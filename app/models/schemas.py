@@ -17,3 +17,17 @@ class ClinicalRecordSchema(BaseModel):
     diagnoses: list[str] = Field(default_factory=list, description="Anonymized diagnoses")
     lab_results: list[str] = Field(default_factory=list, description="Anonymized lab results")
     prescriptions: list[str] = Field(default_factory=list, description="Anonymized prescriptions")
+
+
+class UnifiedPatientPayload(BaseModel):
+    patient_name: str = Field(..., description="Patient full name (PII)")
+    phone: str = Field(..., description="Patient phone number (PII)")
+    aadhaar_abha_id: str = Field(..., description="Aadhaar/ABHA identifier (PII)")
+    diagnoses: list[str] = Field(default_factory=list, description="Anonymized diagnoses")
+    lab_results: list[str] = Field(default_factory=list, description="Anonymized lab results")
+    prescriptions: list[str] = Field(default_factory=list, description="Anonymized prescriptions")
+
+
+class RegisterResponse(BaseModel):
+    pii_vault: PIIVaultSchema
+    clinical_record: ClinicalRecordSchema
