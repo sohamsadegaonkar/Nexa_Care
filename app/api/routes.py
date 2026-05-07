@@ -1,10 +1,10 @@
-from uuid import uuid4
-from fastapi import Query
-from app.core.redis import validate_token
-from app.core.supabase import get_supabase_client
-from fastapi import APIRouter, Header, HTTPException, status
+"""API router for Nexa Care endpoints."""
 
-from app.core.supabase import get_supabase_client
+from uuid import uuid4
+
+from fastapi import APIRouter, Header, HTTPException, status
+from pydantic import BaseModel, Field
+
 from app.models.schemas import (
     ClinicalRecordSchema,
     PIIVaultSchema,
@@ -13,6 +13,24 @@ from app.models.schemas import (
 )
 
 router = APIRouter()
+
+
+@router.post("/register", response_model=RegisterResponse, tags=["sharding"])
+async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
+    masked_internal_id = uuid4()
+    pii_vault = PIIVaultSchema(
+        masked_internal_id=masked_internal_id,
+        patient_name=payload.patient_name,
+        phone=payload.phone,
+        aadhaar_abha_id=payload.aadhaar_abha_id,
+    )
+    clinical_record = ClinicalRecordSchema(
+        masked_internal_id=masked_internal_id,
+        diagnoses=payload.diagnoses,
+        lab_results=payload.lab_results,
+        prescriptions=payload.prescriptions,
+    )
+    return RegisterResponse(pii_vault=pii_vault, clinical_record=clinical_record)
 
 
 @router.get("/view-record", tags=["consent"])
