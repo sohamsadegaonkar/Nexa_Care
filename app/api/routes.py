@@ -19,13 +19,16 @@ router = APIRouter()
 
 class ConsentRequest(BaseModel):
     masked_internal_id: UUID
-    duration_seconds: int = Field(default=1800, ge=1, le=60 * 60 * 24)
+    duration_seconds: int = Field(default=1800, ge=1, le=60 * 60 * 24)  # max 24h
 
 
 @router.post("/register", response_model=RegisterResponse, tags=["sharding"])
 async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
-    """Create linked records in Supabase shards (vault + clinical)."""
-
+    """
+    Registers a patient by creating a shared masked_internal_id and persisting:
+    - PII to nexa_vault
+    - Clinical data to nexa_clinical
+    """
     masked_internal_id = uuid4()
 
     pii_vault = PIIVaultSchema(
@@ -41,7 +44,6 @@ async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
         prescriptions=payload.prescriptions,
     )
 
-    # Persist to Supabase
     supabase = get_supabase_client()
 
     vault_res = (
@@ -56,6 +58,7 @@ async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
         )
         .execute()
     )
+
     clinical_res = (
         supabase.table("nexa_clinical")
         .insert(
@@ -83,8 +86,7 @@ async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
 
 @router.post("/request-consent", tags=["consent"])
 async def request_consent(payload: ConsentRequest) -> dict:
-    """Issue a time-bound consent token stored in Upstash Redis."""
-
+    """Issues a time-bound consent token stored in Upstash Redis."""
     consent_token = issue_token(
         masked_internal_id=str(payload.masked_internal_id),
         ttl_seconds=payload.duration_seconds,
@@ -97,8 +99,12 @@ async def view_record(
     consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
     consent_token_query: str | None = Query(default=None, alias="consent_token"),
 ) -> dict:
-    """Zero-trust retrieval gated by a Redis-backed consent token."""
-
+    """
+    Zero-trust retrieval:
+    - Accept consent token via header or query param
+    - Validate token in Redis
+    - If valid, fetch from both Supabase shards and merge into one response
+    """
     consent_token = consent_token_header or consent_token_query
     masked_internal_id = validate_token(consent_token) if consent_token else None
 
