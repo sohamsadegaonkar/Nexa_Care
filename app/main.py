@@ -1,5 +1,6 @@
 """Nexa Care FastAPI entrypoint."""
-
+from dotenv import load_dotenv
+load_dotenv()  # loads .env into os.environ if present
 from fastapi import FastAPI
 
 from app.api.routes import router as api_router

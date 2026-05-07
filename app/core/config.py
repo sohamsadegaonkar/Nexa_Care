@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from dotenv import load_dotenv
+
+load_dotenv() # This forces Python to read your .env file!
 
 
 class ConfigError(RuntimeError):
