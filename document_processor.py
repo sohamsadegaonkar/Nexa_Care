@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 # Tables-only layout detection (no OCR) using a pretrained object detection model.
 import torch
 from transformers import AutoImageProcessor, TableTransformerForObjectDetection
+
+# OCR for non-table areas
+import pytesseract
 
 TABLE_MODEL_NAME = "microsoft/table-transformer-detection"
 
@@ -64,3 +67,39 @@ def analyze_document_layout(image_path: str) -> dict | None:
         tables.append([int(x0), int(y0), int(x1), int(y1)])
 
     return {"standard_text": [], "tables": tables}
+
+
+async def extract_standard_text(image_path: str, layout_data: dict) -> str | None:
+    """Mask detected tables and run OCR on the remaining regions.
+
+    Engineering requirements:
+        - Open image with PIL
+        - Draw solid black rectangles over layout_data["tables"]
+        - Run pytesseract OCR on the masked image
+        - Return raw extracted text as a single string
+
+    Args:
+        image_path: Path to the image file.
+        layout_data: Output of analyze_document_layout(). Must include a "tables" key.
+
+    Returns:
+        Extracted OCR text (raw). Returns None if the image is missing.
+    """
+
+    try:
+        image = Image.open(image_path).convert("RGB")
+    except FileNotFoundError:
+        return None
+
+    draw = ImageDraw.Draw(image)
+    tables = layout_data.get("tables", []) if isinstance(layout_data, dict) else []
+
+    for box in tables:
+        # Expect [x0, y0, x1, y1]
+        if not isinstance(box, (list, tuple)) or len(box) != 4:
+            continue
+        x0, y0, x1, y1 = box
+        draw.rectangle([x0, y0, x1, y1], fill="black")
+
+    text = pytesseract.image_to_string(image)
+    return text.strip()
