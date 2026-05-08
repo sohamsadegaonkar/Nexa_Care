@@ -11,6 +11,11 @@ import pytesseract
 
 TABLE_MODEL_NAME = "microsoft/table-transformer-detection"
 
+
+def ocr_from_path(path: str) -> str:
+    return pytesseract.image_to_string(Image.open(path))
+
+
 # Load once at import-time so the model is cached in memory for the lifetime of the server.
 # If loading fails, keep them as None so the app can still start and callers can handle it.
 try:
