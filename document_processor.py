@@ -1,24 +1,66 @@
 from __future__ import annotations
 
 from PIL import Image
-from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
 
-MODEL_NAME = "microsoft/layoutlmv3-base"
+# Tables-only layout detection (no OCR) using a pretrained object detection model.
+import torch
+from transformers import AutoImageProcessor, TableTransformerForObjectDetection
+
+TABLE_MODEL_NAME = "microsoft/table-transformer-detection"
 
 # Load once at import-time so the model is cached in memory for the lifetime of the server.
 # If loading fails, keep them as None so the app can still start and callers can handle it.
 try:
-    processor: LayoutLMv3Processor | None = LayoutLMv3Processor.from_pretrained(MODEL_NAME)
-    model: LayoutLMv3ForTokenClassification | None = LayoutLMv3ForTokenClassification.from_pretrained(
-        MODEL_NAME
+    table_processor: AutoImageProcessor | None = AutoImageProcessor.from_pretrained(TABLE_MODEL_NAME)
+    table_model: TableTransformerForObjectDetection | None = (
+        TableTransformerForObjectDetection.from_pretrained(TABLE_MODEL_NAME)
     )
+    if table_model is not None:
+        table_model.eval()
 except Exception:
-    processor = None
-    model = None
+    table_processor = None
+    table_model = None
 
 
-def analyze_document_layout(image_path: str):
+def analyze_document_layout(image_path: str) -> dict | None:
+    """Detect table regions in a document image.
+
+    Returns:
+        {
+          "standard_text": [],
+          "tables": [[x0, y0, x1, y1], ...]
+        }
+
+    Notes:
+        - This performs object detection only (tables). No OCR/text extraction.
+        - Bounding boxes are returned in absolute pixel coordinates.
+    """
+
     try:
         image = Image.open(image_path).convert("RGB")
     except FileNotFoundError:
         return None
+
+    if table_processor is None or table_model is None:
+        return None
+
+    inputs = table_processor(images=image, return_tensors="pt")
+
+    with torch.no_grad():
+        outputs = table_model(**inputs)
+
+    # Convert model outputs to absolute pixel boxes: [x0, y0, x1, y1]
+    # image.size is (width, height); target_sizes expects (height, width)
+    target_sizes = torch.tensor([image.size[::-1]])
+    results = table_processor.post_process_object_detection(
+        outputs,
+        threshold=0.5,
+        target_sizes=target_sizes,
+    )[0]
+
+    tables: list[list[int]] = []
+    for box in results["boxes"]:
+        x0, y0, x1, y1 = box.tolist()
+        tables.append([int(x0), int(y0), int(x1), int(y1)])
+
+    return {"standard_text": [], "tables": tables}
