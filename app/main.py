@@ -12,9 +12,9 @@ from app.api.routes import router as api_router
 from app.core.config import get_redis_config, get_supabase_config
 from app.core.supabase import get_supabase_client
 from document_processor import (
+    analyze_and_extract_tables,
     analyze_document_layout,
     extract_standard_text,
-    structure_table_text,
 )
 
 load_dotenv()  # loads .env into os.environ if present
@@ -65,10 +65,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 detail="Failed to extract PII text",
             )
 
-        table_grids = [
-            structure_table_text(temp_path, box)
-            for box in layout_data.get("tables", [])
-        ]
+        table_grids = analyze_and_extract_tables(temp_path)
 
         masked_internal_id = str(uuid.uuid4())
 
