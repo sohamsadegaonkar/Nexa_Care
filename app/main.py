@@ -11,11 +11,7 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from app.api.routes import router as api_router
 from app.core.config import get_redis_config, get_supabase_config
 from app.core.supabase import get_supabase_client
-from document_processor import (
-    analyze_and_extract_tables,
-    analyze_document_layout,
-    extract_standard_text,
-)
+from document_processor import extract_document_data
 
 load_dotenv()  # loads .env into os.environ if present
 
@@ -51,21 +47,23 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             contents = await file.read()
             tmp.write(contents)
 
-        layout_data = analyze_document_layout(temp_path)
-        if layout_data is None:
+        document_data = extract_document_data(temp_path)
+        if not document_data:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to analyze document layout",
+                detail="Failed to extract document data",
             )
 
-        pii_text = await extract_standard_text(temp_path, layout_data)
-        if pii_text is None:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to extract PII text",
-            )
-
-        table_grids = analyze_and_extract_tables(temp_path)
+        pii_keys = {
+            "patient_name",
+            "phone",
+            "aadhaar",
+            "aadhaar_abha_id",
+            "abha_id",
+            "email",
+        }
+        vault_payload = {k: v for k, v in document_data.items() if k.lower() in pii_keys}
+        clinical_payload = {k: v for k, v in document_data.items() if k not in vault_payload}
 
         masked_internal_id = str(uuid.uuid4())
 
@@ -73,7 +71,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
 
         vault_res = (
             supabase.table("nexa_vault")
-            .insert({"masked_internal_id": masked_internal_id, "raw_pii": pii_text})
+            .insert({"masked_internal_id": masked_internal_id, "raw_pii": vault_payload})
             .execute()
         )
         clinical_res = (
@@ -81,7 +79,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "clinical_data": table_grids,
+                    "clinical_data": clinical_payload,
                 }
             )
             .execute()
@@ -96,10 +94,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 },
             )
 
-        return {
-            "masked_internal_id": masked_internal_id,
-            "tables_detected": len(layout_data.get("tables", [])),
-        }
+        return {"masked_internal_id": masked_internal_id}
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
