@@ -11,7 +11,11 @@ from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from app.api.routes import router as api_router
 from app.core.config import get_redis_config, get_supabase_config
 from app.core.supabase import get_supabase_client
-from document_processor import analyze_document_layout, extract_standard_text
+from document_processor import (
+    analyze_document_layout,
+    extract_standard_text,
+    structure_table_text,
+)
 
 load_dotenv()  # loads .env into os.environ if present
 
@@ -61,6 +65,11 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 detail="Failed to extract PII text",
             )
 
+        table_grids = [
+            structure_table_text(temp_path, box)
+            for box in layout_data.get("tables", [])
+        ]
+
         masked_internal_id = str(uuid.uuid4())
 
         supabase = get_supabase_client()
@@ -75,7 +84,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "table_coordinates": layout_data.get("tables", []),
+                    "clinical_data": table_grids,
                 }
             )
             .execute()
