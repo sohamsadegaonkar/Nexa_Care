@@ -148,3 +148,39 @@ def structure_table_text(image_path: str, table_box: list) -> list[list[str]]:
         table_grid.append([text for _, text in items])
 
     return table_grid
+def structure_table_text(image_path: str, table_box: list) -> list[list[str]]:
+    """Extract table text into a row/column grid from a single table bounding box."""
+    image = Image.open(image_path).convert("RGB")
+    if not isinstance(table_box, (list, tuple)) or len(table_box) != 4:
+        return []
+
+    x0, y0, x1, y1 = [int(coord) for coord in table_box]
+    cropped = image.crop((x0, y0, x1, y1))
+
+    data = pytesseract.image_to_data(cropped, output_type=Output.DICT)
+
+    words: list[tuple[int, int, str]] = []
+    for left, top, text in zip(data.get("left", []), data.get("top", []), data.get("text", [])):
+        if text and text.strip():
+            words.append((int(left), int(top), text.strip()))
+
+    # Group into rows with 10px tolerance
+    words.sort(key=lambda item: item[1])
+    rows: list[dict[str, object]] = []
+    for left, top, text in words:
+        placed = False
+        for row in rows:
+            if abs(top - int(row["top"])) <= 10:
+                row["items"].append((left, text))
+                placed = True
+                break
+        if not placed:
+            rows.append({"top": top, "items": [(left, text)]})
+
+    # Sort each row by X (left)
+    table_grid: list[list[str]] = []
+    for row in rows:
+        items = sorted(row["items"], key=lambda item: item[0])
+        table_grid.append([text for _, text in items])
+
+    return table_grid
