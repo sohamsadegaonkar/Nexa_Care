@@ -83,7 +83,9 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "clinical_data": clinical_payload,
+                    "diagnoses": clinical_payload.get("diagnoses", []),
+                    "lab_results": clinical_payload.get("lab_results", []),
+                    "prescriptions": clinical_payload.get("prescriptions", []),
                 }
             )
             .execute()
