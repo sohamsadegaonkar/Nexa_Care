@@ -2,22 +2,16 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
-# Tables-only layout detection (no OCR) using a pretrained object detection model.
 import torch
 from transformers import AutoImageProcessor, TableTransformerForObjectDetection
 
-# OCR for non-table areas
+# OCR for non-table areas and individual table cells
 import pytesseract
-from pytesseract import Output
 
 TABLE_MODEL_NAME = "microsoft/table-transformer-detection"
+STRUCTURE_MODEL_NAME = "microsoft/table-transformer-structure-recognition"
 
-
-def ocr_from_path(path: str) -> str:
-    return pytesseract.image_to_string(Image.open(path))
-
-
-# Load once at import-time so the model is cached in memory for the lifetime of the server.
+# Load once at import-time so the models are cached in memory for the lifetime of the server.
 # If loading fails, keep them as None so the app can still start and callers can handle it.
 try:
     table_processor: AutoImageProcessor | None = AutoImageProcessor.from_pretrained(TABLE_MODEL_NAME)
@@ -29,6 +23,19 @@ try:
 except Exception:
     table_processor = None
     table_model = None
+
+try:
+    structure_processor: AutoImageProcessor | None = AutoImageProcessor.from_pretrained(
+        STRUCTURE_MODEL_NAME
+    )
+    structure_model: TableTransformerForObjectDetection | None = (
+        TableTransformerForObjectDetection.from_pretrained(STRUCTURE_MODEL_NAME)
+    )
+    if structure_model is not None:
+        structure_model.eval()
+except Exception:
+    structure_processor = None
+    structure_model = None
 
 
 def analyze_document_layout(image_path: str) -> dict | None:
@@ -111,40 +118,63 @@ async def extract_standard_text(image_path: str, layout_data: dict) -> str | Non
     return text.strip()
 
 
-def structure_table_text(image_path: str, table_box: list) -> list[list[str]]:
-    """Extract table text into a row/column grid from a single table bounding box."""
+def analyze_and_extract_tables(image_path: str) -> list[list[list[str]]]:
+    """Detect table structure and OCR each cell.
 
-    image = Image.open(image_path).convert("RGB")
-    if not isinstance(table_box, (list, tuple)) or len(table_box) != 4:
+    Returns a list of tables, where each table is a 2D list (rows x columns).
+    """
+
+    try:
+        image = Image.open(image_path).convert("RGB")
+    except FileNotFoundError:
         return []
 
-    x0, y0, x1, y1 = [int(coord) for coord in table_box]
-    cropped = image.crop((x0, y0, x1, y1))
+    if structure_processor is None or structure_model is None:
+        return []
 
-    data = pytesseract.image_to_data(cropped, output_type=Output.DICT)
+    inputs = structure_processor(images=image, return_tensors="pt")
 
-    words: list[tuple[int, int, str]] = []
-    for left, top, text in zip(data.get("left", []), data.get("top", []), data.get("text", [])):
-        if text and text.strip():
-            words.append((int(left), int(top), text.strip()))
+    with torch.no_grad():
+        outputs = structure_model(**inputs)
 
-    # Sort by vertical position first to form rows
-    words.sort(key=lambda item: item[1])
+    target_sizes = torch.tensor([image.size[::-1]])
+    results = structure_processor.post_process_object_detection(
+        outputs,
+        threshold=0.5,
+        target_sizes=target_sizes,
+    )[0]
 
-    rows: list[dict[str, object]] = []
-    for left, top, text in words:
-        placed = False
-        for row in rows:
-            if abs(top - int(row["top"])) <= 10:
-                row["items"].append((left, text))
-                placed = True
-                break
-        if not placed:
-            rows.append({"top": top, "items": [(left, text)]})
+    id2label = getattr(structure_model.config, "id2label", {})
+
+    rows: list[list[float]] = []
+    columns: list[list[float]] = []
+    for box, label_id in zip(results.get("boxes", []), results.get("labels", [])):
+        label_name = str(id2label.get(int(label_id), "")).lower()
+        if "row" in label_name:
+            rows.append(box.tolist())
+        elif "column" in label_name:
+            columns.append(box.tolist())
+
+    if not rows or not columns:
+        return []
+
+    rows.sort(key=lambda b: b[1])
+    columns.sort(key=lambda b: b[0])
 
     table_grid: list[list[str]] = []
     for row in rows:
-        items = sorted(row["items"], key=lambda item: item[0])
-        table_grid.append([text for _, text in items])
+        row_cells: list[str] = []
+        for col in columns:
+            x0 = max(row[0], col[0])
+            y0 = max(row[1], col[1])
+            x1 = min(row[2], col[2])
+            y1 = min(row[3], col[3])
+            if x1 <= x0 or y1 <= y0:
+                row_cells.append("")
+                continue
+            cell = image.crop((int(x0), int(y0), int(x1), int(y1)))
+            text = pytesseract.image_to_string(cell).strip()
+            row_cells.append(text)
+        table_grid.append(row_cells)
 
-    return table_grid
+    return [table_grid]
