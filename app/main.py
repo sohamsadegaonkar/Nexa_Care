@@ -57,10 +57,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
         pii_keys = {
             "patient_name",
             "phone",
-            "aadhaar",
             "aadhaar_abha_id",
-            "abha_id",
-            "email",
         }
         vault_payload = {k: v for k, v in document_data.items() if k.lower() in pii_keys}
         clinical_payload = {k: v for k, v in document_data.items() if k not in vault_payload}
@@ -71,7 +68,14 @@ async def process_document(file: UploadFile = File(...)) -> dict:
 
         vault_res = (
             supabase.table("nexa_vault")
-            .insert({"masked_internal_id": masked_internal_id, "raw_pii": vault_payload})
+            .insert(
+                {
+                    "masked_internal_id": masked_internal_id,
+                    "patient_name": vault_payload.get("patient_name"),
+                    "phone": vault_payload.get("phone"),
+                    "aadhaar_abha_id": vault_payload.get("aadhaar_abha_id"),
+                }
+            )
             .execute()
         )
         clinical_res = (
