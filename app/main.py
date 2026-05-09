@@ -54,11 +54,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 detail="Failed to extract document data",
             )
 
-        pii_keys = {
-            "patient_name",
-            "phone",
-            "aadhaar_abha_id",
-        }
+        pii_keys = {"patient_name", "phone", "aadhaar", "email"}
         vault_payload = {k: v for k, v in document_data.items() if k.lower() in pii_keys}
         clinical_payload = {k: v for k, v in document_data.items() if k not in vault_payload}
 
@@ -71,9 +67,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "patient_name": vault_payload.get("patient_name"),
-                    "phone": vault_payload.get("phone"),
-                    "aadhaar_abha_id": vault_payload.get("aadhaar_abha_id"),
+                    "raw_pii": vault_payload,
                 }
             )
             .execute()
@@ -83,9 +77,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "diagnoses": clinical_payload.get("diagnoses", []),
-                    "lab_results": clinical_payload.get("lab_results", []),
-                    "prescriptions": clinical_payload.get("prescriptions", []),
+                    "clinical_data": clinical_payload,
                 }
             )
             .execute()
