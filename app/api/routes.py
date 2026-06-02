@@ -6,7 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.core.handshake import create_secure_session, generate_soham_alpha
-from app.core.redis import issue_token, validate_token
+from app.core.redis import get_redis_client, issue_token, validate_token
 from app.core.supabase import get_supabase_client
 from app.models.schemas import (
     ClinicalRecordSchema,
@@ -16,6 +16,23 @@ from app.models.schemas import (
 )
 
 router = APIRouter()
+
+
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    """Parse `Authorization: Bearer <token>` header."""
+
+    if not authorization:
+        return None
+
+    parts = authorization.split()
+    if len(parts) != 2:
+        return None
+
+    scheme, token = parts[0], parts[1]
+    if scheme.lower() != "bearer" or not token.strip():
+        return None
+
+    return token.strip()
 
 
 class ConsentRequest(BaseModel):
@@ -35,6 +52,84 @@ async def process_handshake(request: HandshakeRequest) -> dict:
     return {
         "session_token": session_token,
         "message": "Ghost Key generated. Expires in 30 minutes.",
+    }
+
+
+@router.get("/api/v1/record/{masked_internal_id}", tags=["reassembly"])
+async def get_record(
+    masked_internal_id: str,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict:
+    """Layer 3: Reassembly Engine.
+
+    Requires: Authorization: Bearer <session_token>
+    - Validates token existence in Redis (Ghost Key session)
+    - Reassembles (stitches) raw_pii + clinical_data from Supabase shards
+    """
+
+    session_token = _extract_bearer_token(authorization)
+    if session_token is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or invalid Ghost Key.",
+        )
+
+    # Redis verification: session must exist and not be expired
+    redis_client = get_redis_client()
+    alpha = redis_client.get(session_token)
+    if not alpha:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or invalid Ghost Key.",
+        )
+
+    supabase = get_supabase_client()
+
+    vault_res = (
+        supabase.table("nexa_vault")
+        .select("raw_pii,masked_internal_id")
+        .eq("masked_internal_id", masked_internal_id)
+        .limit(1)
+        .execute()
+    )
+
+    clinical_res = (
+        supabase.table("nexa_clinical")
+        .select("clinical_data,masked_internal_id")
+        .eq("masked_internal_id", masked_internal_id)
+        .limit(1)
+        .execute()
+    )
+
+    if getattr(vault_res, "error", None) or getattr(clinical_res, "error", None):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={
+                "vault_error": str(getattr(vault_res, "error", None)),
+                "clinical_error": str(getattr(clinical_res, "error", None)),
+            },
+        )
+
+    vault_rows = getattr(vault_res, "data", None) or []
+    clinical_rows = getattr(clinical_res, "data", None) or []
+
+    if not vault_rows or not clinical_rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Record not found for masked_internal_id",
+        )
+
+    vault = vault_rows[0] or {}
+    clinical = clinical_rows[0] or {}
+
+    raw_pii = vault.get("raw_pii") or {}
+    clinical_data = clinical.get("clinical_data") or {}
+
+    # Stitching: unified payload (do not persist)
+    return {
+        "masked_internal_id": masked_internal_id,
+        "pii": raw_pii,
+        "clinical": clinical_data,
     }
 
 
