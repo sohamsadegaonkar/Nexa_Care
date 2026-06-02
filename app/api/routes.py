@@ -5,6 +5,7 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
+from app.core.handshake import create_secure_session, generate_soham_alpha
 from app.core.redis import issue_token, validate_token
 from app.core.supabase import get_supabase_client
 from app.models.schemas import (
@@ -20,6 +21,21 @@ router = APIRouter()
 class ConsentRequest(BaseModel):
     masked_internal_id: UUID
     duration_seconds: int = Field(default=1800, ge=1, le=60 * 60 * 24)  # max 24h
+
+
+class HandshakeRequest(BaseModel):
+    nfc_uid: str
+    bio_seed: str
+
+
+@router.post("/api/v1/handshake", tags=["auth"])
+async def process_handshake(request: HandshakeRequest) -> dict:
+    alpha = generate_soham_alpha(request.nfc_uid, request.bio_seed)
+    session_token = create_secure_session(alpha)
+    return {
+        "session_token": session_token,
+        "message": "Ghost Key generated. Expires in 30 minutes.",
+    }
 
 
 @router.post("/register", response_model=RegisterResponse, tags=["sharding"])
