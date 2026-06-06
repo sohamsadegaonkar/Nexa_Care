@@ -7,16 +7,15 @@ import uuid
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
-
 from app.api.routes import router as api_router
 from app.core.config import get_redis_config, get_supabase_config
 from app.core.supabase import get_supabase_client
 from document_processor import extract_document_data
-
+from app.middleware.logging_middleware import GlobalLoggingMiddleware
 load_dotenv()  # loads .env into os.environ if present
 
 app = FastAPI(title="Nexa Care API", version="0.1.0")
-
+app.add_middleware(GlobalLoggingMiddleware)
 
 @app.on_event("startup")
 async def _validate_required_config() -> None:
