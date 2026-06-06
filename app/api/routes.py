@@ -271,3 +271,5 @@ async def view_record(
         "lab_results": clinical.get("lab_results"),
         "prescriptions": clinical.get("prescriptions"),
     }
+
+        
