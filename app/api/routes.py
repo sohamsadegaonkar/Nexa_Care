@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
-
+from app.observability.audit_ledger import append_audit_lo
 from app.core.handshake import create_secure_session, generate_soham_alpha
 from app.core.redis import get_redis_client, issue_token, validate_token
 from app.core.supabase import get_supabase_client
@@ -271,5 +271,138 @@ async def view_record(
         "lab_results": clinical.get("lab_results"),
         "prescriptions": clinical.get("prescriptions"),
     }
+@router.post("/register")
+async def register_patient(payload: UnifiedPatientPayload):
+    await append_audit_log(
+        actor_uid="SYSTEM_INGEST",
+        event_type="PATIENT_REGISTRATION_ATTEMPT",
+        target_id="PENDING_GENERATION",
+        status="STARTED",
+    )
 
+    try:
+        supabase = get_supabase_client()
+        masked_internal_id = generate_masked_internal_id()
+
+        vault_response = (
+            supabase.table("nexa_vault")
+            .insert(
+                {
+                    "masked_internal_id": str(masked_internal_id),
+                    "full_name": payload.full_name,
+                    "date_of_birth": payload.date_of_birth,
+                    "phone": payload.phone,
+                    "email": payload.email,
+                    "address": payload.address,
+                }
+            )
+            .execute()
+        )
+
+        clinical_response = (
+            supabase.table("nexa_clinical")
+            .insert(
+                {
+                    "masked_internal_id": str(masked_internal_id),
+                    "blood_group": payload.blood_group,
+                    "allergies": payload.allergies,
+                    "diagnoses": payload.diagnoses,
+                    "medications": payload.medications,
+                    "clinical_notes": payload.clinical_notes,
+                }
+            )
+            .execute()
+        )
+
+        if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
+            raise RuntimeError("Supabase insert failed during patient registration")
+
+        await append_audit_log(
+            actor_uid="SYSTEM_INGEST",
+            event_type="PATIENT_REGISTRATION_SUCCESS",
+            target_id=str(masked_internal_id),
+            status="SUCCESS",
+        )
+
+        return {"masked_internal_id": str(masked_internal_id), "status": "registered"}
+
+    except Exception:
+        await append_audit_log(
+            actor_uid="SYSTEM_INGEST",
+            event_type="PATIENT_REGISTRATION_FAILED",
+            target_id="FAILED_GENERATION",
+            status="CRITICAL_ERROR",
+        )
+        raise
+
+
+@router.get("/api/v1/record/{masked_internal_id}")
+async def get_record(masked_internal_id: str, authorization: str | None = Header(default=None)):
+    await append_audit_log(
+        actor_uid="REASSEMBLY_ENGINE",
+        event_type="RECORD_ACCESS_ATTEMPT",
+        target_id=masked_internal_id,
+        status="STARTED",
+    )
+
+    if not authorization:
+        await append_audit_log(
+            actor_uid="REASSEMBLY_ENGINE",
+            event_type="RECORD_ACCESS_DENIED",
+            target_id=masked_internal_id,
+            status="UNAUTHORIZED",
+        )
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    session_context = await validate_session_context(authorization)
+    if not session_context:
+        await append_audit_log(
+            actor_uid="REASSEMBLY_ENGINE",
+            event_type="RECORD_ACCESS_DENIED",
+            target_id=masked_internal_id,
+            status="UNAUTHORIZED",
+        )
+        raise HTTPException(status_code=401, detail="Invalid authorization token")
+
+    supabase = get_supabase_client()
+
+    vault_response = (
+        supabase.table("nexa_vault")
+        .select("*")
+        .eq("masked_internal_id", masked_internal_id)
+        .single()
+        .execute()
+    )
+
+    clinical_response = (
+        supabase.table("nexa_clinical")
+        .select("*")
+        .eq("masked_internal_id", masked_internal_id)
+        .single()
+        .execute()
+    )
+
+    if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    vault_data = getattr(vault_response, "data", None)
+    clinical_data = getattr(clinical_response, "data", None)
+
+    if not vault_data or not clinical_data:
+        raise HTTPException(status_code=404, detail="Record not found")
+
+    reassembled_record = {
+        "masked_internal_id": masked_internal_id,
+        "identity": vault_data,
+        "clinical": clinical_data,
+    }
+
+    await append_audit_log(
+        actor_uid="REASSEMBLY_ENGINE",
+        event_type="RECORD_ACCESS_COMPLETED",
+        target_id=masked_internal_id,
+        status="SUCCESS",
+    )
+
+    return reassembled_record
         
