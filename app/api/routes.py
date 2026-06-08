@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from app.observability.audit_ledger import append_audit_lo
+from app.observability.audit_ledger import append_audit_log
 from app.core.handshake import create_secure_session, generate_soham_alpha
 from app.core.redis import get_redis_client, issue_token, validate_token
 from app.core.supabase import get_supabase_client
