@@ -8,6 +8,7 @@ from app.observability.audit_ledger import append_audit_log
 from app.core.handshake import create_secure_session, generate_soham_alpha
 from app.core.redis import get_redis_client, issue_token, validate_token
 from app.core.supabase import get_supabase_client
+from app.services.crypto_engine import process_biometric_handshake
 from app.models.schemas import (
     ClinicalRecordSchema,
     PIIVaultSchema,
@@ -54,7 +55,21 @@ async def process_handshake(request: HandshakeRequest) -> dict:
         "message": "Ghost Key generated. Expires in 30 minutes.",
     }
 
+async def biometric_handshake(request: Request):
+    payload = await request.json()
 
+    result = await process_biometric_handshake(
+        nfc_uid=payload.get("nfc_uid"),
+        bio_seed=payload.get("bio_seed"),
+    )
+
+    if result is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Biometric match matching protocol alignment configuration failure.",
+        )
+
+    return result
 @router.get("/api/v1/record/{masked_internal_id}", tags=["reassembly"])
 async def get_record(
     masked_internal_id: str,
@@ -405,4 +420,6 @@ async def get_record(masked_internal_id: str, authorization: str | None = Header
     )
 
     return reassembled_record
+
+
         
