@@ -50,28 +50,27 @@ class HandshakePayload(BaseModel):
     bio_seed: str
 
 @router.post("/api/v1/handshake", tags=["auth"])
-async def process_handshake(request: HandshakeRequest) -> dict:
-    alpha = generate_soham_alpha(request.nfc_uid, request.bio_seed)
-    session_token = create_secure_session(alpha)
-    return {
-        "session_token": session_token,
-        "message": "Ghost Key generated. Expires in 30 minutes.",
-    }
-
-async def biometric_handshake(request: Request):
-    payload = await request.json()
-    result = await process_biometric_handshake(
-        nfc_uid=payload.get("nfc_uid"),
-        bio_seed=payload.get("bio_seed"),
+async def process_handshake(payload: HandshakePayload):
+    """
+    Biometric Handshake Protocol:
+    Collides the NFC UID (Helper String) with the live pulse (Bio Seed)
+    to generate an ephemeral session token via the Crypto Engine.
+    """
+    # Execute the cryptographic collision
+    auth_result = await process_biometric_handshake(
+        nfc_uid=payload.nfc_uid,
+        bio_seed=payload.bio_seed
     )
 
-    if result is None:
+    # Cryptographic rejection or missing data
+    if auth_result is None:
         raise HTTPException(
             status_code=400,
-            detail="Biometric match matching protocol alignment configuration failure.",
+            detail="Biometric match alignment configuration failure."
         )
 
-    return result
+    # Return the Upstash Redis Session Token
+    return auth_result
 @router.get("/api/v1/record/{masked_internal_id}", tags=["reassembly"])
 async def get_record(
     masked_internal_id: str,
