@@ -1,0 +1,34 @@
+import json
+from typing import Dict, Any, Optional
+
+from app.core.redis import get_redis_client
+
+
+async def validate_session_context(token: str) -> Optional[Dict[str, Any]]:
+    if not token:
+        return None
+
+    clean_token = token
+    if clean_token.startswith("Bearer "):
+        clean_token = clean_token.removeprefix("Bearer ").strip()
+
+    if not clean_token:
+        return None
+
+    try:
+        redis = get_redis_client()
+        cached_session = redis.get(clean_token)
+
+        if hasattr(cached_session, "__await__"):
+            cached_session = await cached_session
+
+        if not cached_session:
+            return None
+
+        if isinstance(cached_session, bytes):
+            cached_session = cached_session.decode("utf-8")
+
+        return json.loads(cached_session)
+
+    except Exception:
+        return None

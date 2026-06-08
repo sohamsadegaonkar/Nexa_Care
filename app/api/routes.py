@@ -9,6 +9,7 @@ from app.core.handshake import create_secure_session, generate_soham_alpha
 from app.core.redis import get_redis_client, issue_token, validate_token
 from app.core.supabase import get_supabase_client
 from app.services.crypto_engine import process_biometric_handshake
+from app.services.auth_service import validate_session_context
 from app.models.schemas import (
     ClinicalRecordSchema,
     PIIVaultSchema,
@@ -44,7 +45,9 @@ class ConsentRequest(BaseModel):
 class HandshakeRequest(BaseModel):
     nfc_uid: str
     bio_seed: str
-
+class HandshakePayload(BaseModel):
+    nfc_uid: str
+    bio_seed: str
 
 @router.post("/api/v1/handshake", tags=["auth"])
 async def process_handshake(request: HandshakeRequest) -> dict:
@@ -57,7 +60,6 @@ async def process_handshake(request: HandshakeRequest) -> dict:
 
 async def biometric_handshake(request: Request):
     payload = await request.json()
-
     result = await process_biometric_handshake(
         nfc_uid=payload.get("nfc_uid"),
         bio_seed=payload.get("bio_seed"),
@@ -420,6 +422,27 @@ async def get_record(masked_internal_id: str, authorization: str | None = Header
     )
 
     return reassembled_record
-
+@router.post("/api/v1/handshake")
+async def process_handshake(payload: HandshakePayload):
+    """
+    Biometric Handshake Protocol:
+    Collides the NFC UID (Helper String) with the live pulse (Bio Seed)
+    to generate an ephemeral session token via the Crypto Engine.
+    """
+    # 1. Route the payload to your new cryptographic engine
+    auth_result = await process_biometric_handshake(
+        nfc_uid=payload.nfc_uid, 
+        bio_seed=payload.bio_seed
+    )
+    
+    # 2. Defensive check: If the Fuzzy Extractor rejects the noise/signal
+    if auth_result is None:
+        raise HTTPException(
+            status_code=400, 
+            detail="Biometric match alignment configuration failure."
+        )
+        
+    # 3. Return the generated Upstash Redis session token to the client
+    return auth_result
 
         
