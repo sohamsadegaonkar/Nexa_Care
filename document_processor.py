@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
-
+import logging
 from PIL import Image
 from pdf2image import convert_from_path
 
 import torch
 from transformers import DonutProcessor, VisionEncoderDecoderModel
-
+logger = logging.getLogger(__name__)
 DONUT_MODEL_NAME = "naver-clova-ix/donut-base-finetuned-cord-v2"
 
 # Load once at import-time so the model is cached in memory for the lifetime of the server.
@@ -19,7 +19,10 @@ try:
     )
     if donut_model is not None:
         donut_model.eval()
-except Exception:
+except Exception as e:
+    donut_processor = None
+    donut_model = None
+    logger.critical(f"Failed to load Donut model. AI extraction is disabled! Error: {e}")
     donut_processor = None
     donut_model = None
 
