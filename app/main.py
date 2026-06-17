@@ -84,12 +84,15 @@ def _map_extracted_fields(document_data: dict) -> tuple[dict, dict]:
     return vault_payload, clinical_payload
 
 app = FastAPI(title="Nexa Care API", version="0.1.0")
-app.add_middleware(GlobalLoggingMiddleware,
-                   CORSMiddleware,
-    allow_origins=["*"],  # Restrict this to your specific frontend URL in production
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],)
+    allow_headers=["*"],
+)
+
+# 2. Register your Global Logging Middleware
 app.add_middleware(GlobalLoggingMiddleware)
 
 @app.on_event("startup")
