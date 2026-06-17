@@ -1,5 +1,7 @@
 """API router for Nexa Care endpoints."""
+from fastapi.params import Security
 
+from app.api.auth_deps import verify_provider
 from uuid import UUID, uuid4
 from app.observability.redactor import redact_payload
 from fastapi import APIRouter, Header, HTTPException, Query, status
@@ -30,7 +32,7 @@ class HandshakePayload(BaseModel):
     masked_internal_id: str
 
 @router.post("/api/v1/handshake", tags=["auth"])
-async def process_handshake(payload: HandshakePayload):
+async def process_handshake(payload: HandshakePayload, provider_key: str = Security(verify_provider)):
     """
     Biometric Handshake Protocol:
     Collides the NFC UID (Helper String) with the live pulse (Bio Seed)
@@ -168,7 +170,7 @@ async def get_record(
 
 
 @router.post("/register", response_model=RegisterResponse, tags=["sharding"])
-async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
+async def register_patient(payload: UnifiedPatientPayload, provider_key: str = Security(verify_provider)) -> RegisterResponse:
     """
     Registers a patient by creating a shared masked_internal_id and persisting:
     - PII to nexa_vault
@@ -250,7 +252,7 @@ async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
 
 
 @router.post("/request-consent", tags=["consent"])
-async def request_consent(payload: ConsentRequest) -> dict:
+async def request_consent(payload: ConsentRequest, provider_key: str = Security(verify_provider)) -> dict:
     """Issues a time-bound consent token stored in Upstash Redis."""
     consent_token = issue_token(
         masked_internal_id=str(payload.masked_internal_id),

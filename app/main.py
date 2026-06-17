@@ -4,9 +4,10 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
+from app.api.auth_deps import verify_provider
 from app.observability.audit_ledger import append_audit_log
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Security, UploadFile, status
 from app.api.routes import router as api_router
 from app.core.config import get_redis_config, get_supabase_config
 from app.core.supabase import get_supabase_client
@@ -99,7 +100,7 @@ async def health_check() -> dict:
     return {"status": "ok"}
 
 @app.post("/api/v1/process-document", tags=["documents"])
-async def process_document(file: UploadFile = File(...)) -> dict:
+async def process_document(file: UploadFile = File(...), provider_key: str = Security(verify_provider)) -> dict:
     """Process an uploaded document and vertically shard PII + clinical layout data."""
     
     # [AUDIT LOG]: AI Processing Initiated
