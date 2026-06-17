@@ -60,3 +60,12 @@ def get_redis_config() -> RedisConfig:
     """
 
     return RedisConfig(url=_require_env("UPSTASH_REDIS_URL"))
+def get_provider_key() -> str:
+    """Fail-fast: Refuse to boot if the provider API key is missing."""
+    key = os.environ.get("PROVIDER_API_KEY")
+    if not key or not key.strip():
+        raise RuntimeError(
+            "CRITICAL SECURITY ERROR: PROVIDER_API_KEY environment variable is not set. "
+            "Refusing to boot with an open perimeter."
+        )
+    return key

@@ -5,11 +5,12 @@ import os
 import tempfile
 import uuid
 from app.api.auth_deps import verify_provider
+from fastapi.concurrency import run_in_threadpool
 from app.observability.audit_ledger import append_audit_log
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Security, UploadFile, status
 from app.api.routes import router as api_router
-from app.core.config import get_redis_config, get_supabase_config
+from app.core.config import get_provider_key, get_redis_config, get_supabase_config
 from app.core.supabase import get_supabase_client
 from document_processor import extract_document_data
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
@@ -90,6 +91,7 @@ async def _validate_required_config() -> None:
 
     get_supabase_config()
     get_redis_config()
+    get_provider_key()
 
 
 app.include_router(api_router)
@@ -120,7 +122,7 @@ async def process_document(file: UploadFile = File(...), provider_key: str = Sec
             contents = await file.read()
             tmp.write(contents)
 
-        document_data = extract_document_data(temp_path)
+        document_data = await run_in_threadpool(extract_document_data, temp_path)
         if not document_data:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
