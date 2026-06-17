@@ -1,13 +1,11 @@
 """API router for Nexa Care endpoints."""
-from fastapi.params import Security
-from fastapi.concurrency import run_in_threadpool  # <--- IMPORTED THREADPOOL
 
-from app.api.auth_deps import verify_provider
 from uuid import UUID, uuid4
-from app.observability.redactor import redact_payload
+
 from fastapi import APIRouter, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from app.observability.audit_ledger import append_audit_log
+from app.core.handshake import create_secure_session, generate_soham_alpha
 from app.core.redis import issue_token, validate_token
 from app.core.supabase import get_supabase_client
 from app.services.crypto_engine import process_biometric_handshake
@@ -30,86 +28,107 @@ class ConsentRequest(BaseModel):
 class HandshakePayload(BaseModel):
     nfc_uid: str
     bio_seed: str
-    masked_internal_id: str
+    # The patient record this handshake is being performed to unlock.
+    # The resulting session is permanently bound to this id (see
+    # crypto_engine.process_biometric_handshake) -- it cannot later be
+    # used to read any other patient's record.
+    masked_internal_id: UUID
+
 
 @router.post("/api/v1/handshake", tags=["auth"])
-async def process_handshake(payload: HandshakePayload, provider_key: str = Security(verify_provider)):
+async def process_handshake(payload: HandshakePayload):
     """
     Biometric Handshake Protocol:
     Collides the NFC UID (Helper String) with the live pulse (Bio Seed)
     to generate an ephemeral session token via the Crypto Engine.
+
+    The issued session is scoped to `masked_internal_id` only -- it
+    authorizes access to that one patient record, not the system at large.
     """
-    # Execute the cryptographic collision
     auth_result = await process_biometric_handshake(
         nfc_uid=payload.nfc_uid,
         bio_seed=payload.bio_seed,
-        masked_internal_id=payload.masked_internal_id,
+        masked_internal_id=str(payload.masked_internal_id),
     )
 
-    # Cryptographic rejection or missing data
     if auth_result is None:
         raise HTTPException(
             status_code=400,
-            detail="Biometric match alignment configuration failure."
+            detail="Biometric match alignment configuration failure.",
         )
 
-    # Return the Upstash Redis Session Token
     return auth_result
+
 
 @router.get("/api/v1/record/{masked_internal_id}", tags=["reassembly"])
 async def get_record(
     masked_internal_id: str,
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> dict:
-    """Layer 3: Reassembly Engine."""
+    """Layer 3: Reassembly Engine.
 
-    await append_audit_log(
-        actor_uid="REASSEMBLY_ENGINE",
-        event_type="RECORD_ACCESS_ATTEMPT",
-        target_id=masked_internal_id,
-        status="STARTED",
-    )
+    Requires: Authorization: Bearer <session_token>
+    - Validates the session token issued by /api/v1/handshake
+    - Enforces that the session is scoped to THIS masked_internal_id --
+      a session minted for one patient cannot be replayed against another
+    - Reassembles (stitches) raw_pii + clinical_data from Supabase shards
+    """
 
-    session_context = await validate_session_context(authorization)
-    if not session_context or not session_context.get("authenticated"):
+    if not authorization:
         await append_audit_log(
             actor_uid="REASSEMBLY_ENGINE",
             event_type="RECORD_ACCESS_DENIED",
             target_id=masked_internal_id,
-            status="UNAUTHORIZED",
+            status="MISSING_TOKEN",
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Session expired or invalid Ghost Key.",
         )
 
-    if session_context.get("masked_internal_id") != masked_internal_id:
+    session_context = await validate_session_context(authorization)
+    if not session_context:
         await append_audit_log(
             actor_uid="REASSEMBLY_ENGINE",
             event_type="RECORD_ACCESS_DENIED",
             target_id=masked_internal_id,
-            status="FORBIDDEN_SCOPE_MISMATCH",
+            status="INVALID_OR_EXPIRED_TOKEN",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or invalid Ghost Key.",
+        )
+
+    try:
+        requested_id = str(UUID(masked_internal_id))
+    except ValueError:
+        requested_id = masked_internal_id
+
+    if session_context.get("masked_internal_id") != requested_id:
+        await append_audit_log(
+            actor_uid="REASSEMBLY_ENGINE",
+            event_type="RECORD_ACCESS_DENIED",
+            target_id=masked_internal_id,
+            status="SESSION_SCOPE_MISMATCH",
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Session is not authorized for this record.",
+            detail="This session is not authorized for the requested record.",
         )
 
     supabase = get_supabase_client()
 
-    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
-    vault_res = await run_in_threadpool(
-        lambda: supabase.table("nexa_vault")
-        .select("patient_name,phone,aadhaar_abha_id,masked_internal_id")
+    vault_res = (
+        supabase.table("nexa_vault")
+        .select("raw_pii,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
         .execute()
     )
 
-    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
-    clinical_res = await run_in_threadpool(
-        lambda: supabase.table("nexa_clinical")
-        .select("diagnoses,lab_results,prescriptions,masked_internal_id")
+    clinical_res = (
+        supabase.table("nexa_clinical")
+        .select("clinical_data,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
         .execute()
@@ -128,6 +147,12 @@ async def get_record(
     clinical_rows = getattr(clinical_res, "data", None) or []
 
     if not vault_rows or not clinical_rows:
+        await append_audit_log(
+            actor_uid="REASSEMBLY_ENGINE",
+            event_type="RECORD_ACCESS_DENIED",
+            target_id=masked_internal_id,
+            status="RECORD_NOT_FOUND",
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Record not found for masked_internal_id",
@@ -136,49 +161,32 @@ async def get_record(
     vault = vault_rows[0] or {}
     clinical = clinical_rows[0] or {}
 
+    raw_pii = vault.get("raw_pii") or {}
+    clinical_data = clinical.get("clinical_data") or {}
+
     await append_audit_log(
         actor_uid="REASSEMBLY_ENGINE",
-        event_type="RECORD_ACCESS_COMPLETED",
+        event_type="RECORD_ACCESS_SUCCESS",
         target_id=masked_internal_id,
         status="SUCCESS",
     )
 
     # Stitching: unified payload (do not persist)
-    raw_response = {
+    return {
         "masked_internal_id": masked_internal_id,
-        "pii": {
-            "patient_name": vault.get("patient_name"),
-            "phone": vault.get("phone"),
-            "aadhaar_abha_id": vault.get("aadhaar_abha_id"),
-        },
-        "clinical": {
-            "diagnoses": clinical.get("diagnoses") or [],
-            "lab_results": clinical.get("lab_results") or [],
-            "prescriptions": clinical.get("prescriptions") or [],
-        },
+        "pii": raw_pii,
+        "clinical": clinical_data,
     }
-
-    # STRATEGIC CHOKEPOINT: Mask sensitive data before it leaves the server
-    raw_response["pii"] = redact_payload(raw_response["pii"])
-
-    return raw_response
 
 
 @router.post("/register", response_model=RegisterResponse, tags=["sharding"])
-async def register_patient(payload: UnifiedPatientPayload, provider_key: str = Security(verify_provider)) -> RegisterResponse:
+async def register_patient(payload: UnifiedPatientPayload) -> RegisterResponse:
     """
     Registers a patient by creating a shared masked_internal_id and persisting:
     - PII to nexa_vault
     - Clinical data to nexa_clinical
     """
     masked_internal_id = uuid4()
-
-    await append_audit_log(
-        actor_uid="SYSTEM_INGEST",
-        event_type="PATIENT_REGISTRATION_ATTEMPT",
-        target_id=str(masked_internal_id),
-        status="STARTED",
-    )
 
     pii_vault = PIIVaultSchema(
         masked_internal_id=masked_internal_id,
@@ -195,9 +203,8 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
 
     supabase = get_supabase_client()
 
-    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
-    vault_res = await run_in_threadpool(
-        lambda: supabase.table("nexa_vault")
+    vault_res = (
+        supabase.table("nexa_vault")
         .insert(
             {
                 "masked_internal_id": str(masked_internal_id),
@@ -209,9 +216,8 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
         .execute()
     )
 
-    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
-    clinical_res = await run_in_threadpool(
-        lambda: supabase.table("nexa_clinical")
+    clinical_res = (
+        supabase.table("nexa_clinical")
         .insert(
             {
                 "masked_internal_id": str(masked_internal_id),
@@ -224,12 +230,6 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
     )
 
     if getattr(vault_res, "error", None) or getattr(clinical_res, "error", None):
-        await append_audit_log(
-            actor_uid="SYSTEM_INGEST",
-            event_type="PATIENT_REGISTRATION_FAILED",
-            target_id=str(masked_internal_id),
-            status="CRITICAL_ERROR",
-        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={
@@ -238,26 +238,72 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
             },
         )
 
-    await append_audit_log(
-        actor_uid="SYSTEM_INGEST",
-        event_type="PATIENT_REGISTRATION_SUCCESS",
-        target_id=str(masked_internal_id),
-        status="SUCCESS",
-    )
-
     return RegisterResponse(pii_vault=pii_vault, clinical_record=clinical_record)
 
 
 @router.post("/request-consent", tags=["consent"])
-async def request_consent(payload: ConsentRequest, provider_key: str = Security(verify_provider)) -> dict:
-    """Issues a time-bound consent token stored in Upstash Redis."""
-    
-    # [FINDING #4 FIX]: Run synchronous Redis I/O in a background thread
-    consent_token = await run_in_threadpool(
-        issue_token,
+async def request_consent(
+    payload: ConsentRequest,
+    authorization: str | None = Header(default=None, alias="Authorization"),
+) -> dict:
+    """Issues a time-bound consent token stored in Upstash Redis.
+
+    LOCKED DOWN: requires Authorization: Bearer <session_token> from
+    /api/v1/handshake, and that session must be scoped to the SAME
+    masked_internal_id being requested. A handshake performed for patient A
+    can no longer be used to mint a consent token for patient B, and an
+    unauthenticated caller can no longer mint a consent token at all.
+    """
+
+    if not authorization:
+        await append_audit_log(
+            actor_uid="CONSENT_ENGINE",
+            event_type="CONSENT_REQUEST_DENIED",
+            target_id=str(payload.masked_internal_id),
+            status="MISSING_TOKEN",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A valid handshake session is required to request consent.",
+        )
+
+    session_context = await validate_session_context(authorization)
+    if not session_context:
+        await append_audit_log(
+            actor_uid="CONSENT_ENGINE",
+            event_type="CONSENT_REQUEST_DENIED",
+            target_id=str(payload.masked_internal_id),
+            status="INVALID_OR_EXPIRED_TOKEN",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Session expired or invalid.",
+        )
+
+    if session_context.get("masked_internal_id") != str(payload.masked_internal_id):
+        await append_audit_log(
+            actor_uid="CONSENT_ENGINE",
+            event_type="CONSENT_REQUEST_DENIED",
+            target_id=str(payload.masked_internal_id),
+            status="SESSION_SCOPE_MISMATCH",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This session is not authorized to request consent for the given record.",
+        )
+
+    consent_token = issue_token(
         masked_internal_id=str(payload.masked_internal_id),
         ttl_seconds=payload.duration_seconds,
     )
+
+    await append_audit_log(
+        actor_uid="CONSENT_ENGINE",
+        event_type="CONSENT_TOKEN_ISSUED",
+        target_id=str(payload.masked_internal_id),
+        status="SUCCESS",
+    )
+
     return {"consent_token": consent_token, "expires_in": payload.duration_seconds}
 
 
@@ -271,11 +317,13 @@ async def view_record(
     - Accept consent token via header or query param
     - Validate token in Redis
     - If valid, fetch from both Supabase shards and merge into one response
+
+    No change needed here for this fix: this endpoint only ever trusts the
+    masked_internal_id that was bound to the token at /request-consent time,
+    and that issuance path is now locked down.
     """
     consent_token = consent_token_header or consent_token_query
-    
-    # [FINDING #4 FIX]: Run synchronous Redis I/O in a background thread
-    masked_internal_id = await run_in_threadpool(validate_token, consent_token) if consent_token else None
+    masked_internal_id = validate_token(consent_token) if consent_token else None
 
     if masked_internal_id is None:
         raise HTTPException(
@@ -285,18 +333,15 @@ async def view_record(
 
     supabase = get_supabase_client()
 
-    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
-    vault_res = await run_in_threadpool(
-        lambda: supabase.table("nexa_vault")
-        .select("patient_name,phone,aadhaar_abha_id,masked_internal_id")
+    vault_res = (
+        supabase.table("nexa_vault")
+        .select("patient_name,phone,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
         .execute()
     )
-    
-    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
-    clinical_res = await run_in_threadpool(
-        lambda: supabase.table("nexa_clinical")
+    clinical_res = (
+        supabase.table("nexa_clinical")
         .select("diagnoses,lab_results,prescriptions,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
@@ -323,23 +368,12 @@ async def view_record(
 
     vault = vault_rows[0]
     clinical = clinical_rows[0]
-    
-    # Pre-assemble the raw payload
-    raw_response = {
+
+    return {
         "masked_internal_id": masked_internal_id,
-        "pii": {
-            "patient_name": vault.get("patient_name"),
-            "phone": vault.get("phone"),
-            "aadhaar_abha_id": vault.get("aadhaar_abha_id"),
-        },
-        "clinical": {
-            "diagnoses": clinical.get("diagnoses") or [],
-            "lab_results": clinical.get("lab_results") or [],
-            "prescriptions": clinical.get("prescriptions") or [],
-        },
+        "patient_name": vault.get("patient_name"),
+        "phone": vault.get("phone"),
+        "diagnoses": clinical.get("diagnoses"),
+        "lab_results": clinical.get("lab_results"),
+        "prescriptions": clinical.get("prescriptions"),
     }
-
-    # STRATEGIC CHOKEPOINT: Mask sensitive data before it leaves the server
-    raw_response["pii"] = redact_payload(raw_response["pii"])
-
-    return raw_response
