@@ -90,6 +90,7 @@ app.add_middleware(GlobalLoggingMiddleware,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],)
+app.add_middleware(GlobalLoggingMiddleware)
 
 @app.on_event("startup")
 async def _validate_required_config() -> None:
