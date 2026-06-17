@@ -8,6 +8,7 @@ Uses redis-py with the UPSTASH_REDIS_URL from app.core.config.
 
 from __future__ import annotations
 
+from functools import lru_cache
 from uuid import uuid4
 
 import redis
@@ -18,6 +19,9 @@ from app.core.config import get_redis_config
 CONSENT_TOKEN_TTL_SECONDS = 30 * 60
 
 
+# [FINDING #11 FIX]: Cache the Redis client to prevent connection churn.
+# This ensures only one connection pool exists per worker process.
+@lru_cache()
 def get_redis_client() -> redis.Redis:
     """Create a Redis client from UPSTASH_REDIS_URL.
 
