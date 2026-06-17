@@ -14,6 +14,72 @@ from document_processor import extract_document_data
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
 load_dotenv()  # loads .env into os.environ if present
 
+
+def _coerce_list(value: object) -> list[str]:
+    """Normalize an extractor value into a list[str] for text[] columns."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v) for v in value]
+    return [str(value)]
+
+
+def _split_raw_capture(document_data: dict) -> tuple[dict, dict]:
+    """Split the unmapped OCR output into PII-ish vs. clinical-ish raw blobs.
+
+    These land in nexa_vault.raw_pii / nexa_clinical.clinical_data, which are
+    real jsonb columns that exist alongside the flat typed ones. They are kept
+    as a raw-capture audit trail for the OCR path specifically: extraction is
+    lossy and the field set isn't guaranteed, so preserving the untouched
+    extractor output means nothing is silently discarded if _map_extracted_fields
+    above misses a field or the document contains something unanticipated.
+    """
+    pii_keys = {"patient_name", "phone", "aadhaar", "aadhaar_abha_id", "email"}
+    raw_pii = {k: v for k, v in document_data.items() if k.lower() in pii_keys}
+    raw_clinical = {k: v for k, v in document_data.items() if k.lower() not in pii_keys}
+    return raw_pii, raw_clinical
+
+
+def _map_extracted_fields(document_data: dict) -> tuple[dict, dict]:
+    """Map OCR-extracted keys onto the canonical nexa_vault / nexa_clinical columns.
+
+    The live Supabase tables use flat typed columns (patient_name, phone,
+    aadhaar_abha_id / diagnoses, lab_results, prescriptions) -- the same shape
+    used by /register and PIIVaultSchema / ClinicalRecordSchema. This mapping
+    keeps the OCR ingestion path writing into that same shape instead of the
+    nonexistent raw_pii / clinical_data columns it was targeting before.
+
+    NOTE: the current Donut model is fine-tuned on retail receipts (CORD), not
+    clinical documents, so these source keys are unlikely to be populated
+    reliably until the model is swapped -- that is a separate, tracked item.
+    This function is defensive (missing fields default to "" / []) rather than
+    raising, so a partial extraction still produces a row instead of a hard 500.
+    """
+
+    patient_name = document_data.get("patient_name", "") or ""
+    phone = document_data.get("phone", "") or ""
+    # Tolerate the field-name drift already present elsewhere in the codebase
+    # (redactor.py uses "aadhaar"; the live table column is "aadhaar_abha_id").
+    aadhaar_abha_id = (
+        document_data.get("aadhaar_abha_id")
+        or document_data.get("aadhaar")
+        or ""
+    )
+
+    vault_payload = {
+        "patient_name": patient_name,
+        "phone": phone,
+        "aadhaar_abha_id": aadhaar_abha_id,
+    }
+
+    clinical_payload = {
+        "diagnoses": _coerce_list(document_data.get("diagnoses")),
+        "lab_results": _coerce_list(document_data.get("lab_results")),
+        "prescriptions": _coerce_list(document_data.get("prescriptions")),
+    }
+
+    return vault_payload, clinical_payload
+
 app = FastAPI(title="Nexa Care API", version="0.1.0")
 app.add_middleware(GlobalLoggingMiddleware)
 
@@ -53,9 +119,8 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 detail="Failed to extract document data",
             )
 
-        pii_keys = {"patient_name", "phone", "aadhaar", "email"}
-        vault_payload = {k: v for k, v in document_data.items() if k.lower() in pii_keys}
-        clinical_payload = {k: v for k, v in document_data.items() if k not in vault_payload}
+        vault_payload, clinical_payload = _map_extracted_fields(document_data)
+        raw_pii, raw_clinical = _split_raw_capture(document_data)
 
         masked_internal_id = str(uuid.uuid4())
 
@@ -66,7 +131,8 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "raw_pii": vault_payload,
+                    **vault_payload,
+                    "raw_pii": raw_pii,
                 }
             )
             .execute()
@@ -76,7 +142,8 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             .insert(
                 {
                     "masked_internal_id": masked_internal_id,
-                    "clinical_data": clinical_payload,
+                    **clinical_payload,
+                    "clinical_data": raw_clinical,
                 }
             )
             .execute()
