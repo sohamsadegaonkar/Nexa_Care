@@ -1,75 +1,68 @@
 import time
-import json
 import logging
-import uuid
-from fastapi import Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.request_context import (
-    trace_id_var, request_id_var, span_id_var, 
-    generate_trace_id, generate_span_id
-)
-from app.observability.redactor import redact_payload
 from app.observability.error_catalog import Catalog, get_error
+from app.observability.redactor import redact_payload
+from app.core.request_context import trace_id_var, span_id_var
 
-logger = logging.getLogger("nexa_logger")
+logger = logging.getLogger(__name__)
 
 class GlobalLoggingMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request: Request, call_next) -> Response:
-        # 1. Setup Context (OpenTelemetry convention)
-        trace_id = request.headers.get("X-Trace-Id") or generate_trace_id()
-        request_id = str(uuid.uuid4())
-        span_id = generate_span_id()
+    async def dispatch(self, request: Request, call_next):
+        start_time = time.time()
+        trace_id = trace_id_var.get()
+        span_id = span_id_var.get()
 
-        trace_id_var.set(trace_id)
-        request_id_var.set(request_id)
-        span_id_var.set(span_id)
+        # [FINDING #16 FIX]: Include both trace_id and span_id in the start log
+        logger.info(f"[Trace: {trace_id}] [Span: {span_id}] Request Started: {request.method} {request.url.path}")
 
-        # 2. Log Request Start
-        logger.info(json.dumps({
-            "event": "request_started",
-            "trace_id": trace_id,
-            "request_id": request_id,
-            "method": request.method,
-            "path": request.url.path
-        }))
-
-        start_time = time.perf_counter()
-
-        # 3. Execution & Dynamic Error Handling
         try:
             response = await call_next(request)
-        except Exception as e:
-            # Fallback to DB_CONNECTION_LOST if unknown
-            error_def = Catalog.DB_CONNECTION_LOST
+            process_time = time.time() - start_time
             
-            # Log with catalog severity
-            log_msg = json.dumps({
-                "event": "request_failed",
-                "trace_id": trace_id,
-                "request_id": request_id,
-                "error_code": error_def.code,
-                "exception": str(e)
-            })
+            # [FINDING #16 FIX]: Include both IDs in the completion log so requests can be fully traced
+            logger.info(f"[Trace: {trace_id}] [Span: {span_id}] Request Completed: {request.method} {request.url.path} - Status: {response.status_code} - Time: {process_time:.3f}s")
             
-            if error_def.severity == "CRITICAL":
-                logger.critical(log_msg)
-            else:
-                logger.error(log_msg)
+            return response
 
-            return JSONResponse(
-                status_code=error_def.http_status,
-                content=redact_payload(get_error(error_def))
+        except Exception as e:
+            process_time = time.time() - start_time
+            
+            # [CRITICAL LOGGING FIX]: Always log the REAL exception trace so developers can debug it!
+            logger.critical(
+                f"[Trace: {trace_id}] [Span: {span_id}] Unhandled Exception: {request.method} {request.url.path} "
+                f"- Error: {str(e)} - Time: {process_time:.3f}s", 
+                exc_info=True
             )
 
-        # 4. Log Success
-        latency = round((time.perf_counter() - start_time) * 1000, 2)
-        logger.info(json.dumps({
-            "event": "request_completed",
-            "trace_id": trace_id,
-            "status": response.status_code,
-            "latency_ms": latency
-        }))
-        
-        return response
+            # [FINDINGS #7 & #12 FIX]: Differentiate exception types instead of blindly returning 503 DB_CONNECTION_LOST
+            if isinstance(e, StarletteHTTPException):
+                # If it's a known FastAPI/Starlette HTTP exception, let it pass through normally
+                return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+            
+            error_name = e.__class__.__name__
+            
+            # Map specific Python exceptions to our specific Business Error Catalog
+            if error_name == "TimeoutError":
+                error_def = Catalog.DOC_TIMEOUT
+            elif error_name in ["PermissionError", "AuthenticationError", "JWTError"]:
+                error_def = Catalog.AUTH_INVALID
+            elif error_name in ["OperationalError", "InterfaceError", "DatabaseError", "RedisError"]:
+                error_def = Catalog.DB_CONNECTION_LOST
+            elif error_name in ["ValueError", "ValidationError"]:
+                error_def = Catalog.VALIDATION_ERROR
+            else:
+                # Catch-all for genuinely unexpected application bugs
+                error_def = Catalog.INTERNAL_SERVER_ERROR
+
+            error_payload = get_error(error_def)
+            redacted_payload = redact_payload(error_payload)
+
+            return JSONResponse(
+                status_code=error_def.status_code,
+                content=redacted_payload
+            )
