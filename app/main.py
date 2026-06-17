@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
-
+from app.observability.audit_ledger import append_audit_log
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile, status
 from app.api.routes import router as api_router
@@ -98,10 +98,17 @@ app.include_router(api_router)
 async def health_check() -> dict:
     return {"status": "ok"}
 
-
 @app.post("/api/v1/process-document", tags=["documents"])
 async def process_document(file: UploadFile = File(...)) -> dict:
     """Process an uploaded document and vertically shard PII + clinical layout data."""
+    
+    # [AUDIT LOG]: AI Processing Initiated
+    await append_audit_log(
+        actor_uid="AI_EXTRACTOR",
+        event_type="DOCUMENT_PROCESSING_ATTEMPT",
+        target_id="PENDING_GENERATION",
+        status="STARTED",
+    )
 
     suffix = os.path.splitext(file.filename or "")[1] or ".png"
     temp_path = None
@@ -128,24 +135,20 @@ async def process_document(file: UploadFile = File(...)) -> dict:
 
         vault_res = (
             supabase.table("nexa_vault")
-            .insert(
-                {
-                    "masked_internal_id": masked_internal_id,
-                    **vault_payload,
-                    "raw_pii": raw_pii,
-                }
-            )
+            .insert({
+                "masked_internal_id": masked_internal_id,
+                **vault_payload,
+                "raw_pii": raw_pii,
+            })
             .execute()
         )
         clinical_res = (
             supabase.table("nexa_clinical")
-            .insert(
-                {
-                    "masked_internal_id": masked_internal_id,
-                    **clinical_payload,
-                    "clinical_data": raw_clinical,
-                }
-            )
+            .insert({
+                "masked_internal_id": masked_internal_id,
+                **clinical_payload,
+                "clinical_data": raw_clinical,
+            })
             .execute()
         )
 
@@ -158,7 +161,26 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 },
             )
 
+        # [AUDIT LOG]: AI Processing Successful
+        await append_audit_log(
+            actor_uid="AI_EXTRACTOR",
+            event_type="DOCUMENT_PROCESSING_SUCCESS",
+            target_id=masked_internal_id,
+            status="SUCCESS",
+        )
+
         return {"masked_internal_id": masked_internal_id}
+
+    except Exception as e:
+        # [AUDIT LOG]: AI Processing Failed
+        await append_audit_log(
+            actor_uid="AI_EXTRACTOR",
+            event_type="DOCUMENT_PROCESSING_FAILED",
+            target_id="FAILED_GENERATION",
+            status="CRITICAL_ERROR",
+        )
+        raise e
+
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)
