@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import os
 import uuid
 
 from app.core.redis import get_redis_client

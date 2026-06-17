@@ -2,7 +2,6 @@ import hmac
 import hashlib
 import secrets
 import json
-import uuid
 
 from app.core.redis import get_redis_client
 from app.core.request_context import trace_id_var

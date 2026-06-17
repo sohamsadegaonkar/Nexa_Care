@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import tempfile
 import uuid
+from fastapi.middleware.cors import CORSMiddleware
 from app.api.auth_deps import verify_provider
 from fastapi.concurrency import run_in_threadpool
 from app.observability.audit_ledger import append_audit_log
@@ -83,7 +84,12 @@ def _map_extracted_fields(document_data: dict) -> tuple[dict, dict]:
     return vault_payload, clinical_payload
 
 app = FastAPI(title="Nexa Care API", version="0.1.0")
-app.add_middleware(GlobalLoggingMiddleware)
+app.add_middleware(GlobalLoggingMiddleware,
+                   CORSMiddleware,
+    allow_origins=["*"],  # Restrict this to your specific frontend URL in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],)
 
 @app.on_event("startup")
 async def _validate_required_config() -> None:
@@ -120,6 +126,12 @@ async def process_document(file: UploadFile = File(...), provider_key: str = Sec
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             temp_path = tmp.name
             contents = await file.read()
+            MAX_FILE_SIZE = 5 * 1024 * 1024 # 5 MB
+            if len(contents) > MAX_FILE_SIZE:
+                raise HTTPException(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    detail="File exceeds the 5MB maximum upload size limit."
+                )
             tmp.write(contents)
 
         document_data = await run_in_threadpool(extract_document_data, temp_path)
