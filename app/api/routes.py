@@ -1,5 +1,6 @@
 """API router for Nexa Care endpoints."""
 from fastapi.params import Security
+from fastapi.concurrency import run_in_threadpool  # <--- IMPORTED THREADPOOL
 
 from app.api.auth_deps import verify_provider
 from uuid import UUID, uuid4
@@ -54,21 +55,13 @@ async def process_handshake(payload: HandshakePayload, provider_key: str = Secur
 
     # Return the Upstash Redis Session Token
     return auth_result
+
 @router.get("/api/v1/record/{masked_internal_id}", tags=["reassembly"])
 async def get_record(
     masked_internal_id: str,
     authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> dict:
-    """Layer 3: Reassembly Engine.
-
-    Requires: Authorization: Bearer <session_token>
-    - Validates the session in Redis (Ghost Key session)
-    - Confirms the session is scoped to *this* masked_internal_id -- a session
-      from a handshake for patient A cannot be used to read patient B's record
-    - Reassembles (stitches) the canonical flat PII + clinical columns from
-      Supabase shards (the same columns /register and /view-record use, so a
-      record looks identical here regardless of which endpoint created it)
-    """
+    """Layer 3: Reassembly Engine."""
 
     await append_audit_log(
         actor_uid="REASSEMBLY_ENGINE",
@@ -104,16 +97,18 @@ async def get_record(
 
     supabase = get_supabase_client()
 
-    vault_res = (
-        supabase.table("nexa_vault")
+    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
+    vault_res = await run_in_threadpool(
+        lambda: supabase.table("nexa_vault")
         .select("patient_name,phone,aadhaar_abha_id,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
         .execute()
     )
 
-    clinical_res = (
-        supabase.table("nexa_clinical")
+    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
+    clinical_res = await run_in_threadpool(
+        lambda: supabase.table("nexa_clinical")
         .select("diagnoses,lab_results,prescriptions,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
@@ -200,8 +195,9 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
 
     supabase = get_supabase_client()
 
-    vault_res = (
-        supabase.table("nexa_vault")
+    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
+    vault_res = await run_in_threadpool(
+        lambda: supabase.table("nexa_vault")
         .insert(
             {
                 "masked_internal_id": str(masked_internal_id),
@@ -213,8 +209,9 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
         .execute()
     )
 
-    clinical_res = (
-        supabase.table("nexa_clinical")
+    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
+    clinical_res = await run_in_threadpool(
+        lambda: supabase.table("nexa_clinical")
         .insert(
             {
                 "masked_internal_id": str(masked_internal_id),
@@ -254,7 +251,10 @@ async def register_patient(payload: UnifiedPatientPayload, provider_key: str = S
 @router.post("/request-consent", tags=["consent"])
 async def request_consent(payload: ConsentRequest, provider_key: str = Security(verify_provider)) -> dict:
     """Issues a time-bound consent token stored in Upstash Redis."""
-    consent_token = issue_token(
+    
+    # [FINDING #4 FIX]: Run synchronous Redis I/O in a background thread
+    consent_token = await run_in_threadpool(
+        issue_token,
         masked_internal_id=str(payload.masked_internal_id),
         ttl_seconds=payload.duration_seconds,
     )
@@ -273,7 +273,9 @@ async def view_record(
     - If valid, fetch from both Supabase shards and merge into one response
     """
     consent_token = consent_token_header or consent_token_query
-    masked_internal_id = validate_token(consent_token) if consent_token else None
+    
+    # [FINDING #4 FIX]: Run synchronous Redis I/O in a background thread
+    masked_internal_id = await run_in_threadpool(validate_token, consent_token) if consent_token else None
 
     if masked_internal_id is None:
         raise HTTPException(
@@ -283,15 +285,18 @@ async def view_record(
 
     supabase = get_supabase_client()
 
-    vault_res = (
-        supabase.table("nexa_vault")
+    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
+    vault_res = await run_in_threadpool(
+        lambda: supabase.table("nexa_vault")
         .select("patient_name,phone,aadhaar_abha_id,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
         .execute()
     )
-    clinical_res = (
-        supabase.table("nexa_clinical")
+    
+    # [FINDING #4 FIX]: Run synchronous Supabase I/O in a background thread
+    clinical_res = await run_in_threadpool(
+        lambda: supabase.table("nexa_clinical")
         .select("diagnoses,lab_results,prescriptions,masked_internal_id")
         .eq("masked_internal_id", masked_internal_id)
         .limit(1)
@@ -318,7 +323,8 @@ async def view_record(
 
     vault = vault_rows[0]
     clinical = clinical_rows[0]
-        # Pre-assemble the raw payload
+    
+    # Pre-assemble the raw payload
     raw_response = {
         "masked_internal_id": masked_internal_id,
         "pii": {

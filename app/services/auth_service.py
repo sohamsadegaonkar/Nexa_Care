@@ -2,7 +2,7 @@ import json
 from typing import Dict, Any, Optional
 
 from app.core.redis import get_redis_client
-
+from fastapi.concurrency import run_in_threadpool # <--- 1. Import threadpool
 
 async def validate_session_context(token: str) -> Optional[Dict[str, Any]]:
     if not token:
@@ -17,7 +17,9 @@ async def validate_session_context(token: str) -> Optional[Dict[str, Any]]:
 
     try:
         redis = get_redis_client()
-        cached_session = redis.get(clean_token)
+        
+        # [FINDING #4 FIX]: Run Redis synchronous network I/O in a background thread
+        cached_session = await run_in_threadpool(redis.get, clean_token)
 
         if hasattr(cached_session, "__await__"):
             cached_session = await cached_session
