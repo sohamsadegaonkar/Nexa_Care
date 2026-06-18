@@ -37,8 +37,8 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, project_root)
 
 # Now your import will work
-from document_processor import extract_document_data
-from app.services.sharding import split_pii_and_clinical_fields
+from document_processor import extract_document_data # noqa: E402
+from app.services.sharding import split_pii_and_clinical_fields# noqa: E402
 
 SUPPORTED_SUFFIXES = {".png", ".jpg", ".jpeg", ".pdf"}
 
