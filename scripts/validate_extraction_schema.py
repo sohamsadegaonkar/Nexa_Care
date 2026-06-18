@@ -30,10 +30,13 @@ likely reason, and the fix is fine-tuning or swapping the model, not
 loosening the field-name sets this script checks against.
 """
 from __future__ import annotations
-
+import os
 import sys
 from pathlib import Path
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, project_root)
 
+# Now your import will work
 from document_processor import extract_document_data
 from app.services.sharding import split_pii_and_clinical_fields
 

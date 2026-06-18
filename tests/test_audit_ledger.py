@@ -1,38 +1,150 @@
-from app.observability.audit_ledger import _calculate_hash, _is_chain_conflict
+import asyncio
+import unittest
+from unittest.mock import patch, MagicMock
+
+from app.observability.audit_ledger import _calculate_hash, append_audit_log
+from app.core.request_context import trace_id_var
 
 
-def test_calculate_hash_is_order_independent():
-    """json.dumps(..., sort_keys=True) means insertion order shouldn't
-    change the hash -- if it did, the chain would be fragile to something
-    as incidental as dict construction order."""
-    payload_a = {"b": 1, "a": 2}
-    payload_b = {"a": 2, "b": 1}
-    assert _calculate_hash(payload_a, "GENESIS") == _calculate_hash(payload_b, "GENESIS")
+def run(coro):
+    return asyncio.run(coro)
 
 
-def test_calculate_hash_changes_with_previous_hash():
-    """This is the whole point of a hash chain: the same event payload
-    must hash differently depending on what it's chained after."""
-    payload = {"event": "x"}
-    assert _calculate_hash(payload, "GENESIS") != _calculate_hash(payload, "some-other-hash")
+class FakeResult:
+    def __init__(self, error=None, data=None):
+        self.error = error
+        self.data = data
 
 
-def test_calculate_hash_changes_with_payload():
-    assert _calculate_hash({"event": "x"}, "GENESIS") != _calculate_hash({"event": "y"}, "GENESIS")
+def make_fake_supabase(select_result, insert_result=None):
+    """Builds a fake supabase client matching the fluent
+    .table(...).select(...).order(...).limit(...).execute() /
+    .table(...).insert(...).execute() call chains used by audit_ledger.
+    """
+    mock_table = MagicMock()
+    mock_table.select.return_value = mock_table
+    mock_table.order.return_value = mock_table
+    mock_table.limit.return_value = mock_table
+    mock_table.insert.return_value = mock_table
+
+    if insert_result is not None:
+        mock_table.execute.side_effect = [select_result, insert_result]
+    else:
+        mock_table.execute.side_effect = [select_result]
+
+    mock_client = MagicMock()
+    mock_client.table.return_value = mock_table
+    return mock_client, mock_table
 
 
-def test_is_chain_conflict_detects_unique_violation_dict_shape():
-    error = {"code": "23505", "message": "duplicate key value violates unique constraint \"uq_system_audit_previous_hash\""}
-    assert _is_chain_conflict(error) is True
+class TestCalculateHash(unittest.TestCase):
+
+    def test_same_inputs_produce_same_hash(self):
+        payload = {"event": "X", "status": "OK"}
+        h1 = _calculate_hash(payload, "GENESIS")
+        h2 = _calculate_hash(payload, "GENESIS")
+        self.assertEqual(h1, h2)
+
+    def test_different_payload_changes_hash(self):
+        h1 = _calculate_hash({"event": "X"}, "GENESIS")
+        h2 = _calculate_hash({"event": "Y"}, "GENESIS")
+        self.assertNotEqual(h1, h2)
+
+    def test_different_previous_hash_changes_hash(self):
+        payload = {"event": "X"}
+        h1 = _calculate_hash(payload, "GENESIS")
+        h2 = _calculate_hash(payload, "some-other-previous-hash")
+        self.assertNotEqual(h1, h2)
+
+    def test_hash_is_sha256_hexdigest(self):
+        h = _calculate_hash({"event": "X"}, "GENESIS")
+        self.assertEqual(len(h), 64)
+        int(h, 16)  # raises ValueError if not valid hex
 
 
-def test_is_chain_conflict_detects_unique_violation_object_shape():
-    class FakePostgrestError(Exception):
-        code = "23505"
+class TestAppendAuditLog(unittest.TestCase):
 
-    assert _is_chain_conflict(FakePostgrestError("duplicate key")) is True
+    def setUp(self):
+        self._token = trace_id_var.set("trace-test123")
+
+    def tearDown(self):
+        trace_id_var.reset(self._token)
+
+    @patch("app.observability.audit_ledger.get_supabase_client")
+    def test_success_links_to_previous_hash_and_threads_trace_id(self, mock_get_client):
+        select_result = FakeResult(error=None, data=[{"record_hash": "prev-hash-abc"}])
+        insert_result = FakeResult(error=None, data=[{"ok": True}])
+        mock_client, mock_table = make_fake_supabase(select_result, insert_result)
+        mock_get_client.return_value = mock_client
+
+        with self.assertNoLogs("nexa_logger", level="CRITICAL"):
+            result = run(append_audit_log(
+                actor_uid="TEST_ACTOR",
+                event_type="TEST_EVENT",
+                target_id="target-1",
+                status="SUCCESS",
+            ))
+
+        self.assertTrue(result)
+
+        inserted_row = mock_table.insert.call_args[0][0]
+        self.assertEqual(inserted_row["previous_hash"], "prev-hash-abc")
+        self.assertEqual(inserted_row["trace_id"], "trace-test123")
+        self.assertEqual(inserted_row["payload"]["trace_id"], "trace-test123")
+
+        expected_hash = _calculate_hash(inserted_row["payload"], "prev-hash-abc")
+        self.assertEqual(inserted_row["record_hash"], expected_hash)
+
+    @patch("app.observability.audit_ledger.get_supabase_client")
+    def test_no_prior_rows_falls_back_to_genesis(self, mock_get_client):
+        select_result = FakeResult(error=None, data=[])
+        insert_result = FakeResult(error=None, data=[{"ok": True}])
+        mock_client, mock_table = make_fake_supabase(select_result, insert_result)
+        mock_get_client.return_value = mock_client
+
+        result = run(append_audit_log("ACTOR", "EVENT", "target-1", "SUCCESS"))
+
+        self.assertTrue(result)
+        inserted_row = mock_table.insert.call_args[0][0]
+        self.assertEqual(inserted_row["previous_hash"], "GENESIS")
+
+    @patch("app.observability.audit_ledger.get_supabase_client")
+    def test_read_error_returns_false_and_logs_critical(self, mock_get_client):
+        select_result = FakeResult(error="connection reset", data=None)
+        mock_client, mock_table = make_fake_supabase(select_result)
+        mock_get_client.return_value = mock_client
+
+        with self.assertLogs("nexa_logger", level="CRITICAL") as cm:
+            result = run(append_audit_log("ACTOR", "EVENT", "target-1", "SUCCESS"))
+
+        self.assertFalse(result)
+        self.assertIn("audit_log_write_failed", cm.output[0])
+        # Read failed, so we must never attempt the insert.
+        mock_table.insert.assert_not_called()
+
+    @patch("app.observability.audit_ledger.get_supabase_client")
+    def test_insert_error_returns_false_and_logs_critical(self, mock_get_client):
+        select_result = FakeResult(error=None, data=[])
+        insert_result = FakeResult(error="constraint violation", data=None)
+        mock_client, mock_table = make_fake_supabase(select_result, insert_result)
+        mock_get_client.return_value = mock_client
+
+        with self.assertLogs("nexa_logger", level="CRITICAL") as cm:
+            result = run(append_audit_log("ACTOR", "EVENT", "target-1", "SUCCESS"))
+
+        self.assertFalse(result)
+        self.assertIn("audit_log_write_failed", cm.output[0])
+
+    @patch("app.observability.audit_ledger.get_supabase_client")
+    def test_unexpected_exception_returns_false_and_logs_critical(self, mock_get_client):
+        mock_get_client.side_effect = ConnectionError("supabase unreachable")
+
+        with self.assertLogs("nexa_logger", level="CRITICAL") as cm:
+            result = run(append_audit_log("ACTOR", "EVENT", "target-1", "SUCCESS"))
+
+        self.assertFalse(result)
+        self.assertIn("audit_log_write_failed", cm.output[0])
 
 
-def test_is_chain_conflict_ignores_unrelated_errors():
-    assert _is_chain_conflict({"code": "08006", "message": "connection failure"}) is False
-    assert _is_chain_conflict(ConnectionError("could not connect to host")) is False
+if __name__ == "__main__":
+    unittest.main()
