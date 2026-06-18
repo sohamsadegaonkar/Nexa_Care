@@ -1,7 +1,5 @@
 import os
-import pytest
 from fastapi.testclient import TestClient
-from uuid import uuid4
 
 # Import your FastAPI app
 from app.main import app 
