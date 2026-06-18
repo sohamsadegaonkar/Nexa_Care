@@ -1,99 +1,34 @@
 """Nexa Care FastAPI entrypoint."""
 from __future__ import annotations
 
+import json
+import logging
 import os
 import tempfile
 import uuid
-from fastapi.middleware.cors import CORSMiddleware
-from app.api.auth_deps import verify_provider
-from fastapi.concurrency import run_in_threadpool
-from app.observability.audit_ledger import append_audit_log
+
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Security, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
+
 from app.api.routes import router as api_router
-from app.core.config import get_provider_key, get_redis_config, get_supabase_config
+from app.core.config import (
+    get_handshake_security_config,
+    get_redis_config,
+    get_supabase_config,
+)
 from app.core.supabase import get_supabase_client
+from app.services.sharding import split_pii_and_clinical_fields
 from document_processor import extract_document_data
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
+
 load_dotenv()  # loads .env into os.environ if present
 
-
-def _coerce_list(value: object) -> list[str]:
-    """Normalize an extractor value into a list[str] for text[] columns."""
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return [str(v) for v in value]
-    return [str(value)]
-
-
-def _split_raw_capture(document_data: dict) -> tuple[dict, dict]:
-    """Split the unmapped OCR output into PII-ish vs. clinical-ish raw blobs.
-
-    These land in nexa_vault.raw_pii / nexa_clinical.clinical_data, which are
-    real jsonb columns that exist alongside the flat typed ones. They are kept
-    as a raw-capture audit trail for the OCR path specifically: extraction is
-    lossy and the field set isn't guaranteed, so preserving the untouched
-    extractor output means nothing is silently discarded if _map_extracted_fields
-    above misses a field or the document contains something unanticipated.
-    """
-    pii_keys = {"patient_name", "phone", "aadhaar", "aadhaar_abha_id", "email"}
-    raw_pii = {k: v for k, v in document_data.items() if k.lower() in pii_keys}
-    raw_clinical = {k: v for k, v in document_data.items() if k.lower() not in pii_keys}
-    return raw_pii, raw_clinical
-
-
-def _map_extracted_fields(document_data: dict) -> tuple[dict, dict]:
-    """Map OCR-extracted keys onto the canonical nexa_vault / nexa_clinical columns.
-
-    The live Supabase tables use flat typed columns (patient_name, phone,
-    aadhaar_abha_id / diagnoses, lab_results, prescriptions) -- the same shape
-    used by /register and PIIVaultSchema / ClinicalRecordSchema. This mapping
-    keeps the OCR ingestion path writing into that same shape instead of the
-    nonexistent raw_pii / clinical_data columns it was targeting before.
-
-    NOTE: the current Donut model is fine-tuned on retail receipts (CORD), not
-    clinical documents, so these source keys are unlikely to be populated
-    reliably until the model is swapped -- that is a separate, tracked item.
-    This function is defensive (missing fields default to "" / []) rather than
-    raising, so a partial extraction still produces a row instead of a hard 500.
-    """
-
-    patient_name = document_data.get("patient_name", "") or ""
-    phone = document_data.get("phone", "") or ""
-    # Tolerate the field-name drift already present elsewhere in the codebase
-    # (redactor.py uses "aadhaar"; the live table column is "aadhaar_abha_id").
-    aadhaar_abha_id = (
-        document_data.get("aadhaar_abha_id")
-        or document_data.get("aadhaar")
-        or ""
-    )
-
-    vault_payload = {
-        "patient_name": patient_name,
-        "phone": phone,
-        "aadhaar_abha_id": aadhaar_abha_id,
-    }
-
-    clinical_payload = {
-        "diagnoses": _coerce_list(document_data.get("diagnoses")),
-        "lab_results": _coerce_list(document_data.get("lab_results")),
-        "prescriptions": _coerce_list(document_data.get("prescriptions")),
-    }
-
-    return vault_payload, clinical_payload
+logger = logging.getLogger("nexa_logger")
 
 app = FastAPI(title="Nexa Care API", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# 2. Register your Global Logging Middleware
 app.add_middleware(GlobalLoggingMiddleware)
+
 
 @app.on_event("startup")
 async def _validate_required_config() -> None:
@@ -101,7 +36,7 @@ async def _validate_required_config() -> None:
 
     get_supabase_config()
     get_redis_config()
-    get_provider_key()
+    get_handshake_security_config()
 
 
 app.include_router(api_router)
@@ -111,17 +46,10 @@ app.include_router(api_router)
 async def health_check() -> dict:
     return {"status": "ok"}
 
+
 @app.post("/api/v1/process-document", tags=["documents"])
-async def process_document(file: UploadFile = File(...), provider_key: str = Security(verify_provider)) -> dict:
+async def process_document(file: UploadFile = File(...)) -> dict:
     """Process an uploaded document and vertically shard PII + clinical layout data."""
-    
-    # [AUDIT LOG]: AI Processing Initiated
-    await append_audit_log(
-        actor_uid="AI_EXTRACTOR",
-        event_type="DOCUMENT_PROCESSING_ATTEMPT",
-        target_id="PENDING_GENERATION",
-        status="STARTED",
-    )
 
     suffix = os.path.splitext(file.filename or "")[1] or ".png"
     temp_path = None
@@ -130,14 +58,18 @@ async def process_document(file: UploadFile = File(...), provider_key: str = Sec
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             temp_path = tmp.name
             contents = await file.read()
-            MAX_FILE_SIZE = 5 * 1024 * 1024 # 5 MB
-            if len(contents) > MAX_FILE_SIZE:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail="File exceeds the 5MB maximum upload size limit."
-                )
             tmp.write(contents)
 
+        # extract_document_data runs CPU-bound model inference synchronously.
+        # Calling it directly here would block this worker's event loop for
+        # the full duration, stalling every other concurrent request on the
+        # same worker. run_in_threadpool offloads it to FastAPI/Starlette's
+        # worker thread pool instead. This is a stopgap: celery + flower are
+        # already project dependencies and are the better long-term home
+        # for this work once extraction volume grows enough that the thread
+        # pool itself becomes the bottleneck -- that's a bigger change
+        # (the endpoint would need to return a job id instead of the result
+        # directly), so it's being called out rather than done silently here.
         document_data = await run_in_threadpool(extract_document_data, temp_path)
         if not document_data:
             raise HTTPException(
@@ -145,8 +77,24 @@ async def process_document(file: UploadFile = File(...), provider_key: str = Sec
                 detail="Failed to extract document data",
             )
 
-        vault_payload, clinical_payload = _map_extracted_fields(document_data)
-        raw_pii, raw_clinical = _split_raw_capture(document_data)
+        vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(
+            document_data
+        )
+
+        if unrecognized_payload:
+            logger.warning(json.dumps({
+                "event": "extraction_schema_mismatch",
+                "unrecognized_keys": sorted(unrecognized_payload.keys()),
+            }))
+            # Fail safe: an unrecognized key might be undocumented PII --
+            # this is exactly how aadhaar_abha_id almost ended up in the
+            # "anonymized" clinical shard, just under a name the old check
+            # didn't expect. Quarantine it in the more restrictively
+            # accessed vault rather than assuming it's safe. See
+            # scripts/validate_extraction_schema.py for how to find and
+            # clear these against a real labeled document set instead of
+            # letting them silently route to the vault indefinitely.
+            vault_payload = {**vault_payload, **unrecognized_payload}
 
         masked_internal_id = str(uuid.uuid4())
 
@@ -154,20 +102,22 @@ async def process_document(file: UploadFile = File(...), provider_key: str = Sec
 
         vault_res = (
             supabase.table("nexa_vault")
-            .insert({
-                "masked_internal_id": masked_internal_id,
-                **vault_payload,
-                "raw_pii": raw_pii,
-            })
+            .insert(
+                {
+                    "masked_internal_id": masked_internal_id,
+                    "raw_pii": vault_payload,
+                }
+            )
             .execute()
         )
         clinical_res = (
             supabase.table("nexa_clinical")
-            .insert({
-                "masked_internal_id": masked_internal_id,
-                **clinical_payload,
-                "clinical_data": raw_clinical,
-            })
+            .insert(
+                {
+                    "masked_internal_id": masked_internal_id,
+                    "clinical_data": clinical_payload,
+                }
+            )
             .execute()
         )
 
@@ -180,26 +130,7 @@ async def process_document(file: UploadFile = File(...), provider_key: str = Sec
                 },
             )
 
-        # [AUDIT LOG]: AI Processing Successful
-        await append_audit_log(
-            actor_uid="AI_EXTRACTOR",
-            event_type="DOCUMENT_PROCESSING_SUCCESS",
-            target_id=masked_internal_id,
-            status="SUCCESS",
-        )
-
         return {"masked_internal_id": masked_internal_id}
-
-    except Exception as e:
-        # [AUDIT LOG]: AI Processing Failed
-        await append_audit_log(
-            actor_uid="AI_EXTRACTOR",
-            event_type="DOCUMENT_PROCESSING_FAILED",
-            target_id="FAILED_GENERATION",
-            status="CRITICAL_ERROR",
-        )
-        raise e
-
     finally:
         if temp_path and os.path.exists(temp_path):
             os.unlink(temp_path)

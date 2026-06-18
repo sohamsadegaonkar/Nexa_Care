@@ -38,6 +38,11 @@ class RedisConfig:
     url: str
 
 
+@dataclass(frozen=True)
+class HandshakeSecurityConfig:
+    pepper: str
+
+
 def get_supabase_config() -> SupabaseConfig:
     """Load Supabase connection info from environment.
 
@@ -60,12 +65,23 @@ def get_redis_config() -> RedisConfig:
     """
 
     return RedisConfig(url=_require_env("UPSTASH_REDIS_URL"))
-def get_provider_key() -> str:
-    """Fail-fast: Refuse to boot if the provider API key is missing."""
-    key = os.environ.get("PROVIDER_API_KEY")
-    if not key or not key.strip():
-        raise RuntimeError(
-            "CRITICAL SECURITY ERROR: PROVIDER_API_KEY environment variable is not set. "
-            "Refusing to boot with an open perimeter."
-        )
-    return key
+
+
+def get_handshake_security_config() -> HandshakeSecurityConfig:
+    """Load the server-side pepper used by app/services/crypto_engine.py to
+    derive a unique per-record salt for every biometric handshake.
+
+    This replaces the single hardcoded, globally-shared salt that used to
+    live in app/core/handshake.py (_STATIC_SALT) -- that constant meant one
+    precomputed table could target every record at once. Combining this
+    pepper with each record's nfc_uid gives every record its own salt,
+    without anyone needing to provision/store a salt per record up front.
+
+    Expected variable:
+    - HANDSHAKE_PEPPER_SECRET (treat this with the same care as a database
+      credential -- generate it with something like `openssl rand -hex 32`,
+      put it in your local .env, and rotate it like any other secret.
+      Rotating it invalidates all sessions issued before the rotation.)
+    """
+
+    return HandshakeSecurityConfig(pepper=_require_env("HANDSHAKE_PEPPER_SECRET"))

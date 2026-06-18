@@ -1,6 +1,23 @@
+"""DEPRECATED -- superseded by app/services/crypto_engine.py.
+
+This module was a second, parallel biometric key-derivation implementation
+that was never actually wired into any route (app/api/routes.py imported
+generate_soham_alpha/create_secure_session but never called either of
+them). app/services/crypto_engine.py is the canonical implementation: it's
+the one the live /api/v1/handshake route calls, it now binds sessions to a
+specific masked_internal_id, and it now derives its key with a per-record
+salt instead of the single hardcoded one below.
+
+Nothing should import from this module going forward. Do not resurrect it
+without first replacing _STATIC_SALT with a real per-record salt -- it was
+already flagged as MVP-only, shared across every record, when it was
+written.
+"""
+
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 
 from app.core.redis import get_redis_client
