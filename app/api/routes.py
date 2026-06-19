@@ -1,54 +1,76 @@
 """API router for Nexa Care endpoints.
 
-Fixes applied in this file:
-  F-10 — GET /view-record now applies redact_payload() to the PII fields
-          before returning them.  The previous implementation returned
-          patient_name and phone in plaintext.  The consent-token gate
-          proves the caller is authorised to VIEW the record; it does not
-          mean raw PII should be transmitted unredacted over the wire.
-          If a downstream consumer (e.g. a kiosk display) genuinely needs
-          the unmasked value it must call a separate, more tightly audited
-          endpoint — this one should never have been a raw-PII pipe.
-
+Fixes applied in this file (prior revisions):
+  F-10 — PII fields are redact_payload()'d before being returned from any
+          consent-token-gated view route.
   F-09 note — the dual write-shape (OCR path: raw_pii / clinical_data
           blobs vs registration path: flat columns) is preserved here
           because unifying the DB schema is a data-migration task that
           must be done with a Supabase migration, not just a code change.
           The reassembly engine's dual-read branch is kept as-is and
           marked with a TODO so the next schema migration removes it.
+  F-17 — Every Supabase call chain is wrapped in try/except instead of
+          relying on the dead `getattr(response, "error", None)` check
+          (supabase-py 2.x raises APIError; it never populates a truthy
+          `.error` attribute). The dead checks are retained as
+          belt-and-suspenders comments where they were already present.
 
-  F-17 — Replaced every dead `getattr(response, "error", None)` check
-          with try/except around the Supabase call chain. In supabase-py
-          2.x, PostgREST errors (4xx/5xx) raise postgrest.APIError; they
-          do NOT populate a truthy `.error` attribute on a returned
-          result object (that was 1.x behavior). The old checks were
-          therefore unreachable on the failure path in every route here
-          — a real DB failure on /register, /api/v1/record, or
-          /view-record instead propagated as an unhandled APIError
-          straight to GlobalLoggingMiddleware, which masks it as a
-          generic DB_CONNECTION_LOST 503 with NO audit log entry for the
-          failure, breaking the "audit precedes/accompanies every state
-          change" guarantee on every DB-error path.
+Fixes applied in THIS revision
+-------------------------------
+SHARD-SEPARATION FIX — GET /view-record has been removed. It returned
+          PII (redacted) and clinical data together in a single response,
+          which contradicted the vertical-sharding architecture even
+          though the PII came back redacted: a single endpoint should
+          never be the join point for both shards. It is replaced by two
+          endpoints that each read exactly one shard:
+            - GET /view-record/clinical  -- de-identified clinical data only.
+            - GET /view-record/pii       -- redacted PII only, and only
+              honored for a consent token whose scope is "full".
+          /request-consent now takes an explicit `scope` field
+          ("clinical" default, or "full") and issues a token bound to
+          that scope via app.core.redis.issue_consent_token(). See that
+          module's docstring for the token format.
 
-          This mirrors the fix already applied to
-          app/services/biometric_registry.py (see its F-15/F-16 comments)
-          — same root cause, same fix shape, ported here so the audit
-          trail no longer has a gap on DB failures in these three routes.
+AUDIT-CONSISTENCY FIX — the architecture's stated rule is "if the audit
+          log fails, the route MUST raise HTTPException(503) and abort."
+          Before this revision, every route in this file except the
+          biometric-enrollment path (app/services/biometric_registry.py)
+          used the fire-and-forget append_audit_log() for EVERY call,
+          including pre-condition and success-path audits, and never
+          checked the return value. Concretely:
+            - register_patient fired DB writes regardless of whether the
+              ATTEMPT log succeeded, and returned 200 regardless of
+              whether the SUCCESS log succeeded.
+            - get_record returned PII+clinical data regardless of whether
+              RECORD_ACCESS_COMPLETED was actually written.
+            - request_consent had NO audit logging at all -- minting a
+              consent token left zero ledger trace, success or failure.
+            - view_record (now split) only ever logged failures, never a
+              successful PII/clinical view.
+          This revision uses append_audit_log_or_503() for every
+          pre-condition and success-path audit (ATTEMPT, SUCCESS,
+          COMPLETED, ISSUED, CLINICAL_VIEW_SUCCESS, PII_VIEW_SUCCESS) and
+          a new _audit_best_effort() helper for failure/denial-path
+          logging, where hard-failing would risk replacing a real error
+          with an unrelated 503. request_consent now audits both the
+          attempt and the issuance, and rolls back (revokes) a token that
+          was minted but couldn't be proven audited.
 """
 from __future__ import annotations
 
 import json
 import logging
 
+from typing import Literal
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
 from app.core.dependencies import get_scoped_session, verify_provider_token
-from app.core.redis import issue_token, validate_token
+from app.core.redis import issue_consent_token, resolve_consent_token, revoke_consent_token
 from app.core.supabase import get_supabase_client
-from app.observability.audit_ledger import append_audit_log
+from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
 from app.observability.redactor import redact_payload           # F-10
 from app.services.crypto_engine import process_biometric_handshake
 from app.services.biometric_registry import enroll_biometric_binding_with_audit
@@ -64,8 +86,41 @@ logger = logging.getLogger("nexa_logger")          # F-17
 router = APIRouter()
 
 
+async def _audit_best_effort(actor_uid: str, event_type: str, target_id: str, status_: str) -> None:
+    """Best-effort audit write for failure/denial-path logging.
+
+    Hard-failing (append_audit_log_or_503) is correct for pre-condition
+    and success-path audits elsewhere in this file -- an action whose
+    audit entry can't be written must not be allowed to proceed or to be
+    reported as successful. It would be WRONG here: these calls run
+    inside an `except` block (or right before raising a 404/403) where a
+    *real* failure is already being reported to the caller. Raising a
+    fresh HTTPException(503) from inside that path would silently
+    replace the true error with an unrelated one. So this logs loudly on
+    failure instead of raising.
+    """
+    success = await append_audit_log(
+        actor_uid=actor_uid, event_type=event_type, target_id=target_id, status=status_,
+    )
+    if not success:
+        logger.critical(json.dumps({
+            "event": "audit_log_write_failed_best_effort",
+            "context": event_type,
+            "target_id": target_id,
+        }))
+
+
 class ConsentRequest(BaseModel):
     duration_seconds: int = Field(default=1800, ge=1, le=60 * 60 * 24)
+    scope: Literal["clinical", "full"] = Field(
+        default="clinical",
+        description=(
+            "Which shard(s) this token authorizes. 'clinical' (default) "
+            "grants only GET /view-record/clinical -- the data-minimizing "
+            "default. 'full' additionally grants GET /view-record/pii and "
+            "must be explicitly requested."
+        ),
+    )
 
 
 class HandshakePayload(BaseModel):
@@ -87,7 +142,9 @@ async def process_handshake(payload: HandshakePayload):
 
     F-03 enforcement lives inside process_biometric_handshake() —
     verify_biometric_binding() is called before any derivation runs, so an
-    unenrolled pair receives a 400 here, not a valid session.
+    unenrolled pair receives a 401 here, not a valid session. A 503 from
+    that function (audit write failed on the success path) propagates
+    here unchanged, distinct from the 401 below.
     """
     auth_result = await process_biometric_handshake(
         nfc_uid=payload.nfc_uid,
@@ -130,18 +187,15 @@ async def register_patient(
     nexa_clinical, under a shared masked_internal_id.
     Gated behind verify_provider_token.
 
-    F-17: the two .insert().execute() calls are now wrapped in their own
-    try/except. In supabase-py 2.x a PostgREST rejection (RLS denial,
-    constraint violation, connection failure, etc.) raises APIError
-    directly out of execute() — the previous
-    `getattr(vault_response, "error", None)` check could never observe
-    that failure, because the line itself would have raised before being
-    reached. Catching it explicitly here means the existing
-    PATIENT_REGISTRATION_FAILED audit entry (in the outer except block)
-    now actually fires for DB-layer failures, not just for failures in
-    the surrounding Python logic.
+    AUDIT-CONSISTENCY FIX: ATTEMPT and SUCCESS now use
+    append_audit_log_or_503 -- a registration whose audit trail can't be
+    written is no longer allowed to silently proceed (ATTEMPT) or to
+    silently report success to the caller (SUCCESS). FAILED logging
+    stays best-effort (_audit_best_effort) so an audit-ledger outage
+    encountered while we are already failing doesn't replace the real
+    error with an unrelated 503.
     """
-    await append_audit_log(
+    await append_audit_log_or_503(
         actor_uid="SYSTEM_INGEST",
         event_type="PATIENT_REGISTRATION_ATTEMPT",
         target_id="PENDING_GENERATION",
@@ -225,7 +279,7 @@ async def register_patient(
         if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
             raise RuntimeError("Supabase insert failed during patient registration")
 
-        await append_audit_log(
+        await append_audit_log_or_503(
             actor_uid="SYSTEM_INGEST",
             event_type="PATIENT_REGISTRATION_SUCCESS",
             target_id=str(masked_internal_id),
@@ -235,19 +289,13 @@ async def register_patient(
         return RegisterResponse(pii_vault=pii_vault, clinical_record=clinical_record)
 
     except HTTPException:
-        await append_audit_log(
-            actor_uid="SYSTEM_INGEST",
-            event_type="PATIENT_REGISTRATION_FAILED",
-            target_id="FAILED_GENERATION",
-            status="CRITICAL_ERROR",
+        await _audit_best_effort(
+            "SYSTEM_INGEST", "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
         )
         raise
     except Exception:
-        await append_audit_log(
-            actor_uid="SYSTEM_INGEST",
-            event_type="PATIENT_REGISTRATION_FAILED",
-            target_id="FAILED_GENERATION",
-            status="CRITICAL_ERROR",
+        await _audit_best_effort(
+            "SYSTEM_INGEST", "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
         )
         raise
 
@@ -260,18 +308,12 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
     TODO (F-09): remove the dual-read branch once the DB schema is unified
     on flat columns via a Supabase migration.
 
-    F-17: both .select().execute() calls are wrapped in try/except. A
-    PostgREST APIError here previously skipped the
-    `getattr(..., "error", None)` check entirely (it never executes,
-    because the exception is raised before the assignment completes) and
-    propagated unhandled past the RECORD_ACCESS_ATTEMPT audit entry with
-    no matching failure entry — the only sign anything happened was a
-    generic 503 from the global error handler. Now a DB failure logs a
-    RECORD_ACCESS_FAILED audit entry and returns a proper 502, while a
-    genuinely missing record (no exception, just empty data) still
-    returns 404 as before.
+    AUDIT-CONSISTENCY FIX: ATTEMPT and COMPLETED now use
+    append_audit_log_or_503; every failure/not-found branch uses the
+    best-effort helper so a DB outage or audit-write failure on the
+    failure path doesn't replace the real 404/502 being returned.
     """
-    await append_audit_log(
+    await append_audit_log_or_503(
         actor_uid="REASSEMBLY_ENGINE",
         event_type="RECORD_ACCESS_ATTEMPT",
         target_id=masked_internal_id,
@@ -301,11 +343,8 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
         # still surfaces as 404, not a CRITICAL-logged 502.
         exc_str = str(exc)
         if "PGRST116" in exc_str or "JSON object requested, multiple (or no) rows returned" in exc_str:
-            await append_audit_log(
-                actor_uid="REASSEMBLY_ENGINE",
-                event_type="RECORD_ACCESS_FAILED",
-                target_id=masked_internal_id,
-                status="NOT_FOUND",
+            await _audit_best_effort(
+                "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "NOT_FOUND"
             )
             raise HTTPException(status_code=404, detail="Record not found") from exc
 
@@ -314,22 +353,25 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
             "masked_internal_id": masked_internal_id,
             "exception": exc_str,
         }))
-        await append_audit_log(
-            actor_uid="REASSEMBLY_ENGINE",
-            event_type="RECORD_ACCESS_FAILED",
-            target_id=masked_internal_id,
-            status="DB_ERROR",
+        await _audit_best_effort(
+            "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "DB_ERROR"
         )
         raise HTTPException(status_code=502, detail="Record reassembly failed") from exc
 
     # F-17: retained as belt-and-suspenders (see register_patient above).
     if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
+        await _audit_best_effort(
+            "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "NOT_FOUND"
+        )
         raise HTTPException(status_code=404, detail="Record not found")
 
     vault_data = getattr(vault_response, "data", None)
     clinical_data = getattr(clinical_response, "data", None)
 
     if not vault_data or not clinical_data:
+        await _audit_best_effort(
+            "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "NOT_FOUND"
+        )
         raise HTTPException(status_code=404, detail="Record not found")
 
     # TODO (F-09): remove dual-branch once DB schema is unified
@@ -338,7 +380,9 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
         clinical_data.get("clinical_data") if "clinical_data" in clinical_data else clinical_data
     ) or {}
 
-    await append_audit_log(
+    # Hard-fail: a successful reassembly that can't be proven in the
+    # ledger must not be returned to the caller.
+    await append_audit_log_or_503(
         actor_uid="REASSEMBLY_ENGINE",
         event_type="RECORD_ACCESS_COMPLETED",
         target_id=masked_internal_id,
@@ -357,47 +401,205 @@ async def request_consent(
     payload: ConsentRequest,
     masked_internal_id: str = Depends(get_scoped_session),
 ) -> dict:
-    """Issue a time-bound consent token.  masked_internal_id comes from the
-    caller's handshake session, not the request body.
+    """Issue a time-bound, scope-bound consent token.  masked_internal_id
+    comes from the caller's handshake session, not the request body.
+
+    SHARD-SEPARATION FIX: `scope` selects which of the two split
+    view-record endpoints the resulting token can be used against. See
+    app.core.redis's module docstring for the token format.
+
+    AUDIT-CONSISTENCY FIX: this route previously had NO audit logging at
+    all. Both the attempt and the successful issuance are now hard-
+    audited via append_audit_log_or_503. If the post-issuance audit
+    write fails, the just-minted token is revoked before the 503
+    propagates, so an unauditable grant of access never remains valid.
     """
-    consent_token = issue_token(
+    await append_audit_log_or_503(
+        actor_uid="CONSENT_ISSUER",
+        event_type="CONSENT_TOKEN_ISSUE_ATTEMPT",
+        target_id=masked_internal_id,
+        status=f"STARTED_SCOPE_{payload.scope.upper()}",
+    )
+
+    consent_token = issue_consent_token(
         masked_internal_id=masked_internal_id,
+        scope=payload.scope,
         ttl_seconds=payload.duration_seconds,
     )
-    return {"consent_token": consent_token, "expires_in": payload.duration_seconds}
+
+    try:
+        await append_audit_log_or_503(
+            actor_uid="CONSENT_ISSUER",
+            event_type="CONSENT_TOKEN_ISSUED",
+            target_id=masked_internal_id,
+            status=f"SUCCESS_SCOPE_{payload.scope.upper()}",
+        )
+    except HTTPException:
+        # The token already exists in Redis but we couldn't prove we
+        # logged its issuance. Best-effort revoke, then re-raise the
+        # original 503 regardless of whether the revoke itself succeeds.
+        revoke_consent_token(consent_token)
+        raise
+
+    return {
+        "consent_token": consent_token,
+        "scope": payload.scope,
+        "expires_in": payload.duration_seconds,
+    }
 
 
-@router.get("/view-record", tags=["consent"])
-async def view_record(
-    consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
-    consent_token_query: str | None = Query(default=None, alias="consent_token"),
-) -> dict:
-    """Zero-trust retrieval via consent token.
+async def _resolve_scoped_consent(
+    consent_token_header: str | None,
+    consent_token_query: str | None,
+    required_capability: Literal["clinical", "pii"],
+) -> str:
+    """Resolves a consent token to a masked_internal_id, enforcing that
+    the token's granted scope covers `required_capability`.
 
-    F-10 fix: PII fields are passed through redact_payload() before being
-    returned.  The consent-token gate proves the caller is authorised to
-    view this record; it does not authorise receiving raw PII over the
-    wire.  A kiosk display that genuinely needs the unmasked value must
-    call a separate, purpose-specific, audit-logged endpoint.
-
-    F-17: both .select().execute() calls wrapped in try/except for the
-    same reason as get_record() above — a PostgREST APIError previously
-    bypassed the `getattr(..., "error", None)` check entirely (unreachable
-    dead code on the failure path) and propagated unhandled to the global
-    handler as a generic 503, with no audit trail and no distinction from
-    a transient DB outage. Note this route had NO audit logging at all
-    before this fix (unlike get_record/register_patient) -- it now gets a
-    minimal VIEW_RECORD_FAILED entry on DB error so a real outage here is
-    no longer silent in the ledger either.
+    Granted scope "full" covers both capabilities; granted scope
+    "clinical" covers only the "clinical" capability. A token that's
+    simply invalid/expired and a token that's valid-but-under-scoped both
+    come back as a 403 with the same message -- the caller doesn't get
+    to distinguish "wrong token" from "right token, wrong privilege" by
+    the response shape.
     """
     consent_token = consent_token_header or consent_token_query
-    masked_internal_id = validate_token(consent_token) if consent_token else None
+    resolved = resolve_consent_token(consent_token) if consent_token else None
 
-    if masked_internal_id is None:
+    if resolved is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Consent token invalid or expired",
         )
+
+    masked_internal_id = resolved["masked_internal_id"]
+    granted_scope = resolved["scope"]
+
+    if required_capability == "pii" and granted_scope != "full":
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "PII_VIEW_DENIED_INSUFFICIENT_SCOPE", masked_internal_id, "FORBIDDEN"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consent token invalid or expired",
+        )
+
+    return masked_internal_id
+
+
+@router.get("/view-record/clinical", tags=["consent"])
+async def view_record_clinical(
+    consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
+    consent_token_query: str | None = Query(default=None, alias="consent_token"),
+) -> dict:
+    """Zero-trust retrieval of the CLINICAL shard ONLY, via consent token.
+
+    SHARD-SEPARATION FIX: replaces the old combined GET /view-record.
+    This endpoint reads exclusively from nexa_clinical and never touches
+    nexa_vault. Available under either consent scope ("clinical" or
+    "full"), since clinical-only access is the data-minimizing default
+    /request-consent now issues unless the caller explicitly asks for
+    scope="full".
+
+    AUDIT-CONSISTENCY FIX: a successful read now hard-audits
+    CLINICAL_VIEW_SUCCESS (append_audit_log_or_503) BEFORE the response
+    is returned -- the prior combined endpoint had no success-path audit
+    logging at all, only a failure-path entry. Failure/not-found logging
+    stays best-effort so a DB error isn't itself masked by a second
+    failure.
+    """
+    masked_internal_id = await _resolve_scoped_consent(
+        consent_token_header, consent_token_query, required_capability="clinical"
+    )
+
+    supabase = get_supabase_client()
+
+    try:
+        clinical_res = (
+            supabase.table("nexa_clinical")
+            .select("diagnoses,lab_results,prescriptions,masked_internal_id")
+            .eq("masked_internal_id", masked_internal_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.critical(json.dumps({
+            "event": "clinical_view_db_error",
+            "masked_internal_id": masked_internal_id,
+            "exception": str(exc),
+        }))
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "CLINICAL_VIEW_FAILED", masked_internal_id, "DB_ERROR"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to retrieve clinical record.",
+        ) from exc
+
+    # F-17: retained as belt-and-suspenders (see register_patient above).
+    if getattr(clinical_res, "error", None):
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "CLINICAL_VIEW_FAILED", masked_internal_id, "DB_ERROR"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to retrieve clinical record.",
+        )
+
+    clinical_rows = getattr(clinical_res, "data", None) or []
+    if not clinical_rows:
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "CLINICAL_VIEW_FAILED", masked_internal_id, "NOT_FOUND"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Record not found for masked_internal_id",
+        )
+
+    clinical = clinical_rows[0]
+
+    await append_audit_log_or_503(
+        actor_uid="CONSENT_VIEWER",
+        event_type="CLINICAL_VIEW_SUCCESS",
+        target_id=masked_internal_id,
+        status="SUCCESS",
+    )
+
+    return {
+        "masked_internal_id": masked_internal_id,
+        "diagnoses": clinical.get("diagnoses"),
+        "lab_results": clinical.get("lab_results"),
+        "prescriptions": clinical.get("prescriptions"),
+    }
+
+
+@router.get("/view-record/pii", tags=["consent"])
+async def view_record_pii(
+    consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
+    consent_token_query: str | None = Query(default=None, alias="consent_token"),
+) -> dict:
+    """Zero-trust retrieval of the (redacted) PII shard ONLY, via a
+    consent token explicitly issued with scope="full".
+
+    SHARD-SEPARATION FIX: replaces the old combined GET /view-record.
+    A "clinical"-scope token (the /request-consent default) is rejected
+    here with the same 403 used for an invalid token -- see
+    _resolve_scoped_consent's docstring for why the response doesn't
+    distinguish the two cases.
+
+    F-10 still applies: a "full"-scope consent token proves the caller is
+    authorised to receive the redacted PII shard; it does not authorise
+    raw, unmasked PII over the wire. Nothing in this codebase currently
+    unmasks PII for any caller -- that would be a separate, more tightly
+    audited, purpose-built capability, not a flag on this endpoint.
+
+    AUDIT-CONSISTENCY FIX: same shape as view_record_clinical above --
+    PII_VIEW_SUCCESS is hard-audited before the response is returned;
+    PII_VIEW_FAILED / PII_VIEW_DENIED_INSUFFICIENT_SCOPE are best-effort.
+    """
+    masked_internal_id = await _resolve_scoped_consent(
+        consent_token_header, consent_token_query, required_capability="pii"
+    )
 
     supabase = get_supabase_client()
 
@@ -409,51 +611,48 @@ async def view_record(
             .limit(1)
             .execute()
         )
-        clinical_res = (
-            supabase.table("nexa_clinical")
-            .select("diagnoses,lab_results,prescriptions,masked_internal_id")
-            .eq("masked_internal_id", masked_internal_id)
-            .limit(1)
-            .execute()
-        )
     except Exception as exc:
         logger.critical(json.dumps({
-            "event": "view_record_db_error",
+            "event": "pii_view_db_error",
             "masked_internal_id": masked_internal_id,
             "exception": str(exc),
         }))
-        await append_audit_log(
-            actor_uid="CONSENT_VIEWER",
-            event_type="VIEW_RECORD_FAILED",
-            target_id=masked_internal_id,
-            status="DB_ERROR",
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "PII_VIEW_FAILED", masked_internal_id, "DB_ERROR"
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to retrieve record.",
+            detail="Failed to retrieve PII record.",
         ) from exc
 
     # F-17: retained as belt-and-suspenders (see register_patient above).
-    if getattr(vault_res, "error", None) or getattr(clinical_res, "error", None):
+    if getattr(vault_res, "error", None):
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "PII_VIEW_FAILED", masked_internal_id, "DB_ERROR"
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={
-                "vault_error": str(getattr(vault_res, "error", None)),
-                "clinical_error": str(getattr(clinical_res, "error", None)),
-            },
+            detail="Failed to retrieve PII record.",
         )
 
     vault_rows = getattr(vault_res, "data", None) or []
-    clinical_rows = getattr(clinical_res, "data", None) or []
-
-    if not vault_rows or not clinical_rows:
+    if not vault_rows:
+        await _audit_best_effort(
+            "CONSENT_VIEWER", "PII_VIEW_FAILED", masked_internal_id, "NOT_FOUND"
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Record not found for masked_internal_id",
         )
 
     vault = vault_rows[0]
-    clinical = clinical_rows[0]
+
+    await append_audit_log_or_503(
+        actor_uid="CONSENT_VIEWER",
+        event_type="PII_VIEW_SUCCESS",
+        target_id=masked_internal_id,
+        status="SUCCESS",
+    )
 
     # F-10: redact PII fields before returning.  patient_name and phone are
     # both in SENSITIVE_FIELDS, so they become "[REDACTED]" here.
@@ -461,8 +660,5 @@ async def view_record(
         "masked_internal_id": masked_internal_id,
         "patient_name": vault.get("patient_name"),
         "phone": vault.get("phone"),
-        "diagnoses": clinical.get("diagnoses"),
-        "lab_results": clinical.get("lab_results"),
-        "prescriptions": clinical.get("prescriptions"),
     }
     return redact_payload(raw_response)

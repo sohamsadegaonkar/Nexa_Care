@@ -40,20 +40,36 @@ F-16 — supabase-py 2.x (postgrest-py ≥ 0.11) raises an APIError on any
         (not enrolled is a normal operational state, not an error), and
         returns False as before.
 
-ACCEPTED RISK (v0.1.0, unchanged): verify_biometric_binding is not
-        constant-time end-to-end.  A masked_internal_id with no enrolled
-        row returns after only a DB round-trip; one with an enrolled-but-
-        mismatched binding additionally pays for an HMAC compute and a
-        compare_digest call.  Planned mitigation is infrastructure-level
-        rate limiting in the next release.
+TIMING SIDE-CHANNEL FIX (this revision) — verify_biometric_binding() was
+        previously NOT constant-time end-to-end: a masked_internal_id with
+        no enrolled row returned after only a DB round-trip, while one with
+        an enrolled-but-mismatched binding additionally paid for an HMAC
+        compute and a compare_digest call. That gap was a real, formally
+        accepted residual timing side-channel, with the planned mitigation
+        (infrastructure-level rate limiting) deferred to "the next release"
+        indefinitely.
+
+        verify_biometric_binding() is now a thin wrapper that runs the
+        actual lookup (_verify_biometric_binding_impl) and pads the total
+        wall-clock time up to _MIN_VERIFY_DURATION_SECONDS before
+        returning, regardless of which internal path was taken. This closes
+        the side-channel at the code level immediately, as defense in depth
+        ALONGSIDE (not instead of) the infrastructure-level rate limiting
+        that's still worth doing separately -- the floor here defends
+        against an attacker distinguishing the fast "not enrolled" path
+        from the fast "enrolled, mismatched" path; it does not, and cannot,
+        defend against distinguishing either fast path from a genuinely
+        slow DB outage, which is what rate limiting is for.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
 import logging
+import time
 
 from fastapi import HTTPException
 
@@ -62,6 +78,14 @@ from app.core.supabase import get_supabase_client
 from app.observability.audit_ledger import append_audit_log_or_503
 
 logger = logging.getLogger("nexa_logger")
+
+# Floor on verify_biometric_binding()'s total wall-clock time. Chosen to
+# comfortably exceed the slowest of the two internal paths (DB round-trip
+# + HMAC compute + compare_digest) under normal conditions while staying
+# small enough not to meaningfully slow down the handshake endpoint or
+# the test suite. Tune upward if profiling shows the "enrolled,
+# mismatched" path routinely exceeds this on your infrastructure.
+_MIN_VERIFY_DURATION_SECONDS = 0.05
 
 
 def compute_bio_verifier(nfc_uid: str, bio_seed: str) -> str:
@@ -78,15 +102,24 @@ async def verify_biometric_binding(nfc_uid: str, bio_seed: str, masked_internal_
     this exact masked_internal_id, and that binding hasn't been revoked.
     Fails closed on any DB error, missing row, or revoked binding.
 
-    ACCEPTED RISK (v0.1.0): this lookup is not constant-time end-to-end.
-    A masked_internal_id with no enrolled row returns after only a DB
-    round-trip; one with an enrolled-but-mismatched binding additionally
-    pays for an HMAC computation and a compare_digest call. This is a
-    real, formally accepted residual timing side-channel for this
-    release -- it is deliberately NOT being closed with a fixed-time
-    response budget here. Planned mitigation is infrastructure-level rate
-    limiting in the next release, not a code-level fix in this function.
+    TIMING SIDE-CHANNEL FIX: wraps _verify_biometric_binding_impl() in a
+    fixed-time response budget. See module docstring.
     """
+    start = time.monotonic()
+    result = await _verify_biometric_binding_impl(nfc_uid, bio_seed, masked_internal_id)
+    elapsed = time.monotonic() - start
+    remaining = _MIN_VERIFY_DURATION_SECONDS - elapsed
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+    return result
+
+
+async def _verify_biometric_binding_impl(
+    nfc_uid: str, bio_seed: str, masked_internal_id: str
+) -> bool:
+    """The actual lookup, unchanged in behavior from the prior revision --
+    only the timing characteristics of the public verify_biometric_binding()
+    wrapper above have changed."""
     try:
         supabase = get_supabase_client()
         response = (
