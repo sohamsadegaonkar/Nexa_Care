@@ -39,8 +39,13 @@ class RedisConfig:
 
 
 @dataclass(frozen=True)
-class HandshakeSecurityConfig:
-    pepper: str
+class HandshakeConfig:
+    pepper_secret: str
+
+
+@dataclass(frozen=True)
+class ClinicConfig:
+    api_key: str
 
 
 def get_supabase_config() -> SupabaseConfig:
@@ -67,21 +72,38 @@ def get_redis_config() -> RedisConfig:
     return RedisConfig(url=_require_env("UPSTASH_REDIS_URL"))
 
 
-def get_handshake_security_config() -> HandshakeSecurityConfig:
-    """Load the server-side pepper used by app/services/crypto_engine.py to
-    derive a unique per-record salt for every biometric handshake.
-
-    This replaces the single hardcoded, globally-shared salt that used to
-    live in app/core/handshake.py (_STATIC_SALT) -- that constant meant one
-    precomputed table could target every record at once. Combining this
-    pepper with each record's nfc_uid gives every record its own salt,
-    without anyone needing to provision/store a salt per record up front.
+def get_handshake_config() -> HandshakeConfig:
+    """Load the server-side HMAC pepper used to verify biometric bindings
+    (see app/services/biometric_registry.py).
 
     Expected variable:
-    - HANDSHAKE_PEPPER_SECRET (treat this with the same care as a database
-      credential -- generate it with something like `openssl rand -hex 32`,
-      put it in your local .env, and rotate it like any other secret.
-      Rotating it invalidates all sessions issued before the rotation.)
+    - HANDSHAKE_PEPPER_SECRET
+
+    This value must never be derivable from nfc_uid or bio_seed, and must
+    never be written to the database -- only held in environment/secrets
+    config. Rotating it invalidates every existing biometric binding,
+    since old verifiers can no longer be recomputed and matched -- treat
+    rotation as a full re-enrollment event, not a routine secret rotation.
     """
 
-    return HandshakeSecurityConfig(pepper=_require_env("HANDSHAKE_PEPPER_SECRET"))
+    return HandshakeConfig(pepper_secret=_require_env("HANDSHAKE_PEPPER_SECRET"))
+
+
+def get_clinic_config() -> ClinicConfig:
+    """Load the shared facility-level credential used by
+    verify_provider_token (app/core/dependencies.py) to authenticate
+    hospital/clinic systems calling provider-only routes (/register,
+    /api/v1/enroll-biometric).
+
+    Expected variable:
+    - CLINIC_API_KEY
+
+    This is a single shared service-to-service secret, not a per-clinician
+    credential and not a patient session token -- it proves "this caller
+    is a legitimate facility system," nothing about which individual
+    patient is involved. Rotate it the same way you would any other
+    service API key; never embed it in any client-side or mobile code
+    path a patient could extract.
+    """
+
+    return ClinicConfig(api_key=_require_env("CLINIC_API_KEY"))

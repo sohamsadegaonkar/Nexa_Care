@@ -2,7 +2,9 @@ import asyncio
 import unittest
 from unittest.mock import patch, MagicMock
 
-from app.observability.audit_ledger import _calculate_hash, append_audit_log
+from fastapi import HTTPException
+
+from app.observability.audit_ledger import _calculate_hash, append_audit_log, append_audit_log_or_503
 from app.core.request_context import trace_id_var
 
 
@@ -144,6 +146,42 @@ class TestAppendAuditLog(unittest.TestCase):
 
         self.assertFalse(result)
         self.assertIn("audit_log_write_failed", cm.output[0])
+
+
+class TestAppendAuditLogOr503(unittest.TestCase):
+
+    @patch("app.observability.audit_ledger.append_audit_log")
+    def test_success_returns_none_does_not_raise(self, mock_append):
+        mock_append.return_value = True
+
+        result = run(append_audit_log_or_503(
+            actor_uid="TEST", event_type="EVENT", target_id="t1", status="OK",
+        ))
+
+        self.assertIsNone(result)
+
+    @patch("app.observability.audit_ledger.append_audit_log")
+    def test_failure_raises_http_503(self, mock_append):
+        mock_append.return_value = False
+
+        with self.assertRaises(HTTPException) as cm:
+            run(append_audit_log_or_503(
+                actor_uid="TEST", event_type="EVENT", target_id="t1", status="OK",
+            ))
+
+        self.assertEqual(cm.exception.status_code, 503)
+
+    @patch("app.observability.audit_ledger.append_audit_log")
+    def test_forwards_all_arguments_unchanged(self, mock_append):
+        mock_append.return_value = True
+
+        run(append_audit_log_or_503(
+            actor_uid="ACTOR_X", event_type="EVENT_X", target_id="target-1", status="STARTED",
+        ))
+
+        mock_append.assert_called_once_with(
+            actor_uid="ACTOR_X", event_type="EVENT_X", target_id="target-1", status="STARTED",
+        )
 
 
 if __name__ == "__main__":

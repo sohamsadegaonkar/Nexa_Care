@@ -4,6 +4,8 @@ import logging
 import datetime
 from typing import Dict, Any
 
+from fastapi import HTTPException
+
 from app.core.supabase import get_supabase_client
 from app.core.request_context import trace_id_var
 
@@ -107,3 +109,34 @@ async def append_audit_log(
             "exception": str(e),
         }))
         return False
+
+
+async def append_audit_log_or_503(
+    actor_uid: str,
+    event_type: str,
+    target_id: str,
+    status: str,
+) -> None:
+    """Same as append_audit_log, but raises HTTPException(503) instead of
+    returning False on failure.
+
+    append_audit_log() itself is intentionally left returning bool rather
+    than raising, so its existing call sites (and the tests asserting
+    they degrade gracefully on a logging failure) are untouched. This is
+    an additive, opt-in wrapper for routes where "the audit write failed"
+    must abort the request rather than let it continue unaudited -- e.g.
+    biometric enrollment, where the action being taken (deciding which
+    physical device a patient identity trusts) is too sensitive to leave
+    unaudited even once.
+    """
+    success = await append_audit_log(
+        actor_uid=actor_uid,
+        event_type=event_type,
+        target_id=target_id,
+        status=status,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=503,
+            detail="Audit ledger write failed; request aborted to avoid an unaudited action.",
+        )
