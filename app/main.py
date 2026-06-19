@@ -21,6 +21,18 @@ Fixes applied in this file:
           middleware instead of cleanly receiving a 413. Now returns a
           JSONResponse, and a malformed (non-numeric) Content-Length
           header is tolerated rather than raising ValueError.
+  F-17 — The Supabase insert calls in process_document() are now wrapped
+          in try/except instead of relying on
+          `getattr(response, "error", None)`. In supabase-py 2.x,
+          PostgREST errors raise postgrest.APIError directly out of
+          execute() rather than setting a truthy `.error` attribute on a
+          returned object — the old check was unreachable dead code on
+          the actual failure path. A real DB failure here previously
+          propagated as an unhandled APIError straight to
+          GlobalLoggingMiddleware (generic 503, no specific detail),
+          rather than the intended 502 with vault/clinical error detail.
+          Same root cause and same fix shape as app/api/routes.py F-17
+          and app/services/biometric_registry.py F-16.
 """
 from __future__ import annotations
 
@@ -137,6 +149,7 @@ async def process_document(file: UploadFile = File(...)) -> dict:
           missed aadhaar_abha_id.
     F-02: runs ML inference in a thread pool so the event loop stays free.
     F-06: temp_path is set before any I/O; finally block always fires.
+    F-17: Supabase inserts wrapped in try/except — see module docstring.
     """
     suffix = os.path.splitext(file.filename or "")[1] or ".png"
 
@@ -192,17 +205,53 @@ async def process_document(file: UploadFile = File(...)) -> dict:
         masked_internal_id = str(uuid.uuid4())
         supabase = get_supabase_client()
 
-        vault_res = (
-            supabase.table("nexa_vault")
-            .insert({"masked_internal_id": masked_internal_id, "raw_pii": vault_payload})
-            .execute()
-        )
-        clinical_res = (
-            supabase.table("nexa_clinical")
-            .insert({"masked_internal_id": masked_internal_id, "clinical_data": clinical_payload})
-            .execute()
-        )
+        # F-17: each insert wrapped individually so the error detail
+        # reported back identifies which shard actually failed, instead
+        # of relying on a `.error` attribute that supabase-py 2.x never
+        # sets on the failure path (APIError is raised instead). A
+        # failure on either insert now reliably surfaces as a 502 with
+        # the real exception message, rather than an unhandled APIError
+        # bubbling up to the global handler as a generic 503.
+        try:
+            vault_res = (
+                supabase.table("nexa_vault")
+                .insert({"masked_internal_id": masked_internal_id, "raw_pii": vault_payload})
+                .execute()
+            )
+        except Exception as exc:
+            logger.critical(json.dumps({
+                "event": "process_document_db_error",
+                "shard": "nexa_vault",
+                "masked_internal_id": masked_internal_id,
+                "exception": str(exc),
+            }))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"vault_error": str(exc), "clinical_error": None},
+            ) from exc
 
+        try:
+            clinical_res = (
+                supabase.table("nexa_clinical")
+                .insert({"masked_internal_id": masked_internal_id, "clinical_data": clinical_payload})
+                .execute()
+            )
+        except Exception as exc:
+            logger.critical(json.dumps({
+                "event": "process_document_db_error",
+                "shard": "nexa_clinical",
+                "masked_internal_id": masked_internal_id,
+                "exception": str(exc),
+            }))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"vault_error": None, "clinical_error": str(exc)},
+            ) from exc
+
+        # F-17: retained as belt-and-suspenders for any future supabase-py
+        # version that reverts to 1.x-style error surfacing, and for test
+        # doubles that mock a truthy `.error` instead of raising — same
+        # rationale as biometric_registry.py F-16 and routes.py F-17.
         if getattr(vault_res, "error", None) or getattr(clinical_res, "error", None):
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,

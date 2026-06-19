@@ -16,8 +16,29 @@ Fixes applied in this file:
           must be done with a Supabase migration, not just a code change.
           The reassembly engine's dual-read branch is kept as-is and
           marked with a TODO so the next schema migration removes it.
+
+  F-17 — Replaced every dead `getattr(response, "error", None)` check
+          with try/except around the Supabase call chain. In supabase-py
+          2.x, PostgREST errors (4xx/5xx) raise postgrest.APIError; they
+          do NOT populate a truthy `.error` attribute on a returned
+          result object (that was 1.x behavior). The old checks were
+          therefore unreachable on the failure path in every route here
+          — a real DB failure on /register, /api/v1/record, or
+          /view-record instead propagated as an unhandled APIError
+          straight to GlobalLoggingMiddleware, which masks it as a
+          generic DB_CONNECTION_LOST 503 with NO audit log entry for the
+          failure, breaking the "audit precedes/accompanies every state
+          change" guarantee on every DB-error path.
+
+          This mirrors the fix already applied to
+          app/services/biometric_registry.py (see its F-15/F-16 comments)
+          — same root cause, same fix shape, ported here so the audit
+          trail no longer has a gap on DB failures in these three routes.
 """
 from __future__ import annotations
+
+import json
+import logging
 
 from uuid import UUID, uuid4
 
@@ -37,6 +58,8 @@ from app.models.schemas import (
     RegisterResponse,
     UnifiedPatientPayload,
 )
+
+logger = logging.getLogger("nexa_logger")          # F-17
 
 router = APIRouter()
 
@@ -106,6 +129,17 @@ async def register_patient(
     """Register a patient: write PII to nexa_vault, clinical data to
     nexa_clinical, under a shared masked_internal_id.
     Gated behind verify_provider_token.
+
+    F-17: the two .insert().execute() calls are now wrapped in their own
+    try/except. In supabase-py 2.x a PostgREST rejection (RLS denial,
+    constraint violation, connection failure, etc.) raises APIError
+    directly out of execute() — the previous
+    `getattr(vault_response, "error", None)` check could never observe
+    that failure, because the line itself would have raised before being
+    reached. Catching it explicitly here means the existing
+    PATIENT_REGISTRATION_FAILED audit entry (in the outer except block)
+    now actually fires for DB-layer failures, not just for failures in
+    the surrounding Python logic.
     """
     await append_audit_log(
         actor_uid="SYSTEM_INGEST",
@@ -132,28 +166,62 @@ async def register_patient(
 
         supabase = get_supabase_client()
 
-        vault_response = (
-            supabase.table("nexa_vault")
-            .insert({
+        # F-17: APIError raised by either insert is caught here, logged
+        # with the table that failed, and re-raised as a 502 so it is
+        # handled the same way (HTTPException, not a bare 500) regardless
+        # of which shard write failed. This also ensures the outer
+        # except block's PATIENT_REGISTRATION_FAILED audit entry runs.
+        try:
+            vault_response = (
+                supabase.table("nexa_vault")
+                .insert({
+                    "masked_internal_id": str(masked_internal_id),
+                    "patient_name": pii_vault.patient_name,
+                    "phone": pii_vault.phone,
+                    "aadhaar_abha_id": pii_vault.aadhaar_abha_id,
+                })
+                .execute()
+            )
+        except Exception as exc:
+            logger.critical(json.dumps({
+                "event": "patient_registration_db_error",
+                "shard": "nexa_vault",
                 "masked_internal_id": str(masked_internal_id),
-                "patient_name": pii_vault.patient_name,
-                "phone": pii_vault.phone,
-                "aadhaar_abha_id": pii_vault.aadhaar_abha_id,
-            })
-            .execute()
-        )
+                "exception": str(exc),
+            }))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to write PII vault record.",
+            ) from exc
 
-        clinical_response = (
-            supabase.table("nexa_clinical")
-            .insert({
+        try:
+            clinical_response = (
+                supabase.table("nexa_clinical")
+                .insert({
+                    "masked_internal_id": str(masked_internal_id),
+                    "diagnoses": clinical_record.diagnoses,
+                    "lab_results": clinical_record.lab_results,
+                    "prescriptions": clinical_record.prescriptions,
+                })
+                .execute()
+            )
+        except Exception as exc:
+            logger.critical(json.dumps({
+                "event": "patient_registration_db_error",
+                "shard": "nexa_clinical",
                 "masked_internal_id": str(masked_internal_id),
-                "diagnoses": clinical_record.diagnoses,
-                "lab_results": clinical_record.lab_results,
-                "prescriptions": clinical_record.prescriptions,
-            })
-            .execute()
-        )
+                "exception": str(exc),
+            }))
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Failed to write clinical record.",
+            ) from exc
 
+        # F-17: retained as belt-and-suspenders for any future supabase-py
+        # version that reverts to 1.x-style error surfacing, and for test
+        # doubles that mock a truthy `.error` instead of raising. Dead in
+        # production today, but cheap and harmless to keep as a second
+        # line of defense — same rationale as biometric_registry.py F-16.
         if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
             raise RuntimeError("Supabase insert failed during patient registration")
 
@@ -166,6 +234,14 @@ async def register_patient(
 
         return RegisterResponse(pii_vault=pii_vault, clinical_record=clinical_record)
 
+    except HTTPException:
+        await append_audit_log(
+            actor_uid="SYSTEM_INGEST",
+            event_type="PATIENT_REGISTRATION_FAILED",
+            target_id="FAILED_GENERATION",
+            status="CRITICAL_ERROR",
+        )
+        raise
     except Exception:
         await append_audit_log(
             actor_uid="SYSTEM_INGEST",
@@ -183,6 +259,17 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
 
     TODO (F-09): remove the dual-read branch once the DB schema is unified
     on flat columns via a Supabase migration.
+
+    F-17: both .select().execute() calls are wrapped in try/except. A
+    PostgREST APIError here previously skipped the
+    `getattr(..., "error", None)` check entirely (it never executes,
+    because the exception is raised before the assignment completes) and
+    propagated unhandled past the RECORD_ACCESS_ATTEMPT audit entry with
+    no matching failure entry — the only sign anything happened was a
+    generic 503 from the global error handler. Now a DB failure logs a
+    RECORD_ACCESS_FAILED audit entry and returns a proper 502, while a
+    genuinely missing record (no exception, just empty data) still
+    returns 404 as before.
     """
     await append_audit_log(
         actor_uid="REASSEMBLY_ENGINE",
@@ -193,21 +280,49 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
 
     supabase = get_supabase_client()
 
-    vault_response = (
-        supabase.table("nexa_vault")
-        .select("*")
-        .eq("masked_internal_id", masked_internal_id)
-        .single()
-        .execute()
-    )
-    clinical_response = (
-        supabase.table("nexa_clinical")
-        .select("*")
-        .eq("masked_internal_id", masked_internal_id)
-        .single()
-        .execute()
-    )
+    try:
+        vault_response = (
+            supabase.table("nexa_vault")
+            .select("*")
+            .eq("masked_internal_id", masked_internal_id)
+            .single()
+            .execute()
+        )
+        clinical_response = (
+            supabase.table("nexa_clinical")
+            .select("*")
+            .eq("masked_internal_id", masked_internal_id)
+            .single()
+            .execute()
+        )
+    except Exception as exc:
+        # .single() raises APIError both on a genuine DB failure and on
+        # "0 rows" (PGRST116) -- distinguish them so a missing record
+        # still surfaces as 404, not a CRITICAL-logged 502.
+        exc_str = str(exc)
+        if "PGRST116" in exc_str or "JSON object requested, multiple (or no) rows returned" in exc_str:
+            await append_audit_log(
+                actor_uid="REASSEMBLY_ENGINE",
+                event_type="RECORD_ACCESS_FAILED",
+                target_id=masked_internal_id,
+                status="NOT_FOUND",
+            )
+            raise HTTPException(status_code=404, detail="Record not found") from exc
 
+        logger.critical(json.dumps({
+            "event": "record_reassembly_db_error",
+            "masked_internal_id": masked_internal_id,
+            "exception": exc_str,
+        }))
+        await append_audit_log(
+            actor_uid="REASSEMBLY_ENGINE",
+            event_type="RECORD_ACCESS_FAILED",
+            target_id=masked_internal_id,
+            status="DB_ERROR",
+        )
+        raise HTTPException(status_code=502, detail="Record reassembly failed") from exc
+
+    # F-17: retained as belt-and-suspenders (see register_patient above).
     if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
         raise HTTPException(status_code=404, detail="Record not found")
 
@@ -264,6 +379,16 @@ async def view_record(
     view this record; it does not authorise receiving raw PII over the
     wire.  A kiosk display that genuinely needs the unmasked value must
     call a separate, purpose-specific, audit-logged endpoint.
+
+    F-17: both .select().execute() calls wrapped in try/except for the
+    same reason as get_record() above — a PostgREST APIError previously
+    bypassed the `getattr(..., "error", None)` check entirely (unreachable
+    dead code on the failure path) and propagated unhandled to the global
+    handler as a generic 503, with no audit trail and no distinction from
+    a transient DB outage. Note this route had NO audit logging at all
+    before this fix (unlike get_record/register_patient) -- it now gets a
+    minimal VIEW_RECORD_FAILED entry on DB error so a real outage here is
+    no longer silent in the ledger either.
     """
     consent_token = consent_token_header or consent_token_query
     masked_internal_id = validate_token(consent_token) if consent_token else None
@@ -276,21 +401,39 @@ async def view_record(
 
     supabase = get_supabase_client()
 
-    vault_res = (
-        supabase.table("nexa_vault")
-        .select("patient_name,phone,masked_internal_id")
-        .eq("masked_internal_id", masked_internal_id)
-        .limit(1)
-        .execute()
-    )
-    clinical_res = (
-        supabase.table("nexa_clinical")
-        .select("diagnoses,lab_results,prescriptions,masked_internal_id")
-        .eq("masked_internal_id", masked_internal_id)
-        .limit(1)
-        .execute()
-    )
+    try:
+        vault_res = (
+            supabase.table("nexa_vault")
+            .select("patient_name,phone,masked_internal_id")
+            .eq("masked_internal_id", masked_internal_id)
+            .limit(1)
+            .execute()
+        )
+        clinical_res = (
+            supabase.table("nexa_clinical")
+            .select("diagnoses,lab_results,prescriptions,masked_internal_id")
+            .eq("masked_internal_id", masked_internal_id)
+            .limit(1)
+            .execute()
+        )
+    except Exception as exc:
+        logger.critical(json.dumps({
+            "event": "view_record_db_error",
+            "masked_internal_id": masked_internal_id,
+            "exception": str(exc),
+        }))
+        await append_audit_log(
+            actor_uid="CONSENT_VIEWER",
+            event_type="VIEW_RECORD_FAILED",
+            target_id=masked_internal_id,
+            status="DB_ERROR",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to retrieve record.",
+        ) from exc
 
+    # F-17: retained as belt-and-suspenders (see register_patient above).
     if getattr(vault_res, "error", None) or getattr(clinical_res, "error", None):
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
