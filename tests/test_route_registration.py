@@ -9,6 +9,26 @@ it needs an explicit check rather than relying on the app "working" in
 manual testing (the live routes still respond fine; it's the *other*
 copy, with different behavior, that you'd never notice was dead).
 
+EXPECTED_ROUTES fix: this previously listed
+("GET", "/api/v1/record/{masked_internal_id}") and never listed
+("POST", "/api/v1/enroll-biometric") at all. Both were stale against the
+actual app:
+
+  - GET /api/v1/record takes its patient id ONLY from the caller's
+    handshake session (Depends(get_scoped_session) in
+    app/api/routes.py) -- never from a URL path parameter. That path
+    param was the exact IDOR this dependency was introduced to close, so
+    asserting it should still exist was asserting the *vulnerable* shape.
+  - POST /api/v1/enroll-biometric is a real, provider-gated route that
+    was simply never added to this set when it shipped.
+
+Left as it was, this file was a guaranteed-red (or silently-ignored) CI
+check: every run would report the fixed route as "missing" and the real
+route as "unexpected," which is worse than having no test at all --
+a false positive here teaches the team to ignore this file's failures,
+which is exactly when a *real* duplicate-route regression would slip
+through unnoticed too.
+
 No mocking needed: this only inspects the real `app.routes` list that
 gets built at import time from the route decorators in app/api/routes.py.
 """
@@ -17,7 +37,8 @@ from app.main import app
 
 EXPECTED_ROUTES = {
     ("POST", "/api/v1/handshake"),
-    ("GET", "/api/v1/record/{masked_internal_id}"),
+    ("POST", "/api/v1/enroll-biometric"),
+    ("GET", "/api/v1/record"),
     ("POST", "/register"),
     ("POST", "/request-consent"),
     ("GET", "/view-record"),

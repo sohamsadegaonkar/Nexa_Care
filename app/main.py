@@ -13,6 +13,14 @@ Fixes applied in this file:
           @asynccontextmanager lifespan pattern.
   F-14 — Added a 20 MB ContentSizeLimitMiddleware to globally reject
           oversized request bodies before they reach any route handler.
+  F-15 — ContentSizeLimitMiddleware.dispatch() previously did
+          `return HTTPException(...)`. HTTPException is not a Response —
+          BaseHTTPMiddleware.dispatch() must return (or the route must
+          raise) something ASGI can actually send. Returning the bare
+          exception object meant any oversized request crashed the
+          middleware instead of cleanly receiving a 413. Now returns a
+          JSONResponse, and a malformed (non-numeric) Content-Length
+          header is tolerated rather than raising ValueError.
 """
 from __future__ import annotations
 
@@ -25,6 +33,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi.responses import JSONResponse                   # F-15
 from starlette.concurrency import run_in_threadpool          # F-02
 from starlette.middleware.base import BaseHTTPMiddleware     # F-14
 
@@ -53,15 +62,41 @@ class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
     """Reject any request whose Content-Length header exceeds the cap, and
     abort streaming bodies that exceed it mid-transfer.  This prevents both
     OOM attacks on the document endpoint and accidental oversized payloads
-    on JSON routes."""
+    on JSON routes.
+
+    F-15: must RETURN A RESPONSE here, not an HTTPException instance.
+    BaseHTTPMiddleware.dispatch() is responsible for producing something
+    ASGI-callable; an HTTPException is just a plain exception class and
+    has no __call__/asgi send behavior, so returning one (instead of
+    raising it, or wrapping it in a Response) would blow up the moment
+    Starlette tried to send it back to the client.
+    """
 
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > _MAX_UPLOAD_BYTES:
-            return HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Request body exceeds the {_MAX_UPLOAD_BYTES // (1024*1024)} MB limit.",
-            )
+
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                # Malformed header -- don't let int() crash the middleware;
+                # fall through and let the route's own logic (or a
+                # downstream framework check) handle it instead.
+                declared_size = None
+
+            if declared_size is not None and declared_size > _MAX_UPLOAD_BYTES:
+                return JSONResponse(
+                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                    content={
+                        "error_code": "PAYLOAD_TOO_LARGE",
+                        "message": (
+                            f"Request body exceeds the "
+                            f"{_MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit."
+                        ),
+                        "retryable": False,
+                    },
+                )
+
         return await call_next(request)
 
 
@@ -78,11 +113,11 @@ async def lifespan(application: FastAPI):
     # Shutdown logic (connection draining etc.) goes here when needed.
 
 
-app = FastAPI(title="Nexa Care API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Nexa Care API", version="0.2.1", lifespan=lifespan)
 
 # Middleware order matters: size check fires before logging so we don't log
 # and store partial bodies from abusive clients.
-app.add_middleware(ContentSizeLimitMiddleware)   # F-14 — outermost, fires first
+app.add_middleware(ContentSizeLimitMiddleware)   # F-14/F-15 — outermost, fires first
 app.add_middleware(GlobalLoggingMiddleware)
 
 app.include_router(api_router)

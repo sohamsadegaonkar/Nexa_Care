@@ -1,69 +1,362 @@
+"""
+End-to-end integration test for Nexa Care.
+
+Why this file was rewritten entirely (not patched):
+
+  1. AUTH SCHEME MISMATCH. The old version sent `X-Provider-Key` and set
+     `PROVIDER_API_KEY` in os.environ. That backed app/api/auth_deps.py,
+     which has been deleted. Every provider route now authenticates via
+     verify_provider_token() (app/core/dependencies.py), which reads
+     `Authorization: Bearer {CLINIC_API_KEY}` and rejects a missing
+     credential with 401 -- the old test asserted 403.
+
+  2. SESSION MODEL MISMATCH. The old version posted a `masked_internal_id`
+     in the /request-consent body. That was the exact IDOR this system was
+     rebuilt to close: /request-consent (like GET /api/v1/record) now
+     resolves its patient ONLY from a handshake-derived session token via
+     Depends(get_scoped_session) -- never from the request body.
+
+  3. RESPONSE SHAPE MISMATCH. The old version asserted
+     view_data["pii"]["phone"] and view_data["clinical"]["diagnoses"].
+     GET /view-record returns a flat dict (patient_name, phone,
+     diagnoses, ...), not a nested pii/clinical envelope -- that nesting
+     belongs to GET /api/v1/record, a different route.
+
+  4. INFRASTRUCTURE MISMATCH. As a plain pytest test hitting the real
+     get_supabase_client()/get_redis_client(), this could never pass in
+     CI anyway -- ci.yml only sets placeholder Supabase/Redis URLs, with
+     no live database behind them. Every other test file in this suite
+     mocks those two functions; this one didn't, which is why it needed
+     a real instance to mean anything.
+
+This version fixes all four: it exercises the actual current auth model
+end-to-end (provider Bearer token -> enroll -> handshake -> session
+Bearer token -> consent token -> redacted view), and replaces Supabase /
+Redis with tiny in-memory fakes (see FakeSupabaseClient / FakeRedisClient
+below) that implement only the exact call chains the app code issues --
+not a full reimplementation of either service, just enough surface area
+to drive the real FastAPI app, real dependency graph, and real
+middleware through a full request lifecycle without live infrastructure.
+"""
+from __future__ import annotations
+
 import os
-from fastapi.testclient import TestClient
+import unittest
+import uuid
+from datetime import datetime, timezone
+from unittest.mock import patch
 
-# Import your FastAPI app
-from app.main import app 
+# Required config must exist before app.main is imported -- the FastAPI
+# lifespan calls get_*_config() at startup, and those raise ConfigError on
+# a missing var. CLINIC_API_KEY is also read fresh, per-request, by
+# verify_provider_token(), so it must hold the exact value the tests below
+# send as a Bearer token.
+os.environ.setdefault("SUPABASE_URL", "https://placeholder.supabase.co")
+os.environ.setdefault("SUPABASE_KEY", "placeholder-key")
+os.environ.setdefault("UPSTASH_REDIS_URL", "redis://localhost:6379")
+os.environ.setdefault("HANDSHAKE_PEPPER_SECRET", "test-pepper-secret")
+os.environ["CLINIC_API_KEY"] = "test-clinic-key-123"
 
-# Ensure the provider key is set for testing
-os.environ["PROVIDER_API_KEY"] = "test-provider-key-123"
-client = TestClient(app)
+from fastapi.testclient import TestClient  # noqa: E402
 
-HEADERS = {
-    "X-Provider-Key": "test-provider-key-123"
-}
+from app.main import app  # noqa: E402
 
-def test_health_check():
-    response = client.get("/health")
-    assert response.status_code == 200
-    assert response.json() == {"status": "ok"}
+PROVIDER_HEADERS = {"Authorization": "Bearer test-clinic-key-123"}
 
-def test_security_perimeter_rejects_unauthorized():
-    # Attempting to register without the X-Provider-Key should fail
-    payload = {
-        "patient_name": "Test User",
-        "phone": "555-0100",
-        "aadhaar_abha_id": "1234-5678-9012",
-        "diagnoses": ["Hypertension"],
-        "lab_results": [],
-        "prescriptions": []
-    }
-    response = client.post("/register", json=payload)
-    assert response.status_code == 403
 
-def test_full_patient_lifecycle():
-    # 1. Register a Patient
-    payload = {
-        "patient_name": "Test User Lifecycle",
-        "phone": "555-0101",
-        "aadhaar_abha_id": "SYNTHETIC-ID-999",
-        "diagnoses": ["Type 2 Diabetes"],
-        "lab_results": ["HbA1c: 7.2%"],
-        "prescriptions": ["Metformin 500mg"]
-    }
-    reg_response = client.post("/register", json=payload, headers=HEADERS)
-    assert reg_response.status_code == 200, f"Registration failed: {reg_response.text}"
-    
-    data = reg_response.json()
-    assert "pii_vault" in data
-    masked_id = data["pii_vault"]["masked_internal_id"]
-    assert masked_id is not None
+# ─────────────────────────────────────────────────────────────────────────
+# Minimal in-memory fakes for the Supabase / Redis layers.
+# ─────────────────────────────────────────────────────────────────────────
 
-    # 2. Request Consent Token
-    consent_payload = {
-        "masked_internal_id": masked_id,
-        "duration_seconds": 300
-    }
-    consent_response = client.post("/request-consent", json=consent_payload, headers=HEADERS)
-    assert consent_response.status_code == 200
-    token = consent_response.json().get("consent_token")
-    assert token is not None
+class _FakeResult:
+    def __init__(self, data=None, error=None):
+        self.data = data
+        self.error = error
 
-    # 3. View Record (Reassembly)
-    view_response = client.get(f"/view-record?consent_token={token}", headers=HEADERS)
-    assert view_response.status_code == 200
-    
-    view_data = view_response.json()
-    assert view_data["masked_internal_id"] == masked_id
-    # Verify Redaction worked!
-    assert view_data["pii"]["phone"] != "555-0101" # Should be masked
-    assert "Type 2 Diabetes" in view_data["clinical"]["diagnoses"]
+
+class _FakeTableQuery:
+    """Mimics exactly the subset of the postgrest-py fluent API this
+    codebase calls: .insert / .select / .eq / .single / .limit / .order /
+    .execute(). Backed by a plain dict-of-lists in memory -- not a real
+    query engine, just enough to satisfy these specific call shapes."""
+
+    def __init__(self, store: dict[str, list[dict]], table_name: str):
+        self._store = store
+        self._table_name = table_name
+        self._mode: str | None = None
+        self._insert_payload: dict | None = None
+        self._select_cols: str | None = None
+        self._filters: list[tuple[str, str]] = []
+        self._single = False
+        self._limit: int | None = None
+        self._order_col: str | None = None
+        self._order_desc = False
+
+    def insert(self, payload: dict):
+        self._mode = "insert"
+        self._insert_payload = payload
+        return self
+
+    def select(self, cols: str = "*"):
+        self._mode = "select"
+        self._select_cols = cols
+        return self
+
+    def eq(self, col: str, val):
+        self._filters.append((col, str(val)))
+        return self
+
+    def single(self):
+        self._single = True
+        return self
+
+    def limit(self, n: int):
+        self._limit = n
+        return self
+
+    def order(self, col: str, desc: bool = False):
+        self._order_col = col
+        self._order_desc = desc
+        return self
+
+    def execute(self):
+        rows = self._store.setdefault(self._table_name, [])
+
+        if self._mode == "insert":
+            row = dict(self._insert_payload or {})
+            row.setdefault("id", str(uuid.uuid4()))
+            row.setdefault("created_at", datetime.now(timezone.utc).isoformat())
+            rows.append(row)
+            return _FakeResult(data=[row], error=None)
+
+        # ── select ───────────────────────────────────────────────────
+        matched = rows
+        for col, val in self._filters:
+            matched = [r for r in matched if str(r.get(col)) == val]
+
+        if self._order_col:
+            matched = sorted(
+                matched, key=lambda r: r.get(self._order_col) or "", reverse=self._order_desc
+            )
+
+        if self._limit is not None:
+            matched = matched[: self._limit]
+
+        if self._select_cols and self._select_cols != "*":
+            cols = [c.strip() for c in self._select_cols.split(",")]
+            matched = [{c: r.get(c) for c in cols} for r in matched]
+
+        if self._single:
+            return _FakeResult(data=(matched[0] if matched else None), error=None)
+
+        return _FakeResult(data=matched, error=None)
+
+
+class FakeSupabaseClient:
+    """Shared in-memory stand-in for app.core.supabase.get_supabase_client().
+    One instance is reused across the whole lifecycle test so
+    register -> enroll -> handshake -> consent -> view-record all see
+    consistent state, exactly like a real Postgres connection would."""
+
+    def __init__(self):
+        self._store: dict[str, list[dict]] = {}
+
+    def table(self, name: str) -> _FakeTableQuery:
+        return _FakeTableQuery(self._store, name)
+
+
+class FakeRedisClient:
+    """Shared in-memory stand-in for app.core.redis.get_redis_client()."""
+
+    def __init__(self):
+        self._store: dict[str, str] = {}
+
+    def get(self, key):
+        return self._store.get(key)
+
+    def set(self, name, value, ex=None):
+        self._store[name] = value
+        return True
+
+    def setex(self, name, time, value):
+        self._store[name] = value
+        return True
+
+    def ping(self):
+        return True
+
+
+class TestNexaCareLifecycle(unittest.TestCase):
+    """Drives the full provider -> patient -> consent lifecycle through the
+    real app, with only the database/cache layers faked out."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fake_supabase = FakeSupabaseClient()
+        cls.fake_redis = FakeRedisClient()
+
+        # Every module that does `from app.core.X import get_Y_client` holds
+        # its OWN reference to that function -- patching
+        # app.core.supabase.get_supabase_client alone would not reach
+        # app.api.routes' already-imported name, for example. Each
+        # consuming module is patched individually, mirroring the pattern
+        # already used in test_audit_ledger.py / test_biometric_registry.py
+        # / test_auth_service.py.
+        cls._patches = [
+            patch("app.core.supabase.get_supabase_client", return_value=cls.fake_supabase),
+            patch("app.api.routes.get_supabase_client", return_value=cls.fake_supabase),
+            patch("app.observability.audit_ledger.get_supabase_client", return_value=cls.fake_supabase),
+            patch("app.services.biometric_registry.get_supabase_client", return_value=cls.fake_supabase),
+            patch("app.core.redis.get_redis_client", return_value=cls.fake_redis),
+            patch("app.services.auth_service.get_redis_client", return_value=cls.fake_redis),
+            patch("app.services.crypto_engine.get_redis_client", return_value=cls.fake_redis),
+        ]
+        for p in cls._patches:
+            p.start()
+
+        cls.client = TestClient(app)
+
+    @classmethod
+    def tearDownClass(cls):
+        for p in cls._patches:
+            p.stop()
+
+    # ── Health ───────────────────────────────────────────────────────────
+
+    def test_health_check(self):
+        response = self.client.get("/health")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    # ── Lane A: provider auth (register / enroll-biometric) ─────────────
+
+    def test_register_without_provider_token_is_rejected(self):
+        payload = {
+            "patient_name": "Unauthorized Attempt",
+            "phone": "5550100",
+            "aadhaar_abha_id": "0000-0000-0000",
+            "diagnoses": [],
+            "lab_results": [],
+            "prescriptions": [],
+        }
+        response = self.client.post("/register", json=payload)
+        # verify_provider_token's auto_error=False scheme + the explicit
+        # 401 in app/core/dependencies.py -- NOT 403. Asserting 403 here
+        # would be testing the old, removed X-Provider-Key scheme instead
+        # of the Bearer-token model actually in place.
+        self.assertEqual(response.status_code, 401)
+
+    def test_register_with_wrong_provider_token_is_rejected(self):
+        payload = {
+            "patient_name": "Wrong Key Attempt",
+            "phone": "5550101",
+            "aadhaar_abha_id": "0000-0000-0001",
+            "diagnoses": [],
+            "lab_results": [],
+            "prescriptions": [],
+        }
+        response = self.client.post(
+            "/register", json=payload, headers={"Authorization": "Bearer not-the-right-key"}
+        )
+        self.assertEqual(response.status_code, 401)
+
+    # ── Lane B: full patient lifecycle ──────────────────────────────────
+
+    def test_full_patient_lifecycle(self):
+        # 1. Register (provider-gated)
+        register_payload = {
+            "patient_name": "Test Patient Lifecycle",
+            "phone": "9999999999",
+            "aadhaar_abha_id": "1234-5678-9012",
+            "diagnoses": ["Type 2 Diabetes"],
+            "lab_results": ["HbA1c: 7.2%"],
+            "prescriptions": ["Metformin 500mg"],
+        }
+        reg_response = self.client.post(
+            "/register", json=register_payload, headers=PROVIDER_HEADERS
+        )
+        self.assertEqual(reg_response.status_code, 200, reg_response.text)
+        reg_data = reg_response.json()
+        masked_id = reg_data["pii_vault"]["masked_internal_id"]
+        self.assertTrue(masked_id)
+
+        # 2. Enroll the biometric binding (provider-gated) -- the action
+        # that decides which (nfc_uid, bio_seed) pair this patient trusts.
+        enroll_payload = {
+            "masked_internal_id": masked_id,
+            "nfc_uid": "NFC-LIFECYCLE-001",
+            "bio_seed": "lifecycle-bio-seed",
+        }
+        enroll_response = self.client.post(
+            "/api/v1/enroll-biometric", json=enroll_payload, headers=PROVIDER_HEADERS
+        )
+        self.assertEqual(enroll_response.status_code, 201, enroll_response.text)
+        self.assertEqual(enroll_response.json()["status"], "enrolled")
+
+        # 3. Handshake: verifies the now-enrolled pair, mints a
+        # patient-scoped session token.
+        handshake_payload = {
+            "nfc_uid": "NFC-LIFECYCLE-001",
+            "bio_seed": "lifecycle-bio-seed",
+            "masked_internal_id": masked_id,
+        }
+        handshake_response = self.client.post("/api/v1/handshake", json=handshake_payload)
+        self.assertEqual(handshake_response.status_code, 200, handshake_response.text)
+        session_token = handshake_response.json()["session_token"]
+        self.assertTrue(session_token)
+        session_headers = {"Authorization": f"Bearer {session_token}"}
+
+        # 3b. An unenrolled (nfc_uid, bio_seed) pair for the same patient
+        # must still be rejected -- proves F-03's verify_biometric_binding()
+        # check is actually wired in, not just present in the module.
+        bad_handshake = self.client.post(
+            "/api/v1/handshake",
+            json={
+                "nfc_uid": "NFC-NEVER-ENROLLED",
+                "bio_seed": "whatever",
+                "masked_internal_id": masked_id,
+            },
+        )
+        self.assertEqual(bad_handshake.status_code, 401)
+
+        # 4. Reassembly engine -- id comes ONLY from the session, never
+        # from a URL.
+        record_response = self.client.get("/api/v1/record", headers=session_headers)
+        self.assertEqual(record_response.status_code, 200, record_response.text)
+        record_data = record_response.json()
+        self.assertEqual(record_data["masked_internal_id"], masked_id)
+        self.assertIn("Type 2 Diabetes", record_data["clinical"]["diagnoses"])
+
+        # 5. Request a consent token -- session-scoped, no id in the body.
+        consent_response = self.client.post(
+            "/request-consent", json={"duration_seconds": 300}, headers=session_headers
+        )
+        self.assertEqual(consent_response.status_code, 200, consent_response.text)
+        consent_token = consent_response.json()["consent_token"]
+        self.assertTrue(consent_token)
+
+        # 6. View the record via the consent token -- PII fields must come
+        # back redacted (F-10), clinical fields must not.
+        view_response = self.client.get(
+            "/view-record", headers={"X-Consent-Token": consent_token}
+        )
+        self.assertEqual(view_response.status_code, 200, view_response.text)
+        view_data = view_response.json()
+        self.assertEqual(view_data["masked_internal_id"], masked_id)
+        self.assertEqual(view_data["patient_name"], "[REDACTED]")
+        self.assertEqual(view_data["phone"], "[REDACTED]")
+        self.assertIn("Type 2 Diabetes", view_data["diagnoses"])
+
+    # ── Negative cases for the patient lane ─────────────────────────────
+
+    def test_request_consent_without_session_is_rejected(self):
+        response = self.client.post("/request-consent", json={})
+        self.assertEqual(response.status_code, 401)
+
+    def test_view_record_without_consent_token_is_rejected(self):
+        response = self.client.get("/view-record")
+        self.assertEqual(response.status_code, 403)
+
+
+if __name__ == "__main__":
+    unittest.main()
