@@ -7,18 +7,61 @@ stored in `biometric_registry` is a one-way HMAC keyed by a server-side
 pepper (HANDSHAKE_PEPPER_SECRET) -- never derivable from nfc_uid or
 bio_seed alone, and never reversible back to either. Raw biometric data
 is never written to the database, before or after this module exists.
+
+Fixes applied in this file
+--------------------------
+F-15 — enroll_biometric_binding() and verify_biometric_binding() previously
+        swallowed every exception with a bare `except: return False/True`.
+        The actual PostgREST error (e.g. "relation does not exist", RLS
+        violation, constraint conflict) was therefore invisible in logs,
+        making smoke-test 502s impossible to diagnose without live DB access.
+
+        Both functions now log the exception at CRITICAL / ERROR level
+        (matching the audit_ledger pattern) before returning the fail-safe
+        value.  The fail-safe behaviour is unchanged — callers still receive
+        False on any error — but ops now have the actionable detail in the
+        structured log stream.
+
+F-16 — supabase-py 2.x (postgrest-py ≥ 0.11) raises an APIError on any
+        HTTP 4xx/5xx response from PostgREST rather than returning a result
+        object with a truthy `.error` attribute.  The old
+        `getattr(response, "error", None)` checks therefore always evaluated
+        to None (falsy) on the success path and were dead code on the error
+        path (because exceptions were caught before reaching them).
+
+        The checks are replaced with explicit post-execute success
+        assertions.  For `enroll_biometric_binding`, a successful execute()
+        is the only non-exceptional path, so reaching the return statement
+        is sufficient.  For `verify_biometric_binding`, the response data is
+        validated directly instead of checking a phantom .error attribute.
+
+        NOTE: .single() in postgrest-py raises when 0 rows are returned.
+        That exception is caught by the outer try/except, logged at DEBUG
+        (not enrolled is a normal operational state, not an error), and
+        returns False as before.
+
+ACCEPTED RISK (v0.1.0, unchanged): verify_biometric_binding is not
+        constant-time end-to-end.  A masked_internal_id with no enrolled
+        row returns after only a DB round-trip; one with an enrolled-but-
+        mismatched binding additionally pays for an HMAC compute and a
+        compare_digest call.  Planned mitigation is infrastructure-level
+        rate limiting in the next release.
 """
 
 from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import logging
 
 from fastapi import HTTPException
 
 from app.core.config import get_handshake_config
 from app.core.supabase import get_supabase_client
 from app.observability.audit_ledger import append_audit_log_or_503
+
+logger = logging.getLogger("nexa_logger")
 
 
 def compute_bio_verifier(nfc_uid: str, bio_seed: str) -> str:
@@ -50,20 +93,62 @@ async def verify_biometric_binding(nfc_uid: str, bio_seed: str, masked_internal_
             supabase.table("biometric_registry")
             .select("bio_verifier_hash,revoked_at")
             .eq("masked_internal_id", masked_internal_id)
-            .single()
+            .single()           # raises APIError if 0 rows (not enrolled)
             .execute()
         )
-    except Exception:
+    except Exception as exc:
+        # F-15: log the real exception before returning the fail-safe False.
+        #
+        # Distinguish operational "not found" (expected on first enrollment
+        # attempt or after revocation) from genuine infrastructure failures
+        # (table missing, RLS violation, network partition) so that:
+        #   - Normal "not enrolled" cases log at DEBUG and don't page on-call.
+        #   - Real DB failures log at CRITICAL and are immediately actionable.
+        #
+        # postgrest-py raises APIError with a message that contains the
+        # PostgREST error code (e.g. "PGRST116" for "exactly one row required"
+        # when .single() finds 0 rows).  Any other exception is unexpected.
+        exc_str = str(exc)
+        if "PGRST116" in exc_str or "JSON object requested, multiple (or no) rows returned" in exc_str:
+            # 0 rows from .single() — patient simply has no enrolled binding.
+            # This is a normal operational state, not an infrastructure error.
+            logger.debug(json.dumps({
+                "event": "biometric_verify_not_enrolled",
+                "masked_internal_id": masked_internal_id,
+                "detail": "No binding row found for this patient.",
+            }))
+        else:
+            # Unexpected: table missing, RLS rejection, network error, etc.
+            # Log at CRITICAL so it appears in alerting thresholds.
+            logger.critical(json.dumps({
+                "event": "biometric_verify_db_error",
+                "masked_internal_id": masked_internal_id,
+                "exception": exc_str,
+                "action": "returning_false_fail_closed",
+            }))
         return False
 
-    if getattr(response, "error", None):
-        return False
-
+    # F-16: in supabase-py 2.x, execute() does not set a .error attribute;
+    # failures raise APIError (caught above).  Validate the response data
+    # directly rather than checking a phantom .error attribute.
     row = getattr(response, "data", None)
     if not row:
+        # .single() returned successfully but with no data — treat as not enrolled.
+        logger.debug(json.dumps({
+            "event": "biometric_verify_empty_row",
+            "masked_internal_id": masked_internal_id,
+        }))
         return False
 
     if row.get("revoked_at"):
+        # Binding exists but has been administratively revoked.
+        # Do NOT log the masked_internal_id at a high severity here —
+        # revocation is an expected operational state, not a security alert.
+        logger.warning(json.dumps({
+            "event": "biometric_verify_revoked",
+            "masked_internal_id": masked_internal_id,
+            "revoked_at": str(row["revoked_at"]),
+        }))
         return False
 
     expected = row.get("bio_verifier_hash") or ""
@@ -80,19 +165,65 @@ async def enroll_biometric_binding(nfc_uid: str, bio_seed: str, masked_internal_
     in via enroll_biometric_binding_with_audit below, which is what the
     /api/v1/enroll-biometric route actually calls. That route is gated
     behind verify_provider_token (app/core/dependencies.py), since this
-    is the one action that decides which physical card/biometric a
+    is the one action that decides which physical card/biometric the
     patient identity trusts.
     """
     try:
         supabase = get_supabase_client()
         verifier = compute_bio_verifier(nfc_uid, bio_seed)
-        response = (
-            supabase.table("biometric_registry")
-            .insert({"masked_internal_id": masked_internal_id, "bio_verifier_hash": verifier})
-            .execute()
-        )
-        return not getattr(response, "error", None)
-    except Exception:
+
+        response = supabase.table("biometric_registry").insert(
+            {
+                "masked_internal_id": masked_internal_id,
+                "bio_verifier_hash": verifier,
+            }
+        ).execute()
+
+        # F-16: in supabase-py 2.x, execute() raises APIError on any PostgREST
+        # error (4xx/5xx) before this line is reached, so the check below is a
+        # no-op in production.  It is retained for two reasons:
+        #   1. Test compatibility: the test suite mocks execute() with a
+        #      FakeResult that carries a truthy .error attribute to simulate a
+        #      DB rejection (supabase-py 1.x style).  Re-raising here causes
+        #      the mock error to flow through the except branch, which logs and
+        #      returns False — matching what real 2.x APIError raises would do.
+        #   2. Belt-and-suspenders: if a future supabase-py version changes
+        #      error-surfacing behavior, this check catches it.
+        error = getattr(response, "error", None)
+        if error:
+            raise RuntimeError(f"PostgREST insert error: {error}")
+
+        return True
+
+    except Exception as exc:
+        # F-15: log the real PostgREST error before returning False.
+        #
+        # The most common failure modes and their signatures:
+        #   "relation biometric_registry does not exist"
+        #       -> Migration 0002 has not been applied to this Supabase instance.
+        #          Apply migrations/0002_biometric_registry_schema.sql and retry.
+        #   "duplicate key value violates unique constraint uq_biometric_registry_patient"
+        #       -> This masked_internal_id is already enrolled.
+        #          Use the revocation endpoint before re-enrolling.
+        #   "new row violates row-level security policy"
+        #       -> The backend is not authenticating as the service role.
+        #          Check that SUPABASE_KEY is the service-role key, not the anon key.
+        #
+        # All three are CRITICAL because they represent either a deployment
+        # gap (missing migration) or a misconfiguration that will block
+        # every enrollment until resolved.
+        logger.critical(json.dumps({
+            "event": "biometric_enroll_db_error",
+            "masked_internal_id": masked_internal_id,
+            "exception": str(exc),
+            "action": "returning_false",
+            "hint": (
+                "If exception contains 'does not exist': apply "
+                "migrations/0002_biometric_registry_schema.sql. "
+                "If 'duplicate key': patient already enrolled, revoke first. "
+                "If 'row-level security': verify SUPABASE_KEY is the service-role key."
+            ),
+        }))
         return False
 
 
