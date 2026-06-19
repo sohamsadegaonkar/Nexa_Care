@@ -30,5 +30,23 @@ jobs:
       - name: Lint
         run: ruff check .
 
+      # F-12 fix: was `python -m unittest discover -s tests -v`
+      #
+      # unittest discover collected test_route_registration.py and
+      # test_sharding.py but found no TestCase subclasses in them (they use
+      # bare `assert` statements — pytest style).  It reported them as
+      # passing with zero tests run, meaning:
+      #   • the aadhaar_abha_id routing regression guard (test_sharding.py)
+      #   • the duplicate-route registration guard (test_route_registration.py)
+      # never executed in CI.  Switching to pytest collects and runs all
+      # test functions regardless of whether they are TestCase subclasses.
       - name: Run tests
-        run: python -m unittest discover -s tests -v
+        run: python -m pytest tests/ -v --tb=short
+        env:
+          # Provide minimal env so startup config validation passes in test
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_KEY: "placeholder-key"
+          UPSTASH_REDIS_URL: "redis://localhost:6379"
+          HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
+          CLINIC_API_KEY: "ci-test-clinic-key"
+          PROVIDER_API_KEY: "ci-test-clinic-key"
