@@ -48,6 +48,12 @@ class ClinicConfig:
     api_key: str
 
 
+@dataclass(frozen=True)
+class DatabaseConfig:
+    url: str
+    echo_sql: bool = False
+
+
 def get_supabase_config() -> SupabaseConfig:
     """Load Supabase connection info from environment.
 
@@ -90,20 +96,30 @@ def get_handshake_config() -> HandshakeConfig:
 
 
 def get_clinic_config() -> ClinicConfig:
-    """Load the shared facility-level credential used by
-    verify_provider_token (app/core/dependencies.py) to authenticate
-    hospital/clinic systems calling provider-only routes (/register,
-    /api/v1/enroll-biometric).
+    """Load the legacy shared facility-level credential (Phase 0).
+
+    Deprecated: provider routes now authenticate individual clinicians via
+    ``get_provider_context`` and ``provider_credential``. Retained only for
+    scripts that have not yet migrated.
 
     Expected variable:
     - CLINIC_API_KEY
-
-    This is a single shared service-to-service secret, not a per-clinician
-    credential and not a patient session token -- it proves "this caller
-    is a legitimate facility system," nothing about which individual
-    patient is involved. Rotate it the same way you would any other
-    service API key; never embed it in any client-side or mobile code
-    path a patient could extract.
     """
 
     return ClinicConfig(api_key=_require_env("CLINIC_API_KEY"))
+
+
+def get_database_config() -> DatabaseConfig:
+    """Load async Postgres connection settings for the provider layer.
+
+    Expected variables:
+    - DATABASE_URL — async SQLAlchemy URL, e.g.
+      ``postgresql+asyncpg://user:pass@host:5432/nexa_care``
+    - DATABASE_ECHO_SQL — optional ``true`` to log SQL statements
+    """
+
+    echo_raw = os.getenv("DATABASE_ECHO_SQL", "false").strip().lower()
+    return DatabaseConfig(
+        url=_require_env("DATABASE_URL"),
+        echo_sql=echo_raw in {"1", "true", "yes", "on"},
+    )

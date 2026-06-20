@@ -1,14 +1,53 @@
 import asyncio
 import unittest
-from unittest.mock import patch
+import uuid
+from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
 
-from app.core.dependencies import get_scoped_session
+from app.core.dependencies import get_provider_context, get_scoped_session
+from app.models.provider import AffiliationType
+from app.models.provider_context import (
+    AffiliationContext,
+    HospitalContext,
+    ProviderContext,
+    ProviderIdentityContext,
+)
+from app.services.provider_auth_service import ProviderAuthFailure, ProviderAuthResult
 
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def _sample_provider_context() -> ProviderContext:
+    provider_id = uuid.uuid4()
+    hospital_id = uuid.uuid4()
+    affiliation_id = uuid.uuid4()
+    return ProviderContext(
+        provider=ProviderIdentityContext(
+            provider_id=provider_id,
+            display_name="Dr. Test Provider",
+            medical_registration_number="MCI-12345",
+            specialty="Cardiology",
+            contact_email="doctor@example.com",
+        ),
+        hospital=HospitalContext(
+            hospital_id=hospital_id,
+            facility_code="HOSP-001",
+            display_name="Test General Hospital",
+        ),
+        affiliation=AffiliationContext(
+            affiliation_id=affiliation_id,
+            affiliation_type=AffiliationType.PERMANENT,
+            department="Cardiology",
+            roles=["consultant"],
+            is_primary=True,
+            valid_from=None,
+            valid_until=None,
+        ),
+    )
 
 
 class TestGetScopedSession(unittest.TestCase):
@@ -24,8 +63,6 @@ class TestGetScopedSession(unittest.TestCase):
     @patch("app.core.dependencies.validate_session_context")
     @patch("app.core.dependencies.append_audit_log")
     def test_invalid_or_expired_session_raises_401(self, mock_audit, mock_validate):
-        # patch() auto-detects validate_session_context is async and uses
-        # AsyncMock, so return_value is the resolved value, not a coroutine.
         mock_validate.return_value = None
 
         with self.assertRaises(HTTPException) as cm:
@@ -36,8 +73,6 @@ class TestGetScopedSession(unittest.TestCase):
     @patch("app.core.dependencies.validate_session_context")
     @patch("app.core.dependencies.append_audit_log")
     def test_session_without_masked_internal_id_raises_401(self, mock_audit, mock_validate):
-        # Simulates a pre-fix session that never had an id bound to it --
-        # must fail closed, not silently let an unscoped session through.
         mock_validate.return_value = {"authenticated": True, "nfc_uid": "NFC-001"}
 
         with self.assertRaises(HTTPException) as cm:
@@ -57,76 +92,110 @@ class TestGetScopedSession(unittest.TestCase):
         result = run(get_scoped_session(authorization="Bearer some-token"))
 
         self.assertEqual(result, "patient-uuid-123")
-        mock_audit.assert_not_called()  # success path logs nothing here -- the route does
+        mock_audit.assert_not_called()
 
 
-class TestVerifyProviderToken(unittest.TestCase):
+class TestGetProviderContext(unittest.TestCase):
 
     @patch("app.core.dependencies.append_audit_log")
     def test_missing_credentials_raises_401(self, mock_audit):
-        from app.core.dependencies import verify_provider_token
-
+        db = AsyncMock()
         with self.assertRaises(HTTPException) as cm:
-            run(verify_provider_token(credentials=None))
+            run(
+                get_provider_context(
+                    credentials=None,
+                    basic_credentials=None,
+                    hospital_id=None,
+                    db=db,
+                )
+            )
         self.assertEqual(cm.exception.status_code, 401)
         self.assertEqual(mock_audit.call_args.kwargs["status"], "MISSING_TOKEN")
 
+    @patch("app.core.dependencies.authenticate_provider_session")
     @patch("app.core.dependencies.append_audit_log")
-    def test_empty_credentials_string_raises_401(self, mock_audit):
-        from app.core.dependencies import verify_provider_token
-        from fastapi.security import HTTPAuthorizationCredentials
-
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="")
-        with self.assertRaises(HTTPException) as cm:
-            run(verify_provider_token(credentials=creds))
-        self.assertEqual(cm.exception.status_code, 401)
-        self.assertEqual(mock_audit.call_args.kwargs["status"], "MISSING_TOKEN")
-
-    @patch("app.core.dependencies.get_clinic_config")
-    @patch("app.core.dependencies.append_audit_log")
-    def test_wrong_token_raises_401(self, mock_audit, mock_config):
-        from app.core.dependencies import verify_provider_token
-        from fastapi.security import HTTPAuthorizationCredentials
-        from app.core.config import ClinicConfig
-
-        mock_config.return_value = ClinicConfig(api_key="correct-key")
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="wrong-key")
+    def test_invalid_bearer_token_raises_401(self, mock_audit, mock_auth):
+        mock_auth.return_value = ProviderAuthResult(
+            None,
+            ProviderAuthFailure.INVALID_CREDENTIALS,
+        )
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="bad-token")
+        db = AsyncMock()
 
         with self.assertRaises(HTTPException) as cm:
-            run(verify_provider_token(credentials=creds))
+            run(
+                get_provider_context(
+                    credentials=creds,
+                    basic_credentials=None,
+                    hospital_id=None,
+                    db=db,
+                )
+            )
         self.assertEqual(cm.exception.status_code, 401)
-        self.assertEqual(mock_audit.call_args.kwargs["status"], "INVALID_TOKEN")
+        self.assertEqual(mock_audit.call_args.kwargs["status"], "INVALID_CREDENTIALS")
 
-    @patch("app.core.dependencies.get_clinic_config")
+    @patch("app.core.dependencies.authenticate_provider_password")
     @patch("app.core.dependencies.append_audit_log")
-    def test_correct_token_passes_silently(self, mock_audit, mock_config):
-        from app.core.dependencies import verify_provider_token
-        from fastapi.security import HTTPAuthorizationCredentials
-        from app.core.config import ClinicConfig
+    def test_affiliation_required_raises_400(self, mock_audit, mock_auth):
+        mock_auth.return_value = ProviderAuthResult(
+            None,
+            ProviderAuthFailure.AFFILIATION_REQUIRED,
+        )
+        basic = HTTPBasicCredentials(username="doctor@example.com", password="secret")
+        db = AsyncMock()
 
-        mock_config.return_value = ClinicConfig(api_key="correct-key")
-        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="correct-key")
+        with self.assertRaises(HTTPException) as cm:
+            run(
+                get_provider_context(
+                    credentials=None,
+                    basic_credentials=basic,
+                    hospital_id=None,
+                    db=db,
+                )
+            )
+        self.assertEqual(cm.exception.status_code, 400)
+        self.assertEqual(mock_audit.call_args.kwargs["status"], "AFFILIATION_REQUIRED")
 
-        result = run(verify_provider_token(credentials=creds))
+    @patch("app.core.dependencies.authenticate_provider_session")
+    @patch("app.core.dependencies.append_audit_log")
+    def test_valid_bearer_session_returns_provider_context(self, mock_audit, mock_auth):
+        context = _sample_provider_context()
+        mock_auth.return_value = ProviderAuthResult(context)
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
+        db = AsyncMock()
 
-        self.assertIsNone(result)
+        result = run(
+            get_provider_context(
+                credentials=creds,
+                basic_credentials=None,
+                hospital_id=context.hospital.hospital_id,
+                db=db,
+            )
+        )
+
+        self.assertEqual(result, context)
         mock_audit.assert_not_called()
 
-    @patch("app.core.dependencies.get_clinic_config")
+    @patch("app.core.dependencies.authenticate_provider_password")
     @patch("app.core.dependencies.append_audit_log")
-    def test_uses_constant_time_comparison_not_eq(self, mock_audit, mock_config):
-        # Regression guard: ensure hmac.compare_digest is actually used,
-        # not a plain `==`, by patching it and asserting it was called
-        # with exactly the supplied and expected values.
-        from app.core.config import ClinicConfig
-        import app.core.dependencies as deps_module
+    def test_valid_basic_auth_returns_provider_context(self, mock_auth, mock_audit):
+        context = _sample_provider_context()
+        mock_auth.return_value = ProviderAuthResult(context)
+        basic = HTTPBasicCredentials(username="doctor@example.com", password="secret")
+        db = AsyncMock()
 
-        mock_config.return_value = ClinicConfig(api_key="correct-key")
-        creds = deps_module.HTTPAuthorizationCredentials(scheme="Bearer", credentials="correct-key")
+        result = run(
+            get_provider_context(
+                credentials=None,
+                basic_credentials=basic,
+                hospital_id=context.hospital.hospital_id,
+                db=db,
+            )
+        )
 
-        with patch("app.core.dependencies.hmac.compare_digest", wraps=__import__("hmac").compare_digest) as mock_cmp:
-            run(deps_module.verify_provider_token(credentials=creds))
-            mock_cmp.assert_called_once_with("correct-key", "correct-key")
+        self.assertEqual(result, context)
+        mock_auth.assert_called_once()
+        mock_audit.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -67,13 +67,14 @@ from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
 
-from app.core.dependencies import get_scoped_session, verify_provider_token
+from app.core.dependencies import get_provider_context, get_scoped_session
 from app.core.redis import issue_consent_token, resolve_consent_token, revoke_consent_token
 from app.core.supabase import get_supabase_client
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
 from app.observability.redactor import redact_payload           # F-10
 from app.services.crypto_engine import process_biometric_handshake
 from app.services.biometric_registry import enroll_biometric_binding_with_audit
+from app.models.provider_context import ProviderContext
 from app.models.schemas import (
     ClinicalRecordSchema,
     PIIVaultSchema,
@@ -164,10 +165,10 @@ async def process_handshake(payload: HandshakePayload):
 @router.post("/api/v1/enroll-biometric", tags=["auth"], status_code=status.HTTP_201_CREATED)
 async def enroll_biometric(
     payload: EnrollBiometricPayload,
-    _: None = Depends(verify_provider_token),
+    provider: ProviderContext = Depends(get_provider_context),
 ):
     """Provider-only: binds an (nfc_uid, bio_seed) pair to a patient.
-    Gated behind verify_provider_token — a patient cannot self-enroll.
+    Gated behind get_provider_context — a patient cannot self-enroll.
     """
     masked_internal_id = str(payload.masked_internal_id)
     await enroll_biometric_binding_with_audit(
@@ -181,11 +182,11 @@ async def enroll_biometric(
 @router.post("/register", response_model=RegisterResponse, tags=["sharding"])
 async def register_patient(
     payload: UnifiedPatientPayload,
-    _: None = Depends(verify_provider_token),
+    provider: ProviderContext = Depends(get_provider_context),
 ) -> RegisterResponse:
     """Register a patient: write PII to nexa_vault, clinical data to
     nexa_clinical, under a shared masked_internal_id.
-    Gated behind verify_provider_token.
+    Gated behind get_provider_context.
 
     AUDIT-CONSISTENCY FIX: ATTEMPT and SUCCESS now use
     append_audit_log_or_503 -- a registration whose audit trail can't be
@@ -196,7 +197,7 @@ async def register_patient(
     error with an unrelated 503.
     """
     await append_audit_log_or_503(
-        actor_uid="SYSTEM_INGEST",
+        actor_uid=provider.actor_uid,
         event_type="PATIENT_REGISTRATION_ATTEMPT",
         target_id="PENDING_GENERATION",
         status="STARTED",
@@ -280,7 +281,7 @@ async def register_patient(
             raise RuntimeError("Supabase insert failed during patient registration")
 
         await append_audit_log_or_503(
-            actor_uid="SYSTEM_INGEST",
+            actor_uid=provider.actor_uid,
             event_type="PATIENT_REGISTRATION_SUCCESS",
             target_id=str(masked_internal_id),
             status="SUCCESS",
@@ -290,12 +291,12 @@ async def register_patient(
 
     except HTTPException:
         await _audit_best_effort(
-            "SYSTEM_INGEST", "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
+            provider.actor_uid, "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
         )
         raise
     except Exception:
         await _audit_best_effort(
-            "SYSTEM_INGEST", "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
+            provider.actor_uid, "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
         )
         raise
 

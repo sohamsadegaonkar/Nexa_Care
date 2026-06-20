@@ -6,9 +6,9 @@ Why this file was rewritten entirely (not patched):
   1. AUTH SCHEME MISMATCH. The old version sent `X-Provider-Key` and set
      `PROVIDER_API_KEY` in os.environ. That backed app/api/auth_deps.py,
      which has been deleted. Every provider route now authenticates via
-     verify_provider_token() (app/core/dependencies.py), which reads
-     `Authorization: Bearer {CLINIC_API_KEY}` and rejects a missing
-     credential with 401 -- the old test asserted 403.
+     get_provider_context() (app/core/dependencies.py), which validates
+     credentials against provider_credential and resolves hospital
+     affiliation — not a shared facility API key.
 
   2. SESSION MODEL MISMATCH. The old version posted a `masked_internal_id`
      in the /request-consent body. That was the exact IDOR this system was
@@ -30,7 +30,7 @@ Why this file was rewritten entirely (not patched):
      a real instance to mean anything.
 
 This version fixes all four: it exercises the actual current auth model
-end-to-end (provider Bearer token -> enroll -> handshake -> session
+end-to-end (provider session token -> enroll -> handshake -> session
 Bearer token -> consent token -> redacted view), and replaces Supabase /
 Redis with tiny in-memory fakes (see FakeSupabaseClient / FakeRedisClient
 below) that implement only the exact call chains the app code issues --
@@ -44,24 +44,73 @@ import os
 import unittest
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 # Required config must exist before app.main is imported -- the FastAPI
 # lifespan calls get_*_config() at startup, and those raise ConfigError on
-# a missing var. CLINIC_API_KEY is also read fresh, per-request, by
-# verify_provider_token(), so it must hold the exact value the tests below
-# send as a Bearer token.
+# a missing var.
 os.environ.setdefault("SUPABASE_URL", "https://placeholder.supabase.co")
 os.environ.setdefault("SUPABASE_KEY", "placeholder-key")
 os.environ.setdefault("UPSTASH_REDIS_URL", "redis://localhost:6379")
 os.environ.setdefault("HANDSHAKE_PEPPER_SECRET", "test-pepper-secret")
-os.environ["CLINIC_API_KEY"] = "test-clinic-key-123"
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://test:test@localhost:5432/nexa_test",
+)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.core.dependencies import get_provider_context  # noqa: E402
 from app.main import app  # noqa: E402
+from app.models.provider import AffiliationType  # noqa: E402
+from app.models.provider_context import (  # noqa: E402
+    AffiliationContext,
+    HospitalContext,
+    ProviderContext,
+    ProviderIdentityContext,
+)
+from app.services.provider_auth_service import ProviderAuthFailure, ProviderAuthResult  # noqa: E402
 
-PROVIDER_HEADERS = {"Authorization": "Bearer test-clinic-key-123"}
+
+def _test_provider_context() -> ProviderContext:
+    return ProviderContext(
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(),
+            display_name="Dr. Integration Test",
+            medical_registration_number="MCI-99999",
+            specialty="General Medicine",
+            contact_email="integration@example.com",
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(),
+            facility_code="HOSP-TEST",
+            display_name="Integration Test Hospital",
+        ),
+        affiliation=AffiliationContext(
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            department="General Medicine",
+            roles=["registrar"],
+            is_primary=True,
+            valid_from=None,
+            valid_until=None,
+        ),
+    )
+
+
+PROVIDER_CONTEXT = _test_provider_context()
+PROVIDER_HEADERS = {
+    "Authorization": "Bearer valid-provider-session",
+    "X-Hospital-Id": str(PROVIDER_CONTEXT.hospital.hospital_id),
+}
+
+
+async def _override_provider_context() -> ProviderContext:
+    return PROVIDER_CONTEXT
+
+
+async def _mock_db_session():
+    yield AsyncMock()
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -210,14 +259,17 @@ class TestNexaCareLifecycle(unittest.TestCase):
             patch("app.core.redis.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.auth_service.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.crypto_engine.get_redis_client", return_value=cls.fake_redis),
+            patch("app.services.provider_auth_service.get_redis_client", return_value=cls.fake_redis),
         ]
         for p in cls._patches:
             p.start()
 
+        app.dependency_overrides[get_provider_context] = _override_provider_context
         cls.client = TestClient(app)
 
     @classmethod
     def tearDownClass(cls):
+        app.dependency_overrides.pop(get_provider_context, None)
         for p in cls._patches:
             p.stop()
 
@@ -231,34 +283,46 @@ class TestNexaCareLifecycle(unittest.TestCase):
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 
     def test_register_without_provider_token_is_rejected(self):
-        payload = {
-            "patient_name": "Unauthorized Attempt",
-            "phone": "5550100",
-            "aadhaar_abha_id": "0000-0000-0000",
-            "diagnoses": [],
-            "lab_results": [],
-            "prescriptions": [],
-        }
-        response = self.client.post("/register", json=payload)
-        # verify_provider_token's auto_error=False scheme + the explicit
-        # 401 in app/core/dependencies.py -- NOT 403. Asserting 403 here
-        # would be testing the old, removed X-Provider-Key scheme instead
-        # of the Bearer-token model actually in place.
-        self.assertEqual(response.status_code, 401)
+        app.dependency_overrides.pop(get_provider_context, None)
+        try:
+            payload = {
+                "patient_name": "Unauthorized Attempt",
+                "phone": "5550100",
+                "aadhaar_abha_id": "0000-0000-0000",
+                "diagnoses": [],
+                "lab_results": [],
+                "prescriptions": [],
+            }
+            with patch("app.core.dependencies.get_db_session", side_effect=_mock_db_session):
+                response = self.client.post("/register", json=payload)
+            self.assertEqual(response.status_code, 401)
+        finally:
+            app.dependency_overrides[get_provider_context] = _override_provider_context
 
     def test_register_with_wrong_provider_token_is_rejected(self):
-        payload = {
-            "patient_name": "Wrong Key Attempt",
-            "phone": "5550101",
-            "aadhaar_abha_id": "0000-0000-0001",
-            "diagnoses": [],
-            "lab_results": [],
-            "prescriptions": [],
-        }
-        response = self.client.post(
-            "/register", json=payload, headers={"Authorization": "Bearer not-the-right-key"}
-        )
-        self.assertEqual(response.status_code, 401)
+        app.dependency_overrides.pop(get_provider_context, None)
+        try:
+            payload = {
+                "patient_name": "Wrong Key Attempt",
+                "phone": "5550101",
+                "aadhaar_abha_id": "0000-0000-0001",
+                "diagnoses": [],
+                "lab_results": [],
+                "prescriptions": [],
+            }
+            with patch(
+                "app.core.dependencies.authenticate_provider_session",
+                new_callable=AsyncMock,
+                return_value=ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS),
+            ), patch("app.core.dependencies.get_db_session", side_effect=_mock_db_session):
+                response = self.client.post(
+                    "/register",
+                    json=payload,
+                    headers={"Authorization": "Bearer not-the-right-key"},
+                )
+            self.assertEqual(response.status_code, 401)
+        finally:
+            app.dependency_overrides[get_provider_context] = _override_provider_context
 
     # ── Lane B: full patient lifecycle ──────────────────────────────────
 

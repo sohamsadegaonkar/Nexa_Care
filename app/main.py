@@ -51,7 +51,7 @@ from starlette.middleware.base import BaseHTTPMiddleware     # F-14
 
 from app.api.routes import router as api_router
 from app.core.config import (
-    get_clinic_config,
+    get_database_config,
     get_handshake_config,
     get_redis_config,
     get_supabase_config,
@@ -120,7 +120,7 @@ async def lifespan(application: FastAPI):
     get_supabase_config()
     get_redis_config()
     get_handshake_config()
-    get_clinic_config()
+    get_database_config()
     yield
     # Shutdown logic (connection draining etc.) goes here when needed.
 
