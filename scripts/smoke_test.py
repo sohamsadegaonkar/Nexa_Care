@@ -150,11 +150,11 @@ def main() -> int:
     consent_token = body.get("consent_token")
     check("POST /request-consent", status == 200 and bool(consent_token), f"status={status} body={body}")
 
-    # 7. View record via consent token
+    # 7. View clinical shard via consent token
     if consent_token:
-        status, body = request("GET", "/view-record", headers={"X-Consent-Token": consent_token})
+        status, body = request("GET", "/view-record/clinical", headers={"X-Consent-Token": consent_token})
         check(
-            "GET /view-record",
+            "GET /view-record/clinical",
             status == 200 and body.get("masked_internal_id") == masked_id,
             f"status={status} body={body}",
         )

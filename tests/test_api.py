@@ -18,9 +18,9 @@ Why this file was rewritten entirely (not patched):
 
   3. RESPONSE SHAPE MISMATCH. The old version asserted
      view_data["pii"]["phone"] and view_data["clinical"]["diagnoses"].
-     GET /view-record returns a flat dict (patient_name, phone,
-     diagnoses, ...), not a nested pii/clinical envelope -- that nesting
-     belongs to GET /api/v1/record, a different route.
+     The old combined GET /view-record has since been split into
+     GET /view-record/clinical and GET /view-record/pii so the consent
+     view path never joins identity and clinical shards in one response.
 
   4. INFRASTRUCTURE MISMATCH. As a plain pytest test hitting the real
      get_supabase_client()/get_redis_client(), this could never pass in
@@ -204,8 +204,9 @@ class _FakeTableQuery:
 class FakeSupabaseClient:
     """Shared in-memory stand-in for app.core.supabase.get_supabase_client().
     One instance is reused across the whole lifecycle test so
-    register -> enroll -> handshake -> consent -> view-record all see
-    consistent state, exactly like a real Postgres connection would."""
+    register -> enroll -> handshake -> consent -> split view-record
+    endpoints all see consistent state, exactly like a real Postgres
+    connection would."""
 
     def __init__(self):
         self._store: dict[str, list[dict]] = {}
@@ -399,17 +400,45 @@ class TestNexaCareLifecycle(unittest.TestCase):
         consent_token = consent_response.json()["consent_token"]
         self.assertTrue(consent_token)
 
-        # 6. View the record via the consent token -- PII fields must come
-        # back redacted (F-10), clinical fields must not.
-        view_response = self.client.get(
-            "/view-record", headers={"X-Consent-Token": consent_token}
+        # 6. View the clinical shard via the default clinical consent
+        # token. It must not return PII fields or reassemble the shards.
+        clinical_view_response = self.client.get(
+            "/view-record/clinical", headers={"X-Consent-Token": consent_token}
         )
-        self.assertEqual(view_response.status_code, 200, view_response.text)
-        view_data = view_response.json()
-        self.assertEqual(view_data["masked_internal_id"], masked_id)
-        self.assertEqual(view_data["patient_name"], "[REDACTED]")
-        self.assertEqual(view_data["phone"], "[REDACTED]")
-        self.assertIn("Type 2 Diabetes", view_data["diagnoses"])
+        self.assertEqual(clinical_view_response.status_code, 200, clinical_view_response.text)
+        clinical_view_data = clinical_view_response.json()
+        self.assertEqual(clinical_view_data["masked_internal_id"], masked_id)
+        self.assertIn("Type 2 Diabetes", clinical_view_data["diagnoses"])
+        self.assertNotIn("patient_name", clinical_view_data)
+        self.assertNotIn("phone", clinical_view_data)
+
+        # 7. A clinical-only consent token must not authorize the PII
+        # endpoint. Under-scoped and invalid tokens intentionally share
+        # the same response shape.
+        under_scoped_pii_response = self.client.get(
+            "/view-record/pii", headers={"X-Consent-Token": consent_token}
+        )
+        self.assertEqual(under_scoped_pii_response.status_code, 403)
+
+        # 8. A full-scope token can view the PII shard, but PII fields
+        # still come back redacted (F-10), and clinical fields are absent.
+        full_consent_response = self.client.post(
+            "/request-consent",
+            json={"duration_seconds": 300, "scope": "full"},
+            headers=session_headers,
+        )
+        self.assertEqual(full_consent_response.status_code, 200, full_consent_response.text)
+        full_consent_token = full_consent_response.json()["consent_token"]
+
+        pii_view_response = self.client.get(
+            "/view-record/pii", headers={"X-Consent-Token": full_consent_token}
+        )
+        self.assertEqual(pii_view_response.status_code, 200, pii_view_response.text)
+        pii_view_data = pii_view_response.json()
+        self.assertEqual(pii_view_data["masked_internal_id"], masked_id)
+        self.assertEqual(pii_view_data["patient_name"], "[REDACTED]")
+        self.assertEqual(pii_view_data["phone"], "[REDACTED]")
+        self.assertNotIn("diagnoses", pii_view_data)
 
     # ── Negative cases for the patient lane ─────────────────────────────
 
@@ -418,7 +447,7 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
 
     def test_view_record_without_consent_token_is_rejected(self):
-        response = self.client.get("/view-record")
+        response = self.client.get("/view-record/clinical")
         self.assertEqual(response.status_code, 403)
 
 

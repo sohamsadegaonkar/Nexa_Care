@@ -178,7 +178,7 @@ class TestGetProviderContext(unittest.TestCase):
 
     @patch("app.core.dependencies.authenticate_provider_password")
     @patch("app.core.dependencies.append_audit_log")
-    def test_valid_basic_auth_returns_provider_context(self, mock_auth, mock_audit):
+    def test_valid_basic_auth_returns_provider_context(self, mock_audit, mock_auth):
         context = _sample_provider_context()
         mock_auth.return_value = ProviderAuthResult(context)
         basic = HTTPBasicCredentials(username="doctor@example.com", password="secret")
@@ -194,7 +194,14 @@ class TestGetProviderContext(unittest.TestCase):
         )
 
         self.assertEqual(result, context)
-        mock_auth.assert_called_once()
+        mock_auth.assert_awaited_once_with(
+            db,
+            basic.username,
+            basic.password,
+            context.hospital.hospital_id,
+        )
+        awaited_result = mock_auth.return_value
+        self.assertEqual(awaited_result.context, context)
         mock_audit.assert_not_called()
 
 
