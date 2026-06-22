@@ -45,3 +45,9 @@ USER nexa_user
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        poppler-utils \
+        libgl1 \
+        libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
