@@ -44,6 +44,7 @@ EXPECTED_ROUTES = {
     ("GET", "/view-record/clinical"),
     ("GET", "/view-record/pii"),
     ("POST", "/api/v1/process-document"),
+    ("POST", "/api/v2/emergency/read-card"),
     ("GET", "/health"),
     # FastAPI auto-generates these documentation routes
     ("GET", "/docs"),

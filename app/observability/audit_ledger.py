@@ -57,6 +57,9 @@ async def append_audit_log(
     event_type: str,
     target_id: str,
     status: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+    event_timestamp: str | None = None,
 ) -> bool:
     """Append one entry to the hash-chained system_audit table.
 
@@ -110,8 +113,10 @@ async def append_audit_log(
                 "event": event_type,
                 "target_id": target_id,
                 "status": status,
-                "timestamp": datetime.datetime.now(datetime.UTC).isoformat(),
+                "timestamp": event_timestamp or datetime.datetime.now(datetime.UTC).isoformat(),
             }
+            if metadata:
+                payload["metadata"] = metadata
             new_hash = _calculate_hash(payload, previous_hash)
 
             # ── Insert ────────────────────────────────────────────────────
@@ -195,17 +200,27 @@ async def append_audit_log_or_503(
     event_type: str,
     target_id: str,
     status: str,
+    *,
+    metadata: dict[str, Any] | None = None,
+    event_timestamp: str | None = None,
 ) -> None:
     """Same as append_audit_log, but raises HTTPException(503) on failure.
 
     Use this on routes where a failed audit write must abort the request
     (e.g. biometric enrollment) rather than silently proceeding.
     """
+    kwargs: dict[str, Any] = {}
+    if metadata is not None:
+        kwargs["metadata"] = metadata
+    if event_timestamp is not None:
+        kwargs["event_timestamp"] = event_timestamp
+
     success = await append_audit_log(
         actor_uid=actor_uid,
         event_type=event_type,
         target_id=target_id,
         status=status,
+        **kwargs,
     )
     if not success:
         raise HTTPException(

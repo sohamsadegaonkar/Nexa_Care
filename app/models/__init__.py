@@ -2,6 +2,7 @@
 """ORM models and provider context types for Nexa Care V2."""
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.provider import (
     AffiliationType,
     HospitalRegistry,
@@ -22,6 +23,8 @@ __all__ = [
     "Base",
     "HospitalContext",
     "HospitalRegistry",
+    "NFCCardRegistry",
+    "NFCCardStatus",
     "ProviderContext",
     "ProviderCredential",
     "ProviderHospitalAffiliation",
