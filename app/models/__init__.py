@@ -1,6 +1,6 @@
-"""Package marker for models module."""
 """ORM models and provider context types for Nexa Care V2."""
 
+# --- 1. ALL IMPORTS MUST GO HERE AT THE VERY TOP ---
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
@@ -18,20 +18,21 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 
+# --- 2. EXECUTABLE CODE/VARIABLES GO DOWN HERE AT THE BOTTOM ---
 __all__ = [
-    "AffiliationContext",
-    "AffiliationType",
-    "Base",
     "ExtractedMedicalDocument",
-    "HospitalContext",
-    "HospitalRegistry",
+    "Base",
+    "TimestampMixin",
+    "UUIDPrimaryKeyMixin",
     "NFCCardRegistry",
     "NFCCardStatus",
-    "ProviderContext",
+    "AffiliationType",
+    "HospitalRegistry",
     "ProviderCredential",
     "ProviderHospitalAffiliation",
     "ProviderIdentity",
+    "AffiliationContext",
+    "HospitalContext",
+    "ProviderContext",
     "ProviderIdentityContext",
-    "TimestampMixin",
-    "UUIDPrimaryKeyMixin",
 ]

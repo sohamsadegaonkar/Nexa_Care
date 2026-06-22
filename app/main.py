@@ -60,7 +60,6 @@ from app.core.config import (
 )
 from app.core.supabase import get_supabase_client
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
-from app.observability.redactor import redact_payload
 from app.services.sharding import split_pii_and_clinical_fields  # F-01
 from document_processor import extract_document_data
 
