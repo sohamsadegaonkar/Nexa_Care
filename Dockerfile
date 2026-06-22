@@ -13,11 +13,11 @@ WORKDIR /app
 
 # System packages required by pdf2image/PIL/image processing.
 # - poppler-utils: required by pdf2image for PDF page conversion.
-# - libgl1-mesa-glx/libglib2.0-0: common image-processing runtime libs.
+# - libgl1: common image-processing runtime libs (replaces old mesa-glx).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         poppler-utils \
-        libgl1-mesa-glx \
+        libgl1 \
         libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -45,9 +45,3 @@ USER nexa_user
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        poppler-utils \
-        libgl1 \
-        libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
