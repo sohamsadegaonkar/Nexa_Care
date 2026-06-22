@@ -1,0 +1,52 @@
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+
+# Python virtual environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local databases and runtime artifacts
+*.db
+*.sqlite
+*.sqlite3
+*.sqlite-journal
+*.log
+logs/
+tmp/
+temp/
+
+# Git and editor metadata
+.git/
+.gitignore
+.github/
+.vscode/
+.idea/
+.DS_Store
+
+# Test/development-only files
+requirements_dev.txt
+tests/
+.pytest_cache/
+
+# Large local model/cache artifacts, if present
+.cache/
+hf_cache/
+model_cache/
+*.pt
+*.pth
+*.onnx
+
+# Docker/build metadata not needed inside the image
+Dockerfile
+.dockerignore
