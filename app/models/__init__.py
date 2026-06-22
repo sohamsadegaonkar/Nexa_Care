@@ -1,6 +1,7 @@
 """Package marker for models module."""
 """ORM models and provider context types for Nexa Care V2."""
 
+from app.models.ai_models import ExtractedMedicalDocument
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.provider import (
@@ -21,6 +22,7 @@ __all__ = [
     "AffiliationContext",
     "AffiliationType",
     "Base",
+    "ExtractedMedicalDocument",
     "HospitalContext",
     "HospitalRegistry",
     "NFCCardRegistry",

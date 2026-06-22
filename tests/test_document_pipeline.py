@@ -17,6 +17,7 @@ from app.ai.pipeline import process_medical_document_background
 from app.api.v2.document_routes import DocumentUploadAcceptedResponse
 from app.core.dependencies import get_provider_context
 from app.main import app
+from app.models.ai_models import ExtractedMedicalDocument
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
     AffiliationContext,
@@ -84,11 +85,15 @@ class TestDocumentPipeline(unittest.TestCase):
         os.write(fd, b"fake medical document")
         os.close(fd)
         db = FakeDBSession()
-        mock_to_thread.return_value = {
-            "patient_name": "Jane Example",
-            "diagnoses": ["asthma"],
-            "unknown_model_key": "treat as vault",
-        }
+        mock_to_thread.return_value = ExtractedMedicalDocument(
+            patient_name="Jane Example",
+            aadhaar_abha_id="1234-5678-9012",
+            phone="9876543210",
+            diagnoses=["asthma"],
+            lab_results=[],
+            prescriptions=[],
+            unknown_model_key="treat as vault",
+        )
         mock_split.return_value = (
             {"patient_name": "Jane Example"},
             {"diagnoses": ["asthma"]},
@@ -99,7 +104,7 @@ class TestDocumentPipeline(unittest.TestCase):
 
         self.assertFalse(os.path.exists(path))
         mock_to_thread.assert_awaited_once()
-        mock_split.assert_called_once_with(mock_to_thread.return_value)
+        mock_split.assert_called_once_with(mock_to_thread.return_value.model_dump())
         self.assertFalse(db.executed)
         self.assertFalse(db.committed)
         self.assertFalse(db.rolled_back)

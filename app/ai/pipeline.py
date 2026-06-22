@@ -1,9 +1,9 @@
-"""Asynchronous medical document AI pipeline scaffolding.
+"""Asynchronous medical document AI pipeline orchestration.
 
-This module intentionally does not load PyTorch, Donut, or any other heavy ML
-model yet. It establishes the safe execution shape: synchronous inference runs
-in a worker thread, extracted fields are routed through the authoritative
-PII/clinical sharding function, and temporary files are always deleted.
+Synchronous Hugging Face / PyTorch work stays behind ``asyncio.to_thread`` so
+model loading and inference cannot block the FastAPI event loop. The pipeline
+then routes typed extraction output through the authoritative PII/clinical
+sharding function before any future persistence boundary.
 """
 
 from __future__ import annotations
@@ -12,26 +12,21 @@ import asyncio
 import json
 import logging
 import os
-from pathlib import Path
-from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.extractor import get_medical_document_extractor
+from app.models.ai_models import ExtractedMedicalDocument
 from app.services.sharding import split_pii_and_clinical_fields
 
 logger = logging.getLogger("nexa_logger")
 
 
-def _extract_medical_document_sync(file_path: str) -> dict[str, Any]:
-    """Placeholder for future synchronous ML extraction.
+def _extract_medical_document_sync(file_path: str) -> ExtractedMedicalDocument:
+    """Load/reuse the singleton extractor and process one document."""
 
-    The real Donut/PyTorch call belongs here later. Keeping it behind this
-    synchronous boundary lets ``process_medical_document_background`` run it via
-    ``asyncio.to_thread`` so model inference cannot block the FastAPI event loop.
-    """
-
-    Path(file_path).stat()
-    return {}
+    extractor = get_medical_document_extractor()
+    return extractor.extract_data(file_path)
 
 
 async def process_medical_document_background(
@@ -43,14 +38,15 @@ async def process_medical_document_background(
 
     The whole function is wrapped in ``try/finally`` so the uploaded temporary
     file is deleted even if extraction, sharding, or future persistence fails.
-    Extracted data must pass through ``split_pii_and_clinical_fields`` before
-    any database insertion to preserve Nexa Care's vault/clinical separation.
+    Extracted model output is validated as ``ExtractedMedicalDocument`` and then
+    passed through ``split_pii_and_clinical_fields`` before any database insert.
     """
 
     try:
-        extracted = await asyncio.to_thread(_extract_medical_document_sync, file_path)
+        extracted_document = await asyncio.to_thread(_extract_medical_document_sync, file_path)
+        extracted_payload = extracted_document.model_dump()
         vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(
-            extracted
+            extracted_payload
         )
 
         if unrecognized_payload:
@@ -70,7 +66,7 @@ async def process_medical_document_background(
         _ = db
 
         logger.info(json.dumps({
-            "event": "document_ai_pipeline_scaffold_completed",
+            "event": "document_ai_pipeline_completed",
             "provider_uid": provider_uid,
             "vault_field_count": len(vault_payload),
             "clinical_field_count": len(clinical_payload),
@@ -80,7 +76,7 @@ async def process_medical_document_background(
         logger.exception(json.dumps({
             "event": "document_ai_pipeline_failed",
             "provider_uid": provider_uid,
-            "exception": str(exc),
+            "exception_type": type(exc).__name__,
         }))
         raise
     finally:
@@ -101,4 +97,3 @@ async def process_medical_document_background(
                 "provider_uid": provider_uid,
                 "exception": str(exc),
             }))
-
