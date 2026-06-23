@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import (
     HTTPAuthorizationCredentials,
     HTTPBasic,
@@ -33,6 +33,7 @@ from app.core.database import get_db_session
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
+from app.services.consent_service import verify_routine_consent
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
@@ -153,3 +154,37 @@ async def get_provider_context(
         status=_audit_status_for_failure(result.failure),
     )
     raise _http_exception_for_failure(result.failure)
+
+async def require_active_consent(
+    request: Request,
+    provider: ProviderContext = Depends(get_provider_context),
+) -> ProviderContext:
+    """Require a live provider-bound routine consent token for a patient path.
+
+    The dependency reads ``X-Consent-Token`` and the ``patient_id`` path
+    parameter. It fails closed on missing values, Redis errors, expired tokens,
+    and patient/provider mismatches.
+    """
+
+    consent_token = request.headers.get("X-Consent-Token")
+    patient_id = request.path_params.get("patient_id")
+
+    if not consent_token or not patient_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Active consent token required or expired.",
+        )
+
+    is_authorized = await verify_routine_consent(
+        token=consent_token,
+        patient_id=str(patient_id),
+        provider_uid=provider.actor_uid,
+    )
+    if not is_authorized:
+        raise HTTPException(
+            status_code=403,
+            detail="Active consent token required or expired.",
+        )
+
+    return provider
+
