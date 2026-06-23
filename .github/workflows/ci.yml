@@ -43,16 +43,12 @@ jobs:
       - name: Run tests
         run: python -m pytest tests/ -v --tb=short
         env:
-          # F-11 fix: PROVIDER_API_KEY removed. It backed
-          # app/api/auth_deps.py (X-Provider-Key header), which has been
-          # deleted — every provider-gated route now authenticates
-          # exclusively via verify_provider_token()
-          # (Authorization: Bearer {CLINIC_API_KEY}). Keeping two env
-          # vars for one concept was exactly the confusion F-11 flagged;
-          # CLINIC_API_KEY is now the only facility credential anywhere
-          # in this pipeline.
+          # Provider routes authenticate via get_provider_context(), which
+          # validates credentials against provider_credential in Postgres.
+          # DATABASE_URL is required at startup even though unit tests mock
+          # the session layer — no live database is contacted in CI.
           SUPABASE_URL: "https://placeholder.supabase.co"
           SUPABASE_KEY: "placeholder-key"
           UPSTASH_REDIS_URL: "redis://localhost:6379"
           HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
-          CLINIC_API_KEY: "ci-test-clinic-key"
+          DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/nexa_ci"

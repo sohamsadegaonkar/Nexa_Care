@@ -50,8 +50,9 @@ from starlette.concurrency import run_in_threadpool          # F-02
 from starlette.middleware.base import BaseHTTPMiddleware     # F-14
 
 from app.api.routes import router as api_router
+from app.api.v2.nfc_routes import router as nfc_v2_router
 from app.core.config import (
-    get_clinic_config,
+    get_database_config,
     get_handshake_config,
     get_redis_config,
     get_supabase_config,
@@ -120,7 +121,7 @@ async def lifespan(application: FastAPI):
     get_supabase_config()
     get_redis_config()
     get_handshake_config()
-    get_clinic_config()
+    get_database_config()
     yield
     # Shutdown logic (connection draining etc.) goes here when needed.
 
@@ -133,6 +134,7 @@ app.add_middleware(ContentSizeLimitMiddleware)   # F-14/F-15 — outermost, fire
 app.add_middleware(GlobalLoggingMiddleware)
 
 app.include_router(api_router)
+app.include_router(nfc_v2_router)
 
 
 @app.get("/health", tags=["health"])

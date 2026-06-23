@@ -1,32 +1,43 @@
 """FastAPI dependencies for access control.
 
-Two distinct trust models live in this module -- do not conflate them:
+Two distinct trust models live in this module — do not conflate them:
 
 - get_scoped_session(): PATIENT-level trust. Resolves masked_internal_id
   from a biometric handshake session bound at handshake time (see
   crypto_engine.py). Proves "this caller is currently authenticated AS
   this specific patient." Never accepts the id from a URL, query string,
-  or body -- that was the IDOR this dependency exists to close.
+  or body — that was the IDOR this dependency exists to close.
 
-- verify_provider_token(): FACILITY-level trust. Proves "this caller is a
-  legitimate hospital/clinic system" via a shared bearer credential
-  (CLINIC_API_KEY) compared in constant time. NOT tied to any individual
-  patient -- a route gated only by this can act on any masked_internal_id
-  supplied in its own request body. That's by design (a facility
-  registers many patients), but it means every such route is a
-  high-value target and must audit-log every call.
+- get_provider_context(): PROVIDER-level trust. Authenticates an
+  individual clinician via ``provider_credential`` (password hash or
+  Redis-backed session token) and resolves their active
+  ``provider_hospital_affiliation`` so every gated route knows which
+  facility context the provider is operating under. Pass ``X-Hospital-Id``
+  when the provider holds multiple active affiliations.
 """
 
 from __future__ import annotations
 
-import hmac
+from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import (
+    HTTPAuthorizationCredentials,
+    HTTPBasic,
+    HTTPBasicCredentials,
+    HTTPBearer,
+)
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_clinic_config
+from app.core.database import get_db_session
+from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
+from app.services.provider_auth_service import (
+    ProviderAuthFailure,
+    authenticate_provider_password,
+    authenticate_provider_session,
+)
 
 
 async def get_scoped_session(authorization: str | None = Header(default=None)) -> str:
@@ -51,9 +62,6 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
 
     masked_internal_id = session_context.get("masked_internal_id")
     if not masked_internal_id:
-        # Catches sessions created before this fix shipped, or any future
-        # handshake path that forgets to bind an id -- fail closed rather
-        # than letting an unscoped session slip through.
         await append_audit_log(
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
@@ -66,43 +74,82 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
 
 
 _provider_bearer_scheme = HTTPBearer(auto_error=False)
+_provider_basic_scheme = HTTPBasic(auto_error=False)
 
 
-async def verify_provider_token(
+def _audit_status_for_failure(failure: ProviderAuthFailure) -> str:
+    return failure.value.upper()
+
+
+def _http_exception_for_failure(failure: ProviderAuthFailure) -> HTTPException:
+    if failure in {
+        ProviderAuthFailure.AFFILIATION_REQUIRED,
+        ProviderAuthFailure.AFFILIATION_NOT_FOUND,
+    }:
+        if failure is ProviderAuthFailure.AFFILIATION_REQUIRED:
+            detail = "Hospital context required — supply X-Hospital-Id header"
+        else:
+            detail = "No active affiliation for the requested hospital context"
+        return HTTPException(status_code=400, detail=detail)
+
+    if failure is ProviderAuthFailure.MFA_REQUIRED:
+        return HTTPException(
+            status_code=403,
+            detail="Multi-factor authentication required",
+        )
+
+    return HTTPException(status_code=401, detail="Invalid provider credentials")
+
+
+async def get_provider_context(
     credentials: HTTPAuthorizationCredentials | None = Depends(_provider_bearer_scheme),
-) -> None:
-    """Authenticates a clinic-facility caller against CLINIC_API_KEY.
+    basic_credentials: HTTPBasicCredentials | None = Depends(_provider_basic_scheme),
+    hospital_id: UUID | None = Header(default=None, alias="X-Hospital-Id"),
+    db: AsyncSession = Depends(get_db_session),
+) -> ProviderContext:
+    """Authenticate a provider and resolve their hospital operating context.
 
-    auto_error=False on the underlying HTTPBearer scheme so a missing
-    header reaches this function as None (auditable, controlled 401)
-    rather than FastAPI's own un-audited 403 short-circuit.
+    Supports two credential transports:
 
-    Uses hmac.compare_digest rather than `==` so the comparison takes
-    time independent of how many leading characters happen to match --
-    `==` on strings short-circuits at the first mismatching byte, which
-    leaks a usable timing signal to an attacker probing the key byte by
-    byte. This is a single shared facility credential, not a per-user
-    identity, so there is no individual actor to return -- callers should
-    log their own audit entries using a fixed actor_uid such as
-    "PROVIDER_FACILITY".
+    1. ``Authorization: Bearer <session_token>`` — opaque token issued after
+       password login (stored in Redis by ``issue_provider_session_token``).
+    2. ``Authorization: Basic <base64(login:password)>`` — direct credential
+       verification against ``provider_credential.password_hash``.
+
+    When a provider has multiple active affiliations, callers must supply
+    ``X-Hospital-Id`` so the dependency can select the correct facility.
     """
-    if credentials is None or not credentials.credentials:
+
+    if credentials is not None and credentials.credentials:
+        result = await authenticate_provider_session(
+            db,
+            credentials.credentials,
+            hospital_id,
+        )
+    elif basic_credentials is not None and basic_credentials.username:
+        result = await authenticate_provider_password(
+            db,
+            basic_credentials.username,
+            basic_credentials.password,
+            hospital_id,
+        )
+    else:
         await append_audit_log(
             actor_uid="PROVIDER_GUARD",
             event_type="PROVIDER_AUTH_FAILED",
-            target_id="UNKNOWN",
+            target_id=str(hospital_id) if hospital_id else "UNKNOWN",
             status="MISSING_TOKEN",
         )
         raise HTTPException(status_code=401, detail="Missing provider credentials")
 
-    expected = get_clinic_config().api_key
-    supplied = credentials.credentials
+    if result.context is not None:
+        return result.context
 
-    if not hmac.compare_digest(supplied, expected):
-        await append_audit_log(
-            actor_uid="PROVIDER_GUARD",
-            event_type="PROVIDER_AUTH_FAILED",
-            target_id="UNKNOWN",
-            status="INVALID_TOKEN",
-        )
-        raise HTTPException(status_code=401, detail="Invalid provider credentials")
+    assert result.failure is not None
+    await append_audit_log(
+        actor_uid="PROVIDER_GUARD",
+        event_type="PROVIDER_AUTH_FAILED",
+        target_id=str(hospital_id) if hospital_id else "UNKNOWN",
+        status=_audit_status_for_failure(result.failure),
+    )
+    raise _http_exception_for_failure(result.failure)
