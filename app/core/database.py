@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from functools import lru_cache
+from uuid import uuid4
 
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -24,6 +26,12 @@ def get_async_engine() -> AsyncEngine:
         config.url,
         echo=config.echo_sql,
         pool_pre_ping=True,
+        poolclass=NullPool,
+        connect_args={
+            "statement_cache_size": 0,
+            "prepared_statement_cache_size": 0,
+            "prepared_statement_name_func": lambda: f"__nexa_{uuid4().hex}__",
+        },
     )
 
 

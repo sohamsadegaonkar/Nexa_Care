@@ -18,6 +18,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
+from app.models.shards import NexaClinical, NexaEmergencySnapshot, NexaVault
 
 # --- 2. EXECUTABLE CODE/VARIABLES GO DOWN HERE AT THE BOTTOM ---
 __all__ = [
@@ -38,4 +39,7 @@ __all__ = [
     "HospitalContext",
     "ProviderContext",
     "ProviderIdentityContext",
+    "NexaEmergencySnapshot",
+    "NexaClinical",
+    "NexaVault",
 ]

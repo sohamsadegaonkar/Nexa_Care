@@ -34,7 +34,10 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 
-_PASSWORD_CONTEXT = CryptContext(schemes=["bcrypt"], deprecated="auto")
+_PASSWORD_CONTEXT = CryptContext(
+    schemes=["pbkdf2_sha256", "bcrypt"],
+    deprecated=["bcrypt"],
+)
 _PROVIDER_SESSION_PREFIX = "provider_session:"
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
 
@@ -64,7 +67,7 @@ def hash_provider_password(plain_password: str) -> str:
 
 
 def verify_provider_password(plain_password: str, password_hash: str) -> bool:
-    """Constant-time password verification against a stored bcrypt hash."""
+    """Constant-time password verification against a stored password hash."""
 
     return _PASSWORD_CONTEXT.verify(plain_password, password_hash)
 
