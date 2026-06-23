@@ -1,4 +1,4 @@
-"""Tests for the Path 2 document ingestion and AI pipeline scaffold."""
+"""Tests for the remote Document AI ingestion and confidence gate."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import tempfile
 import unittest
 import uuid
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -57,14 +57,27 @@ def sample_provider_context() -> ProviderContext:
     )
 
 
+def extracted_doc(confidence: float) -> ExtractedMedicalDocument:
+    return ExtractedMedicalDocument(
+        patient_name="Jane Example",
+        aadhaar_abha_id="1234-5678-9012",
+        phone="9876543210",
+        diagnoses=["asthma"],
+        lab_results=["CBC normal"],
+        prescriptions=["Salbutamol"],
+        extraction_confidence=confidence,
+        unknown_model_key="treat as vault",
+    )
+
+
 class FakeDBSession:
     def __init__(self) -> None:
-        self.executed = False
+        self.executions: list[tuple[object, dict]] = []
         self.committed = False
         self.rolled_back = False
 
-    async def execute(self, *_args, **_kwargs):
-        self.executed = True
+    async def execute(self, stmt, params=None):
+        self.executions.append((stmt, params or {}))
 
     async def commit(self):
         self.committed = True
@@ -74,47 +87,121 @@ class FakeDBSession:
 
 
 class TestDocumentPipeline(unittest.TestCase):
-    @patch("app.ai.pipeline.split_pii_and_clinical_fields")
-    @patch("app.ai.pipeline.asyncio.to_thread", new_callable=AsyncMock)
-    def test_pipeline_runs_extraction_in_thread_splits_and_deletes_temp_file(
-        self,
-        mock_to_thread,
-        mock_split,
-    ) -> None:
+    def _temp_file(self) -> str:
         fd, path = tempfile.mkstemp()
         os.write(fd, b"fake medical document")
         os.close(fd)
+        return path
+
+    @patch("app.ai.pipeline.append_audit_log", new_callable=AsyncMock)
+    @patch("app.ai.pipeline.split_pii_and_clinical_fields")
+    @patch("app.ai.pipeline.get_medical_document_extractor")
+    def test_high_confidence_auto_processes_and_persists_shards(
+        self,
+        mock_get_extractor,
+        mock_split,
+        mock_audit,
+    ) -> None:
+        path = self._temp_file()
         db = FakeDBSession()
-        mock_to_thread.return_value = ExtractedMedicalDocument(
-            patient_name="Jane Example",
-            aadhaar_abha_id="1234-5678-9012",
-            phone="9876543210",
-            diagnoses=["asthma"],
-            lab_results=[],
-            prescriptions=[],
-            unknown_model_key="treat as vault",
-        )
+        extractor = Mock()
+        extractor.extract_data = AsyncMock(return_value=extracted_doc(0.96))
+        mock_get_extractor.return_value = extractor
+        mock_audit.return_value = True
         mock_split.return_value = (
-            {"patient_name": "Jane Example"},
-            {"diagnoses": ["asthma"]},
+            {
+                "patient_name": "Jane Example",
+                "aadhaar_abha_id": "1234-5678-9012",
+                "phone": "9876543210",
+            },
+            {
+                "diagnoses": ["asthma"],
+                "lab_results": ["CBC normal"],
+                "prescriptions": ["Salbutamol"],
+            },
             {"unknown_model_key": "treat as vault"},
         )
 
         run(process_medical_document_background(path, "provider-123", db))
 
         self.assertFalse(os.path.exists(path))
-        mock_to_thread.assert_awaited_once()
-        mock_split.assert_called_once_with(mock_to_thread.return_value.model_dump())
-        self.assertFalse(db.executed)
-        self.assertFalse(db.committed)
+        extractor.extract_data.assert_awaited_once_with(path)
+        split_payload = mock_split.call_args.args[0]
+        self.assertNotIn("extraction_confidence", split_payload)
+        self.assertEqual(len(db.executions), 2)
+        self.assertTrue(db.committed)
         self.assertFalse(db.rolled_back)
+        audit_events = [call.kwargs["event_type"] for call in mock_audit.await_args_list]
+        self.assertEqual(audit_events, ["DOCUMENT_AUTO_PROCESS_STARTED", "DOCUMENT_AUTO_PROCESSED"])
 
-    @patch("app.ai.pipeline.asyncio.to_thread", new_callable=AsyncMock)
-    def test_pipeline_deletes_temp_file_even_when_extraction_fails(self, mock_to_thread) -> None:
-        fd, path = tempfile.mkstemp()
-        os.write(fd, b"fake medical document")
-        os.close(fd)
-        mock_to_thread.side_effect = RuntimeError("model unavailable")
+    @patch("app.ai.pipeline.append_audit_log", new_callable=AsyncMock)
+    @patch("app.ai.pipeline.get_medical_document_extractor")
+    def test_medium_confidence_goes_to_human_review_without_db_writes(
+        self,
+        mock_get_extractor,
+        mock_audit,
+    ) -> None:
+        path = self._temp_file()
+        db = FakeDBSession()
+        extractor = Mock()
+        extractor.extract_data = AsyncMock(return_value=extracted_doc(0.90))
+        mock_get_extractor.return_value = extractor
+        mock_audit.return_value = True
+
+        run(process_medical_document_background(path, "provider-123", db))
+
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(db.executions, [])
+        self.assertFalse(db.committed)
+        self.assertEqual(mock_audit.await_args.kwargs["event_type"], "DOCUMENT_NEEDS_REVIEW")
+
+    @patch("app.ai.pipeline.append_audit_log", new_callable=AsyncMock)
+    @patch("app.ai.pipeline.get_medical_document_extractor")
+    def test_low_confidence_rejects_without_db_writes(self, mock_get_extractor, mock_audit) -> None:
+        path = self._temp_file()
+        db = FakeDBSession()
+        extractor = Mock()
+        extractor.extract_data = AsyncMock(return_value=extracted_doc(0.72))
+        mock_get_extractor.return_value = extractor
+        mock_audit.return_value = True
+
+        run(process_medical_document_background(path, "provider-123", db))
+
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(db.executions, [])
+        self.assertFalse(db.committed)
+        self.assertEqual(
+            mock_audit.await_args.kwargs["event_type"],
+            "DOCUMENT_REJECTED_LOW_CONFIDENCE",
+        )
+
+    @patch("app.ai.pipeline.append_audit_log", new_callable=AsyncMock)
+    @patch("app.ai.pipeline.get_medical_document_extractor")
+    def test_auto_process_audit_failure_aborts_before_db_write(
+        self,
+        mock_get_extractor,
+        mock_audit,
+    ) -> None:
+        path = self._temp_file()
+        db = FakeDBSession()
+        extractor = Mock()
+        extractor.extract_data = AsyncMock(return_value=extracted_doc(0.96))
+        mock_get_extractor.return_value = extractor
+        mock_audit.return_value = False
+
+        with self.assertRaises(RuntimeError):
+            run(process_medical_document_background(path, "provider-123", db))
+
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(db.executions, [])
+        self.assertFalse(db.committed)
+
+    @patch("app.ai.pipeline.get_medical_document_extractor")
+    def test_pipeline_deletes_temp_file_even_when_extraction_fails(self, mock_get_extractor) -> None:
+        path = self._temp_file()
+        extractor = Mock()
+        extractor.extract_data = AsyncMock(side_effect=RuntimeError("remote unavailable"))
+        mock_get_extractor.return_value = extractor
 
         with self.assertRaises(RuntimeError):
             run(process_medical_document_background(path, "provider-123", FakeDBSession()))

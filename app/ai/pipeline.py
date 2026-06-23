@@ -1,32 +1,92 @@
-"""Asynchronous medical document AI pipeline orchestration.
+"""Asynchronous remote Document AI pipeline orchestration.
 
-Synchronous Hugging Face / PyTorch work stays behind ``asyncio.to_thread`` so
-model loading and inference cannot block the FastAPI event loop. The pipeline
-then routes typed extraction output through the authoritative PII/clinical
-sharding function before any future persistence boundary.
+The pipeline uses a hosted VLM client instead of local PyTorch/Transformers so
+it can run on small cloud instances. Extracted output must pass a confidence
+gate before any write to the primary shards.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import os
+from uuid import uuid4
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import get_medical_document_extractor
 from app.models.ai_models import ExtractedMedicalDocument
+from app.observability.audit_ledger import append_audit_log
 from app.services.sharding import split_pii_and_clinical_fields
 
 logger = logging.getLogger("nexa_logger")
 
+_AUTO_PROCESS_CONFIDENCE = 0.95
+_HUMAN_REVIEW_CONFIDENCE = 0.80
 
-def _extract_medical_document_sync(file_path: str) -> ExtractedMedicalDocument:
-    """Load/reuse the singleton extractor and process one document."""
 
-    extractor = get_medical_document_extractor()
-    return extractor.extract_data(file_path)
+async def _audit_document_event(
+    *,
+    provider_uid: str,
+    event_type: str,
+    target_id: str,
+    status: str,
+) -> bool:
+    """Write a non-PII document pipeline audit event, logging on failure."""
+
+    success = await append_audit_log(
+        actor_uid=provider_uid,
+        event_type=event_type,
+        target_id=target_id,
+        status=status,
+    )
+    if not success:
+        logger.critical(json.dumps({
+            "event": "document_pipeline_audit_failed",
+            "provider_uid": provider_uid,
+            "event_type": event_type,
+            "target_id": target_id,
+        }))
+    return success
+
+
+async def _persist_auto_processed_document(
+    *,
+    db: AsyncSession,
+    masked_internal_id: str,
+    vault_payload: dict,
+    clinical_payload: dict,
+) -> None:
+    """Persist confidence-gated extraction output into separated shards."""
+
+    await db.execute(
+        text(
+            "INSERT INTO nexa_vault "
+            "(masked_internal_id, patient_name, phone, aadhaar_abha_id) "
+            "VALUES (:masked_internal_id, :patient_name, :phone, :aadhaar_abha_id)"
+        ),
+        {
+            "masked_internal_id": masked_internal_id,
+            "patient_name": vault_payload.get("patient_name", ""),
+            "phone": vault_payload.get("phone", ""),
+            "aadhaar_abha_id": vault_payload.get("aadhaar_abha_id", ""),
+        },
+    )
+    await db.execute(
+        text(
+            "INSERT INTO nexa_clinical "
+            "(masked_internal_id, diagnoses, lab_results, prescriptions) "
+            "VALUES (:masked_internal_id, :diagnoses, :lab_results, :prescriptions)"
+        ),
+        {
+            "masked_internal_id": masked_internal_id,
+            "diagnoses": clinical_payload.get("diagnoses", []),
+            "lab_results": clinical_payload.get("lab_results", []),
+            "prescriptions": clinical_payload.get("prescriptions", []),
+        },
+    )
+    await db.commit()
 
 
 async def process_medical_document_background(
@@ -36,41 +96,96 @@ async def process_medical_document_background(
 ) -> None:
     """Process one uploaded medical document in the background.
 
-    The whole function is wrapped in ``try/finally`` so the uploaded temporary
-    file is deleted even if extraction, sharding, or future persistence fails.
-    Extracted model output is validated as ``ExtractedMedicalDocument`` and then
-    passed through ``split_pii_and_clinical_fields`` before any database insert.
+    Confidence gate:
+    - >= 0.95: split and persist to ``nexa_vault`` + ``nexa_clinical``.
+    - 0.80 to < 0.95: do not persist; audit for human review.
+    - < 0.80: reject and audit low confidence.
+
+    The temporary upload is deleted in ``finally`` regardless of outcome.
     """
 
+    document_event_id = str(uuid4())
+
     try:
-        extracted_document = await asyncio.to_thread(_extract_medical_document_sync, file_path)
-        extracted_payload = extracted_document.model_dump()
-        vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(
-            extracted_payload
+        extractor = get_medical_document_extractor()
+        extracted_document: ExtractedMedicalDocument = await extractor.extract_data(file_path)
+        confidence = extracted_document.extraction_confidence
+
+        if confidence >= _AUTO_PROCESS_CONFIDENCE:
+            extracted_payload = extracted_document.model_dump(exclude={"extraction_confidence"})
+            vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(
+                extracted_payload
+            )
+
+            if unrecognized_payload:
+                # Unknown model keys may be PII. Keep them out of clinical data.
+                vault_payload.update(unrecognized_payload)
+
+            masked_internal_id = str(uuid4())
+            audit_started = await _audit_document_event(
+                provider_uid=provider_uid,
+                event_type="DOCUMENT_AUTO_PROCESS_STARTED",
+                target_id=masked_internal_id,
+                status="STARTED",
+            )
+            if not audit_started:
+                raise RuntimeError("Audit ledger write failed before document shard persistence.")
+
+            try:
+                await _persist_auto_processed_document(
+                    db=db,
+                    masked_internal_id=masked_internal_id,
+                    vault_payload=vault_payload,
+                    clinical_payload=clinical_payload,
+                )
+            except Exception:
+                await db.rollback()
+                raise
+
+            await _audit_document_event(
+                provider_uid=provider_uid,
+                event_type="DOCUMENT_AUTO_PROCESSED",
+                target_id=masked_internal_id,
+                status="SUCCESS",
+            )
+
+            logger.info(json.dumps({
+                "event": "document_ai_pipeline_auto_processed",
+                "provider_uid": provider_uid,
+                "masked_internal_id": masked_internal_id,
+                "confidence": confidence,
+                "vault_field_count": len(vault_payload),
+                "clinical_field_count": len(clinical_payload),
+                "unrecognized_field_count": len(unrecognized_payload),
+            }))
+            return
+
+        if confidence >= _HUMAN_REVIEW_CONFIDENCE:
+            await _audit_document_event(
+                provider_uid=provider_uid,
+                event_type="DOCUMENT_NEEDS_REVIEW",
+                target_id=document_event_id,
+                status="HUMAN_REVIEW_REQUIRED",
+            )
+            logger.warning(json.dumps({
+                "event": "document_ai_pipeline_needs_review",
+                "provider_uid": provider_uid,
+                "document_event_id": document_event_id,
+                "confidence": confidence,
+            }))
+            return
+
+        await _audit_document_event(
+            provider_uid=provider_uid,
+            event_type="DOCUMENT_REJECTED_LOW_CONFIDENCE",
+            target_id=document_event_id,
+            status="REJECTED",
         )
-
-        if unrecognized_payload:
-            # Fail-safe routing: unknown model keys may be PII. The future
-            # persistence layer must write this merged payload to nexa_vault,
-            # never to nexa_clinical, unless a reviewer explicitly classifies it.
-            vault_payload.update(unrecognized_payload)
-
-        # Future persistence boundary, intentionally read-only for this scaffold:
-        #   await write_document_projection(
-        #       db=db,
-        #       provider_uid=provider_uid,
-        #       vault_payload=vault_payload,
-        #       clinical_payload=clinical_payload,
-        #   )
-        # Do not insert raw, unsplit extraction output into any database table.
-        _ = db
-
-        logger.info(json.dumps({
-            "event": "document_ai_pipeline_completed",
+        logger.warning(json.dumps({
+            "event": "document_ai_pipeline_rejected_low_confidence",
             "provider_uid": provider_uid,
-            "vault_field_count": len(vault_payload),
-            "clinical_field_count": len(clinical_payload),
-            "unrecognized_field_count": len(unrecognized_payload),
+            "document_event_id": document_event_id,
+            "confidence": confidence,
         }))
     except Exception as exc:
         logger.exception(json.dumps({

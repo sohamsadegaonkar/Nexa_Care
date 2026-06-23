@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class ExtractedMedicalDocument(BaseModel):
-    """Strict boundary between ML output and downstream shard routing.
+    """Strict boundary between remote AI output and shard persistence.
 
     Extra keys are allowed so unexpected model fields are not silently lost;
     the pipeline's sharding step can route unrecognized values to the vault by
@@ -21,3 +21,9 @@ class ExtractedMedicalDocument(BaseModel):
     diagnoses: list[str] = Field(..., description="Diagnoses or clinical impressions")
     lab_results: list[str] = Field(..., description="Lab result summaries")
     prescriptions: list[str] = Field(..., description="Medication or prescription entries")
+    extraction_confidence: float = Field(
+        ...,
+        ge=0.0,
+        le=1.0,
+        description="Remote extraction confidence score from 0.0 to 1.0",
+    )

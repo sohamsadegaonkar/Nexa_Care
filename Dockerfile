@@ -11,27 +11,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# System packages required by pdf2image/PIL/image processing.
-# - poppler-utils: required by pdf2image for PDF page conversion.
-# - libgl1: common image-processing runtime libs (replaces old mesa-glx).
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        poppler-utils \
-        libgl1 \
-        libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# No local OCR/ML system packages are installed. Document AI calls are remote.
 
 # Copy requirements first for Docker layer caching.
 COPY requirements.txt ./requirements.txt
 
-# Install CPU-only PyTorch wheels before the rest of the Python stack.
-# This prevents cloud builds from accidentally pulling GPU/CUDA artifacts.
+# Install the lightweight remote-API dependency set. Local PyTorch and
+# Transformers are intentionally excluded for 512MB free-tier deployments.
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install \
-        --extra-index-url https://download.pytorch.org/whl/cpu \
-        torch==2.11.0+cpu \
-        torchvision==0.26.0+cpu \
-        torchaudio==2.11.0+cpu \
     && python -m pip install -r requirements.txt
 
 # Run as a non-root user in production.

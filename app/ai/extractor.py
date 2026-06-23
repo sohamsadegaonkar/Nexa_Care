@@ -1,220 +1,129 @@
-"""Medical document extraction wrapper for Nexa Care.
+"""Remote medical document extraction client for Nexa Care.
 
-The extractor isolates Hugging Face / PyTorch concerns from API routes and from
-persistence. It returns a strict Pydantic model, never raw model output, so the
-rest of the platform only handles typed extraction data.
+The extractor intentionally contains no local PyTorch or Transformer imports.
+It prepares uploads for a hosted Vision-Language Model API and validates the
+remote output through ``ExtractedMedicalDocument`` before the pipeline can act
+on it.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
-import re
-from functools import lru_cache
 from pathlib import Path
-from typing import Any
 
-import torch
-from pdf2image import convert_from_path
-from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
-from transformers import pipeline
 
 from app.models.ai_models import ExtractedMedicalDocument
 
 logger = logging.getLogger("nexa_logger")
 
-_DEFAULT_MODEL_NAME = "naver-clova-ix/donut-base-finetuned-cord-v2"
-_NEXT_FIELD_LOOKAHEAD = (
-    r"(?=\s+(?:abha|aadhaar|phone|mobile|diagnosis|diagnoses|impression|"
-    r"clinical impression|lab results?|investigations?|test results?|"
-    r"prescriptions?|medications?|rx)\b|$)"
-)
-_SECTION_PATTERNS = {
-    "diagnoses": re.compile(
-        r"(?:diagnosis|diagnoses|impression|clinical impression)\s*[:\-]\s*(.+?)"
-        + _NEXT_FIELD_LOOKAHEAD,
-        re.IGNORECASE,
-    ),
-    "lab_results": re.compile(
-        r"(?:lab results?|investigations?|test results?)\s*[:\-]\s*(.+?)"
-        + _NEXT_FIELD_LOOKAHEAD,
-        re.IGNORECASE,
-    ),
-    "prescriptions": re.compile(
-        r"(?:prescriptions?|medications?|rx)\s*[:\-]\s*(.+?)" + _NEXT_FIELD_LOOKAHEAD,
-        re.IGNORECASE,
-    ),
-}
-
 
 class DocumentExtractionError(RuntimeError):
-    """Raised when a document cannot be converted or processed by the model."""
-
-
-def _split_items(value: str) -> list[str]:
-    """Split section text into compact list items without logging content."""
-
-    items = re.split(r"[,;\n\u2022]+", value)
-    return [item.strip(" .\t") for item in items if item.strip(" .\t")]
+    """Raised when remote document extraction cannot produce valid data."""
 
 
 class MedicalDocumentExtractor:
-    """Hugging Face-backed medical document extractor.
+    """HTTP-client wrapper for hosted medical document extraction.
 
-    The model is loaded on CUDA when available and otherwise on CPU. This makes
-    the same code usable in local CPU environments and future GPU deployments.
+    The current MVP uses a high-confidence mock when ``DOCUMENT_AI_API_KEY`` is
+    absent. When the key is configured, this class is the boundary where the
+    hosted VLM request/response implementation belongs. Raw document bytes and
+    extracted PII are never logged.
     """
 
-    def __init__(self, model_name: str | None = None) -> None:
-        """Load the configured image-to-text model once for this extractor."""
+    def __init__(self, api_key: str | None = None, api_url: str | None = None) -> None:
+        """Configure the remote extraction client without loading local ML."""
 
-        self.model_name = model_name or os.getenv("DOCUMENT_AI_MODEL", _DEFAULT_MODEL_NAME)
-        self.device = 0 if torch.cuda.is_available() else -1
-        self.device_label = "cuda" if self.device == 0 else "cpu"
+        self.api_key = api_key or os.getenv("DOCUMENT_AI_API_KEY")
+        self.api_url = api_url or os.getenv("DOCUMENT_AI_API_URL")
         logger.info(json.dumps({
-            "event": "medical_document_extractor_initializing",
-            "model_name": self.model_name,
-            "device": self.device_label,
+            "event": "medical_document_extractor_configured",
+            "mode": "remote_api" if self.api_key else "mock_fallback",
+            "api_url_configured": bool(self.api_url),
         }))
-        self._pipeline = pipeline(
-            task="image-to-text",
-            model=self.model_name,
-            device=self.device,
-        )
 
-    def extract_data(self, file_path: str) -> ExtractedMedicalDocument:
-        """Extract structured medical data from a PDF or image file.
+    async def extract_data(self, file_path: str) -> ExtractedMedicalDocument:
+        """Extract structured medical data using a hosted VLM API.
 
-        PDF files are converted from the first page only. Images are opened via
-        PIL. Raw text and extracted PII are never logged; failures log only
-        structured operational metadata.
+        The file is read locally only to prepare the outbound API request. If no
+        API key is configured, a deterministic two-second mock response is
+        returned for development and CI. The method logs operational metadata
+        only; it never logs file contents or extracted PII.
         """
 
+        path = Path(file_path)
         try:
-            image = self._load_first_page_image(file_path)
-            try:
-                model_output = self._pipeline(image)
-            finally:
-                image.close()
-            extracted_text = self._coerce_model_output_to_text(model_output)
-            parsed = self._parse_medical_text(extracted_text)
-            return ExtractedMedicalDocument(**parsed)
-        except UnidentifiedImageError as exc:
+            document_bytes = path.read_bytes()
+        except OSError as exc:
             logger.critical(json.dumps({
-                "event": "document_extraction_unidentified_image",
-                "file_suffix": Path(file_path).suffix.lower(),
+                "event": "document_extraction_file_read_failed",
+                "file_suffix": path.suffix.lower(),
                 "exception_type": type(exc).__name__,
             }))
-            raise DocumentExtractionError("Uploaded document is not a readable image.") from exc
-        except RuntimeError as exc:
-            if self._is_oom_error(exc):
-                logger.critical(json.dumps({
-                    "event": "document_extraction_oom",
-                    "device": self.device_label,
-                    "exception_type": type(exc).__name__,
-                }))
-                raise DocumentExtractionError("Document extraction exceeded available memory.") from exc
-            raise
+            raise DocumentExtractionError("Uploaded document could not be read.") from exc
+
+        try:
+            if not self.api_key:
+                await asyncio.sleep(2)
+                return self._mock_extraction_result()
+
+            payload = await self._call_remote_vlm_api(
+                document_bytes=document_bytes,
+                file_suffix=path.suffix.lower(),
+            )
+            return ExtractedMedicalDocument.model_validate(payload)
         except ValidationError as exc:
             logger.critical(json.dumps({
                 "event": "document_extraction_validation_failed",
                 "error_count": len(exc.errors()),
             }))
             raise DocumentExtractionError("Extracted document data failed validation.") from exc
+        finally:
+            # Explicitly release the buffer before the pipeline cleanup removes
+            # the temp file. No document bytes are logged or retained here.
+            del document_bytes
 
-    def _load_first_page_image(self, file_path: str) -> Image.Image:
-        suffix = Path(file_path).suffix.lower()
-        if suffix == ".pdf":
-            pages = convert_from_path(file_path, first_page=1, last_page=1)
-            if not pages:
-                raise DocumentExtractionError("PDF did not contain a readable first page.")
-            return pages[0].convert("RGB")
+    async def _call_remote_vlm_api(
+        self,
+        *,
+        document_bytes: bytes,
+        file_suffix: str,
+    ) -> dict[str, object]:
+        """Placeholder for the hosted VLM HTTP call.
 
-        with Image.open(file_path) as image:
-            return image.convert("RGB")
+        A future implementation can use an async HTTP client here. The method is
+        deliberately isolated so credentials and raw bytes do not leak into the
+        rest of the application.
+        """
 
-    @staticmethod
-    def _coerce_model_output_to_text(model_output: Any) -> str:
-        if isinstance(model_output, str):
-            return model_output
-        if isinstance(model_output, list):
-            chunks: list[str] = []
-            for item in model_output:
-                if isinstance(item, dict):
-                    for key in ("generated_text", "answer", "text"):
-                        value = item.get(key)
-                        if isinstance(value, str):
-                            chunks.append(value)
-                            break
-                elif isinstance(item, str):
-                    chunks.append(item)
-            return "\n".join(chunks)
-        if isinstance(model_output, dict):
-            for key in ("generated_text", "answer", "text"):
-                value = model_output.get(key)
-                if isinstance(value, str):
-                    return value
-        return str(model_output or "")
+        _ = (document_bytes, file_suffix)
+        raise DocumentExtractionError("DOCUMENT_AI_API_URL integration is not implemented yet.")
 
     @staticmethod
-    def _parse_medical_text(text: str) -> dict[str, object]:
-        normalized = text.replace("<s>", " ").replace("</s>", " ")
-        normalized = re.sub(r"<[^>]+>", " ", normalized)
-        normalized = re.sub(r"\s+", " ", normalized).strip()
+    def _mock_extraction_result() -> ExtractedMedicalDocument:
+        """Return realistic fake data for local development without a VLM key."""
 
-        patient_name = ""
-        name_match = re.search(
-            r"(?:patient\s*name|name)\s*[:\-]\s*([A-Za-z][A-Za-z .]{1,80}?)"
-            + _NEXT_FIELD_LOOKAHEAD,
-            normalized,
-            re.IGNORECASE,
+        return ExtractedMedicalDocument(
+            patient_name="Asha Raman",
+            aadhaar_abha_id="12-3456-7890-1234",
+            phone="9876543210",
+            diagnoses=["Type 2 Diabetes Mellitus", "Hypertension"],
+            lab_results=["HbA1c 7.2%", "Blood pressure 142/90 mmHg"],
+            prescriptions=["Metformin 500mg twice daily", "Telmisartan 40mg once daily"],
+            extraction_confidence=0.96,
         )
-        if name_match:
-            patient_name = name_match.group(1).strip(" .")
-
-        aadhaar_abha_id = ""
-        abha_match = re.search(
-            r"(?:abha|aadhaar|aadhaar\s*/\s*abha)\s*(?:id|number|no)?\s*[:\-]?\s*([0-9][0-9\- ]{8,24}[0-9])",
-            normalized,
-            re.IGNORECASE,
-        )
-        if abha_match:
-            aadhaar_abha_id = re.sub(r"\s+", "", abha_match.group(1).strip())
-
-        phone = ""
-        phone_match = re.search(r"(?:\+91[\-\s]?)?[6-9]\d{9}\b", normalized)
-        if phone_match:
-            phone = re.sub(r"[\s\-]", "", phone_match.group(0))
-
-        section_values: dict[str, list[str]] = {
-            "diagnoses": [],
-            "lab_results": [],
-            "prescriptions": [],
-        }
-        for field_name, pattern in _SECTION_PATTERNS.items():
-            match = pattern.search(normalized)
-            if match:
-                section_values[field_name] = _split_items(match.group(1))
-
-        return {
-            "patient_name": patient_name,
-            "aadhaar_abha_id": aadhaar_abha_id,
-            "phone": phone,
-            **section_values,
-        }
-
-    @staticmethod
-    def _is_oom_error(exc: RuntimeError) -> bool:
-        if isinstance(exc, torch.cuda.OutOfMemoryError):
-            return True
-        message = str(exc).lower()
-        return "out of memory" in message or "cuda oom" in message
 
 
-@lru_cache(maxsize=1)
+_extractor_singleton: MedicalDocumentExtractor | None = None
+
+
 def get_medical_document_extractor() -> MedicalDocumentExtractor:
-    """Return the process-wide extractor singleton, loading the model lazily."""
+    """Return a lightweight process-wide extractor client."""
 
-    return MedicalDocumentExtractor()
+    global _extractor_singleton
+    if _extractor_singleton is None:
+        _extractor_singleton = MedicalDocumentExtractor()
+    return _extractor_singleton
