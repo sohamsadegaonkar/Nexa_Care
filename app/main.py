@@ -53,6 +53,7 @@ from app.api.routes import router as api_router
 from app.api.v2.consent_routes import router as consent_v2_router
 from app.api.v2.document_routes import router as document_v2_router
 from app.api.v2.emergency_routes import router as emergency_v2_router
+from app.api.v2.fhir_routes import router as fhir_v2_router
 from app.api.v2.review_routes import router as review_v2_router
 from app.core.config import (
     get_database_config,
@@ -139,6 +140,7 @@ app.include_router(api_router)
 app.include_router(consent_v2_router)
 app.include_router(document_v2_router)
 app.include_router(emergency_v2_router)
+app.include_router(fhir_v2_router)
 app.include_router(review_v2_router)
 
 
