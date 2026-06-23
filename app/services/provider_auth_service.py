@@ -11,7 +11,7 @@ import enum
 import json
 import secrets
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
 from passlib.context import CryptContext
@@ -40,6 +40,8 @@ _PASSWORD_CONTEXT = CryptContext(
 )
 _PROVIDER_SESSION_PREFIX = "provider_session:"
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
+_MAX_FAILED_LOGIN_ATTEMPTS = 5
+_LOCKOUT_DURATION = timedelta(minutes=15)
 
 
 class ProviderAuthFailure(str, enum.Enum):
@@ -70,6 +72,23 @@ def verify_provider_password(plain_password: str, password_hash: str) -> bool:
     """Constant-time password verification against a stored password hash."""
 
     return _PASSWORD_CONTEXT.verify(plain_password, password_hash)
+
+
+async def _record_failed_login(db: AsyncSession, credential: ProviderCredential) -> None:
+    """Persist a failed password attempt before returning an auth failure."""
+
+    credential.failed_login_attempts = (credential.failed_login_attempts or 0) + 1
+    if credential.failed_login_attempts >= _MAX_FAILED_LOGIN_ATTEMPTS:
+        credential.locked_until = datetime.now(timezone.utc) + _LOCKOUT_DURATION
+    await db.commit()
+
+
+async def _record_successful_login(db: AsyncSession, credential: ProviderCredential) -> None:
+    """Clear brute-force counters after a fully successful provider login."""
+
+    credential.failed_login_attempts = 0
+    credential.locked_until = None
+    await db.commit()
 
 
 async def issue_provider_session_token(provider_id: uuid.UUID) -> str:
@@ -255,6 +274,7 @@ async def authenticate_provider_password(
     if _credential_is_locked(credential):
         return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
     if not verify_provider_password(plain_password, credential.password_hash):
+        await _record_failed_login(db, credential)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if credential.mfa_enabled:
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_REQUIRED)
@@ -270,6 +290,7 @@ async def authenticate_provider_password(
             _resolve_affiliation_failure(provider.affiliations, hospital_id),
         )
 
+    await _record_successful_login(db, credential)
     return ProviderAuthResult(build_provider_context(provider, affiliation))
 
 

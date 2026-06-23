@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,32 @@ logger = logging.getLogger("nexa_logger")
 
 _AUTO_PROCESS_CONFIDENCE = 0.95
 _HUMAN_REVIEW_CONFIDENCE = 0.80
+_REVIEW_QUEUE_ALLOWED_FIELDS = {
+    "patient_id",
+    "diagnoses",
+    "lab_results",
+    "prescriptions",
+}
+
+
+def _sanitize_review_queue_payload(extracted_document: ExtractedMedicalDocument) -> dict:
+    """Return clinical-only extraction data safe for the review queue."""
+
+    raw_payload = extracted_document.model_dump()
+    sanitized = {
+        key: value
+        for key, value in raw_payload.items()
+        if key in _REVIEW_QUEUE_ALLOWED_FIELDS
+    }
+
+    patient_id = sanitized.get("patient_id")
+    if patient_id is not None:
+        try:
+            sanitized["patient_id"] = str(UUID(str(patient_id)))
+        except (TypeError, ValueError):
+            sanitized.pop("patient_id", None)
+
+    return sanitized
 
 
 async def _audit_document_event(
@@ -172,7 +198,7 @@ async def process_medical_document_background(
                 provider_uid=provider_uid,
                 status="PENDING",
                 confidence_score=confidence,
-                extracted_data=extracted_document.model_dump(),
+                extracted_data=_sanitize_review_queue_payload(extracted_document),
             )
             db.add(review)
             try:
