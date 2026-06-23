@@ -155,6 +155,42 @@ async def get_provider_context(
     )
     raise _http_exception_for_failure(result.failure)
 
+
+async def get_current_provider(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_provider_bearer_scheme),
+    hospital_id: UUID | None = Header(default=None, alias="X-Hospital-Id"),
+    db: AsyncSession = Depends(get_db_session),
+) -> ProviderContext:
+    """Authenticate a provider using only ``Authorization: Bearer``.
+
+    This is the Phase A provider-centric dependency for API-key/session-token
+    protected routes. The bearer token is resolved to a provider, then the
+    provider credential row is checked for active and lockout state by the auth
+    service before a ``ProviderContext`` is returned.
+    """
+
+    if credentials is None or not credentials.credentials:
+        await append_audit_log(
+            actor_uid="PROVIDER_GUARD",
+            event_type="PROVIDER_AUTH_FAILED",
+            target_id=str(hospital_id) if hospital_id else "UNKNOWN",
+            status="MISSING_TOKEN",
+        )
+        raise HTTPException(status_code=401, detail="Missing provider credentials")
+
+    result = await authenticate_provider_session(db, credentials.credentials, hospital_id)
+    if result.context is not None:
+        return result.context
+
+    assert result.failure is not None
+    await append_audit_log(
+        actor_uid="PROVIDER_GUARD",
+        event_type="PROVIDER_AUTH_FAILED",
+        target_id=str(hospital_id) if hospital_id else "UNKNOWN",
+        status=_audit_status_for_failure(result.failure),
+    )
+    raise _http_exception_for_failure(result.failure)
+
 async def require_active_consent(
     request: Request,
     provider: ProviderContext = Depends(get_provider_context),

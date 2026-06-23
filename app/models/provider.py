@@ -68,14 +68,23 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "provider_identity"
 
-    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hospital_registry.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    role: Mapped[str] = mapped_column(String(64), nullable=False, default="provider")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+    display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     medical_registration_number: Mapped[str | None] = mapped_column(
         String(64),
         nullable=True,
         unique=True,
     )
     specialty: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    contact_email: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True, unique=True)
     contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -90,6 +99,9 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
     __table_args__ = (
+        Index("ix_provider_identity_provider_uid", "provider_uid"),
+        Index("ix_provider_identity_hospital_id", "hospital_id"),
+        Index("ix_provider_identity_status", "status"),
         Index("ix_provider_identity_is_active", "is_active"),
         Index("ix_provider_identity_contact_email", "contact_email"),
     )
@@ -146,6 +158,10 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "provider_credential"
 
+    provider_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    hashed_password: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mfa_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     provider_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("provider_identity.id", ondelete="CASCADE"),
@@ -168,6 +184,7 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     provider: Mapped[ProviderIdentity] = relationship(back_populates="credential")
 
     __table_args__ = (
+        Index("ix_provider_credential_provider_uid", "provider_uid"),
         Index("ix_provider_credential_login_identifier", "login_identifier"),
         Index("ix_provider_credential_is_active", "is_active"),
     )

@@ -73,3 +73,15 @@ class ProviderContext(BaseModel):
         """Stable audit-ledger actor identifier for this provider."""
 
         return str(self.provider.provider_id)
+
+    @property
+    def provider_uid(self) -> str:
+        """Phase A provider UID exposed to provider-centric routes."""
+
+        return str(self.provider.provider_id)
+
+    @property
+    def hospital_id(self) -> UUID:
+        """Hospital UUID for the authenticated provider context."""
+
+        return self.hospital.hospital_id

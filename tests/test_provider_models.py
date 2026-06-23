@@ -39,6 +39,20 @@ class TestProviderModels(unittest.TestCase):
         }
         self.assertIn("uq_provider_hospital_affiliation", unique_names)
 
+    def test_phase_a_provider_auth_columns_present(self) -> None:
+        identity_columns = ProviderIdentity.__table__.columns
+        credential_columns = ProviderCredential.__table__.columns
+
+        self.assertIn("provider_uid", identity_columns)
+        self.assertIn("hospital_id", identity_columns)
+        self.assertIn("role", identity_columns)
+        self.assertIn("status", identity_columns)
+        self.assertIn("provider_uid", credential_columns)
+        self.assertIn("hashed_password", credential_columns)
+        self.assertIn("mfa_secret", credential_columns)
+        self.assertIn("failed_login_attempts", credential_columns)
+        self.assertIn("locked_until", credential_columns)
+
     def test_uuid_primary_keys(self) -> None:
         for model in (
             HospitalRegistry,

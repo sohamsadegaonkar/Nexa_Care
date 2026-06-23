@@ -46,6 +46,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v1/process-document"),
     ("POST", "/api/v2/emergency/read-card"),
     ("POST", "/api/v2/documents/upload"),
+    ("POST", "/api/v2/auth/login"),
     ("POST", "/api/v2/consent/grant"),
     ("GET", "/api/v2/fhir/export/{patient_id}"),
     ("POST", "/api/v2/reviews/{review_id}/reject"),

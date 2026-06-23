@@ -15,6 +15,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, NamedTuple
 
 from passlib.context import CryptContext
+
+try:
+    import argon2  # noqa: F401
+    _ARGON2_AVAILABLE = True
+except Exception:
+    _ARGON2_AVAILABLE = False
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -35,8 +41,8 @@ from app.models.provider_context import (
 )
 
 _PASSWORD_CONTEXT = CryptContext(
-    schemes=["pbkdf2_sha256", "bcrypt"],
-    deprecated=["bcrypt"],
+    schemes=["argon2", "pbkdf2_sha256", "bcrypt"] if _ARGON2_AVAILABLE else ["pbkdf2_sha256", "bcrypt"],
+    deprecated=["pbkdf2_sha256", "bcrypt"] if _ARGON2_AVAILABLE else ["bcrypt"],
 )
 _PROVIDER_SESSION_PREFIX = "provider_session:"
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
@@ -149,6 +155,12 @@ async def load_credential_by_login(
     return result.scalar_one_or_none()
 
 
+def _stored_password_hash(credential: ProviderCredential) -> str:
+    """Return the active stored provider password hash across schema versions."""
+
+    return credential.hashed_password or credential.password_hash
+
+
 async def load_provider_with_affiliations(
     db: AsyncSession,
     provider_id: uuid.UUID,
@@ -162,9 +174,10 @@ async def load_provider_with_affiliations(
             ProviderIdentity.is_active.is_(True),
         )
         .options(
+            selectinload(ProviderIdentity.credential),
             selectinload(ProviderIdentity.affiliations).selectinload(
                 ProviderHospitalAffiliation.hospital
-            )
+            ),
         )
     )
     result = await db.execute(stmt)
@@ -224,10 +237,10 @@ def build_provider_context(
     return ProviderContext(
         provider=ProviderIdentityContext(
             provider_id=provider.id,
-            display_name=provider.display_name,
+            display_name=provider.display_name or provider.provider_uid or str(provider.id),
             medical_registration_number=provider.medical_registration_number,
             specialty=provider.specialty,
-            contact_email=provider.contact_email,
+            contact_email=provider.contact_email or provider.provider_uid or str(provider.id),
         ),
         hospital=HospitalContext(
             hospital_id=hospital.id,
@@ -273,7 +286,7 @@ async def authenticate_provider_password(
         return ProviderAuthResult(None, ProviderAuthFailure.PROVIDER_INACTIVE)
     if _credential_is_locked(credential):
         return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
-    if not verify_provider_password(plain_password, credential.password_hash):
+    if not verify_provider_password(plain_password, _stored_password_hash(credential)):
         await _record_failed_login(db, credential)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if credential.mfa_enabled:
@@ -282,6 +295,10 @@ async def authenticate_provider_password(
     provider = await load_provider_with_affiliations(db, credential.provider_id)
     if provider is None:
         return ProviderAuthResult(None, ProviderAuthFailure.PROVIDER_INACTIVE)
+    if provider.credential is None or not provider.credential.is_active:
+        return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
+    if _credential_is_locked(provider.credential):
+        return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
 
     affiliation = _select_affiliation(provider.affiliations, hospital_id)
     if affiliation is None:
@@ -308,6 +325,10 @@ async def authenticate_provider_session(
     provider = await load_provider_with_affiliations(db, provider_id)
     if provider is None:
         return ProviderAuthResult(None, ProviderAuthFailure.PROVIDER_INACTIVE)
+    if provider.credential is None or not provider.credential.is_active:
+        return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
+    if _credential_is_locked(provider.credential):
+        return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
 
     affiliation = _select_affiliation(provider.affiliations, hospital_id)
     if affiliation is None:
