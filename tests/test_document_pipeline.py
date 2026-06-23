@@ -18,6 +18,7 @@ from app.api.v2.document_routes import DocumentUploadAcceptedResponse
 from app.core.dependencies import get_provider_context
 from app.main import app
 from app.models.ai_models import ExtractedMedicalDocument
+from app.models.document_review import DocumentReviewQueue
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
     AffiliationContext,
@@ -73,8 +74,15 @@ def extracted_doc(confidence: float) -> ExtractedMedicalDocument:
 class FakeDBSession:
     def __init__(self) -> None:
         self.executions: list[tuple[object, dict]] = []
+        self.added: list[object] = []
+        self.refreshed: list[object] = []
         self.committed = False
         self.rolled_back = False
+
+    def add(self, obj):
+        self.added.append(obj)
+        if getattr(obj, "id", None) is None:
+            obj.id = uuid.uuid4()
 
     async def execute(self, stmt, params=None):
         self.executions.append((stmt, params or {}))
@@ -84,6 +92,11 @@ class FakeDBSession:
 
     async def rollback(self):
         self.rolled_back = True
+
+    async def refresh(self, obj):
+        self.refreshed.append(obj)
+        if getattr(obj, "id", None) is None:
+            obj.id = uuid.uuid4()
 
 
 class TestDocumentPipeline(unittest.TestCase):
@@ -136,7 +149,7 @@ class TestDocumentPipeline(unittest.TestCase):
 
     @patch("app.ai.pipeline.append_audit_log", new_callable=AsyncMock)
     @patch("app.ai.pipeline.get_medical_document_extractor")
-    def test_medium_confidence_goes_to_human_review_without_db_writes(
+    def test_medium_confidence_creates_pending_review_without_shard_writes(
         self,
         mock_get_extractor,
         mock_audit,
@@ -152,7 +165,14 @@ class TestDocumentPipeline(unittest.TestCase):
 
         self.assertFalse(os.path.exists(path))
         self.assertEqual(db.executions, [])
-        self.assertFalse(db.committed)
+        self.assertEqual(len(db.added), 1)
+        review = db.added[0]
+        self.assertIsInstance(review, DocumentReviewQueue)
+        self.assertEqual(review.provider_uid, "provider-123")
+        self.assertEqual(review.status, "PENDING")
+        self.assertEqual(review.confidence_score, 0.90)
+        self.assertEqual(review.extracted_data["patient_name"], "Jane Example")
+        self.assertTrue(db.committed)
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "DOCUMENT_NEEDS_REVIEW")
 
     @patch("app.ai.pipeline.append_audit_log", new_callable=AsyncMock)

@@ -47,6 +47,9 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/emergency/read-card"),
     ("POST", "/api/v2/documents/upload"),
     ("POST", "/api/v2/consent/grant"),
+    ("POST", "/api/v2/reviews/{review_id}/reject"),
+    ("POST", "/api/v2/reviews/{review_id}/approve"),
+    ("GET", "/api/v2/reviews/pending"),
     ("GET", "/health"),
     # FastAPI auto-generates these documentation routes
     ("GET", "/docs"),

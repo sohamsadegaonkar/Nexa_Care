@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import get_medical_document_extractor
 from app.models.ai_models import ExtractedMedicalDocument
+from app.models.document_review import DocumentReviewQueue
 from app.observability.audit_ledger import append_audit_log
 from app.services.sharding import split_pii_and_clinical_fields
 
@@ -57,8 +58,13 @@ async def _persist_auto_processed_document(
     masked_internal_id: str,
     vault_payload: dict,
     clinical_payload: dict,
+    commit: bool = True,
 ) -> None:
-    """Persist confidence-gated extraction output into separated shards."""
+    """Persist confidence-gated extraction output into separated shards.
+
+    ``commit=False`` lets review approval persist shard rows and queue status
+    in a single transaction.
+    """
 
     await db.execute(
         text(
@@ -86,7 +92,8 @@ async def _persist_auto_processed_document(
             "prescriptions": clinical_payload.get("prescriptions", []),
         },
     )
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def process_medical_document_background(
@@ -161,16 +168,30 @@ async def process_medical_document_background(
             return
 
         if confidence >= _HUMAN_REVIEW_CONFIDENCE:
+            review = DocumentReviewQueue(
+                provider_uid=provider_uid,
+                status="PENDING",
+                confidence_score=confidence,
+                extracted_data=extracted_document.model_dump(),
+            )
+            db.add(review)
+            try:
+                await db.commit()
+                await db.refresh(review)
+            except Exception:
+                await db.rollback()
+                raise
+
             await _audit_document_event(
                 provider_uid=provider_uid,
                 event_type="DOCUMENT_NEEDS_REVIEW",
-                target_id=document_event_id,
+                target_id=str(review.id),
                 status="HUMAN_REVIEW_REQUIRED",
             )
             logger.warning(json.dumps({
                 "event": "document_ai_pipeline_needs_review",
                 "provider_uid": provider_uid,
-                "document_event_id": document_event_id,
+                "review_id": str(review.id),
                 "confidence": confidence,
             }))
             return

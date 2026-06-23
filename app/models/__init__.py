@@ -3,6 +3,7 @@
 # --- 1. ALL IMPORTS MUST GO HERE AT THE VERY TOP ---
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.provider import (
     AffiliationType,
@@ -21,6 +22,8 @@ from app.models.provider_context import (
 # --- 2. EXECUTABLE CODE/VARIABLES GO DOWN HERE AT THE BOTTOM ---
 __all__ = [
     "ExtractedMedicalDocument",
+    "DocumentReviewQueue",
+    "DocumentReviewStatus",
     "Base",
     "TimestampMixin",
     "UUIDPrimaryKeyMixin",
