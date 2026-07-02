@@ -215,12 +215,14 @@ class TestReviewRoutes(unittest.TestCase):
     def test_approve_owned_pending_review_writes_shards_and_marks_approved(self, mock_split, mock_audit):
         provider = sample_provider_context()
         review = make_review(provider.actor_uid)
-        db = FakeReviewDB(row=review)
+        events: list[str] = []
+        db = FakeReviewDB(row=review, events=events)
         mock_split.return_value = (
             {"patient_name": "Jane Example", "phone": "9876543210", "aadhaar_abha_id": "1234"},
             {"diagnoses": ["asthma"], "lab_results": [], "prescriptions": []},
             {},
         )
+        mock_audit.side_effect = make_audit_or_503_mock(events).side_effect
 
         result = run(approve_review(review.id, extracted_doc(0.91), provider, db))
 
@@ -230,11 +232,28 @@ class TestReviewRoutes(unittest.TestCase):
         self.assertEqual(db.commit_count, 1)  # shard inserts + status update commit atomically
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "DOCUMENT_REVIEW_APPROVED")
 
+        # AUDIT-ORDERING FIX: prove ATTEMPT is audited before any DB write,
+        # and APPROVED is audited only after the commit -- not just that
+        # both calls eventually happened.
+        self.assertEqual(
+            events,
+            [
+                "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
+                "DB_EXECUTE",  # select owned pending review
+                "DB_EXECUTE",  # vault shard insert
+                "DB_EXECUTE",  # clinical shard insert
+                "DB_COMMIT",
+                "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVED",
+            ],
+        )
+
     @patch("app.api.v2.review_routes.append_audit_log_or_503", new_callable=AsyncMock)
     def test_reject_owned_pending_review_marks_rejected(self, mock_audit):
         provider = sample_provider_context()
         review = make_review(provider.actor_uid)
-        db = FakeReviewDB(row=review)
+        events: list[str] = []
+        db = FakeReviewDB(row=review, events=events)
+        mock_audit.side_effect = make_audit_or_503_mock(events).side_effect
 
         result = run(reject_review(review.id, provider, db))
 
@@ -242,6 +261,17 @@ class TestReviewRoutes(unittest.TestCase):
         self.assertEqual(review.status, "REJECTED")
         self.assertTrue(db.committed)
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "DOCUMENT_REVIEW_REJECTED")
+
+        # ATTEMPT audited before the status-flip commit; REJECTED audited after.
+        self.assertEqual(
+            events,
+            [
+                "AUDIT_OR_503:DOCUMENT_REVIEW_REJECTION_ATTEMPT",
+                "DB_EXECUTE",  # select owned pending review
+                "DB_COMMIT",
+                "AUDIT_OR_503:DOCUMENT_REVIEW_REJECTED",
+            ],
+        )
 
     def test_another_provider_cannot_approve_pending_review(self):
         provider = sample_provider_context()
@@ -262,17 +292,52 @@ class TestReviewRoutes(unittest.TestCase):
 
         self.assertEqual(cm.exception.status_code, 404)
 
+    @patch("app.api.v2.review_routes.append_audit_log", new_callable=AsyncMock)
+    @patch("app.api.v2.review_routes.append_audit_log_or_503", new_callable=AsyncMock)
     @patch("app.api.v2.review_routes.split_pii_and_clinical_fields")
-    def test_approve_rolls_back_on_db_error(self, mock_split):
+    def test_approve_rolls_back_on_db_error(self, mock_split, mock_audit_503, mock_audit):
+        """AUDIT-ORDERING FIX regression test.
+
+        Previously this test needed no audit mocks at all, because the old
+        route only audited *after* the commit -- a simulated DB error never
+        reached that call. Now the route audits ATTEMPT before touching the
+        DB, so that call must be mocked to succeed (mock_audit_503) or this
+        test would fail on an unrelated HTTPException(503) raised by a real,
+        unconfigured Supabase client -- never reaching the intended
+        SQLAlchemyError / rollback path at all. append_audit_log is also
+        mocked because the FAILED best-effort audit in the except block
+        would otherwise hit the same real, unconfigured client.
+        """
         provider = sample_provider_context()
         review = make_review(provider.actor_uid)
-        db = FakeReviewDB(row=review, execute_error=SQLAlchemyError("db down"), execute_error_after_count=1)
+        events: list[str] = []
+        db = FakeReviewDB(
+            row=review, events=events,
+            execute_error=SQLAlchemyError("db down"), execute_error_after_count=1,
+        )
         mock_split.return_value = ({}, {}, {})
+        mock_audit_503.side_effect = make_audit_or_503_mock(events).side_effect
+        mock_audit.side_effect = make_audit_log_mock(events, success=True).side_effect
 
         with self.assertRaises(SQLAlchemyError):
             run(approve_review(review.id, extracted_doc(0.91), provider, db))
 
         self.assertTrue(db.rolled_back)
+
+        # ATTEMPT audited before the DB write that fails; FAILED audited
+        # (best-effort) after rollback, before the original error re-raises.
+        self.assertEqual(
+            events,
+            [
+                "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
+                "DB_EXECUTE",  # select owned pending review (succeeds)
+                "DB_EXECUTE",  # vault shard insert -- raises SQLAlchemyError
+                "DB_ROLLBACK",
+                "AUDIT_LOG:DOCUMENT_REVIEW_APPROVAL_FAILED",
+            ],
+        )
+        self.assertEqual(mock_audit_503.await_count, 1)  # only ATTEMPT ran; no SUCCESS call
+        self.assertEqual(mock_audit.await_count, 1)  # only the best-effort FAILED call
 
 
 if __name__ == "__main__":
