@@ -2,7 +2,14 @@
 """Smoke test for Nexa Care, meant to run against a live staging instance.
 
 Usage:
-    BASE_URL=https://staging.example.com CLINIC_API_KEY=... python3 scripts/smoke_test.py
+    BASE_URL=https://staging.example.com \\
+    PROVIDER_EMAIL=test.doctor@nexa-care.local \\
+    PROVIDER_PASSWORD=test_hospital_api_key_123 \\
+    python3 scripts/smoke_test.py
+
+    Defaults match scripts/seed_test_data.py's seeded test provider, so
+    this works out of the box against a freshly-seeded instance without
+    setting anything.
 
 Exercises the endpoint chain in dependency order: register (as an
 authenticated provider) -> enroll-biometric (binds the test device to the
@@ -13,10 +20,25 @@ pipeline as a post-deploy gate.
 
 Uses only the standard library (urllib) so it has no extra dependencies
 beyond Python itself.
+
+AUTH FIX (2026-07-03): this previously sent
+`Authorization: Bearer $CLINIC_API_KEY`, but /register and
+/enroll-biometric are gated behind get_provider_context(), which accepts
+only (1) a Bearer session token issued by password login, resolved
+against Redis, or (2) HTTP Basic credentials checked against
+provider_credential.password_hash. CLINIC_API_KEY is never read by
+get_provider_context() at all -- app/core/config.py's get_clinic_config()
+is explicitly documented as deprecated legacy config "retained only for
+scripts that have not yet migrated." Every prior run of this script sent
+a credential type the API doesn't accept for these routes, so /register
+and /enroll-biometric always 401'd. Now uses HTTP Basic auth against the
+seeded test provider, matching how get_provider_context() actually
+authenticates.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -24,8 +46,13 @@ import urllib.error
 import urllib.request
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
-CLINIC_API_KEY = os.environ.get("CLINIC_API_KEY", "")
-PROVIDER_HEADER = {"Authorization": f"Bearer {CLINIC_API_KEY}"}
+
+# Matches scripts/seed_test_data.py's TEST_PROVIDER_EMAIL / TEST_PROVIDER_PASSWORD.
+PROVIDER_EMAIL = os.environ.get("PROVIDER_EMAIL", "test.doctor@nexa-care.local")
+PROVIDER_PASSWORD = os.environ.get("PROVIDER_PASSWORD", "test_hospital_api_key_123")
+
+_basic_value = base64.b64encode(f"{PROVIDER_EMAIL}:{PROVIDER_PASSWORD}".encode("utf-8")).decode("ascii")
+PROVIDER_HEADER = {"Authorization": f"Basic {_basic_value}"}
 
 # Obviously-fake placeholder data — never run this against real patient records.
 SAMPLE_PATIENT = {
@@ -85,9 +112,13 @@ def main() -> int:
     status, body = request("GET", "/health")
     check("GET /health", status == 200 and body.get("status") == "ok", f"status={status} body={body}")
 
-    if not CLINIC_API_KEY:
-        print("\nCLINIC_API_KEY not set -- /register and /enroll-biometric will fail with 401.")
-        print("Set it to the same value as the target server's CLINIC_API_KEY env var.\n")
+    if PROVIDER_EMAIL == "test.doctor@nexa-care.local" and not os.environ.get("PROVIDER_EMAIL"):
+        print(
+            "\nPROVIDER_EMAIL/PROVIDER_PASSWORD not set -- using the default "
+            "seeded test provider credentials from scripts/seed_test_data.py. "
+            "If this instance wasn't seeded with that account, /register and "
+            "/enroll-biometric will fail with 401.\n"
+        )
 
     # 2. Register a patient -> masked_internal_id (note: response shape is
     # {"pii_vault": {...}, "clinical_record": {...}}). Provider-gated:

@@ -84,7 +84,7 @@ class FakeScalarResult:
 
 
 class FakeReviewDB:
-    def __init__(self, row=None, rows=None, execute_error=None, execute_error_after_count=None):
+    def __init__(self, row=None, rows=None, execute_error=None, execute_error_after_count=None, events=None):
         self.row = row
         self.rows = rows
         self.execute_error = execute_error
@@ -95,6 +95,10 @@ class FakeReviewDB:
         self.commit_count = 0
         self.rolled_back = False
         self.refreshed = []
+        # Shared list also appended to by the audit mocks below, so tests
+        # can assert real ordering (audit-before-write), not just that
+        # both eventually happened.
+        self.events = events if events is not None else []
 
     def add(self, obj):
         self.added.append(obj)
@@ -103,6 +107,7 @@ class FakeReviewDB:
 
     async def execute(self, stmt, params=None):
         self.executions.append((stmt, params or {}))
+        self.events.append("DB_EXECUTE")
         if self.execute_error is not None:
             if self.execute_error_after_count is None or len(self.executions) > self.execute_error_after_count:
                 raise self.execute_error
@@ -111,14 +116,37 @@ class FakeReviewDB:
     async def commit(self):
         self.committed = True
         self.commit_count += 1
+        self.events.append("DB_COMMIT")
 
     async def rollback(self):
         self.rolled_back = True
+        self.events.append("DB_ROLLBACK")
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
         if getattr(obj, "id", None) is None:
             obj.id = uuid.uuid4()
+
+
+def make_audit_or_503_mock(events):
+    """Mock for append_audit_log_or_503 that records which event_type was
+    audited, in order, into the shared `events` list -- used to prove
+    audit calls happen before/after DB writes, not just that they happen.
+    """
+    async def _mock(*, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
+        events.append(f"AUDIT_OR_503:{event_type}")
+    return AsyncMock(side_effect=_mock)
+
+
+def make_audit_log_mock(events, success=True):
+    """Mock for append_audit_log (used by _audit_best_effort on the
+    failure path) -- same event recording, returns a bool like the real
+    function instead of raising.
+    """
+    async def _mock(*, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
+        events.append(f"AUDIT_LOG:{event_type}")
+        return success
+    return AsyncMock(side_effect=_mock)
 
 
 def make_review(provider_uid: str, status: str = "PENDING") -> DocumentReviewQueue:

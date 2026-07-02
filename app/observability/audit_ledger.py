@@ -1,20 +1,32 @@
 """Immutable, hash-chained audit ledger for Nexa Care.
 
 Fix applied:
-  F-05 — append_audit_log() now catches the PostgreSQL unique_violation
-          (code 23505) that the UNIQUE(previous_hash) constraint raises
-          when two concurrent writers race on the same previous_hash.  It
-          re-reads the current latest hash and retries up to 5 times before
-          giving up.  This closes the gap between the migration comment
-          (which described this retry) and the old implementation (which had
-          none).
+  F-05 (corrected 2026-07-03) — append_audit_log() catches the
+          PostgreSQL unique_violation (code 23505) that the
+          UNIQUE(previous_hash) constraint raises when two concurrent
+          writers race on the same previous_hash.  It re-reads the
+          current latest hash and retries up to 5 times before giving up.
 
-          PostgREST surfaces the violation inside the supabase-py response
-          object as response.error with a 'code' of '23505', NOT as a
-          native psycopg2 exception — the Python process never talks to
-          Postgres directly.  The detection therefore inspects
-          str(response.error) for the code string, which is the only
-          reliable cross-version approach with supabase-py 2.x.
+          VERIFIED against the actual pinned dependency: requirements.txt
+          pins supabase==2.9.1, which requires postgrest>=0.17.0,<0.18.0.
+          Reading postgrest 0.17.2's request_builder.py directly (both
+          _async and _sync) shows execute() raises postgrest.exceptions.
+          APIError on any non-2xx PostgREST response — it does not return
+          a response object with a populated .error attribute on any code
+          path. The prior version of this fix checked
+          getattr(response, "error", None), which is unreachable dead
+          code under this dependency: a real unique_violation surfaces as
+          a raised exception, so it was always being swallowed by the
+          generic `except Exception` at the bottom of the loop and
+          returned as an unconditional permanent failure — no retry ever
+          actually ran.
+
+          The fix now catches the exception directly and duck-types on
+          its `.code` attribute (which postgrest.exceptions.APIError sets
+          from PostgREST's JSON error body) rather than importing
+          postgrest.exceptions.APIError, since postgrest is a transitive
+          dependency of supabase-py and not declared directly in
+          requirements.txt.
 """
 from __future__ import annotations
 
@@ -40,16 +52,20 @@ def _calculate_hash(payload: dict, previous_hash: str) -> str:
     return hashlib.sha256(combined_buffer.encode("utf-8")).hexdigest()
 
 
-def _is_unique_violation(error: object) -> bool:
-    """Return True when the supabase-py error object represents a PostgreSQL
-    unique_violation (code 23505).
+def _is_unique_violation(exc: BaseException) -> bool:
+    """Return True when `exc` (an exception raised by .execute()) represents
+    a PostgreSQL unique_violation (code 23505) on previous_hash.
 
-    PostgREST wraps the Postgres error in a JSON body.  supabase-py 2.x
-    exposes this as a string representation of that body on the .error
-    attribute of the execute() result, so we look for the canonical code
-    string rather than relying on exception type or HTTP status alone.
+    postgrest.exceptions.APIError sets a `.code` attribute directly from
+    PostgREST's JSON error body — we duck-type on that attribute rather
+    than importing the class, since postgrest is a transitive dependency
+    of supabase-py and not declared directly in requirements.txt. Fall
+    back to a string search for robustness against other exception shapes
+    (e.g. a raw httpx error that never got wrapped).
     """
-    return "23505" in str(error)
+    if getattr(exc, "code", None) == "23505":
+        return True
+    return "23505" in str(exc)
 
 
 async def append_audit_log(
@@ -73,11 +89,12 @@ async def append_audit_log(
     """
     trace_id = trace_id_var.get()
 
+    previous_hash = "GENESIS"
+
     for attempt in range(1, _AUDIT_MAX_RETRIES + 1):
+        # ── Read latest hash ──────────────────────────────────────────────
         try:
             supabase = get_supabase_client()
-
-            # ── Read latest hash ──────────────────────────────────────────
             latest_response = (
                 supabase.table("system_audit")
                 .select("record_hash")
@@ -85,65 +102,62 @@ async def append_audit_log(
                 .limit(1)
                 .execute()
             )
-
-            if getattr(latest_response, "error", None):
-                logger.critical(json.dumps({
-                    "event": "audit_log_write_failed",
-                    "reason": "could_not_read_previous_hash",
-                    "trace_id": trace_id,
-                    "actor_uid": actor_uid,
-                    "event_type": event_type,
-                    "target_id": target_id,
-                    "attempt": attempt,
-                    "error": str(getattr(latest_response, "error", None)),
-                }))
-                return False
-
-            latest_rows = getattr(latest_response, "data", None) or []
-            previous_hash = (
-                latest_rows[0].get("record_hash")
-                if latest_rows and latest_rows[0].get("record_hash")
-                else "GENESIS"
-            )
-
-            # ── Build payload and hash ────────────────────────────────────
-            payload: Dict[str, Any] = {
+        except Exception as exc:
+            logger.critical(json.dumps({
+                "event": "audit_log_write_failed",
+                "reason": "could_not_read_previous_hash",
                 "trace_id": trace_id,
                 "actor_uid": actor_uid,
-                "event": event_type,
+                "event_type": event_type,
                 "target_id": target_id,
+                "attempt": attempt,
+                "exception": str(exc),
+            }))
+            return False
+
+        latest_rows = getattr(latest_response, "data", None) or []
+        previous_hash = (
+            latest_rows[0].get("record_hash")
+            if latest_rows and latest_rows[0].get("record_hash")
+            else "GENESIS"
+        )
+
+        # ── Build payload and hash ──────────────────────────────────────────
+        payload: Dict[str, Any] = {
+            "trace_id": trace_id,
+            "actor_uid": actor_uid,
+            "event": event_type,
+            "target_id": target_id,
+            "status": status,
+            "timestamp": event_timestamp or datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+        if metadata:
+            payload["metadata"] = metadata
+        new_hash = _calculate_hash(payload, previous_hash)
+
+        # ── Insert ────────────────────────────────────────────────────────
+        try:
+            supabase.table("system_audit").insert({
+                "trace_id": str(trace_id),
+                "actor_uid": actor_uid,
+                "event_type": event_type,
+                "target_resource_id": target_id,
                 "status": status,
-                "timestamp": event_timestamp or datetime.datetime.now(datetime.UTC).isoformat(),
-            }
-            if metadata:
-                payload["metadata"] = metadata
-            new_hash = _calculate_hash(payload, previous_hash)
+                "payload": payload,
+                "previous_hash": previous_hash,
+                "record_hash": new_hash,
+            }).execute()
 
-            # ── Insert ────────────────────────────────────────────────────
-            insert_response = (
-                supabase.table("system_audit")
-                .insert({
-                    "trace_id": str(trace_id),
-                    "actor_uid": actor_uid,
-                    "event_type": event_type,
-                    "target_resource_id": target_id,
-                    "status": status,
-                    "payload": payload,
-                    "previous_hash": previous_hash,
-                    "record_hash": new_hash,
-                })
-                .execute()
-            )
+            # execute() only returns here on a 2xx response — see module
+            # docstring. No response.error check needed; a real failure
+            # would already have raised and landed in the except below.
+            return True
 
-            insert_error = getattr(insert_response, "error", None)
-
-            if not insert_error:
-                # Success
-                return True
-
+        except Exception as exc:
             # F-05: unique_violation means another writer beat us to this
-            # previous_hash.  Re-read on the next iteration.
-            if _is_unique_violation(insert_error):
+            # previous_hash. Re-read the (now-current) latest hash and
+            # retry the insert on the next loop iteration.
+            if _is_unique_violation(exc):
                 logger.warning(json.dumps({
                     "event": "audit_log_hash_collision",
                     "reason": "unique_violation_on_previous_hash",
@@ -153,7 +167,6 @@ async def append_audit_log(
                 }))
                 if attempt < _AUDIT_MAX_RETRIES:
                     continue        # re-read latest hash and retry insert
-                # Exhausted retries — fall through to permanent failure log
                 logger.critical(json.dumps({
                     "event": "audit_log_write_failed",
                     "reason": "unique_violation_max_retries_exceeded",
@@ -165,20 +178,8 @@ async def append_audit_log(
                 }))
                 return False
 
-            # Any other insert error is a permanent failure.
-            logger.critical(json.dumps({
-                "event": "audit_log_write_failed",
-                "reason": "insert_rejected",
-                "trace_id": trace_id,
-                "actor_uid": actor_uid,
-                "event_type": event_type,
-                "target_id": target_id,
-                "attempt": attempt,
-                "error": str(insert_error),
-            }))
-            return False
-
-        except Exception as exc:
+            # Any other exception (insert rejected for a different reason,
+            # network failure, etc.) is a permanent failure — do not retry.
             logger.critical(json.dumps({
                 "event": "audit_log_write_failed",
                 "reason": "exception",
