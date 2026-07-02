@@ -16,7 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.ai.pipeline import process_medical_document_background
 from app.api.v2.review_routes import approve_review, list_pending_reviews, reject_review
 from app.models.ai_models import ExtractedMedicalDocument
-from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
+from app.models.document_review import DocumentReviewQueue
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
     AffiliationContext,
