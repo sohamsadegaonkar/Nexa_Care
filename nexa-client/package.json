@@ -1,0 +1,61 @@
+{
+  "name": "nexa-client",
+  "private": true,
+  "workspaces": [
+    "./apps/*",
+    "./packages/*"
+  ],
+  "scripts": {
+    "native": "cd apps/expo && yarn start",
+    "native:prebuild": "cd apps/expo && yarn prebuild",
+    "ios": "cd apps/expo && yarn ios",
+    "android": "cd apps/expo && yarn android",
+    "watch": "ultra -r --no-pretty --concurrency 400 watch",
+    "vercel:install": "yarn set version 3.5 && yarn install",
+    "web": "yarn build && cd apps/next && yarn dev",
+    "web:extract": "DISABLE_EXTRACTION=false yarn workspace next-app dev",
+    "web:prod": "yarn workspace next-app build",
+    "web:prod:serve": "yarn workspace next-app serve",
+    "postinstall": "yarn check-tamagui && yarn build",
+    "build": "yarn workspaces foreach --all --exclude next-app run build",
+    "upgrade:tamagui": "yarn up '*tamagui*'@latest '@tamagui/*'@latest",
+    "upgrade:tamagui:canary": "yarn up '*tamagui*'@canary '@tamagui/*'@canary",
+    "check-tamagui": "tamagui check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepare": "husky"
+  },
+  "resolutions": {
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-refresh": "^0.14.0",
+    "react-native": "0.81.5",
+    "react-native-svg": "15.12.1",
+    "react-native-web": "0.21.2",
+    "@tamagui/core": "2.0.0-rc.16",
+    "@tamagui/web": "2.0.0-rc.16",
+    "tamagui": "2.0.0-rc.16",
+    "@react-navigation/native": "7.1.28"
+  },
+  "dependencies": {
+    "@babel/runtime": "^7.24.6",
+    "@tamagui/cli": "2.0.0-rc.16",
+    "@tamagui/react-native-svg": "2.0.0-rc.16",
+    "@tamagui/react-native-web-lite": "2.0.0-rc.16",
+    "check-dependency-version-consistency": "^4.1.0",
+    "expo": "^54",
+    "husky": "^9.1.6",
+    "turbo": "^1.13.4",
+    "typescript": "~5.8.3",
+    "ultra-runner": "^3.10.5",
+    "vitest": "^2.1.1"
+  },
+  "packageManager": "yarn@4.5.0",
+  "engines": {
+    "node": "22",
+    "npm": "10.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.3"
+  }
+}
