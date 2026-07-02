@@ -18,6 +18,8 @@ Two distinct trust models live in this module — do not conflate them:
 
 from __future__ import annotations
 
+import json
+import logging
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -39,6 +41,8 @@ from app.services.provider_auth_service import (
     authenticate_provider_password,
     authenticate_provider_session,
 )
+
+logger = logging.getLogger("nexa_logger")
 
 
 async def get_scoped_session(authorization: str | None = Header(default=None)) -> str:
@@ -94,9 +98,21 @@ def _http_exception_for_failure(failure: ProviderAuthFailure) -> HTTPException:
         return HTTPException(status_code=400, detail=detail)
 
     if failure is ProviderAuthFailure.MFA_REQUIRED:
+        # MFA-DISABLED-EXPLICITLY (2026-07-03): mfa_enabled=True is a real
+        # provider_credential state with no completion path anywhere in
+        # this codebase (no /mfa/verify route exists). The old 403 here
+        # was indistinguishable from an ordinary permission denial, which
+        # silently and permanently locked out any provider whose account
+        # had MFA turned on. 501 says plainly: this is a server gap, not
+        # something the caller can fix by retrying or re-authenticating.
         return HTTPException(
-            status_code=403,
-            detail="Multi-factor authentication required",
+            status_code=501,
+            detail=(
+                "This provider account has multi-factor authentication "
+                "enabled, but MFA verification is not yet implemented. "
+                "Login cannot proceed. Contact an administrator to "
+                "disable MFA on this account."
+            ),
         )
 
     return HTTPException(status_code=401, detail="Invalid provider credentials")
@@ -153,6 +169,14 @@ async def get_provider_context(
         target_id=str(hospital_id) if hospital_id else "UNKNOWN",
         status=_audit_status_for_failure(result.failure),
     )
+    if result.failure is ProviderAuthFailure.MFA_REQUIRED:
+        # Not routine auth-failure noise -- every occurrence is a provider
+        # who cannot get past login at all until an admin disables MFA on
+        # their account. See MFA-DISABLED-EXPLICITLY note above.
+        logger.critical(json.dumps({
+            "event": "provider_auth_blocked_mfa_not_implemented",
+            "hospital_id": str(hospital_id) if hospital_id else "UNKNOWN",
+        }))
     raise _http_exception_for_failure(result.failure)
 
 
@@ -223,4 +247,3 @@ async def require_active_consent(
         )
 
     return provider
-

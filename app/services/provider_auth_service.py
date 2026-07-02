@@ -55,6 +55,16 @@ class ProviderAuthFailure(str, enum.Enum):
 
     INVALID_CREDENTIALS = "invalid_credentials"
     ACCOUNT_LOCKED = "account_locked"
+    # MFA-DISABLED-EXPLICITLY (2026-07-03): mfa_enabled=True is a real,
+    # reachable provider_credential state, but no /mfa/verify route (or
+    # any other MFA-completion path) exists anywhere in this codebase.
+    # This correctly fails closed -- a password match alone is never
+    # sufficient for an MFA-enabled account -- but until a real
+    # /mfa/verify flow ships, this is a *permanent* dead end for that
+    # account, not a step in a working flow. Callers (auth_routes.py,
+    # core/dependencies.py) surface this as an explicit 501, distinct
+    # from a routine credential failure, precisely because there is
+    # currently nothing the caller can do to get past it.
     MFA_REQUIRED = "mfa_required"
     PROVIDER_INACTIVE = "provider_inactive"
     AFFILIATION_REQUIRED = "affiliation_required"
@@ -290,6 +300,8 @@ async def authenticate_provider_password(
         await _record_failed_login(db, credential)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if credential.mfa_enabled:
+        # See ProviderAuthFailure.MFA_REQUIRED docstring: fails closed
+        # correctly, but is a permanent dead end until /mfa/verify exists.
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_REQUIRED)
 
     provider = await load_provider_with_affiliations(db, credential.provider_id)

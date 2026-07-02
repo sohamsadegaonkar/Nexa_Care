@@ -156,6 +156,35 @@ class TestGetProviderContext(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 400)
         self.assertEqual(mock_audit.call_args.kwargs["status"], "AFFILIATION_REQUIRED")
 
+    @patch("app.core.dependencies.authenticate_provider_password")
+    @patch("app.core.dependencies.append_audit_log")
+    def test_mfa_enabled_account_gets_honest_501_not_generic_403(self, mock_audit, mock_auth):
+        """MFA-DISABLED-EXPLICITLY regression test (see auth_routes.py's
+        matching test for the /login entry point). No /mfa/verify route
+        exists, so this must be a distinct 501 that says "not implemented",
+        not the old bare 403 that looked like an ordinary permission
+        denial with no indication login could never succeed.
+        """
+        mock_auth.return_value = ProviderAuthResult(
+            None,
+            ProviderAuthFailure.MFA_REQUIRED,
+        )
+        basic = HTTPBasicCredentials(username="mfa-doctor@example.com", password="correct-password")
+        db = AsyncMock()
+
+        with self.assertRaises(HTTPException) as cm:
+            run(
+                get_provider_context(
+                    credentials=None,
+                    basic_credentials=basic,
+                    hospital_id=None,
+                    db=db,
+                )
+            )
+        self.assertEqual(cm.exception.status_code, 501)
+        self.assertIn("not yet implemented", cm.exception.detail)
+        self.assertEqual(mock_audit.call_args.kwargs["status"], "MFA_REQUIRED")
+
     @patch("app.core.dependencies.authenticate_provider_session")
     @patch("app.core.dependencies.append_audit_log")
     def test_valid_bearer_session_returns_provider_context(self, mock_audit, mock_auth):
