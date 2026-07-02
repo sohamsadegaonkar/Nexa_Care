@@ -49,6 +49,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/login"),
     ("POST", "/api/v2/consent/grant"),
     ("GET", "/api/v2/fhir/export/{patient_id}"),
+    ("GET", "/api/v2/patient/{patient_id}/record"),
     ("POST", "/api/v2/reviews/{review_id}/reject"),
     ("POST", "/api/v2/reviews/{review_id}/approve"),
     ("GET", "/api/v2/reviews/pending"),
