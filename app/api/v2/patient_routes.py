@@ -18,7 +18,7 @@ from app.core.dependencies import get_current_provider
 from app.models.provider_context import ProviderContext
 from app.models.secure_record import SecureMergedRecord
 from app.models.shards import NexaClinical, NexaVault
-from app.services import consent_engine
+import app.services.consent_engine as consent_engine
 from app.services.audit import audit_read
 
 logger = logging.getLogger("nexa_logger")

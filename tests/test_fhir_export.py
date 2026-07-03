@@ -86,7 +86,7 @@ class TestFHIRExportRoute(unittest.TestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.pop(get_provider_context, None)
 
-    @patch("app.core.dependencies.verify_routine_consent", new_callable=AsyncMock)
+    @patch("app.services.consent_engine.validate", new_callable=AsyncMock)
     def test_export_without_active_consent_token_returns_403(self, mock_verify) -> None:
         response = self.client.get(f"/api/v2/fhir/export/{uuid.uuid4()}")
 

@@ -134,10 +134,10 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
 
     try:
         with (
-            patch("app.api.v2.patient_routes.routine.validate", new_callable=AsyncMock) as mock_validate,
-            patch("app.api.v2.patient_routes.routine.consume", new_callable=AsyncMock) as mock_consume,
-            patch("app.api.v2.patient_routes.audit_read") as mock_audit_read,
-        ):
+    patch("app.api.v2.patient_routes.validate_consent", new_callable=AsyncMock) as mock_validate,
+    patch("app.services.consent_engine.consume", new_callable=AsyncMock) as mock_consume,
+    patch("app.api.v2.patient_routes.audit_read") as mock_audit_read,
+    ):
             mock_validate.side_effect = validate_side_effect
             mock_consume.side_effect = consume_side_effect
             mock_audit_read.side_effect = lambda *args: AuditContext(events)

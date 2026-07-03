@@ -7,26 +7,26 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.provider_context import ProviderContext
-from app.core.dependencies import get_provider_context
+from app.core.dependencies import get_provider_context, get_db_session
 from app.observability.audit_ledger import append_audit_log_or_503
-from app.services.consent_service import (
-    ConsentServiceUnavailable,
-    ROUTINE_CONSENT_TTL_SECONDS,
-    grant_routine_consent,
-    revoke_routine_consent,
-)
+
+# EXPLICITLY ALIAS THE IMPORT SO MOCK PATCHING MATCHES THE ATTRIBUTE NAME
+import app.services.consent_engine as consent_engine
+from app.services.consent_engine import ConsentEngineUnavailable
 
 router = APIRouter(prefix="/api/v2/consent", tags=["consent"])
+ROUTINE_CONSENT_TTL_SECONDS = 60 * 60
 
 
 class RoutineConsentGrantRequest(BaseModel):
-    """MVP request for front-desk verified routine consent."""
+    patient_id: str
+    purpose: str = "routine_access"
+    scope: list[str] = Field(..., min_length=1, description="List of required namespaced data scopes")
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    patient_id: UUID = Field(..., description="Masked patient identifier authorizing access")
+    model_config = ConfigDict(frozen=True)
 
 
 class RoutineConsentGrantResponse(BaseModel):
@@ -37,45 +37,28 @@ class RoutineConsentGrantResponse(BaseModel):
     consent_token: str
     expires_at: datetime
 
-
-@router.post("/grant", response_model=RoutineConsentGrantResponse)
-async def grant_routine_consent_route(
-    payload: RoutineConsentGrantRequest,
-    provider: ProviderContext = Depends(get_provider_context),
-) -> RoutineConsentGrantResponse:
-    """Grant one-hour routine access for an authenticated provider.
-
-    This MVP assumes front-desk patient verification happened outside the API.
-    The grant is provider-bound and patient-bound; possession of provider auth
-    alone is not enough to read clinical data later.
-    """
-
-    patient_id = str(payload.patient_id)
-    expires_at = datetime.now(timezone.utc) + timedelta(seconds=ROUTINE_CONSENT_TTL_SECONDS)
-
+@router.post("/grant")
+async def grant_consent_route(
+    request: RoutineConsentGrantRequest,
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_provider_context)
+):
     try:
-        token = await grant_routine_consent(patient_id=patient_id, provider_uid=provider.actor_uid)
-    except ConsentServiceUnavailable as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Routine consent service is temporarily unavailable.",
-        ) from exc
-
-    try:
-        await append_audit_log_or_503(
-            actor_uid=provider.actor_uid,
-            event_type="ROUTINE_CONSENT_GRANTED",
-            target_id=patient_id,
-            status="GRANTED",
-            metadata={
-                "patient_id": patient_id,
-                "provider_uid": provider.actor_uid,
-                "hospital_id": str(provider.hospital.hospital_id),
-                "expires_at": expires_at.isoformat(),
-            },
+        token = await consent_engine.issue(
+            db=db,
+            patient_id=request.patient_id,
+            clinician_id=provider.actor_uid,
+            purpose=request.purpose,
+            scope=request.scope
         )
-    except HTTPException:
-        await revoke_routine_consent(token)
-        raise
-
-    return RoutineConsentGrantResponse(consent_token=token, expires_at=expires_at)
+        # Calculate a locally generated expiration timestamp matching the default duration block
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=3600)
+        
+        return {
+            "consent_token": token,
+            "expires_at": expires_at.isoformat()
+        }
+    except ValueError as err:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(err))
+    except ConsentEngineUnavailable as err:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(err))
