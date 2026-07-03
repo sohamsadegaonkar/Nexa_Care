@@ -18,7 +18,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.services.consent.routine import RoutineConsentCapability
+from app.services.consent_engine import ConsentEngine, RoutineConsentCapability
 
 
 def sample_provider_context() -> ProviderContext:

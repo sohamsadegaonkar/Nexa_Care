@@ -6,8 +6,7 @@ import asyncio
 import json
 from unittest.mock import AsyncMock, patch
 
-from app.services.consent import break_glass, routine
-
+from app.services.consent_engine import ConsentEngine, routine, break_glass
 
 def run(coro):
     return asyncio.run(coro)
