@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import unittest
 import uuid
 from datetime import datetime

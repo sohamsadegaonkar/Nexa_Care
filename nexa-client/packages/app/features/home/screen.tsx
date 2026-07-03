@@ -16,8 +16,13 @@ import { ChevronDown, ChevronUp } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { Platform } from 'react-native'
 
-export function HomeScreen({ onLinkPress }: { onLinkPress?: () => void }) {
-
+export function HomeScreen({
+  onScannerPress,
+  onEmergencyPress,
+}: {
+  onScannerPress?: () => void
+  onEmergencyPress?: () => void
+}) {
   return (
     <YStack
       flex={1}
@@ -44,22 +49,25 @@ export function HomeScreen({ onLinkPress }: { onLinkPress?: () => void }) {
           text="center"
           color="$color12"
         >
-          Welcome to Tamagui.
+          Welcome to Nexa Care.
         </H1>
         <Paragraph
           color="$color10"
           text="center"
         >
-          Here's a basic starter to show navigating from one screen to another.
-        </Paragraph>
-        <Separator />
-        <Paragraph text="center">
-          This screen uses the same code on Next.js and React Native.
+          Provider-facing scanner and emergency break-glass access.
         </Paragraph>
         <Separator />
       </YStack>
 
-      <Button onPress={onLinkPress}>Link to user</Button>
+      <YStack gap="$4" width="100%" maxW={320}>
+        <Button theme="blue" onPress={onScannerPress} disabled={!onScannerPress}>
+          NFC Scanner
+        </Button>
+        <Button theme="red" onPress={onEmergencyPress} disabled={!onEmergencyPress}>
+          Emergency Break-Glass
+        </Button>
+      </YStack>
 
       <SheetDemo />
     </YStack>

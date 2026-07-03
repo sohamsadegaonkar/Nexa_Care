@@ -8,10 +8,13 @@ export default function Screen() {
     <>
       <Stack.Screen
         options={{
-          title: 'Home',
+          title: 'Nexa Care',
         }}
       />
-      <HomeScreen onLinkPress={() => router.push('/user/nate')} />
+      <HomeScreen
+        onScannerPress={() => router.push('/scanner')}
+        onEmergencyPress={() => router.push('/emergency')}
+      />
     </>
   )
 }

@@ -2,19 +2,22 @@
 
 Credentials are verified against ``provider_credential``; successful
 authentication yields a ``ProviderContext`` with the resolved hospital
-affiliation. Biometric step-up is intentionally out of scope here.
+affiliation. MFA is implemented via TOTP (pyotp) with a pending-token
+step between password verification and final session issuance.
 """
 
 from __future__ import annotations
 
 import enum
 import json
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from importlib.util import find_spec
 from typing import Any, NamedTuple
 
+import pyotp
 from passlib.context import CryptContext
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,33 +49,38 @@ _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
 _MAX_FAILED_LOGIN_ATTEMPTS = 5
 _LOCKOUT_DURATION = timedelta(minutes=15)
 
+_MFA_PENDING_PREFIX = "mfa_pending:"
+_MFA_PENDING_TTL_SECONDS = 5 * 60  # 5 minutes
+_MFA_ISSUER_NAME = "Nexa Care"
+
+
+logger = logging.getLogger("nexa_logger")
+
 
 class ProviderAuthFailure(str, enum.Enum):
     """Machine-readable provider authentication failure causes."""
 
     INVALID_CREDENTIALS = "invalid_credentials"
     ACCOUNT_LOCKED = "account_locked"
-    # MFA-DISABLED-EXPLICITLY (2026-07-03): mfa_enabled=True is a real,
-    # reachable provider_credential state, but no /mfa/verify route (or
-    # any other MFA-completion path) exists anywhere in this codebase.
-    # This correctly fails closed -- a password match alone is never
-    # sufficient for an MFA-enabled account -- but until a real
-    # /mfa/verify flow ships, this is a *permanent* dead end for that
-    # account, not a step in a working flow. Callers (auth_routes.py,
-    # core/dependencies.py) surface this as an explicit 501, distinct
-    # from a routine credential failure, precisely because there is
-    # currently nothing the caller can do to get past it.
     MFA_REQUIRED = "mfa_required"
+    MFA_INVALID_CODE = "mfa_invalid_code"
+    MFA_NOT_CONFIGURED = "mfa_not_configured"
     PROVIDER_INACTIVE = "provider_inactive"
     AFFILIATION_REQUIRED = "affiliation_required"
     AFFILIATION_NOT_FOUND = "affiliation_not_found"
 
 
 class ProviderAuthResult(NamedTuple):
-    """Outcome of a provider authentication attempt."""
+    """Outcome of a provider authentication attempt.
+
+    If ``failure`` is ``MFA_REQUIRED``, ``mfa_pending_token`` will contain
+    a short-lived token the client must supply to the MFA verify endpoint
+    along with the current TOTP code.
+    """
 
     context: ProviderContext | None
     failure: ProviderAuthFailure | None = None
+    mfa_pending_token: str | None = None
 
 
 def hash_provider_password(plain_password: str) -> str:
@@ -102,6 +110,84 @@ async def _record_successful_login(db: AsyncSession, credential: ProviderCredent
     credential.failed_login_attempts = 0
     credential.locked_until = None
     await db.commit()
+
+
+def generate_totp_secret() -> str:
+    """Generate a new TOTP shared secret for MFA enrollment."""
+
+    return pyotp.random_base32()
+
+
+def get_totp_provisioning_uri(secret: str, login_identifier: str) -> str:
+    """Return the otpauth:// URI a provider scans into their authenticator app."""
+
+    return pyotp.totp.TOTP(secret).provisioning_uri(
+        name=login_identifier,
+        issuer_name=_MFA_ISSUER_NAME,
+    )
+
+
+def verify_totp_code(secret: str, code: str) -> bool:
+    """Verify a 6-digit TOTP code against the stored secret."""
+
+    if not secret or not code:
+        return False
+    try:
+        return pyotp.totp.TOTP(secret).verify(code, valid_window=1)
+    except Exception:
+        return False
+
+
+async def issue_mfa_pending_token(provider_id: uuid.UUID) -> str:
+    """Mint a short-lived Redis token for the MFA completion step."""
+
+    token = secrets.token_urlsafe(32)
+    payload = {
+        "provider_id": str(provider_id),
+        "authenticated": True,  # password was already verified
+    }
+    redis = get_redis_client()
+    key = f"{_MFA_PENDING_PREFIX}{token}"
+    set_result = redis.setex(key, _MFA_PENDING_TTL_SECONDS, json.dumps(payload))
+    if hasattr(set_result, "__await__"):
+        await set_result
+    return token
+
+
+async def resolve_mfa_pending_token(token: str) -> uuid.UUID | None:
+    """Load a provider_id from an MFA pending token, or None if invalid/expired."""
+
+    clean_token = token.removeprefix("Bearer ").strip()
+    if not clean_token:
+        return None
+
+    try:
+        redis = get_redis_client()
+        cached = redis.get(f"{_MFA_PENDING_PREFIX}{clean_token}")
+        if hasattr(cached, "__await__"):
+            cached = await cached
+        if not cached:
+            return None
+        if isinstance(cached, bytes):
+            cached = cached.decode("utf-8")
+        payload: dict[str, Any] = json.loads(cached)
+        if not payload.get("authenticated"):
+            return None
+        return uuid.UUID(str(payload["provider_id"]))
+    except Exception:
+        return None
+
+
+async def delete_mfa_pending_token(token: str) -> None:
+    """Burn a used MFA pending token."""
+
+    try:
+        redis = get_redis_client()
+        delete_result = redis.delete(f"{_MFA_PENDING_PREFIX}{token.removeprefix('Bearer ').strip()}")
+        if hasattr(delete_result, "__await__"):
+            await delete_result
+    except Exception:
+        pass
 
 
 async def issue_provider_session_token(provider_id: uuid.UUID) -> str:
@@ -297,9 +383,26 @@ async def authenticate_provider_password(
         await _record_failed_login(db, credential)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if credential.mfa_enabled:
-        # See ProviderAuthFailure.MFA_REQUIRED docstring: fails closed
-        # correctly, but is a permanent dead end until /mfa/verify exists.
-        return ProviderAuthResult(None, ProviderAuthFailure.MFA_REQUIRED)
+        if not credential.mfa_secret:
+            # MFA is enabled but no secret has been enrolled. This is an
+            # inconsistent credential state; fail closed rather than allow
+            # password-only access. The provider must contact an admin to
+            # either disable MFA or enroll a TOTP secret.
+            logger.critical(json.dumps({
+                "event": "provider_auth_mfa_enabled_without_secret",
+                "login_identifier": credential.login_identifier,
+            }))
+            return ProviderAuthResult(None, ProviderAuthFailure.MFA_NOT_CONFIGURED)
+
+        # Password is correct. Issue a short-lived MFA pending token and
+        # require the TOTP code to be verified via /mfa/verify before a
+        # real session token is issued.
+        mfa_token = await issue_mfa_pending_token(credential.provider_id)
+        return ProviderAuthResult(
+            None,
+            ProviderAuthFailure.MFA_REQUIRED,
+            mfa_pending_token=mfa_token,
+        )
 
     provider = await load_provider_with_affiliations(db, credential.provider_id)
     if provider is None:
@@ -346,4 +449,47 @@ async def authenticate_provider_session(
             _resolve_affiliation_failure(provider.affiliations, hospital_id),
         )
 
+    return ProviderAuthResult(build_provider_context(provider, affiliation))
+
+
+async def complete_mfa_login(
+    db: AsyncSession,
+    mfa_token: str,
+    totp_code: str,
+    hospital_id: uuid.UUID | None,
+) -> ProviderAuthResult:
+    """Complete a provider login after MFA verification.
+
+    Resolves the MFA pending token, verifies the TOTP code against the
+    provider's stored secret, and returns a full ProviderContext on
+    success. The pending token is burned regardless of outcome.
+    """
+
+    provider_id = await resolve_mfa_pending_token(mfa_token)
+    await delete_mfa_pending_token(mfa_token)
+
+    if provider_id is None:
+        return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
+
+    provider = await load_provider_with_affiliations(db, provider_id)
+    if provider is None:
+        return ProviderAuthResult(None, ProviderAuthFailure.PROVIDER_INACTIVE)
+    if provider.credential is None or not provider.credential.is_active:
+        return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
+    if _credential_is_locked(provider.credential):
+        return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
+    if not provider.credential.mfa_secret or not provider.credential.mfa_enabled:
+        return ProviderAuthResult(None, ProviderAuthFailure.MFA_NOT_CONFIGURED)
+
+    if not verify_totp_code(provider.credential.mfa_secret, totp_code):
+        return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
+
+    affiliation = _select_affiliation(provider.affiliations, hospital_id)
+    if affiliation is None:
+        return ProviderAuthResult(
+            None,
+            _resolve_affiliation_failure(provider.affiliations, hospital_id),
+        )
+
+    await _record_successful_login(db, provider.credential)
     return ProviderAuthResult(build_provider_context(provider, affiliation))

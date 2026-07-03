@@ -60,6 +60,7 @@ os.environ.setdefault(
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from app.core.database import get_db_session  # noqa: E402
 from app.core.dependencies import get_provider_context  # noqa: E402
 from app.main import app  # noqa: E402
 from app.models.provider import AffiliationType  # noqa: E402
@@ -110,7 +111,14 @@ async def _override_provider_context() -> ProviderContext:
 
 
 async def _mock_db_session():
-    yield AsyncMock()
+    db = AsyncMock()
+    # db.add is synchronous in SQLAlchemy; AsyncMock would otherwise make it
+    # a coroutine and emit a runtime warning when not awaited.
+    db.add = lambda row: None
+    db.commit = AsyncMock()
+    db.execute = AsyncMock()
+    db.rollback = AsyncMock()
+    yield db
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -232,7 +240,69 @@ class FakeRedisClient:
         self._store[name] = value
         return True
 
+    def delete(self, name):
+        self._store.pop(name, None)
+        return 1
+
+    def rpush(self, key, value):
+        self._store.setdefault(key, []).append(value)  # type: ignore[assignment]
+        return 1
+
     def ping(self):
+        return True
+
+
+class FakeAsyncConnection:
+    """In-memory async connection for the health check SELECT 1 probe."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        pass
+
+    async def execute(self, statement):
+        return None
+
+
+class FakeAsyncEngine:
+    """In-memory stand-in for get_async_engine()."""
+
+    def connect(self):
+        return FakeAsyncConnection()
+
+
+class AsyncFakeRedisClient:
+    """In-memory stand-in for the async redis client used by ConsentEngine."""
+
+    def __init__(self):
+        self._store: dict[str, str | list[str]] = {}
+
+    async def get(self, key):
+        value = self._store.get(key)
+        return value if isinstance(value, str) else None
+
+    async def set(self, name, value, ex=None):
+        self._store[name] = value
+        return True
+
+    async def setex(self, name, time, value):
+        self._store[name] = value
+        return True
+
+    async def delete(self, name):
+        self._store.pop(name, None)
+        return 1
+
+    async def rpush(self, key, value):
+        current = self._store.get(key)
+        if isinstance(current, list):
+            current.append(value)
+        else:
+            self._store[key] = [value]
+        return 1
+
+    async def ping(self):
         return True
 
 
@@ -244,6 +314,7 @@ class TestNexaCareLifecycle(unittest.TestCase):
     def setUpClass(cls):
         cls.fake_supabase = FakeSupabaseClient()
         cls.fake_redis = FakeRedisClient()
+        cls.fake_async_redis = AsyncFakeRedisClient()
 
         # Every module that does `from app.core.X import get_Y_client` holds
         # its OWN reference to that function -- patching
@@ -261,11 +332,15 @@ class TestNexaCareLifecycle(unittest.TestCase):
             patch("app.services.auth_service.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.crypto_engine.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.provider_auth_service.get_redis_client", return_value=cls.fake_redis),
+            patch("app.services.consent_engine.get_consent_redis_client", return_value=cls.fake_async_redis),
+            patch("app.main.get_redis_client", return_value=cls.fake_redis),
+            patch("app.main.get_async_engine", return_value=FakeAsyncEngine()),
         ]
         for p in cls._patches:
             p.start()
 
         app.dependency_overrides[get_provider_context] = _override_provider_context
+        app.dependency_overrides[get_db_session] = _mock_db_session
         cls.client = TestClient(app)
 
     @classmethod
@@ -279,7 +354,10 @@ class TestNexaCareLifecycle(unittest.TestCase):
     def test_health_check(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.json(), {"status": "ok"})
+        data = response.json()
+        self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["redis"], "ok")
+        self.assertEqual(data["postgres"], "ok")
 
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 

@@ -5,5 +5,10 @@ import { useRouter } from 'next/navigation'
 
 export default function Page() {
   const router = useRouter()
-  return <HomeScreen onLinkPress={() => router.push('/user/nate')} />
+  return (
+    <HomeScreen
+      onScannerPress={() => router.push('/scanner')}
+      onEmergencyPress={() => router.push('/emergency')}
+    />
+  )
 }

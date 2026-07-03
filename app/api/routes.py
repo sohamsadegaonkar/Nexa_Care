@@ -66,10 +66,13 @@ from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db_session
 from app.core.dependencies import get_provider_context, get_scoped_session
-from app.core.redis import issue_consent_token, resolve_consent_token, revoke_consent_token
 from app.core.supabase import get_supabase_client
+import app.services.consent_engine as consent_engine
+from app.services.consent_engine import ConsentEngineUnavailable
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
 from app.observability.redactor import redact_payload           # F-10
 from app.services.crypto_engine import process_biometric_handshake
@@ -85,6 +88,13 @@ from app.models.schemas import (
 logger = logging.getLogger("nexa_logger")          # F-17
 
 router = APIRouter()
+
+# V1 consent is patient self-consent: the patient authenticated by their
+# biometric handshake grants access to their own record. ConsentEngine is
+# provider-centric, so we use a synthetic self-consent actor ID to keep the
+# v1 surface on the same authority as v2.
+_V1_SELF_CONSENT_CLINICIAN_ID = "patient:self"
+_V1_SELF_CONSENT_PURPOSE = "patient_self_access"
 
 
 async def _audit_best_effort(actor_uid: str, event_type: str, target_id: str, status_: str) -> None:
@@ -401,46 +411,36 @@ async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
 async def request_consent(
     payload: ConsentRequest,
     masked_internal_id: str = Depends(get_scoped_session),
+    db: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    """Issue a time-bound, scope-bound consent token.  masked_internal_id
-    comes from the caller's handshake session, not the request body.
+    """Issue a time-bound, scope-bound self-consent token.
 
-    SHARD-SEPARATION FIX: `scope` selects which of the two split
-    view-record endpoints the resulting token can be used against. See
-    app.core.redis's module docstring for the token format.
-
-    AUDIT-CONSISTENCY FIX: this route previously had NO audit logging at
-    all. Both the attempt and the successful issuance are now hard-
-    audited via append_audit_log_or_503. If the post-issuance audit
-    write fails, the just-minted token is revoked before the 503
-    propagates, so an unauditable grant of access never remains valid.
+    Migrated to ConsentEngine (2026-07-03): the v1 patient self-consent
+    surface now uses the same authority as the v2 provider consent flow.
+    A synthetic ``patient:self`` clinician ID marks the grant as
+    patient self-consent, with ``scope`` mapped to ConsentEngine scopes.
     """
-    await append_audit_log_or_503(
-        actor_uid="CONSENT_ISSUER",
-        event_type="CONSENT_TOKEN_ISSUE_ATTEMPT",
-        target_id=masked_internal_id,
-        status=f"STARTED_SCOPE_{payload.scope.upper()}",
-    )
 
-    consent_token = issue_consent_token(
-        masked_internal_id=masked_internal_id,
-        scope=payload.scope,
-        ttl_seconds=payload.duration_seconds,
+    consent_scope = (
+        ["clinical.*", "pii.*"]
+        if payload.scope == "full"
+        else ["clinical.*"]
     )
 
     try:
-        await append_audit_log_or_503(
-            actor_uid="CONSENT_ISSUER",
-            event_type="CONSENT_TOKEN_ISSUED",
-            target_id=masked_internal_id,
-            status=f"SUCCESS_SCOPE_{payload.scope.upper()}",
+        consent_token = await consent_engine.issue(
+            db=db,
+            patient_id=masked_internal_id,
+            clinician_id=_V1_SELF_CONSENT_CLINICIAN_ID,
+            purpose=_V1_SELF_CONSENT_PURPOSE,
+            scope=consent_scope,
+            ttl_seconds=payload.duration_seconds,
         )
-    except HTTPException:
-        # The token already exists in Redis but we couldn't prove we
-        # logged its issuance. Best-effort revoke, then re-raise the
-        # original 503 regardless of whether the revoke itself succeeds.
-        revoke_consent_token(consent_token)
-        raise
+    except ConsentEngineUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Consent service is temporarily unavailable.",
+        ) from exc
 
     return {
         "consent_token": consent_token,
@@ -454,29 +454,43 @@ async def _resolve_scoped_consent(
     consent_token_query: str | None,
     required_capability: Literal["clinical", "pii"],
 ) -> str:
-    """Resolves a consent token to a masked_internal_id, enforcing that
-    the token's granted scope covers `required_capability`.
+    """Resolves a v1 self-consent token to a masked_internal_id, enforcing
+    that the token's granted scope covers `required_capability`.
 
-    Granted scope "full" covers both capabilities; granted scope
-    "clinical" covers only the "clinical" capability. A token that's
-    simply invalid/expired and a token that's valid-but-under-scoped both
-    come back as a 403 with the same message -- the caller doesn't get
-    to distinguish "wrong token" from "right token, wrong privilege" by
-    the response shape.
+    Migrated to ConsentEngine (2026-07-03): validates a ConsentEngine
+    capability issued by /request-consent. The synthetic
+    ``patient:self`` clinician ID and ``patient_self_access`` purpose are
+    used consistently for v1 self-consent.
     """
     consent_token = consent_token_header or consent_token_query
-    resolved = resolve_consent_token(consent_token) if consent_token else None
-
-    if resolved is None:
+    if not consent_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Consent token invalid or expired",
         )
 
-    masked_internal_id = resolved["masked_internal_id"]
-    granted_scope = resolved["scope"]
+    try:
+        capability = await consent_engine.validate(
+            token=consent_token,
+            patient_id=None,  # v1 self-consent discovers the patient from the token
+            clinician_id=_V1_SELF_CONSENT_CLINICIAN_ID,
+            purpose=_V1_SELF_CONSENT_PURPOSE,
+        )
+    except ConsentEngineUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Consent service is temporarily unavailable.",
+        ) from exc
 
-    if required_capability == "pii" and granted_scope != "full":
+    if capability is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consent token invalid or expired",
+        )
+
+    masked_internal_id = capability.patient_id
+    required_scope = "pii.*" if required_capability == "pii" else "clinical.*"
+    if required_scope not in capability.scope:
         await _audit_best_effort(
             "CONSENT_VIEWER", "PII_VIEW_DENIED_INSUFFICIENT_SCOPE", masked_internal_id, "FORBIDDEN"
         )

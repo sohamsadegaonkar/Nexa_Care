@@ -125,12 +125,25 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
     )
 
 
-def _matches(capability: ConsentCapability, patient_id: str, clinician_id: str, purpose: str) -> bool:
-    return (
-        capability.patient_id == patient_id
-        and capability.clinician_id == clinician_id
-        and capability.purpose == purpose
-    )
+def _matches(
+    capability: ConsentCapability,
+    patient_id: str | None,
+    clinician_id: str | None,
+    purpose: str | None,
+) -> bool:
+    """Match a capability against caller-supplied constraints.
+
+    ``None`` means "do not check this field". V2 routes always bind all
+    three fields; v1 self-consent routes bind clinician and purpose but
+    discover the patient_id from the token itself.
+    """
+    if patient_id is not None and capability.patient_id != patient_id:
+        return False
+    if clinician_id is not None and capability.clinician_id != clinician_id:
+        return False
+    if purpose is not None and capability.purpose != purpose:
+        return False
+    return True
 
 
 async def issue(
@@ -264,11 +277,16 @@ async def issue(
 async def validate(
     *,
     token: str,
-    patient_id: str,
-    clinician_id: str,
-    purpose: str,
+    patient_id: str | None = None,
+    clinician_id: str | None = None,
+    purpose: str | None = None,
 ) -> ConsentCapability | None:
-    """Validate a live capability without consuming it. Fails closed."""
+    """Validate a live capability without consuming it. Fails closed.
+
+    Any of ``patient_id``, ``clinician_id``, or ``purpose`` may be
+    ``None`` to skip that constraint. V2 routes always pass all three;
+    v1 self-consent routes discover the patient_id from the token itself.
+    """
 
     try:
         redis_client = get_consent_redis_client()

@@ -10,7 +10,12 @@ from unittest.mock import AsyncMock, patch
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 
-from app.api.v2.auth_routes import ProviderLoginRequest, provider_login
+from app.api.v2.auth_routes import (
+    ProviderLoginRequest,
+    ProviderMfaVerifyRequest,
+    provider_login,
+    provider_mfa_verify,
+)
 from app.core.dependencies import get_current_provider
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
@@ -109,6 +114,35 @@ class TestGetCurrentProvider(unittest.TestCase):
 
         self.assertEqual(cm.exception.status_code, 401)
         self.assertEqual(mock_audit.await_args.kwargs["status"], "MISSING_TOKEN")
+
+
+class TestMfaFlow(unittest.TestCase):
+    @patch("app.api.v2.auth_routes.append_audit_log", new_callable=AsyncMock)
+    @patch("app.api.v2.auth_routes.authenticate_provider_password", new_callable=AsyncMock)
+    def test_login_with_mfa_returns_pending_token(self, mock_auth, mock_audit) -> None:
+        mock_auth.return_value = ProviderAuthResult(
+            None, ProviderAuthFailure.MFA_REQUIRED, mfa_pending_token="mfa-pending-token"
+        )
+        payload = ProviderLoginRequest(login_identifier="provider@example.com", password="secret")
+
+        result = run(provider_login(payload, db=AsyncMock()))
+
+        self.assertEqual(result.mfa_token, "mfa-pending-token")
+        self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_MFA_REQUIRED")
+
+    @patch("app.api.v2.auth_routes.append_audit_log", new_callable=AsyncMock)
+    @patch("app.api.v2.auth_routes.issue_provider_session_token", new_callable=AsyncMock)
+    @patch("app.api.v2.auth_routes.complete_mfa_login", new_callable=AsyncMock)
+    def test_mfa_verify_issues_bearer_token(self, mock_complete, mock_issue, mock_audit) -> None:
+        context = sample_provider_context()
+        mock_complete.return_value = ProviderAuthResult(context)
+        mock_issue.return_value = "final-session-token"
+        payload = ProviderMfaVerifyRequest(mfa_token="mfa-pending-token", totp_code="123456")
+
+        result = run(provider_mfa_verify(payload, db=AsyncMock()))
+
+        self.assertEqual(result.access_token, "final-session-token")
+        self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_SUCCEEDED")
 
 
 if __name__ == "__main__":

@@ -47,6 +47,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse                   # F-15
 from starlette.concurrency import run_in_threadpool          # F-02
+from sqlalchemy import text
 from starlette.middleware.base import BaseHTTPMiddleware     # F-14
 
 from app.api.routes import router as api_router
@@ -55,6 +56,7 @@ from app.api.v2.consent_routes import router as consent_v2_router
 from app.api.v2.document_routes import router as document_v2_router
 from app.api.v2.emergency_routes import router as emergency_v2_router
 from app.api.v2.fhir_routes import router as fhir_v2_router
+from app.api.v2.nfc_routes import router as nfc_v2_router
 from app.api.v2.patient_routes import router as patient_v2_router
 from app.api.v2.review_routes import router as review_v2_router
 from app.core.config import (
@@ -67,6 +69,9 @@ from app.core.supabase import get_supabase_client
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
 from app.services.sharding import split_pii_and_clinical_fields  # F-01
 from document_processor import extract_document_data
+
+from app.core.database import get_async_engine
+from app.core.redis import get_redis_client
 
 load_dotenv()
 
@@ -144,13 +149,39 @@ app.include_router(consent_v2_router)
 app.include_router(document_v2_router)
 app.include_router(emergency_v2_router)
 app.include_router(fhir_v2_router)
+app.include_router(nfc_v2_router)
 app.include_router(patient_v2_router)
 app.include_router(review_v2_router)
 
 
 @app.get("/health", tags=["health"])
 async def health_check() -> dict:
-    return {"status": "ok"}
+    """Liveness/readiness probe. Verifies Redis and Postgres reachability."""
+
+    checks: dict[str, str] = {}
+
+    try:
+        redis = get_redis_client()
+        redis.ping()
+        checks["redis"] = "ok"
+    except Exception as exc:
+        checks["redis"] = f"unavailable: {type(exc).__name__}"
+
+    try:
+        engine = get_async_engine()
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        checks["postgres"] = "ok"
+    except Exception as exc:
+        checks["postgres"] = f"unavailable: {type(exc).__name__}"
+
+    if all(status == "ok" for status in checks.values()):
+        return {"status": "ok", **checks}
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={"status": "degraded", **checks},
+    )
 
 
 @app.post("/api/v1/process-document", tags=["documents"])

@@ -1,7 +1,13 @@
-"""Architecture guardrails (Phase 0, docs/CURRENT-STATE.md Section 3).
+"""Architecture guardrails (docs/CURRENT-STATE.md Section 3).
 
 Static, AST-based checks on which consent modules production route files
 import. No running server or DB required.
+
+Phase 1 (2026-07-03): consent_service.py, routine.py, and break_glass.py
+were removed and replaced by app.services.consent_engine. This test now
+ensures the old consent families cannot re-enter the v2 production
+surface and that no new v2 route starts importing more than one consent
+authority.
 """
 from __future__ import annotations
 
@@ -24,6 +30,7 @@ V2_SCANNED_FILES = [
     "app/api/v2/review_routes.py",
     "app/api/v2/emergency_routes.py",
     "app/api/v2/auth_routes.py",
+    "app/api/v2/nfc_routes.py",
     "app/core/dependencies.py",
 ]
 
@@ -33,6 +40,7 @@ FAMILY_MODULE_PREFIXES = {
     "app.services.consent_service": "consent_service",
     "app.services.consent.routine": "routine",
     "app.services.consent.break_glass": "break_glass",
+    "app.services.consent_engine": "consent_engine",
 }
 
 
@@ -75,64 +83,49 @@ def _scan_all() -> dict[str, set[str]]:
 
 
 class TestConsentSystemDrift(unittest.TestCase):
-    """Guards against the exact bug that made
-    GET /api/v2/patient/{id}/record permanently unreachable:
-    consent_routes.py issues tokens via consent_service.py while
-    patient_routes.py validates them via routine.py — two disjoint token
-    systems (different Redis key prefixes, different payload schemas).
-    A cheap static check on the import graph would have caught this the
-    day it was introduced.
+    """Guards against the exact bug that previously made
+    GET /api/v2/patient/{id}/record permanently unreachable: consent was
+    issued by one module and validated by another, with disjoint Redis
+    key prefixes and payload schemas. A cheap static check on the import
+    graph would have caught that the day it was introduced.
+
+    As of Phase 1, all v2 consent flows go through ConsentEngine. This
+    test therefore fails if:
+      - any v2 production file imports one of the removed old families
+        (consent_service, routine, break_glass), or
+      - any v2 production file imports more than one distinct consent
+        family at the same time.
     """
 
-    def test_v2_consent_surface_uses_exactly_one_family(self):
-        """No longer @expectedFailure: app/api/v2/consent_routes.py and
-        app/api/v2/patient_routes.py were migrated onto ConsentEngine
-        (docs/CURRENT-STATE.md, "Patient reconstruction endpoint
-        unreachable" — status updated to Fixed), so neither imports
-        consent_service or routine anymore and this now genuinely passes
-        instead of being an expected, tracked violation.
-
-        app/core/dependencies.py still imports consent_service for
-        require_active_consent (used by fhir_routes.py) — that's the one
-        remaining family in the union below. It's a separate, not-yet-
-        migrated leg of the same consent consolidation (see
-        docs/CURRENT-STATE.md Section 4), not new drift, and doesn't
-        collide with anything since routine is now gone entirely from the
-        v2 production surface.
-        """
+    def test_no_removed_consent_families_in_v2_surface(self):
+        """Must always pass. The old consent modules are gone; bringing
+        them back into v2 routes is a regression."""
         found = _scan_all()
-        union: set[str] = set()
-        for families in found.values():
-            union |= families
+        removed_families = {"consent_service", "routine", "break_glass"}
+        offenders = {
+            path: families & removed_families
+            for path, families in found.items()
+            if families & removed_families
+        }
 
-        self.assertLessEqual(
-            len(union), 1,
-            f"Multiple consent families in production v2 routes: {found}. "
-            f"See docs/CURRENT-STATE.md Section 1 (Consent Systems).",
+        self.assertFalse(
+            offenders,
+            f"Removed consent families (consent_service/routine/break_glass) "
+            f"found in v2 production files: {offenders}. "
+            f"See docs/CURRENT-STATE.md Section 1.",
         )
 
-    def test_no_drift_beyond_the_one_currently_tracked_family(self):
-        """Must always pass. Tripwire against the remaining known state
-        getting WORSE. The only family still allowed in the v2 production
-        surface is consent_service (via dependencies.py's
-        require_active_consent, not yet migrated). routine is fully gone
-        as of the consent_routes.py / patient_routes.py migration, so it
-        is no longer an allowed family here either — if it reappears,
-        that's a regression, not tracked debt. break_glass creeping in,
-        or a brand new consent module appearing, must also fail CI
-        immediately.
-        """
+    def test_v2_consent_surface_uses_at_most_one_family(self):
+        """Must always pass. Tripwire against drift. A single v2 file
+        should never import more than one consent family (e.g.
+        ConsentEngine plus a resurrected old module)."""
         found = _scan_all()
-        union: set[str] = set()
-        for families in found.values():
-            union |= families
+        multi_family = {path: families for path, families in found.items() if len(families) > 1}
 
-        self.assertLessEqual(
-            union, {"consent_service"},
-            f"A consent family beyond the tracked {{consent_service}} "
-            f"footprint is now present in production v2 routes: {found}. "
-            f"This is new drift beyond docs/CURRENT-STATE.md and must be "
-            f"resolved before merge.",
+        self.assertFalse(
+            multi_family,
+            f"Multiple consent families in the same v2 production file: "
+            f"{multi_family}. See docs/CURRENT-STATE.md Section 1.",
         )
 
 

@@ -26,6 +26,15 @@ logs/
 tmp/
 temp/
 
+# Frontend dependency and build artifacts
+node_modules/
+.next/
+.expo/
+.expo-shared/
+dist/
+web-build/
+*.tsbuildinfo
+
 # Git and editor metadata
 .git/
 .gitignore
