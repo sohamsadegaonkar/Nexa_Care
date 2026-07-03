@@ -238,8 +238,8 @@ class TestReviewRoutes(unittest.TestCase):
         self.assertEqual(
             events,
             [
+                "DB_EXECUTE",  # select owned pending review (ownership/status check)
                 "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
-                "DB_EXECUTE",  # select owned pending review
                 "DB_EXECUTE",  # vault shard insert
                 "DB_EXECUTE",  # clinical shard insert
                 "DB_COMMIT",
@@ -266,8 +266,8 @@ class TestReviewRoutes(unittest.TestCase):
         self.assertEqual(
             events,
             [
+                "DB_EXECUTE",  # select owned pending review (ownership/status check)
                 "AUDIT_OR_503:DOCUMENT_REVIEW_REJECTION_ATTEMPT",
-                "DB_EXECUTE",  # select owned pending review
                 "DB_COMMIT",
                 "AUDIT_OR_503:DOCUMENT_REVIEW_REJECTED",
             ],
@@ -329,8 +329,8 @@ class TestReviewRoutes(unittest.TestCase):
         self.assertEqual(
             events,
             [
+                "DB_EXECUTE",  # select owned pending review (ownership/status check, succeeds)
                 "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
-                "DB_EXECUTE",  # select owned pending review (succeeds)
                 "DB_EXECUTE",  # vault shard insert -- raises SQLAlchemyError
                 "DB_ROLLBACK",
                 "AUDIT_LOG:DOCUMENT_REVIEW_APPROVAL_FAILED",
