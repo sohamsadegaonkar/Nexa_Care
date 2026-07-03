@@ -18,8 +18,8 @@ from app.core.dependencies import get_current_provider
 from app.models.provider_context import ProviderContext
 from app.models.secure_record import SecureMergedRecord
 from app.models.shards import NexaClinical, NexaVault
+from app.services import consent_engine
 from app.services.audit import audit_read
-from app.services.consent import routine
 
 logger = logging.getLogger("nexa_logger")
 
@@ -118,10 +118,10 @@ async def _fetch_clinical_shard(patient_id: str, db: AsyncSession) -> dict[str, 
     return _clinical_payload(row)
 
 
-def _consent_error(exc: routine.RoutineConsentUnavailable) -> HTTPException:
+def _consent_error(exc: consent_engine.ConsentEngineUnavailable) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        detail="Routine consent service is temporarily unavailable.",
+        detail="Consent service is temporarily unavailable.",
     )
 
 
@@ -146,13 +146,13 @@ async def reconstruct_patient_record(
         )
 
     try:
-        capability = await routine.validate(
+        capability = await consent_engine.validate(
             token=consent_token,
             patient_id=patient_id_text,
             clinician_id=clinician_id,
             purpose=normalized_purpose,
         )
-    except routine.RoutineConsentUnavailable as exc:
+    except consent_engine.ConsentEngineUnavailable as exc:
         raise _consent_error(exc) from exc
 
     if capability is None:
@@ -163,13 +163,13 @@ async def reconstruct_patient_record(
 
     async with audit_read(clinician_id, patient_id_text, normalized_purpose):
         try:
-            revalidated_capability = await routine.validate(
+            revalidated_capability = await consent_engine.validate(
                 token=consent_token,
                 patient_id=patient_id_text,
                 clinician_id=clinician_id,
                 purpose=normalized_purpose,
             )
-        except routine.RoutineConsentUnavailable as exc:
+        except consent_engine.ConsentEngineUnavailable as exc:
             raise _consent_error(exc) from exc
 
         if revalidated_capability is None:
@@ -184,13 +184,14 @@ async def reconstruct_patient_record(
         response = record.to_response(revalidated_capability.scope)
 
         try:
-            consumed_capability = await routine.consume(
+            consumed_capability = await consent_engine.consume(
+                db=db,
                 token=consent_token,
                 patient_id=patient_id_text,
                 clinician_id=clinician_id,
                 purpose=normalized_purpose,
             )
-        except routine.RoutineConsentUnavailable as exc:
+        except consent_engine.ConsentEngineUnavailable as exc:
             raise _consent_error(exc) from exc
 
         if consumed_capability is None:

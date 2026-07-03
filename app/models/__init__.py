@@ -3,6 +3,7 @@
 # --- 1. ALL IMPORTS MUST GO HERE AT THE VERY TOP ---
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.consent_grant import ConsentGrantLog
 from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.provider import (
@@ -23,6 +24,7 @@ from app.models.shards import NexaClinical, NexaEmergencySnapshot, NexaVault
 # --- 2. EXECUTABLE CODE/VARIABLES GO DOWN HERE AT THE BOTTOM ---
 __all__ = [
     "ExtractedMedicalDocument",
+    "ConsentGrantLog",
     "DocumentReviewQueue",
     "DocumentReviewStatus",
     "Base",

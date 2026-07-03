@@ -7,12 +7,14 @@ import json
 import unittest
 import uuid
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from app.api.v2.consent_routes import RoutineConsentGrantResponse
+from app.core.database import get_db_session
 from app.core.dependencies import get_provider_context, require_active_consent
 from app.main import app
 from app.models.provider import AffiliationType
@@ -22,7 +24,8 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.services import consent_service
+from app.services import consent_engine, consent_service
+from app.services.consent_engine import ConsentEngineUnavailable
 
 
 def run(coro):
@@ -112,22 +115,23 @@ class TestRoutineConsentService(unittest.TestCase):
 
 
 class TestRequireActiveConsent(unittest.TestCase):
-    @patch("app.core.dependencies.verify_routine_consent", new_callable=AsyncMock)
-    def test_dependency_accepts_matching_token(self, mock_verify) -> None:
+    @patch("app.core.dependencies.validate_consent_capability", new_callable=AsyncMock)
+    def test_dependency_accepts_matching_token(self, mock_validate) -> None:
         provider = sample_provider_context()
-        mock_verify.return_value = True
+        mock_validate.return_value = SimpleNamespace(purpose="routine_access")
         request = FakeRequest(
-            headers={"X-Consent-Token": "nexa_cons_token"},
+            headers={"X-Consent-Token": "token"},
             path_params={"patient_id": "patient-1"},
         )
 
         result = run(require_active_consent(request=request, provider=provider))
 
         self.assertEqual(result, provider)
-        mock_verify.assert_awaited_once_with(
-            token="nexa_cons_token",
+        mock_validate.assert_awaited_once_with(
+            token="token",
             patient_id="patient-1",
-            provider_uid=provider.actor_uid,
+            clinician_id=provider.actor_uid,
+            purpose="routine_access",
         )
 
     def test_dependency_rejects_missing_header_or_patient_id(self) -> None:
@@ -141,9 +145,9 @@ class TestRequireActiveConsent(unittest.TestCase):
             run(require_active_consent(FakeRequest(headers={"X-Consent-Token": "token"}), provider))
         self.assertEqual(cm.exception.status_code, 403)
 
-    @patch("app.core.dependencies.verify_routine_consent", new_callable=AsyncMock)
-    def test_dependency_rejects_invalid_token(self, mock_verify) -> None:
-        mock_verify.return_value = False
+    @patch("app.core.dependencies.validate_consent_capability", new_callable=AsyncMock)
+    def test_dependency_rejects_invalid_token(self, mock_validate) -> None:
+        mock_validate.return_value = None
         provider = sample_provider_context()
 
         with self.assertRaises(HTTPException) as cm:
@@ -156,6 +160,22 @@ class TestRequireActiveConsent(unittest.TestCase):
             ))
 
         self.assertEqual(cm.exception.status_code, 403)
+
+    @patch("app.core.dependencies.validate_consent_capability", new_callable=AsyncMock)
+    def test_dependency_returns_503_when_consent_store_unavailable(self, mock_validate) -> None:
+        mock_validate.side_effect = ConsentEngineUnavailable("redis down")
+        provider = sample_provider_context()
+
+        with self.assertRaises(HTTPException) as cm:
+            run(require_active_consent(
+                FakeRequest(
+                    headers={"X-Consent-Token": "token"},
+                    path_params={"patient_id": "patient-1"},
+                ),
+                provider,
+            ))
+
+        self.assertEqual(cm.exception.status_code, 503)
 
 
 class TestRoutineConsentRoute(unittest.TestCase):
@@ -171,38 +191,56 @@ class TestRoutineConsentRoute(unittest.TestCase):
     def tearDown(self) -> None:
         app.dependency_overrides.pop(get_provider_context, None)
 
-    @patch("app.api.v2.consent_routes.append_audit_log_or_503", new_callable=AsyncMock)
-    @patch("app.api.v2.consent_routes.grant_routine_consent", new_callable=AsyncMock)
-    def test_grant_route_returns_token_and_audits(self, mock_grant, mock_audit) -> None:
-        patient_id = uuid.uuid4()
-        mock_grant.return_value = "nexa_cons_test-token"
+    def setUp_db_override(self) -> None:
+        async def override_db():
+            yield object()
 
-        response = self.client.post(
-            "/api/v2/consent/grant",
-            json={"patient_id": str(patient_id)},
-        )
+        app.dependency_overrides[get_db_session] = override_db
+
+    @patch("app.api.v2.consent_routes.consent_engine.issue", new_callable=AsyncMock)
+    def test_grant_route_returns_token(self, mock_issue) -> None:
+        self.setUp_db_override()
+        patient_id = uuid.uuid4()
+        mock_issue.return_value = "test-token"
+
+        try:
+            response = self.client.post(
+                "/api/v2/consent/grant",
+                json={"patient_id": str(patient_id), "scope": ["clinical.diagnoses"]},
+            )
+        finally:
+            app.dependency_overrides.pop(get_db_session, None)
 
         self.assertEqual(response.status_code, 200, response.text)
         body = RoutineConsentGrantResponse.model_validate_json(response.text)
-        self.assertEqual(body.consent_token, "nexa_cons_test-token")
+        self.assertEqual(body.consent_token, "test-token")
         self.assertIsInstance(body.expires_at, datetime)
-        mock_grant.assert_awaited_once_with(
-            patient_id=str(patient_id),
-            provider_uid=self.provider.actor_uid,
-        )
-        audit_kwargs = mock_audit.await_args.kwargs
-        self.assertEqual(audit_kwargs["event_type"], "ROUTINE_CONSENT_GRANTED")
-        self.assertEqual(audit_kwargs["target_id"], str(patient_id))
-        self.assertEqual(audit_kwargs["metadata"]["provider_uid"], self.provider.actor_uid)
+        issue_kwargs = mock_issue.await_args.kwargs
+        self.assertEqual(issue_kwargs["patient_id"], str(patient_id))
+        self.assertEqual(issue_kwargs["clinician_id"], self.provider.actor_uid)
+        self.assertEqual(issue_kwargs["purpose"], "routine_access")
+        self.assertEqual(issue_kwargs["scope"], ["clinical.diagnoses"])
 
-    @patch("app.api.v2.consent_routes.grant_routine_consent", new_callable=AsyncMock)
-    def test_grant_route_returns_503_when_redis_unavailable(self, mock_grant) -> None:
-        mock_grant.side_effect = consent_service.ConsentServiceUnavailable("redis down")
-
+    def test_grant_route_rejects_missing_scope(self) -> None:
         response = self.client.post(
             "/api/v2/consent/grant",
             json={"patient_id": str(uuid.uuid4())},
         )
+
+        self.assertEqual(response.status_code, 422)
+
+    @patch("app.api.v2.consent_routes.consent_engine.issue", new_callable=AsyncMock)
+    def test_grant_route_returns_503_when_store_unavailable(self, mock_issue) -> None:
+        self.setUp_db_override()
+        mock_issue.side_effect = consent_engine.ConsentEngineUnavailable("redis down")
+
+        try:
+            response = self.client.post(
+                "/api/v2/consent/grant",
+                json={"patient_id": str(uuid.uuid4()), "scope": ["clinical.diagnoses"]},
+            )
+        finally:
+            app.dependency_overrides.pop(get_db_session, None)
 
         self.assertEqual(response.status_code, 503)
 

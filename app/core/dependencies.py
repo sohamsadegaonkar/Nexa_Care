@@ -35,7 +35,7 @@ from app.core.database import get_db_session
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
-from app.services.consent_service import verify_routine_consent
+from app.services.consent_engine import ConsentEngineUnavailable, validate as validate_consent_capability
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
@@ -219,11 +219,23 @@ async def require_active_consent(
     request: Request,
     provider: ProviderContext = Depends(get_provider_context),
 ) -> ProviderContext:
-    """Require a live provider-bound routine consent token for a patient path.
+    """Require a live provider-bound consent capability for a patient path.
 
     The dependency reads ``X-Consent-Token`` and the ``patient_id`` path
-    parameter. It fails closed on missing values, Redis errors, expired tokens,
-    and patient/provider mismatches.
+    parameter. It fails closed on missing values, consent-store errors,
+    expired tokens, and patient/provider mismatches.
+
+    Phase 1 migration (docs/CURRENT-STATE.md, Section 1): this used to
+    validate against app/services/consent_service.py, which never checked
+    a ``purpose`` at all. It now validates through ConsentEngine, which
+    always binds a purpose. Callers of this dependency (currently
+    fhir_routes.py) don't carry an ``X-Consent-Purpose`` header the way
+    app/api/v2/patient_routes.py does, so this checks against the same
+    ``"routine_access"`` default that consent_routes.py's ``/grant``
+    endpoint uses when the caller doesn't specify one. A token granted for
+    a different, more specific purpose (e.g. patient_routes.py's
+    ``treatment``) will correctly NOT authorize FHIR export under this
+    dependency -- that's purpose-scoping working as intended, not a bug.
     """
 
     consent_token = request.headers.get("X-Consent-Token")
@@ -235,12 +247,20 @@ async def require_active_consent(
             detail="Active consent token required or expired.",
         )
 
-    is_authorized = await verify_routine_consent(
-        token=consent_token,
-        patient_id=str(patient_id),
-        provider_uid=provider.actor_uid,
-    )
-    if not is_authorized:
+    try:
+        capability = await validate_consent_capability(
+            token=consent_token,
+            patient_id=str(patient_id),
+            clinician_id=provider.actor_uid,
+            purpose="routine_access",
+        )
+    except ConsentEngineUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Consent service is temporarily unavailable.",
+        ) from exc
+
+    if capability is None:
         raise HTTPException(
             status_code=403,
             detail="Active consent token required or expired.",

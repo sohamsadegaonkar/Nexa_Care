@@ -84,17 +84,21 @@ class TestConsentSystemDrift(unittest.TestCase):
     day it was introduced.
     """
 
-    @unittest.expectedFailure
     def test_v2_consent_surface_uses_exactly_one_family(self):
-        """This is expected to FAIL right now — that failure IS the
-        documented, tracked violation (docs/CURRENT-STATE.md, "Patient
-        reconstruction endpoint unreachable"). It's expected to keep
-        failing until the v2 consent surface is migrated onto a single
-        ConsentEngine (Phase 1).
+        """No longer @expectedFailure: app/api/v2/consent_routes.py and
+        app/api/v2/patient_routes.py were migrated onto ConsentEngine
+        (docs/CURRENT-STATE.md, "Patient reconstruction endpoint
+        unreachable" — status updated to Fixed), so neither imports
+        consent_service or routine anymore and this now genuinely passes
+        instead of being an expected, tracked violation.
 
-        If this test unexpectedly PASSES, that's the signal Phase 1
-        landed — remove the @expectedFailure decorator at that point,
-        turning this into a real, permanently-enforced guardrail.
+        app/core/dependencies.py still imports consent_service for
+        require_active_consent (used by fhir_routes.py) — that's the one
+        remaining family in the union below. It's a separate, not-yet-
+        migrated leg of the same consent consolidation (see
+        docs/CURRENT-STATE.md Section 4), not new drift, and doesn't
+        collide with anything since routine is now gone entirely from the
+        v2 production surface.
         """
         found = _scan_all()
         union: set[str] = set()
@@ -107,14 +111,16 @@ class TestConsentSystemDrift(unittest.TestCase):
             f"See docs/CURRENT-STATE.md Section 1 (Consent Systems).",
         )
 
-    def test_no_drift_beyond_the_two_currently_tracked_families(self):
-        """NOT an expectedFailure — this must always pass. It's the
-        tripwire against the known-bad state getting WORSE. The tracked
-        violation is exactly {consent_service, routine}. Anything beyond
-        that — break_glass creeping into a production route, or a brand
-        new consent module appearing — is new, un-tracked drift and must
-        fail CI for real, immediately, not silently join the existing
-        expected failure.
+    def test_no_drift_beyond_the_one_currently_tracked_family(self):
+        """Must always pass. Tripwire against the remaining known state
+        getting WORSE. The only family still allowed in the v2 production
+        surface is consent_service (via dependencies.py's
+        require_active_consent, not yet migrated). routine is fully gone
+        as of the consent_routes.py / patient_routes.py migration, so it
+        is no longer an allowed family here either — if it reappears,
+        that's a regression, not tracked debt. break_glass creeping in,
+        or a brand new consent module appearing, must also fail CI
+        immediately.
         """
         found = _scan_all()
         union: set[str] = set()
@@ -122,12 +128,11 @@ class TestConsentSystemDrift(unittest.TestCase):
             union |= families
 
         self.assertLessEqual(
-            union, {"consent_service", "routine"},
-            f"A consent family beyond the tracked {{consent_service, "
-            f"routine}} drift is now present in production v2 routes: "
-            f"{found}. This is new drift beyond docs/CURRENT-STATE.md and "
-            f"must be resolved before merge — do not let it join the "
-            f"existing tracked violation silently.",
+            union, {"consent_service"},
+            f"A consent family beyond the tracked {{consent_service}} "
+            f"footprint is now present in production v2 routes: {found}. "
+            f"This is new drift beyond docs/CURRENT-STATE.md and must be "
+            f"resolved before merge.",
         )
 
 
