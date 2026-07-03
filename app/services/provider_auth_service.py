@@ -10,14 +10,12 @@ from __future__ import annotations
 import enum
 import json
 import secrets
+from importlib.util import find_spec
 import uuid
 from datetime import datetime, timedelta, timezone
-from importlib.util import find_spec
 from typing import Any, NamedTuple
 
 from passlib.context import CryptContext
-
-_ARGON2_AVAILABLE = find_spec("argon2") is not None
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -36,6 +34,8 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
+
+_ARGON2_AVAILABLE = find_spec("argon2") is not None
 
 _PASSWORD_CONTEXT = CryptContext(
     schemes=["argon2", "pbkdf2_sha256", "bcrypt"] if _ARGON2_AVAILABLE else ["pbkdf2_sha256", "bcrypt"],
