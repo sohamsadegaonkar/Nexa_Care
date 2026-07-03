@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.dependencies import get_db_session, get_provider_context
 from app.models.provider_context import ProviderContext
-from app.core.dependencies import get_provider_context, get_db_session
 # EXPLICITLY ALIAS THE IMPORT SO MOCK PATCHING MATCHES THE ATTRIBUTE NAME
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import ConsentEngineUnavailable
