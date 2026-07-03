@@ -8,7 +8,7 @@ ConsentEngine so the v2 consent surface has a single authority.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -17,8 +17,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.dependencies import get_db_session, get_provider_context
 from app.models.provider_context import ProviderContext
 from app.core.dependencies import get_provider_context, get_db_session
-from app.observability.audit_ledger import append_audit_log_or_503
-
 # EXPLICITLY ALIAS THE IMPORT SO MOCK PATCHING MATCHES THE ATTRIBUTE NAME
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import ConsentEngineUnavailable
