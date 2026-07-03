@@ -12,15 +12,12 @@ import json
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from importlib.util import find_spec
 from typing import Any, NamedTuple
 
 from passlib.context import CryptContext
 
-try:
-    import argon2  # noqa: F401
-    _ARGON2_AVAILABLE = True
-except Exception:
-    _ARGON2_AVAILABLE = False
+_ARGON2_AVAILABLE = find_spec("argon2") is not None
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
