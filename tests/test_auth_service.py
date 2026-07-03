@@ -1,139 +1,122 @@
-"""Tests for provider-centric auth routes and bearer dependency."""
+"""Tests for app/services/auth_service.py: validate_session_context (the
+legacy v1 session lookup used by GET /api/v1/record/{id} and
+POST /request-consent) and session_authorizes_patient (a pure scope check,
+currently unwired -- see its docstring in auth_service.py).
 
-from __future__ import annotations
+REGRESSION NOTE (2026-07-03): this file's entire original content was
+found silently replaced with a near-duplicate of test_auth_routes.py
+(provider login / MFA tests that already live there), which deleted all
+coverage of validate_session_context with no test failure to signal it --
+py_compile and even a full pytest run stay green either way, since the
+duplicated tests are valid tests, just of the wrong module. Restored here.
+"""
 
 import asyncio
-import uuid
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
-from fastapi import HTTPException
-from fastapi.security import HTTPAuthorizationCredentials
-
-from app.api.v2.auth_routes import ProviderLoginRequest, provider_login
-from app.core.dependencies import get_current_provider
-from app.models.provider import AffiliationType
-from app.models.provider_context import (
-    AffiliationContext,
-    HospitalContext,
-    ProviderContext,
-    ProviderIdentityContext,
-)
-from app.services.provider_auth_service import ProviderAuthFailure, ProviderAuthResult
+from app.services.auth_service import session_authorizes_patient, validate_session_context
 
 
 def run(coro):
     return asyncio.run(coro)
 
 
-def sample_provider_context() -> ProviderContext:
-    provider_id = uuid.uuid4()
-    hospital_id = uuid.uuid4()
-    return ProviderContext(
-        provider=ProviderIdentityContext(
-            provider_id=provider_id,
-            display_name="Provider",
-            medical_registration_number=None,
-            specialty=None,
-            contact_email="provider@example.com",
-        ),
-        hospital=HospitalContext(
-            hospital_id=hospital_id,
-            facility_code="HOSP",
-            display_name="Hospital",
-        ),
-        affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(),
-            affiliation_type=AffiliationType.PERMANENT,
-            department=None,
-            roles=["doctor"],
-            is_primary=True,
-            valid_from=None,
-            valid_until=None,
-        ),
-    )
+async def _resolved(value):
+    return value
 
 
-class TestProviderLoginRoute(unittest.TestCase):
-    @patch("app.api.v2.auth_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.auth_routes.issue_provider_session_token", new_callable=AsyncMock)
-    @patch("app.api.v2.auth_routes.authenticate_provider_password", new_callable=AsyncMock)
-    def test_login_returns_bearer_token(self, mock_auth, mock_issue_token, mock_audit) -> None:
-        context = sample_provider_context()
-        mock_auth.return_value = ProviderAuthResult(context)
-        mock_issue_token.return_value = "session-token"
-        payload = ProviderLoginRequest(
-            login_identifier="provider@example.com",
-            password="secret",
-            hospital_id=context.hospital.hospital_id,
-        )
+class TestValidateSessionContext(unittest.TestCase):
 
-        result = run(provider_login(payload, db=AsyncMock()))
+    def test_empty_token_returns_none(self):
+        self.assertIsNone(run(validate_session_context("")))
+        self.assertIsNone(run(validate_session_context(None)))
 
-        self.assertEqual(result.access_token, "session-token")
-        self.assertEqual(result.token_type, "bearer")
-        self.assertEqual(result.provider_uid, context.actor_uid)
-        self.assertEqual(result.hospital_id, context.hospital.hospital_id)
-        mock_issue_token.assert_awaited_once_with(context.provider.provider_id)
-        self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_SUCCEEDED")
+    def test_bearer_only_with_no_token_returns_none(self):
+        self.assertIsNone(run(validate_session_context("Bearer ")))
+        self.assertIsNone(run(validate_session_context("Bearer    ")))
 
-    @patch("app.api.v2.auth_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.auth_routes.authenticate_provider_password", new_callable=AsyncMock)
-    def test_login_rejects_invalid_credentials(self, mock_auth, mock_audit) -> None:
-        mock_auth.return_value = ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
-        payload = ProviderLoginRequest(login_identifier="provider@example.com", password="bad")
+    @patch("app.services.auth_service.get_redis_client")
+    def test_strips_bearer_prefix_before_lookup(self, mock_get_client):
+        fake_client = MagicMock()
+        fake_client.get.return_value = '{"authenticated": true}'
+        mock_get_client.return_value = fake_client
 
-        with self.assertRaises(HTTPException) as cm:
-            run(provider_login(payload, db=AsyncMock()))
+        result = run(validate_session_context("Bearer abc123"))
 
-        self.assertEqual(cm.exception.status_code, 401)
-        self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_FAILED")
+        fake_client.get.assert_called_once_with("abc123")
+        self.assertEqual(result, {"authenticated": True})
 
-    @patch("app.api.v2.auth_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.auth_routes.authenticate_provider_password", new_callable=AsyncMock)
-    def test_login_mfa_enabled_account_gets_honest_501_not_generic_403(self, mock_auth, mock_audit) -> None:
-        """MFA-DISABLED-EXPLICITLY regression test.
+    @patch("app.services.auth_service.get_redis_client")
+    def test_valid_json_string_session_returns_dict(self, mock_get_client):
+        fake_client = MagicMock()
+        fake_client.get.return_value = '{"nfc_uid": "abc", "authenticated": true}'
+        mock_get_client.return_value = fake_client
 
-        No /mfa/verify route exists anywhere in this codebase, so an
-        MFA-enabled account can never complete login. Before this fix, the
-        route returned the same 401/generic-detail shape used for a wrong
-        password, which silently and permanently locked such a provider
-        out with no way to tell (from the response) that this wasn't a
-        normal credential failure. Now it must be a distinct 501 with a
-        message that says plainly this is unimplemented, not denied.
-        """
-        mock_auth.return_value = ProviderAuthResult(None, ProviderAuthFailure.MFA_REQUIRED)
-        payload = ProviderLoginRequest(login_identifier="mfa-provider@example.com", password="correct-password")
+        result = run(validate_session_context("abc123"))
 
-        with self.assertRaises(HTTPException) as cm:
-            run(provider_login(payload, db=AsyncMock()))
+        self.assertEqual(result, {"nfc_uid": "abc", "authenticated": True})
 
-        self.assertEqual(cm.exception.status_code, 501)
-        self.assertIn("not yet implemented", cm.exception.detail)
-        self.assertNotEqual(cm.exception.detail, "Invalid provider credentials")
-        self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_FAILED")
-        self.assertEqual(mock_audit.await_args.kwargs["status"], "MFA_REQUIRED")
+    @patch("app.services.auth_service.get_redis_client")
+    def test_valid_json_bytes_session_is_decoded(self, mock_get_client):
+        fake_client = MagicMock()
+        fake_client.get.return_value = b'{"authenticated": true}'
+        mock_get_client.return_value = fake_client
+
+        result = run(validate_session_context("abc123"))
+
+        self.assertEqual(result, {"authenticated": True})
+
+    @patch("app.services.auth_service.get_redis_client")
+    def test_missing_session_returns_none(self, mock_get_client):
+        fake_client = MagicMock()
+        fake_client.get.return_value = None
+        mock_get_client.return_value = fake_client
+
+        self.assertIsNone(run(validate_session_context("expired-token")))
+
+    @patch("app.services.auth_service.get_redis_client")
+    def test_malformed_json_returns_none_not_an_exception(self, mock_get_client):
+        fake_client = MagicMock()
+        fake_client.get.return_value = "{not valid json"
+        mock_get_client.return_value = fake_client
+
+        self.assertIsNone(run(validate_session_context("abc123")))
+
+    @patch("app.services.auth_service.get_redis_client")
+    def test_awaitable_redis_client_is_awaited(self, mock_get_client):
+        # Some redis clients (async ones) return a coroutine from .get();
+        # validate_session_context must detect and await it.
+        fake_client = MagicMock()
+        fake_client.get.return_value = _resolved('{"authenticated": true}')
+        mock_get_client.return_value = fake_client
+
+        result = run(validate_session_context("abc123"))
+
+        self.assertEqual(result, {"authenticated": True})
+
+    @patch("app.services.auth_service.get_redis_client")
+    def test_redis_connection_error_returns_none_not_raise(self, mock_get_client):
+        mock_get_client.side_effect = ConnectionError("redis unreachable")
+
+        # Must not propagate -- auth failures should fail closed, not 500.
+        self.assertIsNone(run(validate_session_context("abc123")))
 
 
-class TestGetCurrentProvider(unittest.TestCase):
-    @patch("app.core.dependencies.authenticate_provider_session", new_callable=AsyncMock)
-    def test_bearer_token_returns_provider_context(self, mock_auth) -> None:
-        context = sample_provider_context()
-        mock_auth.return_value = ProviderAuthResult(context)
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="token")
+class TestSessionAuthorizesPatient(unittest.TestCase):
+    """Companion coverage to tests/test_handshake_scoping.py, kept here
+    too since this module (auth_service.py) is where the function lives.
+    Not a duplicate suite -- test_handshake_scoping.py is the canonical
+    scope-matching test; these two just confirm the None/empty-session
+    guard clauses that live right at the top of the function.
+    """
 
-        result = run(get_current_provider(credentials=credentials, hospital_id=None, db=AsyncMock()))
+    def test_none_session_context_returns_false(self):
+        self.assertFalse(session_authorizes_patient(None, str(uuid4())))
 
-        self.assertEqual(result, context)
-        mock_auth.assert_awaited_once()
-
-    @patch("app.core.dependencies.append_audit_log", new_callable=AsyncMock)
-    def test_missing_bearer_token_rejects(self, mock_audit) -> None:
-        with self.assertRaises(HTTPException) as cm:
-            run(get_current_provider(credentials=None, hospital_id=None, db=AsyncMock()))
-
-        self.assertEqual(cm.exception.status_code, 401)
-        self.assertEqual(mock_audit.await_args.kwargs["status"], "MISSING_TOKEN")
+    def test_empty_dict_session_context_returns_false(self):
+        self.assertFalse(session_authorizes_patient({}, str(uuid4())))
 
 
 if __name__ == "__main__":

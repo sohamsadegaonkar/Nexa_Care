@@ -41,11 +41,19 @@ def session_authorizes_patient(
     """True only if `session_context` is a non-empty session bound to
     exactly this masked_internal_id.
 
-    Centralizes the scope check used by both GET /api/v1/record/{id} and
-    POST /request-consent, so a session minted (via /api/v1/handshake) for
-    one patient can never be replayed -- through either route -- against
-    another patient. A session created before this check existed (no
-    "masked_internal_id" key at all) fails closed rather than matching.
+    DOCSTRING-HYGIENE FIX (2026-07-03): this function is NOT currently
+    called by any route. GET /api/v1/record/{id} and POST /request-consent
+    (app/api/routes.py) both go through get_scoped_session() in
+    core/dependencies.py, which pulls masked_internal_id directly off the
+    session and never calls this check. That's not a live vulnerability --
+    neither route accepts an external patient id to compare against, so
+    there's no cross-patient replay surface today -- but a prior version
+    of this docstring claimed both routes called this function, which was
+    false and could mislead someone into assuming a scope check exists
+    that doesn't. If a future route accepts a patient/record id as input,
+    it MUST call this function to prevent session replay against a
+    different patient; until then, this is a pure, tested, ready-to-wire
+    function with no callers.
 
     Pure function, no I/O -- see tests/test_handshake_scoping.py.
     """
