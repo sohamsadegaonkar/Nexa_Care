@@ -18,7 +18,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.services.consent_engine import ConsentEngine, RoutineConsentCapability
+from app.services.consent_engine import ConsentCapability
 
 
 def sample_provider_context() -> ProviderContext:
@@ -105,13 +105,13 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
     patient_id = uuid.uuid4()
     fake_db = FakeDBSession()
     events: list[str] = []
-    capability = RoutineConsentCapability(
+    capability = ConsentCapability(
         patient_id=str(patient_id),
         clinician_id=provider.actor_uid,
         purpose="treatment",
         scope=["pii.patient_name", "clinical.diagnoses"],
-        nonce="nonce",
-        ttl=60,
+        is_break_glass=False,
+        reason_code=None,
         issued_at="2026-07-02T00:00:00+00:00",
     )
 

@@ -24,7 +24,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.services import consent_engine, consent_service
+from app.services import consent_engine
 from app.services.consent_engine import ConsentEngineUnavailable
 
 
@@ -62,56 +62,6 @@ class FakeRequest:
     def __init__(self, headers=None, path_params=None):
         self.headers = headers or {}
         self.path_params = path_params or {}
-
-
-class TestRoutineConsentService(unittest.TestCase):
-    @patch("app.services.consent_service.secrets.token_urlsafe")
-    @patch("app.services.consent_service.get_async_redis_client")
-    def test_grant_stores_json_payload_with_one_hour_ttl(self, mock_get_redis, mock_token) -> None:
-        redis = AsyncMock()
-        mock_get_redis.return_value = redis
-        mock_token.return_value = "secure-token"
-
-        token = run(consent_service.grant_routine_consent("patient-1", "provider-1"))
-
-        self.assertEqual(token, "nexa_cons_secure-token")
-        redis.set.assert_awaited_once()
-        args, kwargs = redis.set.await_args
-        self.assertEqual(args[0], token)
-        payload = json.loads(args[1])
-        self.assertEqual(payload["patient_id"], "patient-1")
-        self.assertEqual(payload["provider_uid"], "provider-1")
-        self.assertIn("granted_at", payload)
-        self.assertEqual(kwargs["ex"], 3600)
-
-    @patch("app.services.consent_service.get_async_redis_client")
-    def test_verify_returns_true_for_matching_live_token(self, mock_get_redis) -> None:
-        redis = AsyncMock()
-        redis.get.return_value = json.dumps({
-            "patient_id": "patient-1",
-            "provider_uid": "provider-1",
-            "granted_at": "2026-06-23T00:00:00+00:00",
-        })
-        mock_get_redis.return_value = redis
-
-        result = run(consent_service.verify_routine_consent("token", "patient-1", "provider-1"))
-
-        self.assertTrue(result)
-        redis.get.assert_awaited_once_with("token")
-
-    @patch("app.services.consent_service.get_async_redis_client")
-    def test_verify_fails_closed_on_mismatch_missing_or_redis_error(self, mock_get_redis) -> None:
-        redis = AsyncMock()
-        mock_get_redis.return_value = redis
-
-        redis.get.return_value = json.dumps({"patient_id": "patient-1", "provider_uid": "other"})
-        self.assertFalse(run(consent_service.verify_routine_consent("token", "patient-1", "provider-1")))
-
-        redis.get.return_value = None
-        self.assertFalse(run(consent_service.verify_routine_consent("token", "patient-1", "provider-1")))
-
-        redis.get.side_effect = ConnectionError("redis down")
-        self.assertFalse(run(consent_service.verify_routine_consent("token", "patient-1", "provider-1")))
 
 
 class TestRequireActiveConsent(unittest.TestCase):
