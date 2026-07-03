@@ -229,7 +229,7 @@ class TestRoutineConsentRoute(unittest.TestCase):
 
         self.assertEqual(response.status_code, 422)
 
-    @patch("app.api.v2.consent_routes.issue_consent", new_callable=AsyncMock)
+    @patch("app.api.v2.consent_routes.consent_engine.issue", new_callable=AsyncMock)
     def test_grant_route_returns_503_when_store_unavailable(self, mock_issue) -> None:
         self.setUp_db_override()
         mock_issue.side_effect = consent_engine.ConsentEngineUnavailable("redis down")
