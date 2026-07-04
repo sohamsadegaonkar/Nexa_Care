@@ -3,7 +3,7 @@ Nexa Care v1.0 Consent Routes
 Tap → Consent → Session flow endpoints
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 

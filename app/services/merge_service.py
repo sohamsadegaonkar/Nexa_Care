@@ -5,7 +5,6 @@ Patient Merge Service (Section 9 - Alias & Tombstone)
 from datetime import datetime, timezone
 from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert
 
 from app.models.patient_tombstone import PatientTombstone
 from app.models.patient import Patient

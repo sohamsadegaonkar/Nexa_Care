@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from typing import Optional, Literal
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class PatientCreate(BaseModel):

@@ -12,7 +12,7 @@ from uuid import UUID
 import secrets
 
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, insert
+from sqlalchemy import select
 
 from app.models.consent_ledger import ConsentLedger
 from app.models.consent_sessions import ConsentSession

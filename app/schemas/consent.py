@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Optional, Literal
+from typing import Literal
 from uuid import UUID
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class ConsentIssueRequest(BaseModel):

@@ -3,7 +3,6 @@ Card Redirection Service for Tombstoned Patients
 Handles legacy cards after patient merge (Section 9)
 """
 
-from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 

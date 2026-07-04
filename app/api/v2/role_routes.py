@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from app.core.dependencies import get_provider_context
 from app.models.provider_context import ProviderContext

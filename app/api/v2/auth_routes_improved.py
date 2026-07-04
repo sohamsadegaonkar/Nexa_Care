@@ -2,7 +2,7 @@
 Improved Login + MFA routes with per-IP + per-email rate limiting
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from app.core.redis import get_redis_client
 

@@ -12,7 +12,7 @@ from app.core.redis import get_redis_client
 from app.models.provider_context import ProviderContext
 from app.services.assurance_service import AssuranceService
 from app.observability.audit_ledger import append_audit_log
-from app.observability.security_metrics import ASSURANCE_REQUESTS, BREAK_GLASS_REQUESTS
+from app.observability.security_metrics import ASSURANCE_REQUESTS
 
 router = APIRouter(prefix="/api/v2/assurance", tags=["assurance"])
 service = AssuranceService()
