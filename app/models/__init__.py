@@ -4,8 +4,13 @@
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.consent_grant import ConsentGrantLog
+from app.models.consent_ledger import ConsentLedger
+from app.models.consent_sessions import ConsentSession
 from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
+from app.models.patient import Patient
+from app.models.patient_policy import PatientPolicy
+from app.models.patient_tombstone import PatientTombstone
 from app.models.provider import (
     AffiliationType,
     HospitalRegistry,
@@ -25,6 +30,8 @@ from app.models.shards import NexaClinical, NexaEmergencySnapshot, NexaVault
 __all__ = [
     "ExtractedMedicalDocument",
     "ConsentGrantLog",
+    "ConsentLedger",
+    "ConsentSession",
     "DocumentReviewQueue",
     "DocumentReviewStatus",
     "Base",
@@ -32,6 +39,9 @@ __all__ = [
     "UUIDPrimaryKeyMixin",
     "NFCCardRegistry",
     "NFCCardStatus",
+    "Patient",
+    "PatientPolicy",
+    "PatientTombstone",
     "AffiliationType",
     "HospitalRegistry",
     "ProviderCredential",
