@@ -13,16 +13,20 @@ import {
   YStack,
 } from '@my/ui'
 import { ChevronDown, ChevronUp } from '@tamagui/lucide-icons'
+import { useRouter } from 'solito/navigation'
 import { useState } from 'react'
 import { Platform } from 'react-native'
 
-export function HomeScreen({
-  onScannerPress,
-  onEmergencyPress,
-}: {
-  onScannerPress?: () => void
-  onEmergencyPress?: () => void
-}) {
+export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => void }) {
+  const router = useRouter()
+
+  const navigate = (screen: string) => {
+    if (onNavigate) {
+      onNavigate(screen)
+    } else {
+      router.push(`/${screen}`)
+    }
+  }
   return (
     <YStack
       flex={1}
@@ -61,11 +65,17 @@ export function HomeScreen({
       </YStack>
 
       <YStack gap="$4" width="100%" maxW={320}>
-        <Button theme="blue" onPress={onScannerPress} disabled={!onScannerPress}>
+        <Button theme="blue" onPress={() => router.push('/scanner')}>
           NFC Scanner
         </Button>
-        <Button theme="red" onPress={onEmergencyPress} disabled={!onEmergencyPress}>
+        <Button theme="red" onPress={() => router.push('/break-glass')}>
           Emergency Break-Glass
+        </Button>
+        <Button theme="green" onPress={() => router.push('/dashboard')}>
+          Dashboard
+        </Button>
+        <Button onPress={() => router.push('/consent-history')}>
+          Consent History
         </Button>
       </YStack>
 

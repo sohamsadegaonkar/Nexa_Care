@@ -62,6 +62,9 @@ from app.api.v2.fhir_routes import router as fhir_v2_router
 from app.api.v2.nfc_routes import router as nfc_v2_router
 from app.api.v2.patient_routes import router as patient_v2_router
 from app.api.v2.review_routes import router as review_v2_router
+from app.api.v2.nexa_consent_routes import router as nexa_consent_v2_router
+from app.api.v2.dashboard_routes import router as dashboard_v2_router
+from app.api.v2.consent_history_routes import router as consent_history_v2_router
 from app.core.config import (
     get_database_config,
     get_handshake_config,
@@ -211,6 +214,13 @@ app.include_router(fhir_v2_router)
 app.include_router(nfc_v2_router)
 app.include_router(patient_v2_router)
 app.include_router(review_v2_router)
+app.include_router(nexa_consent_v2_router)
+app.include_router(policy_v2_router)
+app.include_router(role_v2_router)
+app.include_router(mfa_action_router)
+app.include_router(assurance_v2_router)
+app.include_router(dashboard_v2_router)
+app.include_router(consent_history_v2_router)
 
 # Prometheus metrics endpoint (no auth for liveness; protect in production
 # with a reverse proxy or basic auth if exposed externally).

@@ -1,0 +1,1 @@
+export { ConsentHistoryScreen } from './ConsentHistoryScreen'
