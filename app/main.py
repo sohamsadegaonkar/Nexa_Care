@@ -40,11 +40,14 @@ import json
 import logging
 import os
 import tempfile
+import time
 import uuid
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse                   # F-15
 from starlette.concurrency import run_in_threadpool          # F-02
 from sqlalchemy import text
@@ -67,8 +70,9 @@ from app.core.config import (
 )
 from app.core.supabase import get_supabase_client
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
-from app.services.sharding import split_pii_and_clinical_fields  # F-01
+from app.services.sharding import encrypt_vault_payload, split_pii_and_clinical_fields  # F-01
 from document_processor import extract_document_data
+from prometheus_client import Counter, Histogram, make_asgi_app
 
 from app.core.database import get_async_engine
 from app.core.redis import get_redis_client
@@ -123,6 +127,32 @@ class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Attach baseline security headers to every outgoing response.
+
+    Does not include CORS (handled by CORSMiddleware) or HSTS (must be
+    added by the TLS-terminating reverse proxy / load balancer). CSP is
+    kept permissive for a React/Expo SPA; tighten it once the exact CDN
+    and inline script policy is known.
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self';"
+        )
+        return response
+
+
 # ── F-13: Modern lifespan pattern ────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -133,14 +163,43 @@ async def lifespan(application: FastAPI):
     get_handshake_config()
     get_database_config()
     yield
-    # Shutdown logic (connection draining etc.) goes here when needed.
+    # Graceful shutdown: dispose of the SQLAlchemy engine pool and
+    # close any open Redis connections so the process exits cleanly.
+    try:
+        engine = get_async_engine()
+        await engine.dispose()
+    except Exception as exc:
+        logger.warning(f"Engine disposal during shutdown failed: {exc}")
+
+    try:
+        redis_client = get_redis_client()
+        redis_client.close()
+    except Exception as exc:
+        logger.warning(f"Redis close during shutdown failed: {exc}")
 
 
 app = FastAPI(title="Nexa Care API", version="0.2.1", lifespan=lifespan)
 
-# Middleware order matters: size check fires before logging so we don't log
-# and store partial bodies from abusive clients.
+# Middleware order matters: security/size checks fire before logging so we
+# don't log and store partial bodies from abusive clients.
 app.add_middleware(ContentSizeLimitMiddleware)   # F-14/F-15 — outermost, fires first
+app.add_middleware(SecurityHeadersMiddleware)
+
+# CORS: only allow explicitly configured origins. If none are set, the
+# middleware is still installed but allows no cross-origin traffic.
+_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Authorization", "Content-Type", "X-Hospital-Id", "X-Consent-Token", "X-Consent-Purpose"],
+)
+
+# Trusted hosts: reject requests whose Host header is not expected.
+_trusted_hosts = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts)
+
 app.add_middleware(GlobalLoggingMiddleware)
 
 app.include_router(api_router)
@@ -152,6 +211,38 @@ app.include_router(fhir_v2_router)
 app.include_router(nfc_v2_router)
 app.include_router(patient_v2_router)
 app.include_router(review_v2_router)
+
+# Prometheus metrics endpoint (no auth for liveness; protect in production
+# with a reverse proxy or basic auth if exposed externally).
+_REQUESTS_TOTAL = Counter(
+    "nexa_http_requests_total",
+    "Total HTTP requests by method and status",
+    ["method", "status_code"],
+)
+_REQUEST_DURATION = Histogram(
+    "nexa_http_request_duration_seconds",
+    "HTTP request latency",
+    ["method"],
+    buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0],
+)
+
+
+class PrometheusMiddleware(BaseHTTPMiddleware):
+    """Record request counts and latency for Prometheus."""
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.perf_counter()
+        response = await call_next(request)
+        duration = time.perf_counter() - start
+        method = request.method
+        status = str(response.status_code)
+        _REQUESTS_TOTAL.labels(method=method, status_code=status).inc()
+        _REQUEST_DURATION.labels(method=method).observe(duration)
+        return response
+
+
+app.add_middleware(PrometheusMiddleware)
+app.mount("/metrics", make_asgi_app())
 
 
 @app.get("/health", tags=["health"])
@@ -194,6 +285,9 @@ async def process_document(file: UploadFile = File(...)) -> dict:
     F-02: runs ML inference in a thread pool so the event loop stays free.
     F-06: temp_path is set before any I/O; finally block always fires.
     F-17: Supabase inserts wrapped in try/except — see module docstring.
+    SHARD-SEPARATION FIX: PII is written to the explicitly modeled vault
+    columns (patient_name, phone, aadhaar_abha_id) encrypted at rest. The
+    legacy combined ``raw_pii`` JSONB blob is no longer persisted.
     """
     suffix = os.path.splitext(file.filename or "")[1] or ".png"
 
@@ -232,19 +326,21 @@ async def process_document(file: UploadFile = File(...)) -> dict:
         )
 
         if unrecognized_payload:
+            # The migration removes the generic ``raw_pii`` JSONB blob, so
+            # unrecognized keys can no longer be silently dumped into a vault
+            # catch-all. They are logged and dropped; a clinician must confirm
+            # their classification before any new column is added.
             logger.warning(
                 json.dumps({
                     "event": "unrecognized_extraction_keys",
                     "keys": sorted(unrecognized_payload.keys()),
-                    "action": "routed_to_vault",
+                    "action": "dropped_no_raw_pii_column",
                     "note": (
                         "Run scripts/validate_extraction_schema.py and confirm "
                         "with a clinician whether each key is PII before re-routing."
                     ),
                 })
             )
-            # Fail-safe: treat unknowns as PII until a reviewer confirms otherwise.
-            vault_payload.update(unrecognized_payload)
 
         masked_internal_id = str(uuid.uuid4())
         supabase = get_supabase_client()
@@ -257,9 +353,13 @@ async def process_document(file: UploadFile = File(...)) -> dict:
         # the real exception message, rather than an unhandled APIError
         # bubbling up to the global handler as a generic 503.
         try:
+            vault_columns = {
+                "masked_internal_id": masked_internal_id,
+            }
+            vault_columns.update(encrypt_vault_payload(vault_payload))
             vault_res = (
                 supabase.table("nexa_vault")
-                .insert({"masked_internal_id": masked_internal_id, "raw_pii": vault_payload})
+                .insert(vault_columns)
                 .execute()
             )
         except Exception as exc:

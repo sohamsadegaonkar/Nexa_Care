@@ -32,6 +32,7 @@ from fastapi.security import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
+from app.core.security import hash_client_ip
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
@@ -82,6 +83,15 @@ _provider_bearer_scheme = HTTPBearer(auto_error=False)
 _provider_basic_scheme = HTTPBasic(auto_error=False)
 
 
+def _client_ip_from_request(request: Request) -> str:
+    """Return the request's client IP, preferring X-Forwarded-For."""
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else ""
+
+
 def _audit_status_for_failure(failure: ProviderAuthFailure) -> str:
     return failure.value.upper()
 
@@ -98,27 +108,44 @@ def _http_exception_for_failure(failure: ProviderAuthFailure) -> HTTPException:
         return HTTPException(status_code=400, detail=detail)
 
     if failure is ProviderAuthFailure.MFA_REQUIRED:
-        # MFA-DISABLED-EXPLICITLY (2026-07-03): mfa_enabled=True is a real
-        # provider_credential state with no completion path anywhere in
-        # this codebase (no /mfa/verify route exists). The old 403 here
-        # was indistinguishable from an ordinary permission denial, which
-        # silently and permanently locked out any provider whose account
-        # had MFA turned on. 501 says plainly: this is a server gap, not
-        # something the caller can fix by retrying or re-authenticating.
+        # MFA is implemented via /api/v2/auth/login + /mfa/verify. Routes
+        # that use this dependency (Bearer or Basic auth) should not accept
+        # a half-authenticated password-only session. Tell the caller to
+        # complete the MFA login flow and present a valid Bearer token.
         return HTTPException(
-            status_code=501,
+            status_code=401,
             detail=(
-                "This provider account has multi-factor authentication "
-                "enabled, but MFA verification is not yet implemented. "
-                "Login cannot proceed. Contact an administrator to "
-                "disable MFA on this account."
+                "Multi-factor authentication required. "
+                "Complete login via POST /api/v2/auth/mfa/verify and use the "
+                "returned Bearer session token."
             ),
+        )
+
+    if failure is ProviderAuthFailure.MFA_NOT_CONFIGURED:
+        # Inconsistent credential state: MFA flag is enabled but no secret
+        # is enrolled. Fail closed and do not allow password-only access.
+        return HTTPException(
+            status_code=401,
+            detail="Provider MFA is misconfigured. Contact an administrator.",
+        )
+
+    if failure is ProviderAuthFailure.SESSION_BINDING_MISMATCH:
+        return HTTPException(
+            status_code=401,
+            detail="Session binding mismatch — User-Agent verification failed.",
+        )
+
+    if failure is ProviderAuthFailure.MFA_RATE_LIMITED:
+        return HTTPException(
+            status_code=429,
+            detail="Too many failed MFA attempts. Please try again later.",
         )
 
     return HTTPException(status_code=401, detail="Invalid provider credentials")
 
 
 async def get_provider_context(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_provider_bearer_scheme),
     basic_credentials: HTTPBasicCredentials | None = Depends(_provider_basic_scheme),
     hospital_id: UUID | None = Header(default=None, alias="X-Hospital-Id"),
@@ -135,13 +162,21 @@ async def get_provider_context(
 
     When a provider has multiple active affiliations, callers must supply
     ``X-Hospital-Id`` so the dependency can select the correct facility.
+
+    Session binding is enforced on the bearer path: a User-Agent mismatch
+    returns 401; an IP mismatch is allowed but logged as a warning.
     """
+
+    user_agent = request.headers.get("user-agent")
+    client_ip = _client_ip_from_request(request)
 
     if credentials is not None and credentials.credentials:
         result = await authenticate_provider_session(
             db,
             credentials.credentials,
             hospital_id,
+            user_agent=user_agent,
+            client_ip=client_ip,
         )
     elif basic_credentials is not None and basic_credentials.username:
         result = await authenticate_provider_password(
@@ -160,6 +195,12 @@ async def get_provider_context(
         raise HTTPException(status_code=401, detail="Missing provider credentials")
 
     if result.context is not None:
+        if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
+            logger.warning(json.dumps({
+                "event": "SESSION_IP_ROTATION_DETECTED",
+                "provider_id": str(result.context.provider.provider_id),
+                "ip_hash": hash_client_ip(client_ip),
+            }))
         return result.context
 
     assert result.failure is not None
@@ -169,18 +210,11 @@ async def get_provider_context(
         target_id=str(hospital_id) if hospital_id else "UNKNOWN",
         status=_audit_status_for_failure(result.failure),
     )
-    if result.failure is ProviderAuthFailure.MFA_REQUIRED:
-        # Not routine auth-failure noise -- every occurrence is a provider
-        # who cannot get past login at all until an admin disables MFA on
-        # their account. See MFA-DISABLED-EXPLICITLY note above.
-        logger.critical(json.dumps({
-            "event": "provider_auth_blocked_mfa_not_implemented",
-            "hospital_id": str(hospital_id) if hospital_id else "UNKNOWN",
-        }))
     raise _http_exception_for_failure(result.failure)
 
 
 async def get_current_provider(
+    request: Request,
     credentials: HTTPAuthorizationCredentials | None = Depends(_provider_bearer_scheme),
     hospital_id: UUID | None = Header(default=None, alias="X-Hospital-Id"),
     db: AsyncSession = Depends(get_db_session),
@@ -191,7 +225,13 @@ async def get_current_provider(
     protected routes. The bearer token is resolved to a provider, then the
     provider credential row is checked for active and lockout state by the auth
     service before a ``ProviderContext`` is returned.
+
+    Session binding is enforced: a User-Agent mismatch returns 401; an IP
+    mismatch is allowed but logged as a warning.
     """
+
+    user_agent = request.headers.get("user-agent")
+    client_ip = _client_ip_from_request(request)
 
     if credentials is None or not credentials.credentials:
         await append_audit_log(
@@ -202,8 +242,20 @@ async def get_current_provider(
         )
         raise HTTPException(status_code=401, detail="Missing provider credentials")
 
-    result = await authenticate_provider_session(db, credentials.credentials, hospital_id)
+    result = await authenticate_provider_session(
+        db,
+        credentials.credentials,
+        hospital_id,
+        user_agent=user_agent,
+        client_ip=client_ip,
+    )
     if result.context is not None:
+        if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
+            logger.warning(json.dumps({
+                "event": "SESSION_IP_ROTATION_DETECTED",
+                "provider_id": str(result.context.provider.provider_id),
+                "ip_hash": hash_client_ip(client_ip),
+            }))
         return result.context
 
     assert result.failure is not None
@@ -214,6 +266,35 @@ async def get_current_provider(
         status=_audit_status_for_failure(result.failure),
     )
     raise _http_exception_for_failure(result.failure)
+
+def require_role(required_role: str):
+    """Factory that returns a FastAPI dependency enforcing a provider role.
+
+    The role is checked against the active affiliation's ``roles`` list.
+    Callers with multiple affiliations should supply ``X-Hospital-Id`` so
+    the correct affiliation (and its roles) is selected.
+    """
+
+    async def _require_role(
+        provider: ProviderContext = Depends(get_provider_context),
+    ) -> ProviderContext:
+        roles = provider.affiliation.roles or []
+        if required_role not in roles:
+            await append_audit_log(
+                actor_uid=provider.actor_uid,
+                event_type="PROVIDER_ROLE_DENIED",
+                target_id=str(provider.provider.provider_id),
+                status="FORBIDDEN",
+                metadata={"required_role": required_role, "roles": roles},
+            )
+            raise HTTPException(
+                status_code=403,
+                detail=f"This action requires the '{required_role}' role.",
+            )
+        return provider
+
+    return _require_role
+
 
 async def require_active_consent(
     request: Request,

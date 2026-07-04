@@ -11,7 +11,7 @@ schemas) — not inferred from comments, docstrings, or prior audit
 write-ups. Where a docstring or comment made a claim the code didn't
 back up, that's called out explicitly.
 
-**Last updated:** 2026-07-02
+**Last updated:** 2026-07-04
 
 ---
 
@@ -105,4 +105,12 @@ IDOR gaps found in this pass.
 - Migrated legacy v1 consent routes (`/request-consent`, `/view-record/*`) onto `ConsentEngine` using a synthetic `patient:self` self-consent model.
 - Added `.env.example`, `pyproject.toml`, `.python-version`, improved `.dockerignore`, and rewrote `README.md` with setup instructions.
 - Verified frontend build: `yarn install`, `yarn test`, and `yarn build` all succeed in the Tamagui monorepo.
-- Full Python test suite: **175/175 passing**, `ruff` clean.
+- Full Python test suite: **185/185 passing**, `ruff` clean.
+- Industry-grade hardening decisions implemented (2026-07-04):
+  - **Rate limiter**: remains fail-open on Redis failures; lockout is enforced only for cryptographic/identity decisions.
+  - **Session binding**: hard User-Agent check + soft IP check. UA mismatch returns `401`; IP mismatch is allowed but logs `SESSION_IP_ROTATION_DETECTED`.
+  - **Refresh rebind**: `POST /api/v2/auth/refresh` issues a new token bound to the current request's UA/IP.
+  - **MFA composite lockout**: failed MFA attempts are tracked under `mfa_fails:{provider_id}:{ip_hash}` to prevent the MFA lockout from becoming a provider-wide DoS vector.
+  - **raw_pii removal**: `process_document` (and the v2 document AI pipeline) no longer writes the combined `raw_pii` JSONB blob; PII is encrypted at rest into `patient_name`, `phone`, `aadhaar_abha_id`. Alembic migration `20260704_drop_raw_pii_from_vault` drops the legacy column.
+  - Backend verification: `ruff check .` clean; `pytest tests/` 185/185 passing.
+  - Frontend verification: `yarn install` could not be completed inside this sandbox (the Yarn link step is repeatedly killed, likely by resource limits). The committed code does not change the frontend; the build/test should be verified on a machine with more memory before deploying.

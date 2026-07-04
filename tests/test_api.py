@@ -91,7 +91,7 @@ def _test_provider_context() -> ProviderContext:
             affiliation_id=uuid.uuid4(),
             affiliation_type=AffiliationType.PERMANENT,
             department="General Medicine",
-            roles=["registrar"],
+            roles=["clinician"],
             is_primary=True,
             valid_from=None,
             valid_until=None,
@@ -462,13 +462,10 @@ class TestNexaCareLifecycle(unittest.TestCase):
         )
         self.assertEqual(bad_handshake.status_code, 401)
 
-        # 4. Reassembly engine -- id comes ONLY from the session, never
-        # from a URL.
+        # 4. The old combined /api/v1/record endpoint is deprecated
+        # (410 Gone) because it joined PII and clinical shards in one response.
         record_response = self.client.get("/api/v1/record", headers=session_headers)
-        self.assertEqual(record_response.status_code, 200, record_response.text)
-        record_data = record_response.json()
-        self.assertEqual(record_data["masked_internal_id"], masked_id)
-        self.assertIn("Type 2 Diabetes", record_data["clinical"]["diagnoses"])
+        self.assertEqual(record_response.status_code, 410, record_response.text)
 
         # 5. Request a consent token -- session-scoped, no id in the body.
         consent_response = self.client.post(

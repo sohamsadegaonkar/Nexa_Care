@@ -24,6 +24,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.redis import get_redis_client
+from app.core.security import (
+    decrypt_mfa_secret,
+    hash_client_ip,
+    hash_user_agent,
+)
 from app.models.provider import (
     AffiliationType,
     HospitalRegistry,
@@ -52,6 +57,9 @@ _LOCKOUT_DURATION = timedelta(minutes=15)
 _MFA_PENDING_PREFIX = "mfa_pending:"
 _MFA_PENDING_TTL_SECONDS = 5 * 60  # 5 minutes
 _MFA_ISSUER_NAME = "Nexa Care"
+_MAX_FAILED_MFA_ATTEMPTS = 5
+_MFA_LOCKOUT_SECONDS = 15 * 60
+_MFA_FAILS_PREFIX = "mfa_fails:"
 
 
 logger = logging.getLogger("nexa_logger")
@@ -68,6 +76,8 @@ class ProviderAuthFailure(str, enum.Enum):
     PROVIDER_INACTIVE = "provider_inactive"
     AFFILIATION_REQUIRED = "affiliation_required"
     AFFILIATION_NOT_FOUND = "affiliation_not_found"
+    SESSION_BINDING_MISMATCH = "session_binding_mismatch"
+    MFA_RATE_LIMITED = "mfa_rate_limited"
 
 
 class ProviderAuthResult(NamedTuple):
@@ -81,6 +91,7 @@ class ProviderAuthResult(NamedTuple):
     context: ProviderContext | None
     failure: ProviderAuthFailure | None = None
     mfa_pending_token: str | None = None
+    binding_warning: str | None = None
 
 
 def hash_provider_password(plain_password: str) -> str:
@@ -190,13 +201,19 @@ async def delete_mfa_pending_token(token: str) -> None:
         pass
 
 
-async def issue_provider_session_token(provider_id: uuid.UUID) -> str:
-    """Mint an opaque Redis-backed session token for an authenticated provider."""
+async def issue_provider_session_token(
+    provider_id: uuid.UUID,
+    user_agent: str | None = None,
+    client_ip: str | None = None,
+) -> str:
+    """Mint an opaque Redis-backed session token bound to UA/IP."""
 
     token = secrets.token_urlsafe(32)
     payload = {
         "authenticated": True,
         "provider_id": str(provider_id),
+        "ua_hash": hash_user_agent(user_agent),
+        "ip_hash": hash_client_ip(client_ip),
     }
     redis = get_redis_client()
     key = f"{_PROVIDER_SESSION_PREFIX}{token}"
@@ -206,8 +223,8 @@ async def issue_provider_session_token(provider_id: uuid.UUID) -> str:
     return token
 
 
-async def resolve_provider_session_token(token: str) -> uuid.UUID | None:
-    """Load a provider_id from a Redis session token, or None if invalid."""
+async def resolve_provider_session_context(token: str) -> dict[str, Any] | None:
+    """Load the full session context from a Redis session token."""
 
     clean_token = token.removeprefix("Bearer ").strip()
     if not clean_token:
@@ -225,9 +242,113 @@ async def resolve_provider_session_token(token: str) -> uuid.UUID | None:
         payload: dict[str, Any] = json.loads(cached)
         if not payload.get("authenticated"):
             return None
+        return payload
+    except Exception:
+        return None
+
+
+async def resolve_provider_session_token(token: str) -> uuid.UUID | None:
+    """Load a provider_id from a Redis session token, or None if invalid."""
+
+    payload = await resolve_provider_session_context(token)
+    if payload is None:
+        return None
+    try:
         return uuid.UUID(str(payload["provider_id"]))
     except Exception:
         return None
+
+
+async def delete_provider_session_token(token: str) -> None:
+    """Burn a provider session token (logout)."""
+
+    try:
+        redis = get_redis_client()
+        clean_token = token.removeprefix("Bearer ").strip()
+        if clean_token:
+            delete_result = redis.delete(f"{_PROVIDER_SESSION_PREFIX}{clean_token}")
+            if hasattr(delete_result, "__await__"):
+                await delete_result
+    except Exception:
+        pass
+
+
+async def refresh_provider_session_token(
+    old_token: str,
+    user_agent: str | None = None,
+    client_ip: str | None = None,
+) -> str | None:
+    """Rotate a valid provider session token to a new one.
+
+    Returns the new token on success, or None if the old token is invalid.
+    The old token is deleted immediately to prevent replay. The new token
+    is bound to the UA/IP of the current request (refresh rebind).
+    """
+
+    payload = await resolve_provider_session_context(old_token)
+    if payload is None:
+        return None
+
+    try:
+        provider_id = uuid.UUID(str(payload["provider_id"]))
+    except Exception:
+        return None
+
+    await delete_provider_session_token(old_token)
+    return await issue_provider_session_token(provider_id, user_agent, client_ip)
+
+
+async def _get_mfa_fails_count(provider_id: uuid.UUID, ip_hash: str) -> int:
+    """Return the current failed MFA attempt count for the composite key."""
+
+    try:
+        redis = get_redis_client()
+        key = f"{_MFA_FAILS_PREFIX}{provider_id}:{ip_hash}"
+        count = redis.get(key)
+        if hasattr(count, "__await__"):
+            count = await count
+        if count is None:
+            return 0
+        return int(count)
+    except Exception:
+        return 0
+
+
+async def _record_failed_mfa_attempt(provider_id: uuid.UUID, ip_hash: str) -> int:
+    """Increment the composite-key failed MFA counter and set its TTL."""
+
+    try:
+        redis = get_redis_client()
+        key = f"{_MFA_FAILS_PREFIX}{provider_id}:{ip_hash}"
+        pipe = redis.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, _MFA_LOCKOUT_SECONDS)
+        results = pipe.execute()
+        if hasattr(results, "__await__"):
+            results = await results
+        return int(results[0])
+    except Exception:
+        return 0
+
+
+async def _clear_mfa_fails(provider_id: uuid.UUID, ip_hash: str) -> None:
+    """Reset the composite-key failed MFA counter on successful verification."""
+
+    try:
+        redis = get_redis_client()
+        key = f"{_MFA_FAILS_PREFIX}{provider_id}:{ip_hash}"
+        delete_result = redis.delete(key)
+        if hasattr(delete_result, "__await__"):
+            await delete_result
+    except Exception:
+        pass
+
+
+async def _is_mfa_rate_limited(provider_id: uuid.UUID, ip_hash: str) -> bool:
+    """True if the composite-key MFA counter has reached the threshold."""
+
+    count = await _get_mfa_fails_count(provider_id, ip_hash)
+    return count >= _MAX_FAILED_MFA_ATTEMPTS
 
 
 async def load_credential_by_login(
@@ -383,7 +504,8 @@ async def authenticate_provider_password(
         await _record_failed_login(db, credential)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if credential.mfa_enabled:
-        if not credential.mfa_secret:
+        mfa_secret = decrypt_mfa_secret(credential.mfa_secret_encrypted)
+        if not mfa_secret:
             # MFA is enabled but no secret has been enrolled. This is an
             # inconsistent credential state; fail closed rather than allow
             # password-only access. The provider must contact an admin to
@@ -427,12 +549,37 @@ async def authenticate_provider_session(
     db: AsyncSession,
     session_token: str,
     hospital_id: uuid.UUID | None,
+    user_agent: str | None = None,
+    client_ip: str | None = None,
 ) -> ProviderAuthResult:
-    """Resolve a Redis session token to a ProviderContext."""
+    """Resolve a Redis session token to a ProviderContext.
 
-    provider_id = await resolve_provider_session_token(session_token)
-    if provider_id is None:
+    Session binding is enforced as a hard UA check and a soft IP check:
+    - UA mismatch -> SESSION_BINDING_MISMATCH (401)
+    - IP mismatch -> context is returned with binding_warning
+      "SESSION_IP_ROTATION_DETECTED" so the caller can log it.
+    """
+
+    payload = await resolve_provider_session_context(session_token)
+    if payload is None:
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
+
+    try:
+        provider_id = uuid.UUID(str(payload["provider_id"]))
+    except Exception:
+        return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
+
+    stored_ua_hash = payload.get("ua_hash", "")
+    stored_ip_hash = payload.get("ip_hash", "")
+    current_ua_hash = hash_user_agent(user_agent)
+    current_ip_hash = hash_client_ip(client_ip)
+
+    if stored_ua_hash and current_ua_hash and stored_ua_hash != current_ua_hash:
+        return ProviderAuthResult(None, ProviderAuthFailure.SESSION_BINDING_MISMATCH)
+
+    binding_warning: str | None = None
+    if stored_ip_hash and current_ip_hash and stored_ip_hash != current_ip_hash:
+        binding_warning = "SESSION_IP_ROTATION_DETECTED"
 
     provider = await load_provider_with_affiliations(db, provider_id)
     if provider is None:
@@ -449,7 +596,10 @@ async def authenticate_provider_session(
             _resolve_affiliation_failure(provider.affiliations, hospital_id),
         )
 
-    return ProviderAuthResult(build_provider_context(provider, affiliation))
+    return ProviderAuthResult(
+        build_provider_context(provider, affiliation),
+        binding_warning=binding_warning,
+    )
 
 
 async def complete_mfa_login(
@@ -457,12 +607,16 @@ async def complete_mfa_login(
     mfa_token: str,
     totp_code: str,
     hospital_id: uuid.UUID | None,
+    client_ip: str | None = None,
 ) -> ProviderAuthResult:
     """Complete a provider login after MFA verification.
 
     Resolves the MFA pending token, verifies the TOTP code against the
     provider's stored secret, and returns a full ProviderContext on
-    success. The pending token is burned regardless of outcome.
+    success. The pending token is burned regardless of outcome. Failed
+    attempts are tracked under the composite key
+    ``mfa_fails:{provider_id}:{ip_hash}`` to prevent MFA brute-force
+    from being used as a provider-wide account lockout vector.
     """
 
     provider_id = await resolve_mfa_pending_token(mfa_token)
@@ -471,6 +625,10 @@ async def complete_mfa_login(
     if provider_id is None:
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
 
+    ip_hash = hash_client_ip(client_ip)
+    if await _is_mfa_rate_limited(provider_id, ip_hash):
+        return ProviderAuthResult(None, ProviderAuthFailure.MFA_RATE_LIMITED)
+
     provider = await load_provider_with_affiliations(db, provider_id)
     if provider is None:
         return ProviderAuthResult(None, ProviderAuthFailure.PROVIDER_INACTIVE)
@@ -478,11 +636,17 @@ async def complete_mfa_login(
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if _credential_is_locked(provider.credential):
         return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
-    if not provider.credential.mfa_secret or not provider.credential.mfa_enabled:
+    mfa_secret = decrypt_mfa_secret(provider.credential.mfa_secret_encrypted)
+    if not mfa_secret or not provider.credential.mfa_enabled:
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_NOT_CONFIGURED)
 
-    if not verify_totp_code(provider.credential.mfa_secret, totp_code):
+    if not verify_totp_code(mfa_secret, totp_code):
+        count = await _record_failed_mfa_attempt(provider_id, ip_hash)
+        if count >= _MAX_FAILED_MFA_ATTEMPTS:
+            return ProviderAuthResult(None, ProviderAuthFailure.MFA_RATE_LIMITED)
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
+
+    await _clear_mfa_fails(provider_id, ip_hash)
 
     affiliation = _select_affiliation(provider.affiliations, hospital_id)
     if affiliation is None:

@@ -22,10 +22,29 @@ in production:
 """
 from __future__ import annotations
 
+from app.core.security import encrypt_pii_field
 from app.observability.redactor import SENSITIVE_FIELDS as PII_FIELD_NAMES
 
 # Fields known to be safe to file under the "anonymized" clinical shard.
 CLINICAL_FIELD_NAMES = {"diagnoses", "lab_results", "prescriptions"}
+
+
+# Columns that replace the legacy raw_pii JSONB blob in nexa_vault.
+_VAULT_PII_COLUMNS = {"patient_name", "phone", "aadhaar_abha_id"}
+
+
+def encrypt_vault_payload(vault_payload: dict) -> dict[str, str | None]:
+    """Map a PII vault payload to the encrypted column set.
+
+    Unknown keys are intentionally dropped: the migration removes the
+    generic ``raw_pii`` JSONB blob, so only explicitly modeled columns
+    may be persisted.
+    """
+
+    return {
+        column: encrypt_pii_field(vault_payload.get(column))
+        for column in _VAULT_PII_COLUMNS
+    }
 
 
 def split_pii_and_clinical_fields(

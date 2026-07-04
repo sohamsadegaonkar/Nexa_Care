@@ -69,7 +69,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import get_provider_context, get_scoped_session
+from app.core.dependencies import get_scoped_session, require_role
+from app.core.security import decrypt_pii_field, encrypt_pii_field
 from app.core.supabase import get_supabase_client
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import ConsentEngineUnavailable
@@ -175,7 +176,7 @@ async def process_handshake(payload: HandshakePayload):
 @router.post("/api/v1/enroll-biometric", tags=["auth"], status_code=status.HTTP_201_CREATED)
 async def enroll_biometric(
     payload: EnrollBiometricPayload,
-    provider: ProviderContext = Depends(get_provider_context),
+    provider: ProviderContext = Depends(require_role("clinician")),
 ):
     """Provider-only: binds an (nfc_uid, bio_seed) pair to a patient.
     Gated behind get_provider_context — a patient cannot self-enroll.
@@ -192,7 +193,7 @@ async def enroll_biometric(
 @router.post("/register", response_model=RegisterResponse, tags=["sharding"])
 async def register_patient(
     payload: UnifiedPatientPayload,
-    provider: ProviderContext = Depends(get_provider_context),
+    provider: ProviderContext = Depends(require_role("clinician")),
 ) -> RegisterResponse:
     """Register a patient: write PII to nexa_vault, clinical data to
     nexa_clinical, under a shared masked_internal_id.
@@ -241,9 +242,9 @@ async def register_patient(
                 supabase.table("nexa_vault")
                 .insert({
                     "masked_internal_id": str(masked_internal_id),
-                    "patient_name": pii_vault.patient_name,
-                    "phone": pii_vault.phone,
-                    "aadhaar_abha_id": pii_vault.aadhaar_abha_id,
+                    "patient_name": encrypt_pii_field(pii_vault.patient_name),
+                    "phone": encrypt_pii_field(pii_vault.phone),
+                    "aadhaar_abha_id": encrypt_pii_field(pii_vault.aadhaar_abha_id),
                 })
                 .execute()
             )
@@ -313,98 +314,24 @@ async def register_patient(
 
 @router.get("/api/v1/record", tags=["reassembly"])
 async def get_record(masked_internal_id: str = Depends(get_scoped_session)):
-    """Reassembly engine.  masked_internal_id comes only from the session
-    (bound at handshake time) — never from a URL param — closing the IDOR.
+    """DEPRECATED: this endpoint joined PII and clinical data in a single
+    response, violating the vertical-sharding architecture. It is disabled
+    and returns 410 Gone.
 
-    TODO (F-09): remove the dual-read branch once the DB schema is unified
-    on flat columns via a Supabase migration.
-
-    AUDIT-CONSISTENCY FIX: ATTEMPT and COMPLETED now use
-    append_audit_log_or_503; every failure/not-found branch uses the
-    best-effort helper so a DB outage or audit-write failure on the
-    failure path doesn't replace the real 404/502 being returned.
+    Use the split endpoints instead:
+      - GET /view-record/clinical (clinical shard only)
+      - GET /view-record/pii      (redacted PII shard only, scope="full")
     """
-    await append_audit_log_or_503(
-        actor_uid="REASSEMBLY_ENGINE",
-        event_type="RECORD_ACCESS_ATTEMPT",
-        target_id=masked_internal_id,
-        status="STARTED",
+    await _audit_best_effort(
+        "REASSEMBLY_ENGINE", "RECORD_ACCESS_DEPRECATED", masked_internal_id, "GONE"
     )
-
-    supabase = get_supabase_client()
-
-    try:
-        vault_response = (
-            supabase.table("nexa_vault")
-            .select("*")
-            .eq("masked_internal_id", masked_internal_id)
-            .single()
-            .execute()
-        )
-        clinical_response = (
-            supabase.table("nexa_clinical")
-            .select("*")
-            .eq("masked_internal_id", masked_internal_id)
-            .single()
-            .execute()
-        )
-    except Exception as exc:
-        # .single() raises APIError both on a genuine DB failure and on
-        # "0 rows" (PGRST116) -- distinguish them so a missing record
-        # still surfaces as 404, not a CRITICAL-logged 502.
-        exc_str = str(exc)
-        if "PGRST116" in exc_str or "JSON object requested, multiple (or no) rows returned" in exc_str:
-            await _audit_best_effort(
-                "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "NOT_FOUND"
-            )
-            raise HTTPException(status_code=404, detail="Record not found") from exc
-
-        logger.critical(json.dumps({
-            "event": "record_reassembly_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": exc_str,
-        }))
-        await _audit_best_effort(
-            "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "DB_ERROR"
-        )
-        raise HTTPException(status_code=502, detail="Record reassembly failed") from exc
-
-    # F-17: retained as belt-and-suspenders (see register_patient above).
-    if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
-        await _audit_best_effort(
-            "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "NOT_FOUND"
-        )
-        raise HTTPException(status_code=404, detail="Record not found")
-
-    vault_data = getattr(vault_response, "data", None)
-    clinical_data = getattr(clinical_response, "data", None)
-
-    if not vault_data or not clinical_data:
-        await _audit_best_effort(
-            "REASSEMBLY_ENGINE", "RECORD_ACCESS_FAILED", masked_internal_id, "NOT_FOUND"
-        )
-        raise HTTPException(status_code=404, detail="Record not found")
-
-    # TODO (F-09): remove dual-branch once DB schema is unified
-    pii_payload = (vault_data.get("raw_pii") if "raw_pii" in vault_data else vault_data) or {}
-    clinical_payload = (
-        clinical_data.get("clinical_data") if "clinical_data" in clinical_data else clinical_data
-    ) or {}
-
-    # Hard-fail: a successful reassembly that can't be proven in the
-    # ledger must not be returned to the caller.
-    await append_audit_log_or_503(
-        actor_uid="REASSEMBLY_ENGINE",
-        event_type="RECORD_ACCESS_COMPLETED",
-        target_id=masked_internal_id,
-        status="SUCCESS",
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail=(
+            "This endpoint is deprecated. Use /view-record/clinical and "
+            "/view-record/pii for vertical-shard retrieval."
+        ),
     )
-
-    return {
-        "masked_internal_id": masked_internal_id,
-        "pii": pii_payload,
-        "clinical": clinical_payload,
-    }
 
 
 @router.post("/request-consent", tags=["consent"])
@@ -671,9 +598,14 @@ async def view_record_pii(
 
     # F-10: redact PII fields before returning.  patient_name and phone are
     # both in SENSITIVE_FIELDS, so they become "[REDACTED]" here.
+    # Decrypt at-rest PII before redaction. Legacy unencrypted rows are
+    # passed through unchanged; the redactor handles them safely.
+    decrypted_patient_name = decrypt_pii_field(vault.get("patient_name"))
+    decrypted_phone = decrypt_pii_field(vault.get("phone"))
+
     raw_response = {
         "masked_internal_id": masked_internal_id,
-        "patient_name": vault.get("patient_name"),
-        "phone": vault.get("phone"),
+        "patient_name": decrypted_patient_name if decrypted_patient_name is not None else vault.get("patient_name"),
+        "phone": decrypted_phone if decrypted_phone is not None else vault.get("phone"),
     }
     return redact_payload(raw_response)

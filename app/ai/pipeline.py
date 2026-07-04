@@ -19,7 +19,7 @@ from app.ai.extractor import get_medical_document_extractor
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.document_review import DocumentReviewQueue
 from app.observability.audit_ledger import append_audit_log
-from app.services.sharding import split_pii_and_clinical_fields
+from app.services.sharding import encrypt_vault_payload, split_pii_and_clinical_fields
 
 logger = logging.getLogger("nexa_logger")
 
@@ -88,10 +88,14 @@ async def _persist_auto_processed_document(
 ) -> None:
     """Persist confidence-gated extraction output into separated shards.
 
+    PII is encrypted at rest before writing to ``nexa_vault``. The legacy
+    combined ``raw_pii`` JSONB blob is no longer persisted.
+
     ``commit=False`` lets review approval persist shard rows and queue status
     in a single transaction.
     """
 
+    encrypted_vault = encrypt_vault_payload(vault_payload)
     await db.execute(
         text(
             "INSERT INTO nexa_vault "
@@ -100,9 +104,9 @@ async def _persist_auto_processed_document(
         ),
         {
             "masked_internal_id": masked_internal_id,
-            "patient_name": vault_payload.get("patient_name", ""),
-            "phone": vault_payload.get("phone", ""),
-            "aadhaar_abha_id": vault_payload.get("aadhaar_abha_id", ""),
+            "patient_name": encrypted_vault.get("patient_name", ""),
+            "phone": encrypted_vault.get("phone", ""),
+            "aadhaar_abha_id": encrypted_vault.get("aadhaar_abha_id", ""),
         },
     )
     await db.execute(

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from app.models.provider import (
@@ -18,6 +20,12 @@ from app.models.provider import (
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
+    authenticate_provider_session,
+    complete_mfa_login,
+    hash_client_ip,
+    hash_user_agent,
+    refresh_provider_session_token,
+    resolve_provider_session_context,
 )
 
 
@@ -72,6 +80,40 @@ def make_credential(provider: ProviderIdentity) -> ProviderCredential:
     credential.id = uuid.uuid4()
     credential.provider = provider
     return credential
+
+
+class FakeRedis:
+    """In-memory synchronous Redis stand-in for provider auth tests."""
+
+    def __init__(self):
+        self._store: dict[str, Any] = {}
+        self._pipeline_key: str | None = None
+
+    def get(self, key: str) -> Any:
+        return self._store.get(key)
+
+    def setex(self, key: str, time: int, value: str) -> bool:
+        self._store[key] = value
+        return True
+
+    def delete(self, key: str) -> int:
+        self._store.pop(key, None)
+        return 1
+
+    def pipeline(self):
+        return self
+
+    def incr(self, key: str) -> int:
+        self._pipeline_key = key
+        self._store[key] = int(self._store.get(key, 0)) + 1
+        return self._store[key]
+
+    def expire(self, key: str, time: int) -> bool:
+        return True
+
+    def execute(self) -> list[Any]:
+        # Return the post-incr count and the expire result.
+        return [self._store.get(self._pipeline_key, 0), True]
 
 
 class TestProviderPasswordAuthentication(unittest.TestCase):
@@ -145,6 +187,133 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         self.assertEqual(credential.failed_login_attempts, 0)
         self.assertIsNone(credential.locked_until)
         db.commit.assert_awaited_once()
+
+
+class TestProviderSessionBinding(unittest.TestCase):
+    @patch("app.services.provider_auth_service.get_redis_client")
+    @patch("app.services.provider_auth_service.load_provider_with_affiliations")
+    def test_ua_mismatch_returns_session_binding_mismatch(self, mock_load, mock_redis):
+        provider, _, _ = make_provider_rows()
+        credential = make_credential(provider)
+        credential.mfa_enabled = False
+        provider.credential = credential
+        mock_load.return_value = provider
+        fake_redis = FakeRedis()
+        fake_redis._store["provider_session:token"] = json.dumps({
+            "authenticated": True,
+            "provider_id": str(provider.id),
+            "ua_hash": hash_user_agent("OriginalAgent/1.0"),
+            "ip_hash": hash_client_ip("10.0.0.1"),
+        })
+        mock_redis.return_value = fake_redis
+
+        result = run(authenticate_provider_session(
+            AsyncMock(), "token", None,
+            user_agent="DifferentAgent/2.0",
+            client_ip="10.0.0.1",
+        ))
+
+        self.assertIsNone(result.context)
+        self.assertEqual(result.failure, ProviderAuthFailure.SESSION_BINDING_MISMATCH)
+
+    @patch("app.services.provider_auth_service.get_redis_client")
+    @patch("app.services.provider_auth_service.load_provider_with_affiliations")
+    def test_ip_mismatch_returns_warning_not_failure(self, mock_load, mock_redis):
+        provider, _, _ = make_provider_rows()
+        credential = make_credential(provider)
+        credential.mfa_enabled = False
+        provider.credential = credential
+        mock_load.return_value = provider
+        fake_redis = FakeRedis()
+        fake_redis._store["provider_session:token"] = json.dumps({
+            "authenticated": True,
+            "provider_id": str(provider.id),
+            "ua_hash": hash_user_agent("SameAgent/1.0"),
+            "ip_hash": hash_client_ip("10.0.0.1"),
+        })
+        mock_redis.return_value = fake_redis
+
+        result = run(authenticate_provider_session(
+            AsyncMock(), "token", None,
+            user_agent="SameAgent/1.0",
+            client_ip="10.0.0.2",
+        ))
+
+        self.assertIsNotNone(result.context)
+        self.assertEqual(result.binding_warning, "SESSION_IP_ROTATION_DETECTED")
+
+
+class TestProviderSessionRefresh(unittest.TestCase):
+    @patch("app.services.provider_auth_service.get_redis_client")
+    def test_refresh_rebinds_new_token_to_current_context(self, mock_redis):
+        provider_id = uuid.uuid4()
+        fake_redis = FakeRedis()
+        fake_redis._store["provider_session:old-token"] = json.dumps({
+            "authenticated": True,
+            "provider_id": str(provider_id),
+            "ua_hash": hash_user_agent("OldAgent/1.0"),
+            "ip_hash": hash_client_ip("10.0.0.1"),
+        })
+        mock_redis.return_value = fake_redis
+
+        new_token = run(refresh_provider_session_token(
+            "old-token",
+            user_agent="NewAgent/2.0",
+            client_ip="10.0.0.2",
+        ))
+
+        self.assertIsNotNone(new_token)
+        self.assertNotEqual(new_token, "old-token")
+        # Old token must be burned.
+        self.assertIsNone(fake_redis._store.get("provider_session:old-token"))
+        context = run(resolve_provider_session_context(new_token))
+        self.assertIsNotNone(context)
+        self.assertEqual(context["ua_hash"], hash_user_agent("NewAgent/2.0"))
+        self.assertEqual(context["ip_hash"], hash_client_ip("10.0.0.2"))
+
+
+class TestMfaCompositeLockout(unittest.TestCase):
+    @patch("app.services.provider_auth_service.get_redis_client")
+    @patch("app.services.provider_auth_service.load_provider_with_affiliations")
+    @patch("app.services.provider_auth_service.decrypt_mfa_secret")
+    @patch("app.services.provider_auth_service.verify_totp_code")
+    @patch("app.services.provider_auth_service.resolve_mfa_pending_token", new_callable=AsyncMock)
+    def test_failed_mfa_tracks_composite_key_and_rate_limits(
+        self,
+        mock_resolve,
+        mock_verify_totp,
+        mock_decrypt,
+        mock_load,
+        mock_redis,
+    ):
+        from app.services.provider_auth_service import _MAX_FAILED_MFA_ATTEMPTS
+
+        provider, hospital, affiliation = make_provider_rows()
+        credential = make_credential(provider)
+        credential.mfa_enabled = True
+        credential.mfa_secret_encrypted = "encrypted-secret"
+        provider.credential = credential
+        mock_load.return_value = provider
+        mock_decrypt.return_value = "secret"
+        mock_verify_totp.return_value = False
+        mock_resolve.return_value = provider.id
+        fake_redis = FakeRedis()
+        mock_redis.return_value = fake_redis
+        db = AsyncMock()
+
+        client_ip = "10.0.0.1"
+        ip_hash = hash_client_ip(client_ip)
+        for attempt in range(1, _MAX_FAILED_MFA_ATTEMPTS + 1):
+            result = run(complete_mfa_login(
+                db, "mfa-token", "000000", None, client_ip=client_ip
+            ))
+            if attempt < _MAX_FAILED_MFA_ATTEMPTS:
+                self.assertEqual(result.failure, ProviderAuthFailure.MFA_INVALID_CODE)
+            else:
+                self.assertEqual(result.failure, ProviderAuthFailure.MFA_RATE_LIMITED)
+
+        key = f"mfa_fails:{provider.id}:{ip_hash}"
+        self.assertEqual(fake_redis._store.get(key), _MAX_FAILED_MFA_ATTEMPTS)
 
 
 if __name__ == "__main__":

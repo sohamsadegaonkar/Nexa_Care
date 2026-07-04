@@ -21,6 +21,14 @@ def run(coro):
     return asyncio.run(coro)
 
 
+class MockRequest:
+    """Minimal request stand-in for dependency tests."""
+
+    def __init__(self, user_agent: str = "TestAgent/1.0", client_ip: str = "10.0.0.1"):
+        self.headers = {"user-agent": user_agent, "x-forwarded-for": client_ip}
+        self.client = None
+
+
 def _sample_provider_context() -> ProviderContext:
     provider_id = uuid.uuid4()
     hospital_id = uuid.uuid4()
@@ -103,6 +111,7 @@ class TestGetProviderContext(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(
                 get_provider_context(
+                    request=MockRequest(),
                     credentials=None,
                     basic_credentials=None,
                     hospital_id=None,
@@ -125,6 +134,7 @@ class TestGetProviderContext(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(
                 get_provider_context(
+                    request=MockRequest(),
                     credentials=creds,
                     basic_credentials=None,
                     hospital_id=None,
@@ -147,6 +157,7 @@ class TestGetProviderContext(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(
                 get_provider_context(
+                    request=MockRequest(),
                     credentials=None,
                     basic_credentials=basic,
                     hospital_id=None,
@@ -158,12 +169,10 @@ class TestGetProviderContext(unittest.TestCase):
 
     @patch("app.core.dependencies.authenticate_provider_password")
     @patch("app.core.dependencies.append_audit_log")
-    def test_mfa_enabled_account_gets_honest_501_not_generic_403(self, mock_audit, mock_auth):
-        """MFA-DISABLED-EXPLICITLY regression test (see auth_routes.py's
-        matching test for the /login entry point). No /mfa/verify route
-        exists, so this must be a distinct 501 that says "not implemented",
-        not the old bare 403 that looked like an ordinary permission
-        denial with no indication login could never succeed.
+    def test_mfa_enabled_account_gets_401_with_mfa_flow_hint(self, mock_audit, mock_auth):
+        """MFA is implemented via /login + /mfa/verify. Routes that use this
+        dependency should not accept a half-authenticated password-only
+        session; they must return 401 with a hint to complete the MFA flow.
         """
         mock_auth.return_value = ProviderAuthResult(
             None,
@@ -175,14 +184,15 @@ class TestGetProviderContext(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(
                 get_provider_context(
+                    request=MockRequest(),
                     credentials=None,
                     basic_credentials=basic,
                     hospital_id=None,
                     db=db,
                 )
             )
-        self.assertEqual(cm.exception.status_code, 501)
-        self.assertIn("not yet implemented", cm.exception.detail)
+        self.assertEqual(cm.exception.status_code, 401)
+        self.assertIn("/api/v2/auth/mfa/verify", cm.exception.detail)
         self.assertEqual(mock_audit.call_args.kwargs["status"], "MFA_REQUIRED")
 
     @patch("app.core.dependencies.authenticate_provider_session")
@@ -195,6 +205,7 @@ class TestGetProviderContext(unittest.TestCase):
 
         result = run(
             get_provider_context(
+                request=MockRequest(),
                 credentials=creds,
                 basic_credentials=None,
                 hospital_id=context.hospital.hospital_id,
@@ -215,6 +226,7 @@ class TestGetProviderContext(unittest.TestCase):
 
         result = run(
             get_provider_context(
+                request=MockRequest(),
                 credentials=None,
                 basic_credentials=basic,
                 hospital_id=context.hospital.hospital_id,
@@ -232,6 +244,31 @@ class TestGetProviderContext(unittest.TestCase):
         awaited_result = mock_auth.return_value
         self.assertEqual(awaited_result.context, context)
         mock_audit.assert_not_called()
+
+    @patch("app.core.dependencies.authenticate_provider_session")
+    @patch("app.core.dependencies.append_audit_log")
+    def test_ip_rotation_warning_is_allowed_and_logged(self, mock_audit, mock_auth):
+        context = _sample_provider_context()
+        mock_auth.return_value = ProviderAuthResult(
+            context, binding_warning="SESSION_IP_ROTATION_DETECTED"
+        )
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid-token")
+        db = AsyncMock()
+
+        with patch("app.core.dependencies.logger") as mock_logger:
+            result = run(
+                get_provider_context(
+                    request=MockRequest(user_agent="TestAgent/1.0", client_ip="10.0.0.2"),
+                    credentials=creds,
+                    basic_credentials=None,
+                    hospital_id=context.hospital.hospital_id,
+                    db=db,
+                )
+            )
+
+        self.assertEqual(result, context)
+        mock_logger.warning.assert_called_once()
+        self.assertIn("SESSION_IP_ROTATION_DETECTED", str(mock_logger.warning.call_args))
 
 
 if __name__ == "__main__":

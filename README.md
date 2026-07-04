@@ -77,4 +77,8 @@ nexa-client/       # Tamagui monorepo (Next.js + Expo)
 ## Notes
 
 - `CLINIC_API_KEY` is deprecated and only used by legacy scripts. Provider routes authenticate via `provider_credential` (HTTP Basic or Bearer session token).
-- MFA is currently a hard fail (`501 Not Implemented`) for any provider with `mfa_enabled=True` until the `/mfa/verify` flow is built.
+- MFA is implemented via TOTP (`POST /api/v2/auth/mfa/setup` and `POST /api/v2/auth/mfa/verify`).
+- Provider sessions are bound to User-Agent (hard check) and client IP (soft check). UA mismatch returns `401`; IP mismatch is allowed but logs `SESSION_IP_ROTATION_DETECTED`.
+- `POST /api/v2/auth/refresh` rebinds the new session token to the current request's UA/IP.
+- MFA brute-force lockout uses the composite Redis key `mfa_fails:{provider_id}:{ip_hash}`.
+- The legacy combined `raw_pii` JSONB blob has been removed from `nexa_vault`; PII is encrypted at rest into the `patient_name`, `phone`, and `aadhaar_abha_id` columns. Alembic migration `20260704_drop_raw_pii_from_vault` drops the column.

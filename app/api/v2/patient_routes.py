@@ -39,9 +39,8 @@ def _merge_non_null_fields(base: dict[str, Any], values: dict[str, Any]) -> dict
 def _pii_payload(row: NexaVault) -> dict[str, Any]:
     """Build an identity-only payload without clinical fields."""
 
-    raw_pii = row.raw_pii if isinstance(row.raw_pii, dict) else {}
     return _merge_non_null_fields(
-        raw_pii,
+        {},
         {
             "patient_name": row.patient_name,
             "phone": row.phone,

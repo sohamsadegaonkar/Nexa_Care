@@ -1,10 +1,49 @@
-"""Tests for the in-memory rate limiter."""
+"""Tests for the Redis-backed rate limiter using an in-memory fake client."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 
 from app.core.rate_limiter import RateLimiter, client_ip_key
+
+
+class FakeAsyncRedisPipeline:
+    def __init__(self, client: "FakeAsyncRedisClient"):
+        self._client = client
+        self._commands: list = []
+
+    def incr(self, key: str):
+        self._commands.append(("incr", key))
+        return self
+
+    def expire(self, key: str, seconds: int, nx: bool = True):
+        self._commands.append(("expire", key, seconds, nx))
+        return self
+
+    async def execute(self) -> list:
+        results = []
+        for cmd in self._commands:
+            if cmd[0] == "incr":
+                key = cmd[1]
+                self._client._counters[key] = self._client._counters.get(key, 0) + 1
+                results.append(self._client._counters[key])
+            elif cmd[0] == "expire":
+                # Fake TTL bookkeeping is not needed for these unit tests.
+                results.append(1)
+        self._commands.clear()
+        return results
+
+
+class FakeAsyncRedisClient:
+    def __init__(self):
+        self._counters: dict[str, int] = {}
+
+    def pipeline(self):
+        return FakeAsyncRedisPipeline(self)
+
+    async def close(self) -> None:
+        pass
 
 
 class FakeRequest:
@@ -17,17 +56,28 @@ class FakeRequest:
 
 class TestRateLimiter(unittest.TestCase):
     def test_allows_requests_up_to_max(self):
-        limiter = RateLimiter(max_requests=3, window_seconds=60, key_func=lambda r: "key")
-        self.assertTrue(limiter.is_allowed("key"))
-        self.assertTrue(limiter.is_allowed("key"))
-        self.assertTrue(limiter.is_allowed("key"))
-        self.assertFalse(limiter.is_allowed("key"))
+        fake = FakeAsyncRedisClient()
+        limiter = RateLimiter(
+            max_requests=3,
+            window_seconds=60,
+            key_func=lambda r: "key",
+            redis_client=fake,
+        )
+        self.assertTrue(asyncio.run(limiter.is_allowed("key")))
+        self.assertTrue(asyncio.run(limiter.is_allowed("key")))
+        self.assertTrue(asyncio.run(limiter.is_allowed("key")))
+        self.assertFalse(asyncio.run(limiter.is_allowed("key")))
 
-    def test_bypasses_window_after_timeout(self):
-        limiter = RateLimiter(max_requests=1, window_seconds=0, key_func=lambda r: "key")
-        self.assertTrue(limiter.is_allowed("key"))
-        # Window is 0 seconds, so next call resets the bucket.
-        self.assertTrue(limiter.is_allowed("key"))
+    def test_separate_keys_do_not_share_counters(self):
+        fake = FakeAsyncRedisClient()
+        limiter = RateLimiter(
+            max_requests=1,
+            window_seconds=60,
+            key_func=lambda r: "ignored",
+            redis_client=fake,
+        )
+        self.assertTrue(asyncio.run(limiter.is_allowed("key-a")))
+        self.assertTrue(asyncio.run(limiter.is_allowed("key-b")))
 
     def test_client_ip_key_prefers_forwarded_header(self):
         request = FakeRequest(host="10.0.0.1", forwarded="203.0.113.5, 10.0.0.1")
