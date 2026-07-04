@@ -52,3 +52,9 @@ jobs:
           UPSTASH_REDIS_URL: "redis://localhost:6379"
           HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
           DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/nexa_ci"
+          # app/core/security.py::_load_key requires 32-byte base64 Fernet
+          # keys for any code path that encrypts PII/MFA fields at rest
+          # (patient registration, document pipeline, review approval).
+          # These are throwaway CI-only keys, not real secrets.
+          PII_ENCRYPTION_KEY: "vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw="
+          MFA_ENCRYPTION_KEY: "ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8="
