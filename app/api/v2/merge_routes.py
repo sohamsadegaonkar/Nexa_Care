@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
-from app.core.database import get_db
+from app.core.database import get_db_session
 from app.services.merge_service import PatientMergeService
 
 router = APIRouter(prefix="/api/v2/patient", tags=["merge"])
@@ -30,7 +30,7 @@ class MergeResponse(BaseModel):
 @router.post("/merge", response_model=MergeResponse, status_code=201)
 async def merge_patients(
     payload: MergeRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """
     Supervised patient merge workflow.

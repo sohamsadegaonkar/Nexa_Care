@@ -28,7 +28,7 @@ class ConsentResponse(BaseModel):
     consent_token: str
     patient_uuid: UUID
     purpose: str
-    consent_assurance: ConsentAssurance
+    consent_assurance: str
     granted_at: datetime
     expires_at: datetime
 

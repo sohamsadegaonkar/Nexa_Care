@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
 
-from app.core.database import get_db
+from app.core.database import get_db_session
 from app.services.nexa_consent_engine import NexaConsentEngine
 from app.schemas.consent import (
     ConsentIssueRequest,
@@ -22,7 +22,7 @@ engine = NexaConsentEngine()
 @router.post("/routine/issue", response_model=ConsentResponse, status_code=201)
 async def issue_routine_consent(
     payload: ConsentIssueRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Issue routine consent token after card tap + assurance check"""
     try:
@@ -50,7 +50,7 @@ async def issue_routine_consent(
 @router.post("/break-glass/issue", response_model=ConsentResponse, status_code=201)
 async def issue_break_glass(
     payload: BreakGlassRequest,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Emergency break-glass access"""
     token = await engine.issue_break_glass(
@@ -76,7 +76,7 @@ async def issue_break_glass(
 async def validate_consent(
     consent_token: str,
     patient_uuid: UUID | None = None,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Validate consent token (used by terminals for revalidation)"""
     result = await engine.validate_consent(db, consent_token, patient_uuid)
