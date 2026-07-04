@@ -85,12 +85,29 @@ class ProviderLoginMfaRequiredResponse(BaseModel):
 
 
 class ProviderMfaVerifyRequest(BaseModel):
-    """Complete login with a TOTP code."""
+    """Complete login with a TOTP code.
+
+    ``provider_id``, if supplied, is NOT a credential and is never used to
+    resolve identity. Identity is resolved exclusively from the server-side
+    Redis-backed ``mfa_token`` pending-token, which is proof the caller
+    already passed the password step. ``provider_id`` here is only a
+    client-echo integrity check: if a caller supplies one and it does not
+    match the identity bound to their ``mfa_token``, that is treated as a
+    session-confusion / IDOR probe and rejected (see
+    ``ProviderAuthFailure.SESSION_BINDING_MISMATCH``).
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     mfa_token: str = Field(..., min_length=1, max_length=256)
     totp_code: str = Field(..., min_length=6, max_length=8)
+    provider_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Optional client-echo of the provider's ID for defense-in-depth "
+            "session-binding verification. Never authoritative on its own."
+        ),
+    )
     hospital_id: UUID | None = None
 
 
@@ -252,14 +269,28 @@ async def provider_mfa_verify(
         payload.totp_code,
         payload.hospital_id,
         client_ip=client_ip,
+        claimed_provider_id=payload.provider_id,
     )
 
     if result.context is None:
         assert result.failure is not None
+
+        # SESSION_BINDING_MISMATCH means the caller's mfa_token resolved to
+        # a *different* provider than the provider_id they claimed in the
+        # body — a session-confusion / IDOR probe, not a routine bad code.
+        # It gets its own audit target_id (the claimed identity) so the
+        # immutable ledger can distinguish "wrong code" from "possible
+        # cross-account access attempt" without leaking that distinction
+        # back to the client in the HTTP response.
+        is_binding_mismatch = result.failure is ProviderAuthFailure.SESSION_BINDING_MISMATCH
         await append_audit_log(
             actor_uid="PROVIDER_MFA",
-            event_type="PROVIDER_MFA_VERIFY_FAILED",
-            target_id="UNKNOWN",
+            event_type=(
+                "PROVIDER_MFA_SESSION_BINDING_MISMATCH"
+                if is_binding_mismatch
+                else "PROVIDER_MFA_VERIFY_FAILED"
+            ),
+            target_id=str(payload.provider_id) if is_binding_mismatch else "UNKNOWN",
             status=result.failure.value.upper(),
         )
         raise HTTPException(

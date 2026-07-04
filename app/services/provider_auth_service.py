@@ -608,6 +608,7 @@ async def complete_mfa_login(
     totp_code: str,
     hospital_id: uuid.UUID | None,
     client_ip: str | None = None,
+    claimed_provider_id: uuid.UUID | None = None,
 ) -> ProviderAuthResult:
     """Complete a provider login after MFA verification.
 
@@ -617,6 +618,15 @@ async def complete_mfa_login(
     attempts are tracked under the composite key
     ``mfa_fails:{provider_id}:{ip_hash}`` to prevent MFA brute-force
     from being used as a provider-wide account lockout vector.
+
+    ``claimed_provider_id``, if supplied by the caller, is NEVER used to
+    resolve identity — identity comes exclusively from the Redis-backed
+    pending token, which is proof the password step already succeeded for
+    a specific provider. ``claimed_provider_id`` is checked only as a
+    defense-in-depth integrity assertion: a mismatch means the caller's
+    token and claimed identity disagree, which is treated as a
+    session-confusion / IDOR probe (``SESSION_BINDING_MISMATCH``) and
+    rejected before any further DB work is done.
     """
 
     provider_id = await resolve_mfa_pending_token(mfa_token)
@@ -624,6 +634,9 @@ async def complete_mfa_login(
 
     if provider_id is None:
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
+
+    if claimed_provider_id is not None and claimed_provider_id != provider_id:
+        return ProviderAuthResult(None, ProviderAuthFailure.SESSION_BINDING_MISMATCH)
 
     ip_hash = hash_client_ip(client_ip)
     if await _is_mfa_rate_limited(provider_id, ip_hash):

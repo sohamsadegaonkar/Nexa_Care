@@ -3,22 +3,56 @@
 import {
   Anchor,
   Button,
+  Card,
   H1,
+  Input,
   Paragraph,
   Separator,
   Sheet,
+  Spinner,
   SwitchThemeButton,
+  Text,
   useToastController,
   XStack,
   YStack,
 } from '@my/ui'
 import { ChevronDown, ChevronUp } from '@tamagui/lucide-icons'
+import axios from 'axios'
 import { useRouter } from 'solito/navigation'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Platform } from 'react-native'
+
+import { apiClient, setAuthTokenProvider } from '../../utils/api'
+
+interface ProviderMfaVerifyResponse {
+  access_token: string
+  token_type: string
+  expires_at: string
+  provider_uid: string
+  hospital_id: string
+}
 
 export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => void }) {
   const router = useRouter()
+
+  // Holds the verified provider session token in memory. We register a
+  // *closure* with setAuthTokenProvider (never the raw string) so the
+  // axios interceptor in utils/api.ts always reads the current value.
+  const sessionTokenRef = useRef<string | null>(null)
+
+  // --- Lane A: Provider MFA verification state ---
+  // The backend's ProviderMfaVerifyRequest requires `mfa_token` (the
+  // pending token from POST /auth/login) + `totp_code` (the 6-8 digit
+  // authenticator code). `provider_id` is also accepted, but ONLY as a
+  // non-authoritative, client-echo integrity check — the server resolves
+  // real identity exclusively from the Redis-backed mfa_token, never from
+  // this field. If it's supplied and doesn't match, the server treats it
+  // as a session-confusion/IDOR probe and rejects with 401.
+  const [providerId, setProviderId] = useState('')
+  const [totpCode, setTotpCode] = useState('')
+  const [mfaToken, setMfaToken] = useState('')
+  const [verifyLoading, setVerifyLoading] = useState(false)
+  const [verifyError, setVerifyError] = useState<string | null>(null)
 
   const navigate = (screen: string) => {
     if (onNavigate) {
@@ -27,6 +61,72 @@ export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => vo
       router.push(`/${screen}`)
     }
   }
+
+  const UUID_PATTERN =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+  const handleVerify = async () => {
+    if (!mfaToken.trim() || !totpCode.trim()) {
+      setVerifyError('Both the MFA token and the authenticator code are required.')
+      return
+    }
+
+    const trimmedProviderId = providerId.trim()
+    if (trimmedProviderId && !UUID_PATTERN.test(trimmedProviderId)) {
+      setVerifyError('Provider ID must be a valid UUID.')
+      return
+    }
+
+    setVerifyLoading(true)
+    setVerifyError(null)
+
+    try {
+      const response = await apiClient.post<ProviderMfaVerifyResponse>(
+        '/api/v2/auth/mfa/verify',
+        {
+          mfa_token: mfaToken.trim(),
+          totp_code: totpCode.trim(),
+          // Non-authoritative: server verifies this against the identity
+          // bound to mfa_token and rejects on mismatch. Omitted entirely
+          // if left blank, since it's optional server-side.
+          ...(trimmedProviderId ? { provider_id: trimmedProviderId } : {}),
+        }
+      )
+
+      const { access_token } = response.data
+
+      // Persist the token, then wire it into the shared auth utility.
+      // Nothing navigates until the token is actually captured — no
+      // silent-failure path to /dashboard with an empty session.
+      sessionTokenRef.current = access_token
+      setAuthTokenProvider(() => sessionTokenRef.current)
+
+      router.push('/dashboard')
+    } catch (err: unknown) {
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status
+
+        if (status === 401) {
+          setVerifyError('Invalid or expired MFA token/code. Please try again.')
+        } else if (status === 403) {
+          setVerifyError('This provider is not authorized to complete verification.')
+        } else if (status === 429) {
+          setVerifyError('Too many attempts. Please wait a minute before retrying.')
+        } else {
+          const detail =
+            typeof err.response?.data?.detail === 'string'
+              ? err.response.data.detail
+              : 'Verification failed. Please try again.'
+          setVerifyError(detail)
+        }
+      } else {
+        setVerifyError('Unable to reach the authentication service.')
+      }
+    } finally {
+      setVerifyLoading(false)
+    }
+  }
+
   return (
     <YStack
       flex={1}
@@ -63,6 +163,64 @@ export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => vo
         </Paragraph>
         <Separator />
       </YStack>
+
+      <Card
+        width="100%"
+        maxW={320}
+        p="$4"
+        gap="$4"
+        bg="$color2"
+        borderWidth={1}
+        borderColor="$borderColor"
+      >
+        <YStack gap="$2">
+          <Text fontWeight="700" color="$color12">
+            Provider Verification
+          </Text>
+          <Text color="$color10" fontSize={13}>
+            Enter the MFA token issued at login and your authenticator code.
+          </Text>
+        </YStack>
+
+        <YStack gap="$3">
+          <Input
+            placeholder="Provider ID (optional)"
+            value={providerId}
+            onChangeText={setProviderId}
+            autoCapitalize="none"
+            size="$4"
+          />
+          <Input
+            placeholder="MFA Token"
+            value={mfaToken}
+            onChangeText={setMfaToken}
+            autoCapitalize="none"
+            size="$4"
+          />
+          <Input
+            placeholder="Authenticator Code (TOTP)"
+            value={totpCode}
+            onChangeText={setTotpCode}
+            keyboardType="numeric"
+            maxLength={8}
+            size="$4"
+          />
+        </YStack>
+
+        <Button
+          theme="blue"
+          disabled={verifyLoading}
+          onPress={handleVerify}
+        >
+          {verifyLoading ? <Spinner color="$color12" /> : 'Verify & Authenticate'}
+        </Button>
+
+        {verifyError && (
+          <Text color="$red10" fontSize={13} text="center">
+            {verifyError}
+          </Text>
+        )}
+      </Card>
 
       <YStack gap="$4" width="100%" maxW={320}>
         <Button theme="blue" onPress={() => router.push('/scanner')}>
