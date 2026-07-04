@@ -65,6 +65,10 @@ from app.api.v2.review_routes import router as review_v2_router
 from app.api.v2.nexa_consent_routes import router as nexa_consent_v2_router
 from app.api.v2.dashboard_routes import router as dashboard_v2_router
 from app.api.v2.consent_history_routes import router as consent_history_v2_router
+from app.api.v2.policy_routes import router as policy_v2_router
+from app.api.v2.role_routes import router as role_v2_router
+from app.api.v2.mfa_action_routes import router as mfa_action_router
+from app.api.v2.assurance_routes import router as assurance_v2_router
 from app.core.config import (
     get_database_config,
     get_handshake_config,

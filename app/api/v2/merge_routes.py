@@ -3,7 +3,7 @@ Patient Merge (Alias & Tombstone) Workflow
 Implements Section 9 of the Nexa Care v1.0 Architecture
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
@@ -51,5 +51,5 @@ async def merge_patients(
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Merge operation failed")

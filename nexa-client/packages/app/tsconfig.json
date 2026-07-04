@@ -3,6 +3,7 @@
   "include": ["**/*.ts", "**/*.tsx"],
   "compilerOptions": {
     "composite": true,
+    "ignoreDeprecations": "6.0",
     "jsx": "react-jsx",
     "paths": {
       "app/*": ["./packages/app/*"],
