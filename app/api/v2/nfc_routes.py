@@ -7,10 +7,8 @@ caller still needs a separate consent grant to read the patient record.
 
 from __future__ import annotations
 
-from uuid import UUID
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
@@ -29,17 +27,31 @@ class NFCResolveRequest(BaseModel):
 
     card_uid: str = Field(..., min_length=1, max_length=128)
 
-    def __post_init__(self):
-        # Sanitize card_uid
-        self.card_uid = self.card_uid.strip().upper()
+    @field_validator("card_uid", mode="before")
+    @classmethod
+    def normalize_card_uid(cls, value: object) -> object:
+        """Normalize physical card UIDs before lookup."""
+
+        if isinstance(value, str):
+            return value.strip().upper()
+        return value
 
 
 class NFCResolveResponse(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
-    patient_id: UUID
-    canonical_patient_id: UUID | None = None
+    patient_id: str
+    canonical_patient_id: str | None = None
     is_redirected: bool = False
+
+    @field_validator("patient_id", "canonical_patient_id", mode="before")
+    @classmethod
+    def stringify_patient_identifier(cls, value: object) -> str | None:
+        """Keep response IDs transport-safe while accepting UUID service output."""
+
+        if value is None:
+            return None
+        return str(value)
 
 
 @router.post("/resolve", response_model=NFCResolveResponse)
@@ -57,7 +69,7 @@ async def resolve_nfc_card(
     # Rate limiting: 30 NFC scans per provider per minute
     try:
         redis = get_redis_client()
-        rate_key = f"nfc_resolve_rate:{provider.provider_id}"
+        rate_key = f"nfc_resolve_rate:{provider.actor_uid}"
         current = await redis.incr(rate_key)
         if current == 1:
             await redis.expire(rate_key, 60)
@@ -92,7 +104,7 @@ async def resolve_nfc_card(
 
     # Audit every NFC resolution attempt
     await append_audit_log(
-        actor_uid=provider.provider_id,
+        actor_uid=provider.actor_uid,
         event_type="NFC_CARD_RESOLVED",
         target_id=str(patient_id),
         status="SUCCESS",
