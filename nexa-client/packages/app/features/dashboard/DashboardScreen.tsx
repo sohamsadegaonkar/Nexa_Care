@@ -1,14 +1,10 @@
 'use client'
 
-import {
-  Card,
-  Text,
-  YStack,
-  XStack,
-  Button,
-} from '@my/ui'
+import { Card, Text, YStack, XStack, Button, Spinner } from '@my/ui'
 import { TrendingUp, Users, Clock } from '@tamagui/lucide-icons'
+import axios from 'axios'
 import { useState, useEffect } from 'react'
+import { apiClient, getAuthToken } from '../../utils/api'
 
 interface DashboardMetrics {
   total_patients: number
@@ -20,41 +16,151 @@ interface DashboardMetrics {
 export function DashboardScreen() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d')
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
+    let isMounted = true
+
     const fetchMetrics = async () => {
+      setLoading(true)
+      setError(null)
+
       try {
-        const res = await fetch('http://localhost:8000/api/v2/dashboard/metrics')
-        const data = await res.json()
-        setMetrics(data)
-      } catch (e) {
-        console.error('Failed to fetch dashboard metrics', e)
+        const providerToken = await getAuthToken()
+
+        if (!providerToken) {
+          if (isMounted) {
+            setMetrics(null)
+            setError('Provider authentication is required to view dashboard metrics.')
+          }
+          return
+        }
+
+        const response = await apiClient.get<DashboardMetrics>('/api/v2/dashboard/metrics', {
+          headers: {
+            Authorization: `Bearer ${providerToken}`,
+          },
+        })
+
+        if (isMounted) {
+          setMetrics(response.data)
+        }
+      } catch (error: unknown) {
+        if (!isMounted) {
+          return
+        }
+
+        setMetrics(null)
+
+        if (axios.isAxiosError(error)) {
+          const status = error.response?.status
+
+          if (status === 401) {
+            setError('Your provider session has expired. Sign in again to view dashboard metrics.')
+            return
+          }
+
+          if (status === 403) {
+            setError('Your provider role is not permitted to view dashboard metrics.')
+            return
+          }
+        }
+
+        setError('Dashboard metrics are temporarily unavailable.')
       } finally {
-        setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
     }
-    fetchMetrics()
-  }, [])
 
-  if (loading || !metrics) {
+    fetchMetrics()
+
+    return () => {
+      isMounted = false
+    }
+  }, [refreshKey])
+
+  if (loading) {
     return (
-      <YStack flex={1} items="center" justify="center" bg="$background">
+      <YStack
+        flex={1}
+        items="center"
+        justify="center"
+        bg="$background"
+        gap="$3"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
         <Text color="$color11">Loading dashboard...</Text>
       </YStack>
     )
   }
 
+  if (error || !metrics) {
+    return (
+      <YStack
+        flex={1}
+        items="center"
+        justify="center"
+        bg="$background"
+        p="$5"
+      >
+        <Card
+          width="100%"
+          maxW={460}
+          p="$5"
+          bg="$color2"
+          borderWidth={1}
+          borderColor="$borderColor"
+        >
+          <YStack gap="$3">
+            <Text
+              fontSize={18}
+              fontWeight="900"
+              color="$color12"
+            >
+              Dashboard unavailable
+            </Text>
+            <Text color="$red11">{error ?? 'Unable to load dashboard metrics.'}</Text>
+            <Button
+              theme="blue"
+              onPress={() => setRefreshKey((current) => current + 1)}
+            >
+              Retry
+            </Button>
+          </YStack>
+        </Card>
+      </YStack>
+    )
+  }
+
   return (
-    <YStack flex={1} bg="$background" p="$5" gap="$6">
+    <YStack
+      flex={1}
+      bg="$background"
+      p="$5"
+      gap="$6"
+    >
       <YStack gap="$2">
-        <Text fontSize={28} fontWeight="900" color="$color12">
+        <Text
+          fontSize={28}
+          fontWeight="900"
+          color="$color12"
+        >
           Provider Dashboard
         </Text>
         <Text color="$color11">Data-driven insights • Last updated just now</Text>
       </YStack>
 
-      <XStack gap="$3" flexWrap="wrap">
+      <XStack
+        gap="$3"
+        flexWrap="wrap"
+      >
         {(['7d', '30d', '90d'] as const).map((range) => (
           <Button
             key={range}
@@ -68,7 +174,10 @@ export function DashboardScreen() {
       </XStack>
 
       <YStack gap="$4">
-        <XStack gap="$4" flexWrap="wrap">
+        <XStack
+          gap="$4"
+          flexWrap="wrap"
+        >
           <KpiCard
             icon={Users}
             label="Total Patients"
@@ -95,18 +204,37 @@ export function DashboardScreen() {
           />
         </XStack>
 
-        <Card p="$5" bg="$color2" borderWidth={1} borderColor="$borderColor">
+        <Card
+          p="$5"
+          bg="$color2"
+          borderWidth={1}
+          borderColor="$borderColor"
+        >
           <YStack gap="$4">
-            <Text fontSize={18} fontWeight="900" color="$color12">
+            <Text
+              fontSize={18}
+              fontWeight="900"
+              color="$color12"
+            >
               Productivity Trends
             </Text>
-            <Text color="$color11">
-              {timeRange} overview • Charts coming soon in v2
-            </Text>
-            <YStack gap="$3" pt="$2">
-              <MetricRow label="Appointments completed" value="312" />
-              <MetricRow label="Avg patients per day" value="21.4" />
-              <MetricRow label="Consent compliance rate" value="98.2%" />
+            <Text color="$color11">{timeRange} overview • Charts coming soon in v2</Text>
+            <YStack
+              gap="$3"
+              pt="$2"
+            >
+              <MetricRow
+                label="Appointments completed"
+                value="312"
+              />
+              <MetricRow
+                label="Avg patients per day"
+                value="21.4"
+              />
+              <MetricRow
+                label="Consent compliance rate"
+                value="98.2%"
+              />
             </YStack>
           </YStack>
         </Card>
@@ -115,33 +243,57 @@ export function DashboardScreen() {
   )
 }
 
-function KpiCard({ 
-  icon: Icon, 
-  label, 
-  value, 
-  trend 
-}: { 
+function KpiCard({
+  icon: Icon,
+  label,
+  value,
+  trend,
+}: {
   icon: any
   label: string
   value: string
-  trend: string 
+  trend: string
 }) {
   return (
-    <Card 
-      flex={1} 
-      minWidth={140} 
-      p="$4" 
-      bg="$color2" 
-      borderWidth={1} 
+    <Card
+      flex={1}
+      minWidth={140}
+      p="$4"
+      bg="$color2"
+      borderWidth={1}
       borderColor="$borderColor"
     >
       <YStack gap="$2">
-        <XStack justify="space-between" items="center">
-          <Icon size={22} color="$blue10" />
-          <Text fontSize={12} color="$green10" fontWeight="700">{trend}</Text>
+        <XStack
+          justify="space-between"
+          items="center"
+        >
+          <Icon
+            size={22}
+            color="$blue10"
+          />
+          <Text
+            fontSize={12}
+            color="$green10"
+            fontWeight="700"
+          >
+            {trend}
+          </Text>
         </XStack>
-        <Text fontSize={13} color="$color11" fontWeight="700">{label}</Text>
-        <Text fontSize={24} fontWeight="900" color="$color12">{value}</Text>
+        <Text
+          fontSize={13}
+          color="$color11"
+          fontWeight="700"
+        >
+          {label}
+        </Text>
+        <Text
+          fontSize={24}
+          fontWeight="900"
+          color="$color12"
+        >
+          {value}
+        </Text>
       </YStack>
     </Card>
   )
@@ -151,7 +303,12 @@ function MetricRow({ label, value }: { label: string; value: string }) {
   return (
     <XStack justify="space-between">
       <Text color="$color11">{label}</Text>
-      <Text color="$color12" fontWeight="700">{value}</Text>
+      <Text
+        color="$color12"
+        fontWeight="700"
+      >
+        {value}
+      </Text>
     </XStack>
   )
 }
