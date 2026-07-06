@@ -141,6 +141,10 @@ class TestVerifyBiometricBinding(unittest.TestCase):
 
 class TestEnrollBiometricBinding(unittest.TestCase):
 
+    # Note: `db` is required positionally (Sprint 2 added it to support
+    # encrypting an optional device_public_key via the KMS). These tests
+    # never pass device_public_key, so `db` is never actually touched --
+    # a bare MagicMock() is enough to satisfy the signature.
     @patch("app.services.biometric_registry.compute_bio_verifier")
     @patch("app.services.biometric_registry.get_supabase_client")
     def test_success_returns_true(self, mock_get_client, mock_compute):
@@ -148,7 +152,7 @@ class TestEnrollBiometricBinding(unittest.TestCase):
         client, table = make_fake_insert_client(FakeResult(error=None, data=[{"id": "row-1"}]))
         mock_get_client.return_value = client
 
-        result = run(enroll_biometric_binding("NFC-001", "pulse-data", "patient-uuid-123"))
+        result = run(enroll_biometric_binding("NFC-001", "pulse-data", "patient-uuid-123", MagicMock()))
 
         self.assertTrue(result)
         inserted_row = table.insert.call_args[0][0]
@@ -162,7 +166,7 @@ class TestEnrollBiometricBinding(unittest.TestCase):
         client, _ = make_fake_insert_client(FakeResult(error="unique violation", data=None))
         mock_get_client.return_value = client
 
-        result = run(enroll_biometric_binding("NFC-001", "pulse-data", "patient-uuid-123"))
+        result = run(enroll_biometric_binding("NFC-001", "pulse-data", "patient-uuid-123", MagicMock()))
         self.assertFalse(result)
 
 
@@ -175,6 +179,7 @@ class TestEnrollBiometricBindingWithAudit(unittest.TestCase):
 
         result = run(enroll_biometric_binding_with_audit(
             nfc_uid="NFC-001", bio_seed="pulse-data", masked_internal_id="patient-uuid-123",
+            db=MagicMock(),
         ))
 
         self.assertTrue(result)
@@ -191,6 +196,7 @@ class TestEnrollBiometricBindingWithAudit(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(enroll_biometric_binding_with_audit(
                 nfc_uid="NFC-001", bio_seed="pulse-data", masked_internal_id="patient-uuid-123",
+                db=MagicMock(),
             ))
 
         self.assertEqual(cm.exception.status_code, 502)
@@ -210,6 +216,7 @@ class TestEnrollBiometricBindingWithAudit(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(enroll_biometric_binding_with_audit(
                 nfc_uid="NFC-001", bio_seed="pulse-data", masked_internal_id="patient-uuid-123",
+                db=MagicMock(),
             ))
 
         self.assertEqual(cm.exception.status_code, 503)
@@ -227,6 +234,7 @@ class TestEnrollBiometricBindingWithAudit(unittest.TestCase):
         with self.assertRaises(HTTPException) as cm:
             run(enroll_biometric_binding_with_audit(
                 nfc_uid="NFC-001", bio_seed="pulse-data", masked_internal_id="patient-uuid-123",
+                db=MagicMock(),
             ))
 
         self.assertEqual(cm.exception.status_code, 503)
@@ -235,13 +243,18 @@ class TestEnrollBiometricBindingWithAudit(unittest.TestCase):
     @patch("app.services.biometric_registry.append_audit_log_or_503")
     def test_passes_through_correct_arguments_to_enroll(self, mock_audit, mock_enroll):
         mock_enroll.return_value = True
+        fake_db = MagicMock()
 
         run(enroll_biometric_binding_with_audit(
             nfc_uid="NFC-XYZ", bio_seed="seed-xyz", masked_internal_id="patient-abc",
+            db=fake_db,
         ))
 
+        # enroll_biometric_binding_with_audit forwards db and device_public_key
+        # through to enroll_biometric_binding unchanged (biometric_registry.py:358-364).
         mock_enroll.assert_called_once_with(
             nfc_uid="NFC-XYZ", bio_seed="seed-xyz", masked_internal_id="patient-abc",
+            db=fake_db, device_public_key=None,
         )
 
 

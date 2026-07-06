@@ -109,7 +109,14 @@ async def _persist_auto_processed_document(
     )
 
     # 2. Encrypt using KMS
-    encrypted_vault = await encrypt_vault_payload(vault_payload, masked_internal_id, db)
+    # Reuse `kms` (not a fresh get_encryption_provider() instance) so the
+    # DEK cache warmed by generate_dek() above is actually used -- without
+    # this, encrypt_vault_payload spins up its own provider with an empty
+    # cache and has to re-fetch and re-unwrap the DEK from patient_dek_store
+    # for every encrypted field, which is both a wasted DB round trip and
+    # (in tests) requires fabricating real encrypted DEK bytes just to
+    # reach a no-op cache hit.
+    encrypted_vault = await encrypt_vault_payload(vault_payload, masked_internal_id, db, provider=kms)
     await db.execute(
         text(
             "INSERT INTO nexa_vault "

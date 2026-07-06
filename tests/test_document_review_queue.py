@@ -68,6 +68,19 @@ def extracted_doc(confidence: float = 0.88) -> ExtractedMedicalDocument:
     )
 
 
+class FakeDEKRow:
+    """Stands in for an active PatientDEKStore row.
+
+    Only dek_version and destroyed_at are read by crypto_kms.py's
+    encrypt_field/_get_plaintext_dek before it falls back to the
+    in-process DEK cache warmed by the preceding generate_dek() call.
+    """
+
+    def __init__(self, dek_version: int = 1):
+        self.dek_version = dek_version
+        self.destroyed_at = None
+
+
 class FakeScalarResult:
     def __init__(self, row=None, rows=None):
         self.row = row
@@ -111,6 +124,19 @@ class FakeReviewDB:
         if self.execute_error is not None:
             if self.execute_error_after_count is None or len(self.executions) > self.execute_error_after_count:
                 raise self.execute_error
+        # approve_review() -> _persist_auto_processed_document() generates a
+        # DEK then immediately looks it up again via
+        # `select(PatientDEKStore)...` (crypto_kms.py::encrypt_field). That
+        # lookup only became reachable once CI started setting
+        # KEK_ROOT_SECRET (previously get_kms_config() raised first). This
+        # fixture was written to return the single review row it was
+        # constructed with for every execute() call, which meant the DEK
+        # lookup silently got the *review* row back instead and blew up on
+        # `row.dek_version`. Special-case that one statement shape; every
+        # other query in this suite still gets self.row/self.rows.
+        stmt_text = str(stmt).lower()
+        if "patient_dek_store" in stmt_text:
+            return FakeScalarResult(row=FakeDEKRow())
         return FakeScalarResult(self.row, self.rows)
 
     async def commit(self):
@@ -228,8 +254,21 @@ class TestReviewRoutes(unittest.TestCase):
 
         self.assertEqual(result.status, "APPROVED")
         self.assertEqual(review.status, "APPROVED")
-        self.assertEqual(len(db.executions), 3)  # select + two shard inserts
-        self.assertEqual(db.commit_count, 1)  # shard inserts + status update commit atomically
+        # select owned review + two shard inserts + 1 DEK-lookup SELECT per
+        # encrypted vault field (patient_name, phone, aadhaar_abha_id -- see
+        # crypto_kms.py::encrypt_field). This was 3 before CI started
+        # setting KEK_ROOT_SECRET, when get_kms_config() raised before any
+        # of this ran at all.
+        self.assertEqual(len(db.executions), 6)
+        # NOTE: generate_dek() commits the new DEK row in its own separate
+        # transaction (crypto_kms.py::generate_dek) before this route's own
+        # shard-insert-and-status-update commit. That means "commit_count"
+        # is 2, not 1 -- the DEK write and the shard/status write are NOT
+        # atomic with each other, only the shard writes + status update are
+        # atomic with *each other*. Worth a design conversation: if the
+        # second commit fails and rolls back, the DEK row from the first
+        # commit stays committed. Not fixing that here -- flagging it.
+        self.assertEqual(db.commit_count, 2)
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "DOCUMENT_REVIEW_APPROVED")
 
         # AUDIT-ORDERING FIX: prove ATTEMPT is audited before any DB write,
@@ -240,6 +279,10 @@ class TestReviewRoutes(unittest.TestCase):
             [
                 "DB_EXECUTE",  # select owned pending review (ownership/status check)
                 "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
+                "DB_COMMIT",  # generate_dek() persisting the new patient DEK row
+                "DB_EXECUTE",  # DEK-lookup select for patient_name field
+                "DB_EXECUTE",  # DEK-lookup select for phone field
+                "DB_EXECUTE",  # DEK-lookup select for aadhaar_abha_id field
                 "DB_EXECUTE",  # vault shard insert
                 "DB_EXECUTE",  # clinical shard insert
                 "DB_COMMIT",
@@ -326,11 +369,17 @@ class TestReviewRoutes(unittest.TestCase):
 
         # ATTEMPT audited before the DB write that fails; FAILED audited
         # (best-effort) after rollback, before the original error re-raises.
+        # DB_COMMIT after ATTEMPT is generate_dek() persisting the new DEK
+        # row (crypto_kms.py::generate_dek) -- this always runs before the
+        # vault/clinical shard inserts. It only started showing up once CI
+        # set KEK_ROOT_SECRET; before that, get_kms_config() raised before
+        # generate_dek was ever reached.
         self.assertEqual(
             events,
             [
                 "DB_EXECUTE",  # select owned pending review (ownership/status check, succeeds)
                 "AUDIT_OR_503:DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
+                "DB_COMMIT",  # generate_dek() persisting the new patient DEK row
                 "DB_EXECUTE",  # vault shard insert -- raises SQLAlchemyError
                 "DB_ROLLBACK",
                 "AUDIT_LOG:DOCUMENT_REVIEW_APPROVAL_FAILED",

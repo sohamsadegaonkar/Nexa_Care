@@ -35,6 +35,26 @@ gets built at import time from the route decorators in app/api/routes.py.
 from app.main import app
 
 
+# Reconciled 2026-07-06 against the actual router registrations in
+# app/main.py after a full audit of a 16-test CI failure (see the PR that
+# added this comment for the full breakdown). Two things changed since this
+# set was last updated:
+#
+#   1. The old /api/v2/assurance/push/request and
+#      /api/v2/assurance/biometric/verify endpoints were retired when the
+#      notification rework replaced them with the Expo-push + signed-response
+#      design now living under /api/v2/push/* (assurance_routes.py). There is
+#      no standalone biometric/verify route any more -- verification is
+#      folded into POST /api/v2/push/{request_id}/respond.
+#   2. Several routers shipped after this set was last touched and were
+#      never added: merge-challenge auth (auth_routes.py), break-glass
+#      revoke (consent_routes.py), consent validation (consent_routes.py),
+#      and cryptographic erasure (patient_routes.py).
+#
+# If this file goes red again: don't just delete the offending entries to
+# make it pass. Confirm with whoever owns the route in question whether the
+# route was intentionally added/removed, then update this set with a note
+# like this one so the next drift has a breadcrumb instead of a guess.
 EXPECTED_ROUTES = {
     ("POST", "/api/v1/handshake"),
     ("POST", "/api/v1/enroll-biometric"),
@@ -55,15 +75,23 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/mfa/verify"),
     ("POST", "/api/v2/auth/mfa/verify-action"),
     ("GET", "/api/v2/auth/me/role"),
-    ("POST", "/api/v2/assurance/push/request"),
-    ("POST", "/api/v2/assurance/biometric/verify"),
+    ("POST", "/api/v2/auth/challenge/merge"),
+    ("POST", "/api/v2/auth/challenge/merge/verify"),
+    ("POST", "/api/v2/push/request"),
+    ("POST", "/api/v2/push/{request_id}/respond"),
+    ("GET", "/api/v2/push/{request_id}/status"),
+    ("POST", "/api/v2/push/register-token"),
+    ("GET", "/api/v2/push/transport-config"),
     ("POST", "/api/v2/consent/grant"),
     ("GET", "/api/v2/consent/history"),
+    ("GET", "/api/v2/consent/validate"),
     ("POST", "/api/v2/consent/routine/issue"),
     ("POST", "/api/v2/consent/break-glass/issue"),
+    ("POST", "/api/v2/consent/break-glass/revoke"),
     ("POST", "/api/v2/nfc/resolve"),
     ("GET", "/api/v2/fhir/export/{patient_id}"),
     ("GET", "/api/v2/patient/{patient_id}/record"),
+    ("POST", "/api/v2/patient/{patient_id}/erase"),
     ("GET", "/api/v2/patient/{patient_uuid}/policy"),
     ("PUT", "/api/v2/patient/{patient_uuid}/policy"),
     ("GET", "/api/v2/dashboard/metrics"),
