@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+import uuid
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -30,13 +31,18 @@ from app.services.provider_auth_service import (
     get_totp_provisioning_uri,
     issue_provider_session_token,
     refresh_provider_session_token,
+    decrypt_mfa_secret,
 )
+
+from app.core.redis import get_redis_client
 
 logger = logging.getLogger("nexa_logger")
 
 router = APIRouter(prefix="/api/v2/auth", tags=["auth"])
 
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8
+_MERGE_CHALLENGE_PREFIX = "merge_challenge:"
+_MERGE_CHALLENGE_TTL_SECONDS = 120
 
 # Per-IP rate limiters. Single-worker MVP; replace with a Redis-backed
 # limiter for multi-worker production.
@@ -314,16 +320,27 @@ async def provider_mfa_verify(
     return response
 
 
+class ProviderMfaSetupVerifyRequest(BaseModel):
+    """Verify and enable MFA enrollment."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    totp_code: str = Field(..., min_length=6, max_length=8)
+
+
 @router.post("/mfa/setup", response_model=ProviderMfaSetupResponse)
 async def provider_mfa_setup(
     db: AsyncSession = Depends(get_db_session),
     provider: ProviderContext = Depends(get_current_provider),
 ) -> ProviderMfaSetupResponse:
-    """Enroll TOTP MFA for the authenticated provider.
+    """Initialize TOTP MFA enrollment for the authenticated provider.
 
-    Generates a new secret, stores it on the provider's credential row, and
-    enables the MFA flag. The provider must add the returned provisioning URI
-    to their authenticator app before the next login.
+    Generates a new secret and stores it on the provider's credential row, but
+    does NOT enable the MFA flag yet. Enrollment must be verified via
+    ``POST /api/v2/auth/mfa/setup/verify``.
+
+    Security controls:
+    - If MFA is already enabled, the request is rejected (409).
+    - If a setup was initiated recently (15-min TTL), the request is rejected
+      to prevent unverified secret overwrite/interception.
     """
 
     stmt = (
@@ -341,19 +358,38 @@ async def provider_mfa_setup(
     if row.mfa_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="MFA is already enabled. Contact an administrator to reset enrollment.",
+            detail="MFA is already enabled.",
         )
+
+    # Overwrite protection / Pending TTL (15 mins)
+    if row.mfa_secret_encrypted:
+        now = datetime.now(timezone.utc)
+        elapsed = now - row.updated_at
+        if elapsed < timedelta(minutes=15):
+            logger.warning(json.dumps({
+                "event": "provider_mfa_setup_throttled",
+                "provider_id": str(provider.provider.provider_id),
+                "elapsed_seconds": int(elapsed.total_seconds()),
+            }))
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="A setup is already in progress. Please wait 15 minutes or complete verification.",
+            )
+
+        logger.info(json.dumps({
+            "event": "provider_mfa_setup_overwriting_stale_secret",
+            "provider_id": str(provider.provider.provider_id),
+            "stale_age_seconds": int(elapsed.total_seconds()),
+        }))
 
     secret = generate_totp_secret()
     row.mfa_secret_encrypted = encrypt_mfa_secret(secret)
-    # Clear any legacy plaintext secret to avoid two copies of the same key.
     row.mfa_secret = None
-    row.mfa_enabled = True
     await db.commit()
 
     await append_audit_log(
         actor_uid=provider.actor_uid,
-        event_type="PROVIDER_MFA_SETUP",
+        event_type="PROVIDER_MFA_SETUP_INIT",
         target_id=str(provider.provider.provider_id),
         status="SUCCESS",
     )
@@ -361,8 +397,61 @@ async def provider_mfa_setup(
     return ProviderMfaSetupResponse(
         secret=secret,
         provisioning_uri=get_totp_provisioning_uri(secret, provider.actor_uid),
-        message="Scan the provisioning URI into an authenticator app and log in again.",
+        message="Scan the provisioning URI and call /mfa/setup/verify to enable MFA.",
     )
+
+
+@router.post("/mfa/setup/verify")
+async def provider_mfa_setup_verify(
+    payload: ProviderMfaSetupVerifyRequest,
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    """Complete MFA enrollment by verifying a TOTP code.
+
+    If the code is correct, the MFA flag is enabled for the account.
+    """
+
+    stmt = (
+        select(ProviderCredential)
+        .where(ProviderCredential.provider_id == provider.provider.provider_id)
+    )
+    result = await db.execute(stmt)
+    row = result.scalar_one_or_none()
+    if row is None or row.mfa_secret_encrypted is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA setup has not been initialized.",
+        )
+
+    if row.mfa_enabled:
+        return {"message": "MFA is already enabled."}
+
+    secret = decrypt_mfa_secret(row.mfa_secret_encrypted)
+    from app.services.provider_auth_service import verify_totp_code
+    if not verify_totp_code(secret, payload.totp_code):
+        await append_audit_log(
+            actor_uid=provider.actor_uid,
+            event_type="PROVIDER_MFA_SETUP_VERIFY_FAILED",
+            target_id=str(provider.provider.provider_id),
+            status="INVALID_CODE",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid MFA code. Verification failed.",
+        )
+
+    row.mfa_enabled = True
+    await db.commit()
+
+    await append_audit_log(
+        actor_uid=provider.actor_uid,
+        event_type="PROVIDER_MFA_SETUP_SUCCESS",
+        target_id=str(provider.provider.provider_id),
+        status="SUCCESS",
+    )
+
+    return {"message": "MFA has been successfully enabled."}
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
@@ -417,3 +506,123 @@ async def provider_refresh(
         access_token=new_token,
         expires_at=expires_at,
     )
+
+
+class MergeChallengeResponse(BaseModel):
+    challenge_token: str
+    requires_mfa: bool = True
+    expires_in_seconds: int = _MERGE_CHALLENGE_TTL_SECONDS
+
+
+@router.post("/challenge/merge", response_model=MergeChallengeResponse)
+async def create_merge_challenge(
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    """Generate a short-lived challenge token for the merge operation.
+    Requires admin role.
+    """
+    if "admin" not in provider.affiliation.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required for merge challenge.",
+        )
+
+    challenge_token = str(uuid.uuid4())
+    payload = {
+        "provider_id": str(provider.provider.provider_id),
+        "issued_at": datetime.now(timezone.utc).isoformat(),
+        "verified": False,
+    }
+
+    redis = get_redis_client()
+    key = f"{_MERGE_CHALLENGE_PREFIX}{challenge_token}"
+    redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(payload))
+
+    await append_audit_log(
+        actor_uid=provider.actor_uid,
+        event_type="MERGE_CHALLENGE_CREATED",
+        target_id=challenge_token,
+        status="SUCCESS"
+    )
+
+    return MergeChallengeResponse(challenge_token=challenge_token)
+
+
+class MergeChallengeVerifyRequest(BaseModel):
+    challenge_token: str
+    totp_code: str = Field(..., min_length=6, max_length=6)
+
+
+@router.post("/challenge/merge/verify")
+async def verify_merge_challenge(
+    payload: MergeChallengeVerifyRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    """Verify a merge challenge with a TOTP code."""
+    redis = get_redis_client()
+    key = f"{_MERGE_CHALLENGE_PREFIX}{payload.challenge_token}"
+    cached = redis.get(key)
+    if not cached:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Challenge expired or invalid.",
+        )
+
+    challenge_data = json.loads(cached)
+    if challenge_data["provider_id"] != str(provider.provider.provider_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Challenge bound to different provider.",
+        )
+
+    # Re-use existing MFA logic
+    from app.services.provider_auth_service import (
+        verify_totp_code,
+        _record_failed_mfa_attempt,
+        _clear_mfa_fails,
+        _is_mfa_rate_limited,
+        hash_client_ip,
+    )
+
+    client_ip = _client_ip_from_request(request)
+    ip_hash = hash_client_ip(client_ip)
+
+    if await _is_mfa_rate_limited(provider.provider.provider_id, ip_hash):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed MFA attempts. Please try again later.",
+        )
+
+    # Fetch credential to get secret
+    stmt = select(ProviderCredential).where(ProviderCredential.provider_id == provider.provider.provider_id)
+    result = await db.execute(stmt)
+    cred = result.scalar_one_or_none()
+    if not cred or not cred.mfa_enabled or not cred.mfa_secret_encrypted:
+         raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="MFA not enabled or configured for this provider.",
+        )
+
+    mfa_secret = decrypt_mfa_secret(cred.mfa_secret_encrypted)
+    if not verify_totp_code(mfa_secret, payload.totp_code):
+        await _record_failed_mfa_attempt(provider.provider.provider_id, ip_hash)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid MFA code.",
+        )
+
+    await _clear_mfa_fails(provider.provider.provider_id, ip_hash)
+
+    challenge_data["verified"] = True
+    redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(challenge_data))
+
+    await append_audit_log(
+        actor_uid=provider.actor_uid,
+        event_type="MERGE_CHALLENGE_VERIFIED",
+        target_id=payload.challenge_token,
+        status="SUCCESS"
+    )
+
+    return {"challenge_token": payload.challenge_token, "verified": True}

@@ -109,6 +109,25 @@ def get_clinic_config() -> ClinicConfig:
     return ClinicConfig(api_key=_require_env("CLINIC_API_KEY"))
 
 
+@dataclass(frozen=True)
+class KMSConfig:
+    kek_root_secret: str
+    encryption_backend: str = "local"
+
+
+def get_kms_config() -> KMSConfig:
+    """Load configuration for the Key Management System (KMS).
+
+    Expected variables:
+    - KEK_ROOT_SECRET — root secret used to derive the Key Encryption Key (KEK)
+    - ENCRYPTION_BACKEND — optional 'local' (default) or 'kms'
+    """
+    return KMSConfig(
+        kek_root_secret=_require_env("KEK_ROOT_SECRET"),
+        encryption_backend=os.getenv("ENCRYPTION_BACKEND", "local"),
+    )
+
+
 def get_database_config() -> DatabaseConfig:
     """Load async Postgres connection settings for the provider layer.
 

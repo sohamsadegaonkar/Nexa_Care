@@ -36,14 +36,19 @@ export class MergeError extends Error {
  * Performs a supervised patient merge (creates tombstone).
  */
 export async function mergePatients(
-  payload: PatientMergeRequest
+  payload: PatientMergeRequest,
+  challengeToken: string
 ): Promise<PatientMergeResponse> {
   try {
     const response = await apiClient.post<
       PatientMergeResponse,
       AxiosResponse<PatientMergeResponse>,
       PatientMergeRequest
-    >('/api/v2/patient/merge', payload)
+    >('/api/v2/patient/merge', payload, {
+      headers: {
+        'X-Merge-Challenge': challengeToken,
+      },
+    })
 
     return response.data
   } catch (error: unknown) {

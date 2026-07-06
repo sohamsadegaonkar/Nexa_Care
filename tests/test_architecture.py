@@ -17,30 +17,20 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-# The "v2 production consent surface". Legacy v1 (app/api/routes.py,
-# app/core/redis.py's issue/resolve/revoke_consent_token) is intentionally
-# excluded: its full deprecation is tracked as a whole system in
-# docs/CURRENT-STATE.md, not as intra-v2 drift, and it is already known and
-# accepted to coexist with the v2 systems during Phase 0/1.
-V2_SCANNED_FILES = [
-    "app/api/v2/consent_routes.py",
-    "app/api/v2/patient_routes.py",
-    "app/api/v2/fhir_routes.py",
-    "app/api/v2/document_routes.py",
-    "app/api/v2/review_routes.py",
-    "app/api/v2/emergency_routes.py",
-    "app/api/v2/auth_routes.py",
-    "app/api/v2/nfc_routes.py",
-    "app/core/dependencies.py",
-]
+# The "production surface". Now scanning all files under app/ recursively.
+def _get_all_app_files() -> list[str]:
+    app_path = REPO_ROOT / "app"
+    return [str(p.relative_to(REPO_ROOT)) for p in app_path.rglob("*.py")]
 
-# Module path -> consent "family" name. Any import whose module equals or
-# is nested under one of these prefixes counts as a use of that family.
+V2_SCANNED_FILES = _get_all_app_files()
+
+# Module path -> consent "family" name.
 FAMILY_MODULE_PREFIXES = {
     "app.services.consent_service": "consent_service",
     "app.services.consent.routine": "routine",
     "app.services.consent.break_glass": "break_glass",
     "app.services.consent_engine": "consent_engine",
+    "app.services.nexa_consent_engine": "nexa_consent_engine",
 }
 
 
@@ -101,7 +91,7 @@ class TestConsentSystemDrift(unittest.TestCase):
         """Must always pass. The old consent modules are gone; bringing
         them back into v2 routes is a regression."""
         found = _scan_all()
-        removed_families = {"consent_service", "routine", "break_glass"}
+        removed_families = {"consent_service", "routine", "break_glass", "nexa_consent_engine"}
         offenders = {
             path: families & removed_families
             for path, families in found.items()
@@ -110,10 +100,15 @@ class TestConsentSystemDrift(unittest.TestCase):
 
         self.assertFalse(
             offenders,
-            f"Removed consent families (consent_service/routine/break_glass) "
-            f"found in v2 production files: {offenders}. "
+            f"Removed consent families (consent_service/routine/break_glass/nexa_consent_engine) "
+            f"found in app files: {offenders}. "
             f"See docs/CURRENT-STATE.md Section 1.",
         )
+
+    def test_legacy_engine_file_is_absent(self):
+        """Verify the physical deletion of the legacy engine."""
+        legacy_path = REPO_ROOT / "app" / "services" / "nexa_consent_engine.py"
+        self.assertFalse(legacy_path.exists(), f"Legacy engine file still exists at {legacy_path}")
 
     def test_v2_consent_surface_uses_at_most_one_family(self):
         """Must always pass. Tripwire against drift. A single v2 file

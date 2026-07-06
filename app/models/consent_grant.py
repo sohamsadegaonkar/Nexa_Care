@@ -44,6 +44,9 @@ class ConsentGrantLog(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
+    assurance_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    assurance_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_consent_grant_log_token_hash"),
         CheckConstraint(

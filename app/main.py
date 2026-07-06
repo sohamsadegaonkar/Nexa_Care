@@ -45,13 +45,14 @@ import uuid
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from fastapi.responses import JSONResponse                   # F-15
-from starlette.concurrency import run_in_threadpool          # F-02
+from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy import text
-from starlette.middleware.base import BaseHTTPMiddleware     # F-14
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.api.routes import router as api_router
 from app.api.v2.auth_routes import router as auth_v2_router
@@ -76,11 +77,12 @@ from app.core.config import (
 )
 from app.core.supabase import get_supabase_client
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
-from app.services.sharding import encrypt_vault_payload, split_pii_and_clinical_fields  # F-01
+from app.services.sharding import encrypt_vault_payload, split_pii_and_clinical_fields
+from app.services.crypto_kms import get_encryption_provider, PatientDataErased
 from document_processor import extract_document_data
 from prometheus_client import Counter, Histogram, make_asgi_app
 
-from app.core.database import get_async_engine
+from app.core.database import get_async_engine, get_db_session
 from app.core.redis import get_redis_client
 
 load_dotenv()
@@ -92,18 +94,7 @@ _MAX_UPLOAD_BYTES: int = int(os.environ.get("MAX_UPLOAD_BYTES", str(20 * 1024 * 
 
 
 class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject any request whose Content-Length header exceeds the cap, and
-    abort streaming bodies that exceed it mid-transfer.  This prevents both
-    OOM attacks on the document endpoint and accidental oversized payloads
-    on JSON routes.
-
-    F-15: must RETURN A RESPONSE here, not an HTTPException instance.
-    BaseHTTPMiddleware.dispatch() is responsible for producing something
-    ASGI-callable; an HTTPException is just a plain exception class and
-    has no __call__/asgi send behavior, so returning one (instead of
-    raising it, or wrapping it in a Response) would blow up the moment
-    Starlette tried to send it back to the client.
-    """
+    """Reject any request whose Content-Length header exceeds the cap."""
 
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
@@ -112,9 +103,6 @@ class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
             try:
                 declared_size = int(content_length)
             except ValueError:
-                # Malformed header -- don't let int() crash the middleware;
-                # fall through and let the route's own logic (or a
-                # downstream framework check) handle it instead.
                 declared_size = None
 
             if declared_size is not None and declared_size > _MAX_UPLOAD_BYTES:
@@ -134,13 +122,7 @@ class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
-    """Attach baseline security headers to every outgoing response.
-
-    Does not include CORS (handled by CORSMiddleware) or HSTS (must be
-    added by the TLS-terminating reverse proxy / load balancer). CSP is
-    kept permissive for a React/Expo SPA; tighten it once the exact CDN
-    and inline script policy is known.
-    """
+    """Attach baseline security headers to every outgoing response."""
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
@@ -162,15 +144,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # ── F-13: Modern lifespan pattern ────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Validate all required secrets at startup so the process fails fast
-    rather than serving requests with a broken configuration."""
+    """Validate all required secrets at startup."""
     get_supabase_config()
     get_redis_config()
     get_handshake_config()
     get_database_config()
     yield
-    # Graceful shutdown: dispose of the SQLAlchemy engine pool and
-    # close any open Redis connections so the process exits cleanly.
     try:
         engine = get_async_engine()
         await engine.dispose()
@@ -186,13 +165,9 @@ async def lifespan(application: FastAPI):
 
 app = FastAPI(title="Nexa Care API", version="0.2.1", lifespan=lifespan)
 
-# Middleware order matters: security/size checks fire before logging so we
-# don't log and store partial bodies from abusive clients.
-app.add_middleware(ContentSizeLimitMiddleware)   # F-14/F-15 — outermost, fires first
+app.add_middleware(ContentSizeLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 
-# CORS: only allow explicitly configured origins. If none are set, the
-# middleware is still installed but allows no cross-origin traffic.
 _cors_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -202,7 +177,6 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "X-Hospital-Id", "X-Consent-Token", "X-Consent-Purpose"],
 )
 
-# Trusted hosts: reject requests whose Host header is not expected.
 _trusted_hosts = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts)
 
@@ -224,8 +198,20 @@ app.include_router(assurance_v2_router)
 app.include_router(dashboard_v2_router)
 app.include_router(consent_history_v2_router)
 
-# Prometheus metrics endpoint (no auth for liveness; protect in production
-# with a reverse proxy or basic auth if exposed externally).
+
+@app.exception_handler(PatientDataErased)
+async def patient_data_erased_handler(request: Request, exc: PatientDataErased):
+    """Handle cryptographic erasure errors by returning a 410 Gone."""
+    return JSONResponse(
+        status_code=status.HTTP_410_GONE,
+        content={
+            "error_code": "PATIENT_DATA_ERASED",
+            "message": str(exc),
+            "patient_id": exc.patient_id,
+        },
+    )
+
+
 _REQUESTS_TOTAL = Counter(
     "nexa_http_requests_total",
     "Total HTTP requests by method and status",
@@ -288,30 +274,19 @@ async def health_check() -> dict:
 
 
 @app.post("/api/v1/process-document", tags=["documents"])
-async def process_document(file: UploadFile = File(...)) -> dict:
-    """Process an uploaded document and vertically shard PII + clinical data.
-
-    F-01: uses split_pii_and_clinical_fields() — the single authoritative
-          sharding function — instead of the old inline dict-split that
-          missed aadhaar_abha_id.
-    F-02: runs ML inference in a thread pool so the event loop stays free.
-    F-06: temp_path is set before any I/O; finally block always fires.
-    F-17: Supabase inserts wrapped in try/except — see module docstring.
-    SHARD-SEPARATION FIX: PII is written to the explicitly modeled vault
-    columns (patient_name, phone, aadhaar_abha_id) encrypted at rest. The
-    legacy combined ``raw_pii`` JSONB blob is no longer persisted.
-    """
+async def process_document(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db_session)
+) -> dict:
+    """Process an uploaded document and vertically shard PII + clinical data."""
     suffix = os.path.splitext(file.filename or "")[1] or ".png"
 
-    # F-06: create the temp file first so temp_path is always defined,
-    # then write to it.  If write fails, finally still cleans up the empty file.
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     temp_path: str = tmp.name
 
     try:
         contents = await file.read()
 
-        # F-06: secondary size guard for cases where Content-Length was absent
         if len(contents) > _MAX_UPLOAD_BYTES:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -321,7 +296,6 @@ async def process_document(file: UploadFile = File(...)) -> dict:
         tmp.write(contents)
         tmp.close()
 
-        # F-02: run synchronous PyTorch inference off the event loop
         document_data: dict = await run_in_threadpool(extract_document_data, temp_path)
 
         if not document_data:
@@ -330,50 +304,35 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 detail="Failed to extract document data.",
             )
 
-        # F-01: replace the old broken inline split with the authoritative
-        # sharding function.  Unrecognized keys are routed to the vault
-        # (fail-safe) so no novel PII key silently leaks to clinical data.
         vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(
             document_data
         )
 
         if unrecognized_payload:
-            # The migration removes the generic ``raw_pii`` JSONB blob, so
-            # unrecognized keys can no longer be silently dumped into a vault
-            # catch-all. They are logged and dropped; a clinician must confirm
-            # their classification before any new column is added.
             logger.warning(
                 json.dumps({
                     "event": "unrecognized_extraction_keys",
                     "keys": sorted(unrecognized_payload.keys()),
                     "action": "dropped_no_raw_pii_column",
-                    "note": (
-                        "Run scripts/validate_extraction_schema.py and confirm "
-                        "with a clinician whether each key is PII before re-routing."
-                    ),
                 })
             )
 
         masked_internal_id = str(uuid.uuid4())
         supabase = get_supabase_client()
 
-        # F-17: each insert wrapped individually so the error detail
-        # reported back identifies which shard actually failed, instead
-        # of relying on a `.error` attribute that supabase-py 2.x never
-        # sets on the failure path (APIError is raised instead). A
-        # failure on either insert now reliably surfaces as a 502 with
-        # the real exception message, rather than an unhandled APIError
-        # bubbling up to the global handler as a generic 503.
+        # 1. Generate DEK first (atomic with transaction)
+        kms = get_encryption_provider()
+        await kms.generate_dek(masked_internal_id, db)
+
+        # 2. Encrypt PII using KMS
+        encrypted_vault = await encrypt_vault_payload(vault_payload, masked_internal_id, db)
+
         try:
             vault_columns = {
                 "masked_internal_id": masked_internal_id,
             }
-            vault_columns.update(encrypt_vault_payload(vault_payload))
-            vault_res = (
-                supabase.table("nexa_vault")
-                .insert(vault_columns)
-                .execute()
-            )
+            vault_columns.update(encrypted_vault)
+            supabase.table("nexa_vault").insert(vault_columns).execute()
         except Exception as exc:
             logger.critical(json.dumps({
                 "event": "process_document_db_error",
@@ -387,11 +346,10 @@ async def process_document(file: UploadFile = File(...)) -> dict:
             ) from exc
 
         try:
-            clinical_res = (
-                supabase.table("nexa_clinical")
-                .insert({"masked_internal_id": masked_internal_id, "clinical_data": clinical_payload})
-                .execute()
-            )
+            supabase.table("nexa_clinical").insert({
+                "masked_internal_id": masked_internal_id,
+                "clinical_data": clinical_payload
+            }).execute()
         except Exception as exc:
             logger.critical(json.dumps({
                 "event": "process_document_db_error",
@@ -404,24 +362,9 @@ async def process_document(file: UploadFile = File(...)) -> dict:
                 detail={"vault_error": None, "clinical_error": str(exc)},
             ) from exc
 
-        # F-17: retained as belt-and-suspenders for any future supabase-py
-        # version that reverts to 1.x-style error surfacing, and for test
-        # doubles that mock a truthy `.error` instead of raising — same
-        # rationale as biometric_registry.py F-16 and routes.py F-17.
-        if getattr(vault_res, "error", None) or getattr(clinical_res, "error", None):
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={
-                    "vault_error": str(getattr(vault_res, "error", None)),
-                    "clinical_error": str(getattr(clinical_res, "error", None)),
-                },
-            )
-
         return {"masked_internal_id": masked_internal_id}
 
     finally:
-        # F-06: always close and remove, even on exceptions raised before
-        # tmp.close() is reached in the happy path.
         try:
             tmp.close()
         except Exception:

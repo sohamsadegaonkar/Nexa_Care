@@ -161,6 +161,7 @@ async def approve_review(
     try:
         await _persist_auto_processed_document(
             db=db,
+            provider_uid=provider.actor_uid,
             masked_internal_id=masked_internal_id,
             vault_payload=vault_payload,
             clinical_payload=clinical_payload,

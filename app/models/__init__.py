@@ -6,6 +6,7 @@ from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.consent_grant import ConsentGrantLog
 from app.models.consent_ledger import ConsentLedger
 from app.models.consent_sessions import ConsentSession
+from app.models.dek_store import PatientDEKStore
 from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.patient import Patient
@@ -34,6 +35,7 @@ __all__ = [
     "ConsentSession",
     "DocumentReviewQueue",
     "DocumentReviewStatus",
+    "PatientDEKStore",
     "Base",
     "TimestampMixin",
     "UUIDPrimaryKeyMixin",

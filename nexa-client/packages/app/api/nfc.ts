@@ -8,6 +8,9 @@ export interface NfcResolveRequest {
 
 export interface NfcResolveResponse {
   patient_id: string
+  canonical_patient_id: string | null
+  is_redirected: boolean
+  card_status: 'active' | 'inactive' | 'lost'
 }
 
 export type NfcResolveErrorCode =

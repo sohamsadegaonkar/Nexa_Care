@@ -14,6 +14,9 @@ export type NativeNfcUidReader = () => Promise<string>
 export interface UseNfcScannerResult {
   status: NfcScannerStatus
   patientId: string | null
+  canonicalPatientId: string | null
+  isRedirected: boolean
+  cardStatus: 'active' | 'inactive' | 'lost' | null
   errorMessage: string | null
   isScanning: boolean
   startScan: (cardUid?: string) => Promise<NfcResolveResponse | null>
@@ -63,17 +66,26 @@ async function getCardUidForScan(cardUid?: string): Promise<string> {
 export function useNfcScanner(): UseNfcScannerResult {
   const [status, setStatus] = useState<NfcScannerStatus>('idle')
   const [patientId, setPatientId] = useState<string | null>(null)
+  const [canonicalPatientId, setCanonicalPatientId] = useState<string | null>(null)
+  const [isRedirected, setIsRedirected] = useState<boolean>(false)
+  const [cardStatus, setCardStatus] = useState<'active' | 'inactive' | 'lost' | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
   const reset = useCallback((): void => {
     setStatus('idle')
     setPatientId(null)
+    setCanonicalPatientId(null)
+    setIsRedirected(false)
+    setCardStatus(null)
     setErrorMessage(null)
   }, [])
 
   const startScan = useCallback(async (cardUid?: string): Promise<NfcResolveResponse | null> => {
     setStatus('scanning')
     setPatientId(null)
+    setCanonicalPatientId(null)
+    setIsRedirected(false)
+    setCardStatus(null)
     setErrorMessage(null)
 
     try {
@@ -81,6 +93,9 @@ export function useNfcScanner(): UseNfcScannerResult {
       const response = await resolveNfcCard(uid)
 
       setPatientId(response.patient_id)
+      setCanonicalPatientId(response.canonical_patient_id)
+      setIsRedirected(response.is_redirected)
+      setCardStatus(response.card_status)
       setStatus('success')
 
       return response
@@ -95,6 +110,9 @@ export function useNfcScanner(): UseNfcScannerResult {
   return {
     status,
     patientId,
+    canonicalPatientId,
+    isRedirected,
+    cardStatus,
     errorMessage,
     isScanning: status === 'scanning',
     startScan,

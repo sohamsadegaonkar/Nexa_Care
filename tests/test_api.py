@@ -282,6 +282,9 @@ class AsyncFakeRedisClient:
         value = self._store.get(key)
         return value if isinstance(value, str) else None
 
+    async def getdel(self, key):
+        return self._store.pop(key, None)
+
     async def set(self, name, value, ex=None):
         self._store[name] = value
         return True

@@ -89,10 +89,99 @@ class RateLimiter:
             )
             return True
 
-    async def __call__(self, request: Request) -> None:
-        identifier = self.key_func(request)
+    async def __call__(self, request: Request, provider_id: str | None = None) -> None:
+        if provider_id:
+            identifier = provider_id
+        else:
+            identifier = self.key_func(request)
+
         if not await self.is_allowed(identifier):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests. Please try again later.",
             )
+
+
+class ConcurrentPushLimiter:
+    """Enforces concurrency and rate limits for asynchronous push approvals.
+
+    Rules:
+    - 1 pending request per patient.
+    - 10 requests per provider per 5 minutes.
+    - 5 requests per patient per hour.
+    """
+
+    def __init__(self, redis_client: Any | None = None):
+        self._redis_client = redis_client
+
+    async def _get_redis(self):
+        if self._redis_client:
+            return self._redis_client
+        redis_async = _import_redis()
+        cfg = get_redis_config()
+        return redis_async.from_url(cfg.url, decode_responses=True)
+
+    async def check_and_acquire(self, patient_id: str, provider_id: str) -> None:
+        """
+        Atomically check all limits and acquire the concurrency lock.
+        Fail-open on Redis error.
+        """
+        redis = None
+        try:
+            redis = await self._get_redis()
+            # Keys
+            concurrent_key = f"nexa:push_concurrent:{patient_id}"
+            provider_rate_key = f"nexa:push_rate:provider:{provider_id}"
+            patient_rate_key = f"nexa:push_rate:patient:{patient_id}"
+
+            # 1. Check Per-Patient Concurrency
+            is_pending = await redis.get(concurrent_key)
+            if is_pending:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="A consent request is already pending for this patient"
+                )
+
+            # 2. Check and Increment Rates
+            # Provider: 10 per 5 min
+            provider_count = await redis.incr(provider_rate_key)
+            if provider_count == 1:
+                await redis.expire(provider_rate_key, 300)
+            if provider_count > 10:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Rate limit exceeded for provider"
+                )
+
+            # Patient: 5 per hour
+            patient_count = await redis.incr(patient_rate_key)
+            if patient_count == 1:
+                await redis.expire(patient_rate_key, 3600)
+            if patient_count > 5:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Rate limit exceeded for patient"
+                )
+
+            # 3. Acquire Concurrency Lock (90s push TTL + 10s buffer)
+            await redis.setex(concurrent_key, 100, "1")
+
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning(f"ConcurrentPushLimiter Redis failure: {exc}. Fail-open.")
+        finally:
+            if redis is not None and self._redis_client is None:
+                await redis.close()
+
+    async def release(self, patient_id: str) -> None:
+        """Clear the concurrency lock for a patient."""
+        redis = None
+        try:
+            redis = await self._get_redis()
+            await redis.delete(f"nexa:push_concurrent:{patient_id}")
+        except Exception as exc:
+            logger.warning(f"ConcurrentPushLimiter release failure: {exc}")
+        finally:
+            if redis is not None and self._redis_client is None:
+                await redis.close()

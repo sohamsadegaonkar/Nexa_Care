@@ -8,6 +8,10 @@
   ],
   "dependencies": {
     "@my/ui": "0.0.1",
+    "@noble/curves": "^1.9.0",
+    "expo-secure-store": "~14.0.1",
+    "expo-local-authentication": "~15.0.2",
+    "expo-crypto": "~14.0.2",
     "@react-navigation/native": "^6.1.17",
     "@tamagui/animations-react-native": "2.0.0-rc.16",
     "@tamagui/colors": "2.0.0-rc.16",

@@ -76,6 +76,9 @@ from fastapi import HTTPException
 from app.core.config import get_handshake_config
 from app.core.supabase import get_supabase_client
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.services.crypto_kms import get_encryption_provider
+from sqlalchemy.ext.asyncio import AsyncSession
+import base64
 
 logger = logging.getLogger("nexa_logger")
 
@@ -191,26 +194,101 @@ async def _verify_biometric_binding_impl(
     return hmac.compare_digest(candidate, expected)
 
 
-async def enroll_biometric_binding(nfc_uid: str, bio_seed: str, masked_internal_id: str) -> bool:
+async def update_device_public_key(
+    masked_internal_id: str,
+    device_public_key: bytes,
+    db: AsyncSession,
+) -> bool:
+    """Patient self-service: attach/replace the device signing public key on
+    an *existing* biometric_registry row.
+
+    This exists because enroll_biometric_binding() is provider-only (a
+    clinician binds nfc_uid+bio_seed during card issuance) and never
+    actually receives a device_public_key from any live route today --
+    only enroll_biometric_binding_with_audit()'s optional insert-time
+    parameter, which no caller in app/api/ populates. Without this
+    function, no real patient's row ever gets a usable signing key, so
+    push-approval signature verification can only succeed for
+    manually-seeded test rows.
+
+    Requires that a row already exists for this masked_internal_id (i.e.
+    the patient has already been through provider-led NFC enrollment).
+    This is intentionally an UPDATE, never an INSERT -- it must not be
+    usable to create a fresh biometric binding, only to attach a signing
+    key to one that a clinician already verified in person.
+
+    Fails closed: any DB error, missing row, or revoked binding returns
+    False without raising, matching this module's existing conventions.
+    """
+    try:
+        supabase = get_supabase_client()
+        kms = get_encryption_provider()
+
+        plaintext_key = base64.b64encode(device_public_key).decode("utf-8")
+        encrypted_field = await kms.encrypt_field(
+            masked_internal_id, "device_public_key", plaintext_key, db
+        )
+
+        response = (
+            supabase.table("biometric_registry")
+            .update({"device_public_key": encrypted_field.serialize()})
+            .eq("masked_internal_id", masked_internal_id)
+            .is_("revoked_at", "null")
+            .execute()
+        )
+
+        rows = getattr(response, "data", None) or []
+        if not rows:
+            logger.warning(json.dumps({
+                "event": "device_key_update_no_matching_row",
+                "masked_internal_id": masked_internal_id,
+                "detail": "No active (non-revoked) biometric_registry row found. "
+                          "Patient must complete provider-led NFC enrollment first.",
+            }))
+            return False
+
+        return True
+
+    except Exception as exc:
+        logger.critical(json.dumps({
+            "event": "device_key_update_db_error",
+            "masked_internal_id": masked_internal_id,
+            "exception": str(exc),
+            "action": "returning_false",
+        }))
+        return False
+
+
+async def enroll_biometric_binding(
+    nfc_uid: str,
+    bio_seed: str,
+    masked_internal_id: str,
+    db: AsyncSession,
+    device_public_key: bytes | None = None,
+) -> bool:
     """One-time enrollment: binds (nfc_uid, bio_seed) to masked_internal_id.
 
-    Low-level DB write only -- no audit logging, no access control. Wired
-    in via enroll_biometric_binding_with_audit below, which is what the
-    /api/v1/enroll-biometric route actually calls. That route is gated
-    behind verify_provider_token (app/core/dependencies.py), since this
-    is the one action that decides which physical card/biometric the
-    patient identity trusts.
+    Security Sprint (Sprint 2): Now also encrypts and stores the device
+    public key using the patient's per-patient DEK.
     """
     try:
         supabase = get_supabase_client()
         verifier = compute_bio_verifier(nfc_uid, bio_seed)
 
-        response = supabase.table("biometric_registry").insert(
-            {
-                "masked_internal_id": masked_internal_id,
-                "bio_verifier_hash": verifier,
-            }
-        ).execute()
+        data = {
+            "masked_internal_id": masked_internal_id,
+            "bio_verifier_hash": verifier,
+        }
+
+        if device_public_key:
+            # Encrypt the public key (DER bytes) using KMS
+            kms = get_encryption_provider()
+            # Encode DER bytes to base64 for encrypt_field which expects string
+            plaintext_key = base64.b64encode(device_public_key).decode("utf-8")
+            encrypted_field = await kms.encrypt_field(masked_internal_id, "device_public_key", plaintext_key, db)
+            data["device_public_key"] = encrypted_field.serialize()
+
+        response = supabase.table("biometric_registry").insert(data).execute()
 
         # F-16: in supabase-py 2.x, execute() raises APIError on any PostgREST
         # error (4xx/5xx) before this line is reached, so the check below is a
@@ -260,21 +338,15 @@ async def enroll_biometric_binding(nfc_uid: str, bio_seed: str, masked_internal_
         return False
 
 
-async def enroll_biometric_binding_with_audit(nfc_uid: str, bio_seed: str, masked_internal_id: str) -> bool:
+async def enroll_biometric_binding_with_audit(
+    nfc_uid: str,
+    bio_seed: str,
+    masked_internal_id: str,
+    db: AsyncSession,
+    device_public_key: bytes | None = None,
+) -> bool:
     """Orchestrates enrollment with a full attempt/success/failure audit
-    trail, hard-failing the request (HTTPException 503) if the audit
-    ledger itself cannot be written to at any stage -- an enrollment that
-    can't be audited is not allowed to silently succeed.
-
-    Pulled out of the route handler so the route stays a thin HTTP
-    adapter and this orchestration logic can be unit-tested without a
-    running FastAPI app.
-
-    Raises HTTPException(503) if any audit write fails.
-    Raises HTTPException(502) if the registry write itself fails (e.g.
-    already enrolled -- the table has a UNIQUE constraint on
-    masked_internal_id -- or a transient DB error).
-    Returns True on a fully audited, successful enrollment.
+    trail.
     """
     await append_audit_log_or_503(
         actor_uid="PROVIDER_FACILITY",
@@ -287,6 +359,8 @@ async def enroll_biometric_binding_with_audit(nfc_uid: str, bio_seed: str, maske
         nfc_uid=nfc_uid,
         bio_seed=bio_seed,
         masked_internal_id=masked_internal_id,
+        db=db,
+        device_public_key=device_public_key,
     )
 
     if not enrolled:

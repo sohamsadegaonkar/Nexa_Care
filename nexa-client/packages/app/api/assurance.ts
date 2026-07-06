@@ -8,8 +8,7 @@ export interface PushApprovalRequest {
 }
 
 export interface PushApprovalResponse {
-  approved: boolean
-  timeout: boolean
+  request_id: string
 }
 
 export async function requestPushApproval(
@@ -27,9 +26,36 @@ export interface BiometricVerifyRequest {
   biometric_token: string
 }
 
-export async function verifyBiometric(
-  payload: BiometricVerifyRequest
-): Promise<{ verified: boolean }> {
-  const res = await apiClient.post('/api/v2/assurance/biometric/verify', payload)
+export interface PushApprovalStatusResponse {
+  request_id: string
+  patient_id: string
+  clinician_name: string
+  hospital_name: string
+  purpose: string
+  status: 'pending' | 'approved' | 'denied' | 'expired'
+  created_at: string
+  nonce: string
+}
+
+export interface PushApprovalRespondRequest {
+  decision: 'approved' | 'denied'
+  signature?: string
+  nonce?: string
+}
+
+export async function getPushRequestStatus(
+  requestId: string
+): Promise<PushApprovalStatusResponse> {
+  const res = await apiClient.get<PushApprovalStatusResponse>(
+    `/api/v2/assurance/push/${requestId}/status`
+  )
+  return res.data
+}
+
+export async function respondToPushRequest(
+  requestId: string,
+  payload: PushApprovalRespondRequest
+): Promise<{ status: string }> {
+  const res = await apiClient.post(`/api/v2/assurance/push/${requestId}/respond`, payload)
   return res.data
 }

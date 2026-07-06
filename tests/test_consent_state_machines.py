@@ -35,6 +35,7 @@ def make_fake_db():
 def test_routine_issue_binds_patient_clinician_purpose_scope_and_ttl(
     mock_get_redis, mock_audit, mock_audit_503
 ) -> None:
+    from app.models.assurance import AssuranceLevel
     redis = AsyncMock()
     mock_get_redis.return_value = redis
     fake_db = make_fake_db()
@@ -46,6 +47,8 @@ def test_routine_issue_binds_patient_clinician_purpose_scope_and_ttl(
             clinician_id="clinician-1",
             purpose="treatment",
             scope=["clinical.diagnoses"],
+            assurance_level=AssuranceLevel.STANDARD,
+            assurance_evidence={},
             ttl_seconds=90,
         )
     )
@@ -124,6 +127,7 @@ def test_validate_and_consume_fail_closed_on_mismatch(mock_get_redis) -> None:
 def test_break_glass_issue_uses_break_glass_ttl_and_notifies_compliance_queue(
     mock_get_redis, mock_audit, mock_audit_503
 ) -> None:
+    from app.models.assurance import AssuranceLevel
     redis = AsyncMock()
     mock_get_redis.return_value = redis
     fake_db = make_fake_db()
@@ -135,6 +139,8 @@ def test_break_glass_issue_uses_break_glass_ttl_and_notifies_compliance_queue(
             clinician_id="clinician-1",
             purpose="emergency",
             scope=["clinical.allergies"],
+            assurance_level=AssuranceLevel.BREAK_GLASS,
+            assurance_evidence={},
             is_break_glass=True,
             reason_code="LIFE_THREAT",
         )

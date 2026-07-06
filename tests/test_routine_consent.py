@@ -169,6 +169,9 @@ class TestRoutineConsentRoute(unittest.TestCase):
         self.assertEqual(issue_kwargs["clinician_id"], self.provider.actor_uid)
         self.assertEqual(issue_kwargs["purpose"], "routine_access")
         self.assertEqual(issue_kwargs["scope"], ["clinical.diagnoses"])
+        from app.models.assurance import AssuranceLevel
+        self.assertEqual(issue_kwargs["assurance_level"], AssuranceLevel.STANDARD)
+        self.assertEqual(issue_kwargs["assurance_evidence"], {})
 
     def test_grant_route_rejects_missing_scope(self) -> None:
         response = self.client.post(

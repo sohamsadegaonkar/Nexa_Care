@@ -1,12 +1,16 @@
 'use client'
 
-import { Button, Card, Input, Text, TextArea, YStack, XStack, Spinner } from '@my/ui'
+import { Button, Card, Input, Text, TextArea, YStack, XStack, Spinner, Sheet } from '@my/ui'
 import { useState } from 'react'
 import { mergePatients, MergeError } from '../../api/merge'
+import { createMergeChallenge, verifyMergeChallenge } from '../../api/auth'
 
-export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
+export function MergeAdminScreen() {
   const [mfaCode, setMfaCode] = useState('')
+  const [challengeToken, setChallengeToken] = useState<string | null>(null)
   const [mfaVerified, setMfaVerified] = useState(false)
+  const [showMfaSheet, setShowMfaSheet] = useState(false)
+  
   const [oldUuid, setOldUuid] = useState('')
   const [canonicalUuid, setCanonicalUuid] = useState('')
   const [reason, setReason] = useState('')
@@ -15,8 +19,28 @@ export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
   const [result, setResult] = useState<any>(null)
   const [error, setError] = useState('')
 
-  const verifyMfa = async () => {
-    if (!mfaCode || mfaCode.length !== 6) {
+  const initiateMerge = async () => {
+    if (!oldUuid || !canonicalUuid || !reason) {
+      setError('All fields are required')
+      return
+    }
+    
+    setLoading(true)
+    setError('')
+    
+    try {
+      const res = await createMergeChallenge()
+      setChallengeToken(res.challenge_token)
+      setShowMfaSheet(true)
+    } catch (e: any) {
+      setError('Failed to initiate merge challenge')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleVerifyMfa = async () => {
+    if (!mfaCode || mfaCode.length !== 6 || !challengeToken) {
       setError('Please enter a 6-digit code')
       return
     }
@@ -25,39 +49,20 @@ export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
     setError('')
 
     try {
-      // Use step-up MFA action verification (fresh TOTP code)
-      const res = await fetch('http://localhost:8000/api/v2/auth/mfa/verify-action', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          code: mfaCode,
-        }),
-      })
-
-      if (res.ok) {
+      const res = await verifyMergeChallenge(challengeToken, mfaCode)
+      if (res.verified) {
         setMfaVerified(true)
-      } else {
-        const data = await res.json()
-        setError(data.detail || 'Invalid MFA code')
+        setShowMfaSheet(false)
+        await executeMerge(challengeToken)
       }
-    } catch (e) {
-      setError('MFA verification failed')
+    } catch (e: any) {
+      setError(e.response?.data?.detail || 'MFA verification failed')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleMerge = async () => {
-    if (!mfaVerified) {
-      setError('MFA verification required')
-      return
-    }
-    if (!oldUuid || !canonicalUuid || !reason) {
-      setError('All fields are required')
-      return
-    }
-
+  const executeMerge = async (token: string) => {
     setLoading(true)
     setError('')
 
@@ -67,7 +72,7 @@ export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
         canonical_patient_uuid: canonicalUuid.trim(),
         reason: reason.trim(),
         evidence: evidence ? JSON.parse(evidence) : undefined,
-      })
+      }, token)
       setResult(res)
     } catch (e: any) {
       if (e instanceof MergeError) {
@@ -75,6 +80,9 @@ export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
       } else {
         setError('Merge failed')
       }
+      // If merge failed, MFA might need to be redone since it is single-use
+      setMfaVerified(false)
+      setChallengeToken(null)
     } finally {
       setLoading(false)
     }
@@ -96,11 +104,38 @@ export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
   return (
     <YStack flex={1} bg="$background" p="$5" gap="$5">
       <Text fontSize={24} fontWeight="900" color="$color12">Patient Merge (Admin)</Text>
-      <Text color="$red11">MFA + Clinical_Admin role required</Text>
+      <Text color="$red11">Fresh MFA + Admin role required</Text>
 
-      {!mfaVerified ? (
-        <YStack gap="$4">
-          <Text color="$color11">Enter MFA code to unlock merge</Text>
+      <YStack gap="$4">
+        <Input placeholder="Old Patient UUID" value={oldUuid} onChangeText={setOldUuid} />
+        <Input placeholder="Canonical Patient UUID" value={canonicalUuid} onChangeText={setCanonicalUuid} />
+        <Input placeholder="Reason for merge" value={reason} onChangeText={setReason} />
+        <TextArea placeholder="Evidence (JSON)" value={evidence} onChangeText={setEvidence} minHeight={100} />
+
+        {error && <Text color="$red11">{error}</Text>}
+
+        <Button
+          theme="red"
+          size="$5"
+          disabled={loading}
+          onPress={initiateMerge}
+        >
+          {loading ? <Spinner /> : 'INITIATE MERGE'}
+        </Button>
+      </YStack>
+
+      <Sheet
+        modal
+        open={showMfaSheet}
+        onOpenChange={setShowMfaSheet}
+        snapPoints={[40]}
+        dismissOnSnapToBottom
+      >
+        <Sheet.Overlay />
+        <Sheet.Frame p="$4" gap="$4">
+          <Sheet.Handle />
+          <Text fontSize={20} fontWeight="900">MFA Verification Required</Text>
+          <Text color="$color11">Enter your 6-digit TOTP code to authorize this merge.</Text>
           <Input
             placeholder="123456"
             value={mfaCode}
@@ -108,29 +143,12 @@ export function MergeAdminScreen({ mfaToken }: { mfaToken?: string | null }) {
             keyboardType="numeric"
             maxLength={6}
           />
-          <Button theme="blue" onPress={verifyMfa}>Verify MFA</Button>
-          {error && <Text color="$red11">{error}</Text>}
-        </YStack>
-      ) : (
-        <YStack gap="$4">
-          <Text color="$green11">✓ MFA Verified — Admin access granted</Text>
-          <Input placeholder="Old Patient UUID" value={oldUuid} onChangeText={setOldUuid} />
-          <Input placeholder="Canonical Patient UUID" value={canonicalUuid} onChangeText={setCanonicalUuid} />
-          <Input placeholder="Reason for merge" value={reason} onChangeText={setReason} />
-          <TextArea placeholder="Evidence (JSON)" value={evidence} onChangeText={setEvidence} minHeight={100} />
-
-          {error && <Text color="$red11">{error}</Text>}
-
-          <Button
-            theme="red"
-            size="$5"
-            disabled={loading}
-            onPress={handleMerge}
-          >
-            {loading ? <Spinner /> : 'EXECUTE MERGE'}
+          <Button theme="blue" onPress={handleVerifyMfa} disabled={loading}>
+            {loading ? <Spinner /> : 'Verify & Execute'}
           </Button>
-        </YStack>
-      )}
+          {error && <Text color="$red11">{error}</Text>}
+        </Sheet.Frame>
+      </Sheet>
     </YStack>
   )
 }

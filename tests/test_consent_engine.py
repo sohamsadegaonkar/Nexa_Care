@@ -16,6 +16,7 @@ from app.services.consent_engine import (
     revoke,
     validate,
 )
+from app.models.assurance import AssuranceLevel
 
 
 def run(coro):
@@ -87,6 +88,8 @@ class TestIssue(unittest.TestCase):
             clinician_id="clinician-1",
             purpose="routine",
             scope=["clinical"],
+            assurance_level=AssuranceLevel.STANDARD,
+            assurance_evidence={},
         ))
 
         self.assertTrue(token)
@@ -105,7 +108,10 @@ class TestIssue(unittest.TestCase):
         db = FakeConsentDB()
 
         with self.assertRaises(ValueError):
-            run(issue(db=db, patient_id="p", clinician_id="c", purpose="routine", scope=[]))
+            run(issue(
+                db=db, patient_id="p", clinician_id="c", purpose="routine",
+                scope=[], assurance_level=AssuranceLevel.STANDARD, assurance_evidence={}
+            ))
 
         mock_audit_503.assert_not_awaited()
         self.assertEqual(len(db.added), 0)
@@ -119,6 +125,7 @@ class TestIssue(unittest.TestCase):
             run(issue(
                 db=db, patient_id="p", clinician_id="c", purpose="emergency",
                 scope=["clinical"], is_break_glass=True,
+                assurance_level=AssuranceLevel.BREAK_GLASS, assurance_evidence={},
             ))
 
         mock_audit_503.assert_not_awaited()
@@ -135,6 +142,7 @@ class TestIssue(unittest.TestCase):
         run(issue(
             db=db, patient_id="p", clinician_id="c", purpose="emergency",
             scope=["clinical"], is_break_glass=True, reason_code="unconscious patient, ICU",
+            assurance_level=AssuranceLevel.BREAK_GLASS, assurance_evidence={},
         ))
 
         redis_client.rpush.assert_awaited_once()
@@ -149,7 +157,10 @@ class TestIssue(unittest.TestCase):
         db = FakeConsentDB(commit_error=RuntimeError("db down"))
 
         with self.assertRaises(ConsentEngineUnavailable):
-            run(issue(db=db, patient_id="p", clinician_id="c", purpose="routine", scope=["clinical"]))
+            run(issue(
+                db=db, patient_id="p", clinician_id="c", purpose="routine",
+                scope=["clinical"], assurance_level=AssuranceLevel.STANDARD, assurance_evidence={}
+            ))
 
         self.assertTrue(db.rolled_back)
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "CONSENT_GRANT_FAILED")
@@ -172,7 +183,10 @@ class TestIssue(unittest.TestCase):
         db = FakeConsentDB()
 
         with self.assertRaises(ConsentEngineUnavailable):
-            run(issue(db=db, patient_id="p", clinician_id="c", purpose="routine", scope=["clinical"]))
+            run(issue(
+                db=db, patient_id="p", clinician_id="c", purpose="routine",
+                scope=["clinical"], assurance_level=AssuranceLevel.STANDARD, assurance_evidence={}
+            ))
 
         self.assertEqual(len(db.added), 1)
         row = db.added[0]

@@ -18,8 +18,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.extractor import get_medical_document_extractor
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.document_review import DocumentReviewQueue
-from app.observability.audit_ledger import append_audit_log
+from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
 from app.services.sharding import encrypt_vault_payload, split_pii_and_clinical_fields
+from app.services.crypto_kms import get_encryption_provider
 
 logger = logging.getLogger("nexa_logger")
 
@@ -81,6 +82,7 @@ async def _audit_document_event(
 async def _persist_auto_processed_document(
     *,
     db: AsyncSession,
+    provider_uid: str,
     masked_internal_id: str,
     vault_payload: dict,
     clinical_payload: dict,
@@ -94,8 +96,20 @@ async def _persist_auto_processed_document(
     ``commit=False`` lets review approval persist shard rows and queue status
     in a single transaction.
     """
+    # 1. Generate DEK first
+    kms = get_encryption_provider()
+    dek_bundle = await kms.generate_dek(masked_internal_id, db)
+    
+    await append_audit_log_or_503(
+        actor_uid=provider_uid,
+        event_type="PATIENT_DEK_GENERATED",
+        target_id=masked_internal_id,
+        status="SUCCESS",
+        metadata={"dek_version": dek_bundle.dek_version, "source": "document_ai"}
+    )
 
-    encrypted_vault = encrypt_vault_payload(vault_payload)
+    # 2. Encrypt using KMS
+    encrypted_vault = await encrypt_vault_payload(vault_payload, masked_internal_id, db)
     await db.execute(
         text(
             "INSERT INTO nexa_vault "
@@ -104,9 +118,9 @@ async def _persist_auto_processed_document(
         ),
         {
             "masked_internal_id": masked_internal_id,
-            "patient_name": encrypted_vault.get("patient_name", ""),
-            "phone": encrypted_vault.get("phone", ""),
-            "aadhaar_abha_id": encrypted_vault.get("aadhaar_abha_id", ""),
+            "patient_name": encrypted_vault.get("patient_name"),
+            "phone": encrypted_vault.get("phone"),
+            "aadhaar_abha_id": encrypted_vault.get("aadhaar_abha_id"),
         },
     )
     await db.execute(
@@ -171,6 +185,7 @@ async def process_medical_document_background(
             try:
                 await _persist_auto_processed_document(
                     db=db,
+                    provider_uid=provider_uid,
                     masked_internal_id=masked_internal_id,
                     vault_payload=vault_payload,
                     clinical_payload=clinical_payload,

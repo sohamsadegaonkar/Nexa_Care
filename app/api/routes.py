@@ -70,12 +70,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import get_scoped_session, require_role
-from app.core.security import decrypt_pii_field, encrypt_pii_field
+from app.core.security import decrypt_pii_field
 from app.core.supabase import get_supabase_client
+from app.models.assurance import AssuranceLevel
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import ConsentEngineUnavailable
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
 from app.observability.redactor import redact_payload           # F-10
+from app.services.sharding import encrypt_vault_payload
+from app.services.crypto_kms import get_encryption_provider, EncryptionError
 from app.services.crypto_engine import process_biometric_handshake
 from app.services.biometric_registry import enroll_biometric_binding_with_audit
 from app.models.provider_context import ProviderContext
@@ -133,6 +136,8 @@ class ConsentRequest(BaseModel):
             "must be explicitly requested."
         ),
     )
+    assurance_level: AssuranceLevel = AssuranceLevel.STANDARD
+    assurance_evidence: dict = Field(default_factory=dict)
 
 
 class HandshakePayload(BaseModel):
@@ -177,6 +182,7 @@ async def process_handshake(payload: HandshakePayload):
 async def enroll_biometric(
     payload: EnrollBiometricPayload,
     provider: ProviderContext = Depends(require_role("clinician")),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Provider-only: binds an (nfc_uid, bio_seed) pair to a patient.
     Gated behind get_provider_context — a patient cannot self-enroll.
@@ -186,6 +192,7 @@ async def enroll_biometric(
         nfc_uid=payload.nfc_uid,
         bio_seed=payload.bio_seed,
         masked_internal_id=masked_internal_id,
+        db=db,
     )
     return {"masked_internal_id": masked_internal_id, "status": "enrolled"}
 
@@ -194,18 +201,13 @@ async def enroll_biometric(
 async def register_patient(
     payload: UnifiedPatientPayload,
     provider: ProviderContext = Depends(require_role("clinician")),
+    db: AsyncSession = Depends(get_db_session),
 ) -> RegisterResponse:
     """Register a patient: write PII to nexa_vault, clinical data to
     nexa_clinical, under a shared masked_internal_id.
     Gated behind get_provider_context.
 
-    AUDIT-CONSISTENCY FIX: ATTEMPT and SUCCESS now use
-    append_audit_log_or_503 -- a registration whose audit trail can't be
-    written is no longer allowed to silently proceed (ATTEMPT) or to
-    silently report success to the caller (SUCCESS). FAILED logging
-    stays best-effort (_audit_best_effort) so an audit-ledger outage
-    encountered while we are already failing doesn't replace the real
-    error with an unrelated 503.
+    KMS Integration: Generates a per-patient DEK atomically.
     """
     await append_audit_log_or_503(
         actor_uid=provider.actor_uid,
@@ -216,12 +218,31 @@ async def register_patient(
 
     try:
         masked_internal_id = uuid4()
+        patient_id_str = str(masked_internal_id)
+
+        # 1. Generate DEK first (atomic with transaction)
+        kms = get_encryption_provider()
+        dek_bundle = await kms.generate_dek(patient_id_str, db)
+        
+        await append_audit_log_or_503(
+            actor_uid=provider.actor_uid,
+            event_type="PATIENT_DEK_GENERATED",
+            target_id=patient_id_str,
+            status="SUCCESS",
+            metadata={"dek_version": dek_bundle.dek_version}
+        )
+
+        # 2. Encrypt PII using KMS
+        vault_data = {
+            "patient_name": payload.patient_name,
+            "phone": payload.phone,
+            "aadhaar_abha_id": payload.aadhaar_abha_id,
+        }
+        encrypted_vault = await encrypt_vault_payload(vault_data, patient_id_str, db)
 
         pii_vault = PIIVaultSchema(
             masked_internal_id=masked_internal_id,
-            patient_name=payload.patient_name,
-            phone=payload.phone,
-            aadhaar_abha_id=payload.aadhaar_abha_id,
+            **vault_data
         )
         clinical_record = ClinicalRecordSchema(
             masked_internal_id=masked_internal_id,
@@ -232,19 +253,12 @@ async def register_patient(
 
         supabase = get_supabase_client()
 
-        # F-17: APIError raised by either insert is caught here, logged
-        # with the table that failed, and re-raised as a 502 so it is
-        # handled the same way (HTTPException, not a bare 500) regardless
-        # of which shard write failed. This also ensures the outer
-        # except block's PATIENT_REGISTRATION_FAILED audit entry runs.
         try:
-            vault_response = (
+            (
                 supabase.table("nexa_vault")
                 .insert({
-                    "masked_internal_id": str(masked_internal_id),
-                    "patient_name": encrypt_pii_field(pii_vault.patient_name),
-                    "phone": encrypt_pii_field(pii_vault.phone),
-                    "aadhaar_abha_id": encrypt_pii_field(pii_vault.aadhaar_abha_id),
+                    "masked_internal_id": patient_id_str,
+                    **encrypted_vault
                 })
                 .execute()
             )
@@ -252,7 +266,7 @@ async def register_patient(
             logger.critical(json.dumps({
                 "event": "patient_registration_db_error",
                 "shard": "nexa_vault",
-                "masked_internal_id": str(masked_internal_id),
+                "masked_internal_id": patient_id_str,
                 "exception": str(exc),
             }))
             raise HTTPException(
@@ -261,10 +275,10 @@ async def register_patient(
             ) from exc
 
         try:
-            clinical_response = (
+            (
                 supabase.table("nexa_clinical")
                 .insert({
-                    "masked_internal_id": str(masked_internal_id),
+                    "masked_internal_id": patient_id_str,
                     "diagnoses": clinical_record.diagnoses,
                     "lab_results": clinical_record.lab_results,
                     "prescriptions": clinical_record.prescriptions,
@@ -275,7 +289,7 @@ async def register_patient(
             logger.critical(json.dumps({
                 "event": "patient_registration_db_error",
                 "shard": "nexa_clinical",
-                "masked_internal_id": str(masked_internal_id),
+                "masked_internal_id": patient_id_str,
                 "exception": str(exc),
             }))
             raise HTTPException(
@@ -283,29 +297,26 @@ async def register_patient(
                 detail="Failed to write clinical record.",
             ) from exc
 
-        # F-17: retained as belt-and-suspenders for any future supabase-py
-        # version that reverts to 1.x-style error surfacing, and for test
-        # doubles that mock a truthy `.error` instead of raising. Dead in
-        # production today, but cheap and harmless to keep as a second
-        # line of defense — same rationale as biometric_registry.py F-16.
-        if getattr(vault_response, "error", None) or getattr(clinical_response, "error", None):
-            raise RuntimeError("Supabase insert failed during patient registration")
+        # Commit everything (Postgres + Supabase)
+        await db.commit()
 
         await append_audit_log_or_503(
             actor_uid=provider.actor_uid,
             event_type="PATIENT_REGISTRATION_SUCCESS",
-            target_id=str(masked_internal_id),
+            target_id=patient_id_str,
             status="SUCCESS",
         )
 
         return RegisterResponse(pii_vault=pii_vault, clinical_record=clinical_record)
 
-    except HTTPException:
+    except (HTTPException, EncryptionError):
+        await db.rollback()
         await _audit_best_effort(
             provider.actor_uid, "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
         )
         raise
     except Exception:
+        await db.rollback()
         await _audit_best_effort(
             provider.actor_uid, "PATIENT_REGISTRATION_FAILED", "FAILED_GENERATION", "CRITICAL_ERROR"
         )
@@ -361,6 +372,8 @@ async def request_consent(
             clinician_id=_V1_SELF_CONSENT_CLINICIAN_ID,
             purpose=_V1_SELF_CONSENT_PURPOSE,
             scope=consent_scope,
+            assurance_level=payload.assurance_level,
+            assurance_evidence=payload.assurance_evidence,
             ttl_seconds=payload.duration_seconds,
         )
     except ConsentEngineUnavailable as exc:
@@ -380,14 +393,11 @@ async def _resolve_scoped_consent(
     consent_token_header: str | None,
     consent_token_query: str | None,
     required_capability: Literal["clinical", "pii"],
+    db: AsyncSession,
 ) -> str:
     """Resolves a v1 self-consent token to a masked_internal_id, enforcing
     that the token's granted scope covers `required_capability`.
-
-    Migrated to ConsentEngine (2026-07-03): validates a ConsentEngine
-    capability issued by /request-consent. The synthetic
-    ``patient:self`` clinician ID and ``patient_self_access`` purpose are
-    used consistently for v1 self-consent.
+    Consumes the token upon successful validation (single-use).
     """
     consent_token = consent_token_header or consent_token_query
     if not consent_token:
@@ -397,9 +407,10 @@ async def _resolve_scoped_consent(
         )
 
     try:
+        # Step 1: Validate (non-destructive) to check scope
         capability = await consent_engine.validate(
             token=consent_token,
-            patient_id=None,  # v1 self-consent discovers the patient from the token
+            patient_id=None,
             clinician_id=_V1_SELF_CONSENT_CLINICIAN_ID,
             purpose=_V1_SELF_CONSENT_PURPOSE,
         )
@@ -426,6 +437,27 @@ async def _resolve_scoped_consent(
             detail="Consent token invalid or expired",
         )
 
+    # Step 2: Consume (destructive)
+    try:
+        consumed = await consent_engine.consume(
+            db=db,
+            token=consent_token,
+            patient_id=masked_internal_id,
+            clinician_id=_V1_SELF_CONSENT_CLINICIAN_ID,
+            purpose=_V1_SELF_CONSENT_PURPOSE,
+        )
+    except ConsentEngineUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Consent service is temporarily unavailable.",
+        ) from exc
+
+    if consumed is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consent token invalid or expired",
+        )
+
     return masked_internal_id
 
 
@@ -433,25 +465,12 @@ async def _resolve_scoped_consent(
 async def view_record_clinical(
     consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
     consent_token_query: str | None = Query(default=None, alias="consent_token"),
+    db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     """Zero-trust retrieval of the CLINICAL shard ONLY, via consent token.
-
-    SHARD-SEPARATION FIX: replaces the old combined GET /view-record.
-    This endpoint reads exclusively from nexa_clinical and never touches
-    nexa_vault. Available under either consent scope ("clinical" or
-    "full"), since clinical-only access is the data-minimizing default
-    /request-consent now issues unless the caller explicitly asks for
-    scope="full".
-
-    AUDIT-CONSISTENCY FIX: a successful read now hard-audits
-    CLINICAL_VIEW_SUCCESS (append_audit_log_or_503) BEFORE the response
-    is returned -- the prior combined endpoint had no success-path audit
-    logging at all, only a failure-path entry. Failure/not-found logging
-    stays best-effort so a DB error isn't itself masked by a second
-    failure.
     """
     masked_internal_id = await _resolve_scoped_consent(
-        consent_token_header, consent_token_query, required_capability="clinical"
+        consent_token_header, consent_token_query, required_capability="clinical", db=db
     )
 
     supabase = get_supabase_client()
@@ -519,28 +538,13 @@ async def view_record_clinical(
 async def view_record_pii(
     consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
     consent_token_query: str | None = Query(default=None, alias="consent_token"),
+    db: AsyncSession = Depends(get_db_session),
 ) -> dict:
     """Zero-trust retrieval of the (redacted) PII shard ONLY, via a
     consent token explicitly issued with scope="full".
-
-    SHARD-SEPARATION FIX: replaces the old combined GET /view-record.
-    A "clinical"-scope token (the /request-consent default) is rejected
-    here with the same 403 used for an invalid token -- see
-    _resolve_scoped_consent's docstring for why the response doesn't
-    distinguish the two cases.
-
-    F-10 still applies: a "full"-scope consent token proves the caller is
-    authorised to receive the redacted PII shard; it does not authorise
-    raw, unmasked PII over the wire. Nothing in this codebase currently
-    unmasks PII for any caller -- that would be a separate, more tightly
-    audited, purpose-built capability, not a flag on this endpoint.
-
-    AUDIT-CONSISTENCY FIX: same shape as view_record_clinical above --
-    PII_VIEW_SUCCESS is hard-audited before the response is returned;
-    PII_VIEW_FAILED / PII_VIEW_DENIED_INSUFFICIENT_SCOPE are best-effort.
     """
     masked_internal_id = await _resolve_scoped_consent(
-        consent_token_header, consent_token_query, required_capability="pii"
+        consent_token_header, consent_token_query, required_capability="pii", db=db
     )
 
     supabase = get_supabase_client()

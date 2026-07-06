@@ -51,6 +51,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/logout"),
     ("POST", "/api/v2/auth/refresh"),
     ("POST", "/api/v2/auth/mfa/setup"),
+    ("POST", "/api/v2/auth/mfa/setup/verify"),
     ("POST", "/api/v2/auth/mfa/verify"),
     ("POST", "/api/v2/auth/mfa/verify-action"),
     ("GET", "/api/v2/auth/me/role"),
