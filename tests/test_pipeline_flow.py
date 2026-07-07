@@ -8,7 +8,7 @@ Verifies:
 5. LOW_RISK + confidence >= 0.95 routes to auto_approved.
 6. CRITICAL_RISK always routes to needs_review.
 7. needs_review field cannot commit.
-8. rejected field cannot commit.
+8. rejected field is skipped during commit.
 9. approved/edited field can commit.
 10. double commit does not duplicate patient records.
 11. ReviewQueueItem created for flagged field.
@@ -315,8 +315,8 @@ def test_review_edit_stores_corrected_value_and_status_edited(admin_headers):
         assert data["final_value"] == "115/75"
 
 
-def test_review_reject_prevents_commit(admin_headers):
-    """Test 14: Rejected field cannot be committed via commit endpoint."""
+def test_review_reject_skips_ingestion(admin_headers):
+    """Test 14: Rejected field is skipped and does not block job commit."""
     mock_cap = ConsentCapability(
         patient_id="pat-101",
         clinician_id="doc-202",
@@ -326,7 +326,8 @@ def test_review_reject_prevents_commit(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap):
+    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap), \
+         patch("app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
         payload = {
             "patient_id": "pat-101",
             "fields": [
@@ -345,8 +346,11 @@ def test_review_reject_prevents_commit(admin_headers):
             headers={**admin_headers, "X-Consent-Token": "valid-tok"},
             json=payload,
         )
-        assert res.status_code == 400
-        assert "cannot be committed" in res.json()["detail"]
+        assert res.status_code == 201
+        assert res.json()["status"] == "committed"
+        if mock_ingest.called:
+            passed_fields = mock_ingest.call_args.kwargs["approved_fields"]
+            assert len(passed_fields) == 0
 
 
 @pytest.mark.asyncio

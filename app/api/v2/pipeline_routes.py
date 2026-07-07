@@ -381,11 +381,19 @@ async def commit_extraction_job(
     if isinstance(unres_rows, list) and len(unres_rows) > 0:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Review incomplete: job contains unresolved fields needing review.")
 
+    allowed_commit_statuses = {"auto_approved", "approved", "edited"}
     approved_models = []
     if payload.fields is not None:
         for idx, f in enumerate(payload.fields):
             st_val = str(f.get("status") or "approved").lower()
-            if st_val in {"needs_review", "rejected"}:
+            if st_val == "needs_review":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Review incomplete: job contains unresolved fields needing review.",
+                )
+            if st_val == "rejected":
+                continue
+            if st_val not in allowed_commit_statuses:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Field with status '{st_val}' cannot be committed.",
