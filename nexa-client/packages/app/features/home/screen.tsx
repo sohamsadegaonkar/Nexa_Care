@@ -107,7 +107,6 @@ export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => vo
         } else {
           setVerifyError(err.message || 'Verification failed. Please try again.')
         }
-        }
       } else {
         setVerifyError('Unable to reach the authentication service.')
       }

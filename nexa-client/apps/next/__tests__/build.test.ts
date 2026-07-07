@@ -34,7 +34,7 @@ test('Next.js build completes', async () => {
         if (code === 0) {
           resolve(output)
         } else {
-          reject(new Error(`Build process exited with code ${code}`))
+          reject(new Error(`Build process exited with code ${code}\n\nBuild output:\n${output}`))
         }
       })
     })
