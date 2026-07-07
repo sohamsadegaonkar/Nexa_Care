@@ -72,9 +72,14 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         for diag in doc_data.diagnoses:
             candidate_items.append({"field_name": "diagnosis", "raw_value": diag, "normalized_value": diag, "risk_level": "MEDIUM_RISK"})
         for lab in doc_data.lab_results:
-            is_hba1c = ("hba1c" in lab.lower() or "sugar" in lab.lower())
-            risk = "HIGH_RISK" if is_hba1c else "LOW_RISK"
-            candidate_items.append({"field_name": "hba1c" if is_hba1c else "lab_result", "raw_value": lab, "normalized_value": lab.split()[1] if len(lab.split()) > 1 else lab, "risk_level": risk})
+            lab_text = str(lab)
+            lab_lower = lab_text.lower()
+            is_hba1c = ("hba1c" in lab_lower or "sugar" in lab_lower)
+            if "critical" in lab_lower:
+                risk = "CRITICAL_RISK"
+            else:
+                risk = "HIGH_RISK" if is_hba1c else "LOW_RISK"
+            candidate_items.append({"field_name": "hba1c" if is_hba1c else "lab_result", "raw_value": lab_text, "normalized_value": lab_text, "risk_level": risk})
         for rx in doc_data.prescriptions:
             candidate_items.append({"field_name": "medication", "raw_value": rx, "normalized_value": "Standard", "risk_level": "MEDIUM_RISK"})
 
@@ -140,7 +145,13 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             # Score confidence and classify risk via WS5 intelligence layer
             ef_model = score_extracted_field(ef_model)
             conf = float(ef_model.confidence) if ef_model.confidence is not None else 0.96
-            risk = str(ef_model.risk_level)
+            scored_risk = str(ef_model.risk_level)
+            tier_order = {"LOW_RISK": 0, "MEDIUM_RISK": 1, "HIGH_RISK": 2, "CRITICAL_RISK": 3}
+            original_risk = str(risk).upper()
+            risk = scored_risk
+            if tier_order.get(original_risk, -1) > tier_order.get(scored_risk, -1):
+                risk = original_risk
+                ef_model.risk_level = original_risk
 
             # Single authoritative auto-approval guardrail (WS5 rules)
             if can_auto_approve(ef_model):

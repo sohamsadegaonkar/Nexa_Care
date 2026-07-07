@@ -82,7 +82,7 @@ def test_abuse_forged_signature(mock_scoped_pat, keypair_and_device):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
@@ -129,7 +129,7 @@ def test_abuse_revoked_device_signature(mock_scoped_pat, keypair_and_device):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
@@ -249,12 +249,12 @@ def test_abuse_tampered_decision_payload(mock_scoped_pat, keypair_and_device):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": nonce,
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
     # Patient device signs "denied", but attacker sends decision="approved"
-    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2026-07-07T16:05:00Z")
+    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z")
 
     mock_db = AsyncMock()
     mock_res = MagicMock()

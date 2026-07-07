@@ -385,14 +385,11 @@ async def commit_extraction_job(
     if payload.fields is not None:
         for idx, f in enumerate(payload.fields):
             st_val = str(f.get("status") or "approved").lower()
-            if st_val == "needs_review":
+            if st_val in {"needs_review", "rejected"}:
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Review incomplete: field status is needs_review.",
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Field with status '{st_val}' cannot be committed.",
                 )
-            if st_val == "rejected":
-                # Rejected fields are not committed
-                continue
 
             if "confidence" not in f or "risk_level" not in f or f.get("confidence") is None or not f.get("risk_level"):
                 raise HTTPException(

@@ -76,11 +76,11 @@ def test_valid_signed_approval_issues_grant_and_doctor_sees_approved(mock_scoped
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": nonce,
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
-    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "approved", "clinical", "routine_checkup", 900, "2026-07-07T16:05:00Z")
+    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "approved", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z")
 
     mock_db = AsyncMock()
     mock_res = MagicMock()
@@ -137,7 +137,7 @@ def test_forged_signature_rejected(mock_scoped_pat, keypair_and_device):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
@@ -181,7 +181,7 @@ def test_wrong_patient_key_rejected(mock_scoped_pat):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
@@ -226,7 +226,7 @@ def test_revoked_device_key_rejected(mock_scoped_pat, keypair_and_device):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
@@ -321,11 +321,11 @@ def test_denial_with_valid_signature_works(mock_scoped_pat, keypair_and_device):
         "scope": "clinical",
         "access_duration": 900,
         "challenge_nonce": nonce,
-        "expires_at": "2026-07-07T16:05:00Z",
+        "expires_at": "2099-07-07T16:05:00Z",
         "status": "pending",
     }
 
-    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2026-07-07T16:05:00Z")
+    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z")
 
     mock_db = AsyncMock()
     mock_res = MagicMock()

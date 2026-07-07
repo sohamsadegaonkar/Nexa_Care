@@ -187,6 +187,8 @@ class TestAntiDriftGuardrails(unittest.TestCase):
                 continue
             for ext in ("*.py", "*.ts", "*.tsx"):
                 for path in d.rglob(ext):
+                    if "node_modules" in path.parts:
+                        continue
                     text = path.read_text(encoding="utf-8")
                     for idx, line in enumerate(text.splitlines(), 1):
                         stripped = line.strip()

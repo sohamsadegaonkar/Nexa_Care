@@ -191,10 +191,7 @@ class FakeSyncRedis:
         return 1
 
     def pipeline(self):
-        return self
-
-    def execute(self):
-        return [int(self._a.data.get(list(self._a.data.keys())[-1], 0))]
+        return FakeRedisPipeline(self._a)
 
 
 @pytest.fixture

@@ -69,7 +69,7 @@ async def test_ingest_vitals():
         assert res.ingested_count == 1
         assert res.vitals_created == 1
         assert res.timeline_events_created == 1
-        assert mock_db.add.call_count == 2  # 1 Vitals + 1 TimelineEvent
+        assert mock_db.add.call_count == 3  # 1 Vitals + 1 TimelineEvent + 1 PipelineCommit
         mock_audit.assert_called_once()
         assert mock_audit.call_args.kwargs["event_type"] == "EXTRACTED_DATA_INGESTED"
 
@@ -214,7 +214,7 @@ def test_commit_endpoint_integration(admin_headers):
         issued_at="2026-07-07T16:00:00Z",
     )
     with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap), \
-         patch("app.api.v2.contract_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
+         patch("app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
         payload = {
             "patient_id": "pat-101",
             "encounter_summary": "Extracted labs committed via pipeline",
