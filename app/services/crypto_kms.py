@@ -181,7 +181,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
         row = result.scalar_one_or_none()
 
         if row is None:
-            raise EncryptionError(f"DEK v{version} not found for patient {patient_id}")
+            raise EncryptionError(f"DEK v{version} not found or destroyed for patient {patient_id}")
 
         # Check for destruction (erasure)
         if _is_dek_destroyed(row):

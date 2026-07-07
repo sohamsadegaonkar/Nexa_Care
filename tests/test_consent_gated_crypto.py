@@ -212,4 +212,4 @@ async def test_consent_gated_decrypt_audit_failure_aborts(mock_kms, mock_redis, 
                 kms=mock_kms
             )
         assert exc.value.status_code == 503
-        assert not mock_kms.decrypt.called
+        assert not mock_kms.decrypt_field.called

@@ -1,7 +1,7 @@
 import asyncio
 import json
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -9,15 +9,17 @@ from app.api.v2.auth_routes import _MERGE_CHALLENGE_PREFIX
 from app.core.dependencies import get_current_provider
 from app.main import app
 
-@pytest.fixture(autouse=True)
-def auth_override(admin_context):
-    app.dependency_overrides[get_current_provider] = lambda: admin_context
-    yield
-    app.dependency_overrides.pop(get_current_provider, None)
 
 @pytest.fixture
 def admin_headers(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
+
+
+@pytest.fixture(autouse=True)
+def override_admin_provider(admin_context):
+    app.dependency_overrides[get_current_provider] = lambda: admin_context
+    yield
+    app.dependency_overrides.pop(get_current_provider, None)
 
 @pytest.mark.asyncio
 async def test_merge_no_challenge_header(test_client, admin_headers):
@@ -122,7 +124,7 @@ async def test_merge_already_used_challenge(test_client, admin_headers, mock_red
     with patch("app.api.v2.merge_routes.get_redis_client", return_value=mock_redis), \
          patch("app.api.v2.merge_routes.PatientMergeService") as mock_service:
         
-        mock_service.return_value.merge_patients.return_value = MagicMock(tombstone_id=uuid.uuid4())
+        mock_service.return_value.merge_patients = AsyncMock(return_value=MagicMock(tombstone_id=uuid.uuid4()))
         
         # First use -> Success
         resp1 = test_client.post(
@@ -238,7 +240,7 @@ async def test_merge_happy_path(test_client, admin_headers, mock_redis, admin_co
     with patch("app.api.v2.merge_routes.get_redis_client", return_value=mock_redis), \
          patch("app.api.v2.merge_routes.PatientMergeService") as mock_service:
         
-        mock_service.return_value.merge_patients.return_value = MagicMock(tombstone_id=uuid.uuid4())
+        mock_service.return_value.merge_patients = AsyncMock(return_value=MagicMock(tombstone_id=uuid.uuid4()))
         
         resp = test_client.post(
             "/api/v2/patient/merge",
@@ -246,7 +248,7 @@ async def test_merge_happy_path(test_client, admin_headers, mock_redis, admin_co
             headers={**admin_headers, "X-Merge-Challenge": challenge_token}
         )
         assert resp.status_code == 201
-        assert mock_redis.get(f"{_MERGE_CHALLENGE_PREFIX}{challenge_token}") is None
+        assert await mock_redis.get(f"{_MERGE_CHALLENGE_PREFIX}{challenge_token}") is None
 
 @pytest.mark.asyncio
 async def test_concurrent_merge_attempts(test_client, admin_headers, mock_redis, admin_context):
@@ -268,7 +270,7 @@ async def test_concurrent_merge_attempts(test_client, admin_headers, mock_redis,
     with patch("app.api.v2.merge_routes.get_redis_client", return_value=mock_redis), \
          patch("app.api.v2.merge_routes.PatientMergeService") as mock_service:
         
-        mock_service.return_value.merge_patients.return_value = MagicMock(tombstone_id=uuid.uuid4())
+        mock_service.return_value.merge_patients = AsyncMock(return_value=MagicMock(tombstone_id=uuid.uuid4()))
         
         # Async execution
         async def call_merge():

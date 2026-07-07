@@ -66,7 +66,7 @@ def client(fake_async_redis, mock_provider):
         app.dependency_overrides[get_current_provider] = lambda: mock_provider
         
         m_kms = AsyncMock()
-        m_kms.decrypt.side_effect = lambda pid, data: data
+        m_kms.decrypt_field.side_effect = lambda pid, name, enc, db: f"decrypted-{name}"
         from app.api.v2.patient_routes import get_kms_provider
         app.dependency_overrides[get_kms_provider] = lambda: m_kms
 
@@ -97,8 +97,8 @@ async def test_routine_lifecycle(client):
     res = MagicMock()
     # Use real values instead of Mocks for clinical fields to pass Pydantic validation
     res.scalars().first.return_value = MagicMock(
-        patient_name="X", phone="1", aadhaar_abha_id="A",
-        diagnoses=["Flu"], lab_results=["Normal"], prescriptions=["Rest"]
+        patient_name="YWJjZGVmZ2hpamtsbW5vcA==:1", phone="YWJjZGVmZ2hpamtsbW5vcA==:1", aadhaar_abha_id="YWJjZGVmZ2hpamtsbW5vcA==:1",
+        diagnoses="YWJjZGVmZ2hpamtsbW5vcA==:1", lab_results="YWJjZGVmZ2hpamtsbW5vcA==:1", prescriptions="YWJjZGVmZ2hpamtsbW5vcA==:1"
     )
     row = MagicMock()
     row.consumed_at = None
@@ -106,8 +106,10 @@ async def test_routine_lifecycle(client):
     db.execute.return_value = res
     
     headers = {"X-Consent-Token": token, "X-Consent-Purpose": "TREATMENT", "Authorization": "Bearer session"}
-    assert test_client.get(f"/api/v2/patient/{p_id}/record", headers=headers).status_code == 200
-    assert test_client.get(f"/api/v2/patient/{p_id}/record", headers=headers).status_code == 403
+    first = test_client.get(f"/api/v2/patient/{p_id}/record", headers=headers)
+    assert first.status_code == 200, first.text
+    second = test_client.get(f"/api/v2/patient/{p_id}/record", headers=headers)
+    assert second.status_code == 403, second.text
 
 @pytest.mark.asyncio
 async def test_break_glass_lifecycle(client, mock_provider):

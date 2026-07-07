@@ -92,6 +92,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/nfc/resolve"),
     ("GET", "/api/v2/fhir/export/{patient_id}"),
     ("GET", "/api/v2/patient/{patient_id}/record"),
+    ("POST", "/api/v2/patient/merge"),
     ("POST", "/api/v2/patient/{patient_id}/erase"),
     ("POST", "/api/v2/patient/merge"),
     ("GET", "/api/v2/patient/{patient_uuid}/policy"),

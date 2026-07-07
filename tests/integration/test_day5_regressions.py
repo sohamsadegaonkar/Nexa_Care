@@ -9,6 +9,9 @@ import pytest
 from app.services.assurance_verifier import RedisAssuranceVerifier
 from app.models.assurance import AssuranceLevel
 from app.services.crypto_kms import PatientDataErased
+from app.main import app
+from app.api.v2.patient_routes import get_current_provider, get_kms_provider
+from app.services.consent_engine import ConsentCapability
 
 
 @pytest.mark.asyncio
@@ -41,54 +44,55 @@ async def test_regress_sec_001_redis_prefix(mock_redis):
 async def test_regress_sec_002_erased_handler(test_client, mock_db):
     """SEC-002: Ensure PatientDataErased results in a 410 GONE response."""
     patient_id = str(uuid.uuid4())
-    
-    # Mocking KMS to raise the specific error
+
     mock_kms = AsyncMock()
     mock_kms.decrypt_field.side_effect = PatientDataErased(patient_id)
-    
-    # Mock dependencies
-    mock_provider = MagicMock()
-    
-    # 1. Issue a valid token first
-    with patch("app.services.consent_engine.get_consent_redis_client") as mock_redis_factory:
-        mock_redis_client = AsyncMock()
-        mock_redis_factory.return_value = mock_redis_client
-        
-        # Simulate a valid capability in Redis
-        mock_redis_client.get.return_value = json.dumps({
-            "patient_id": patient_id,
-            "clinician_id": "d-1",
-            "purpose": "t",
-            "scope": ["pii.*"],
-            "issued_at": "2026-07-06T00:00:00Z"
-        })
-        # Simulate single-use consumption success
-        mock_redis_client.getdel.return_value = mock_redis_client.get.return_value
 
-        with patch("app.api.v2.patient_routes.get_current_provider", return_value=mock_provider), \
-             patch("app.api.v2.patient_routes.get_provider_context", return_value=mock_provider), \
-             patch("app.api.v2.patient_routes.get_kms_provider", return_value=mock_kms):
-            
-            # Mock DB to return a row so we reach the decrypt step
-            mock_row = MagicMock(patient_name="enc-data:1", phone=None, aadhaar_abha_id=None)
+    mock_provider = MagicMock()
+    mock_provider.actor_uid = "d-1"
+
+    capability = ConsentCapability(
+        patient_id=patient_id,
+        clinician_id="d-1",
+        purpose="t",
+        scope=["pii.*"],
+        is_break_glass=False,
+        reason_code=None,
+        issued_at="2026-07-06T00:00:00Z",
+    )
+
+    app.dependency_overrides[get_current_provider] = lambda: mock_provider
+    app.dependency_overrides[get_kms_provider] = lambda: mock_kms
+    try:
+        with (
+            patch("app.services.consent_engine.validate", return_value=capability),
+            patch("app.services.consent_engine.consume", new_callable=AsyncMock),
+            patch("app.services.consent_gated_crypto.append_audit_log_or_503", new_callable=AsyncMock),
+            patch("app.services.consent_gated_crypto.append_audit_log", new_callable=AsyncMock),
+        ):
+            mock_val = "YWJjZGVmZ2hpamtsbW5vcA==:1"
+            mock_row = MagicMock(patient_name=mock_val, phone=None, aadhaar_abha_id=None)
             mock_db.execute.return_value.scalars().first.return_value = mock_row
-            
+
             headers = {
                 "X-Consent-Token": "valid-token",
                 "X-Consent-Purpose": "t",
-                "X-Hospital-Id": str(uuid.uuid4())
+                "X-Hospital-Id": str(uuid.uuid4()),
             }
-            
-            resp = test_client.get(f"/api/v2/patient/{patient_id}/record", headers=headers)
-            
+
+            resp = await test_client.get(f"/api/v2/patient/{patient_id}/record", headers=headers)
+
             assert resp.status_code == 410
             assert resp.json()["error_code"] == "PATIENT_DATA_ERASED"
+    finally:
+        app.dependency_overrides.pop(get_current_provider, None)
+        app.dependency_overrides.pop(get_kms_provider, None)
 
 
 @pytest.mark.asyncio
 async def test_regress_sec_003_merge_hospital_id_required(test_client):
     """SEC-003: Backend must reject merge calls missing X-Hospital-Id."""
-    resp = test_client.post("/api/v2/patient/merge", json={
+    resp = await test_client.post("/api/v2/patient/merge", json={
         "old_patient_uuid": str(uuid.uuid4()),
         "canonical_patient_uuid": str(uuid.uuid4()),
         "reason": "test"

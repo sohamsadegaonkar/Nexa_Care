@@ -43,6 +43,7 @@ async def test_vault_encrypt_decrypt_roundtrip(env_setup, mock_db):
     # Mock active DEK lookup
     mock_row = MagicMock(spec=PatientDEKStore)
     mock_row.dek_version = 1
+    mock_row.destroyed_at = None
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
     mock_db.scalar = AsyncMock(return_value=1)
 
@@ -77,6 +78,7 @@ async def test_auto_migration_on_read(env_setup, mock_db):
     # Mock existing DEK lookup for re-encryption
     mock_row = MagicMock(spec=PatientDEKStore)
     mock_row.dek_version = 1
+    mock_row.destroyed_at = None
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
     mock_db.scalar = AsyncMock(return_value=1)
 

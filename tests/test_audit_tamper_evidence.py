@@ -128,10 +128,13 @@ async def test_concurrent_audit_writes():
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.side_effect = mock_execute_latest
     
     def get_insert_side_effect(payload_dict):
-        # We need to return an object that has an execute method
-        exec_mock = AsyncMock()
-        exec_mock.side_effect = lambda: mock_execute_insert(payload_dict)
-        return exec_mock
+        # Supabase insert() returns a request builder whose execute() may be sync or async.
+        async def execute_insert():
+            return await mock_execute_insert(payload_dict)
+
+        insert_request = MagicMock()
+        insert_request.execute = AsyncMock(side_effect=execute_insert)
+        return insert_request
 
     mock_supabase.table.return_value.insert.side_effect = get_insert_side_effect
 

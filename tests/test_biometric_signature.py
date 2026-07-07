@@ -141,7 +141,7 @@ async def test_timing_side_channel_enforced(mock_redis):
     start = time.monotonic()
     with patch("app.services.biometric_signature_verifier.get_supabase_client") as mock_s:
         mock_s.return_value.table.return_value.select.return_value.eq.return_value.single.return_value.execute.side_effect = Exception("Fast")
-        await verifier.verify_signature("p", "r", "c2ln", "nonce", mock_redis)
+        await verifier.verify_signature("p", "r", "c2ln", "nonce", mock_redis, AsyncMock())
     assert time.monotonic() - start >= 0.05
 
 @pytest.mark.asyncio

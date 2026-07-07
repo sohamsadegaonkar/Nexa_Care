@@ -142,6 +142,7 @@ async def test_concurrent_encryptions(env_setup, mock_db):
     # Mock active DEK fetch
     mock_row = MagicMock(spec=PatientDEKStore)
     mock_row.dek_version = 1
+    mock_row.destroyed_at = None
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
     mock_db.scalar.return_value = 1
 

@@ -1,6 +1,16 @@
 import pytest
 import uuid
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
+
+from app.core.dependencies import get_current_provider
+from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def override_admin_provider(admin_context):
+    app.dependency_overrides[get_current_provider] = lambda: admin_context
+    yield
+    app.dependency_overrides.pop(get_current_provider, None)
 
 @pytest.mark.asyncio
 async def test_merge_challenge_flow(test_client, test_db, admin_token, admin_context):
@@ -40,7 +50,7 @@ async def test_merge_challenge_flow(test_client, test_db, admin_token, admin_con
     
     with patch("app.api.v2.merge_routes.PatientMergeService") as mock_service:
         mock_instance = mock_service.return_value
-        mock_instance.merge_patients.return_value = MagicMock(tombstone_id=uuid.uuid4())
+        mock_instance.merge_patients = AsyncMock(return_value=MagicMock(tombstone_id=uuid.uuid4()))
         
         resp = test_client.post(
             "/api/v2/patient/merge",

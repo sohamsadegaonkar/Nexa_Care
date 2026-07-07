@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -43,6 +44,13 @@ router = APIRouter(prefix="/api/v2/auth", tags=["auth"])
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8
 _MERGE_CHALLENGE_PREFIX = "merge_challenge:"
 _MERGE_CHALLENGE_TTL_SECONDS = 120
+
+
+async def _maybe_await(value):
+    """Support sync redis-py and async fakes without changing route semantics."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 # Per-IP rate limiters. Single-worker MVP; replace with a Redis-backed
 # limiter for multi-worker production.
@@ -536,7 +544,7 @@ async def create_merge_challenge(
 
     redis = get_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{challenge_token}"
-    redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(payload))
+    await _maybe_await(redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(payload)))
 
     await append_audit_log(
         actor_uid=provider.actor_uid,
@@ -563,7 +571,7 @@ async def verify_merge_challenge(
     """Verify a merge challenge with a TOTP code."""
     redis = get_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{payload.challenge_token}"
-    cached = redis.get(key)
+    cached = await _maybe_await(redis.get(key))
     if not cached:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -616,7 +624,7 @@ async def verify_merge_challenge(
     await _clear_mfa_fails(provider.provider.provider_id, ip_hash)
 
     challenge_data["verified"] = True
-    redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(challenge_data))
+    await _maybe_await(redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(challenge_data)))
 
     await append_audit_log(
         actor_uid=provider.actor_uid,

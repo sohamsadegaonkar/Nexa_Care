@@ -31,6 +31,7 @@ Fix applied:
 from __future__ import annotations
 
 import hashlib
+import inspect
 import json
 import logging
 import datetime
@@ -44,6 +45,13 @@ from app.core.request_context import trace_id_var
 logger = logging.getLogger("nexa_logger")
 
 _AUDIT_MAX_RETRIES = 5          # F-05: bounded retry limit
+
+
+async def _maybe_await(value):
+    """Return sync values directly and await async test/client values."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 def _calculate_hash(payload: dict, previous_hash: str) -> str:
@@ -95,13 +103,13 @@ async def append_audit_log(
         # ── Read latest hash ──────────────────────────────────────────────
         try:
             supabase = get_supabase_client()
-            latest_response = (
+            latest_query = (
                 supabase.table("system_audit")
                 .select("record_hash")
                 .order("created_at", desc=True)
                 .limit(1)
-                .execute()
             )
+            latest_response = await _maybe_await(latest_query.execute())
         except Exception as exc:
             logger.critical(json.dumps({
                 "event": "audit_log_write_failed",
@@ -137,7 +145,7 @@ async def append_audit_log(
 
         # ── Insert ────────────────────────────────────────────────────────
         try:
-            supabase.table("system_audit").insert({
+            insert_query = supabase.table("system_audit").insert({
                 "trace_id": str(trace_id),
                 "actor_uid": actor_uid,
                 "event_type": event_type,
@@ -146,7 +154,8 @@ async def append_audit_log(
                 "payload": payload,
                 "previous_hash": previous_hash,
                 "record_hash": new_hash,
-            }).execute()
+            })
+            await _maybe_await(insert_query.execute())
 
             # execute() only returns here on a 2xx response — see module
             # docstring. No response.error check needed; a real failure

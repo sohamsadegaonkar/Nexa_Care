@@ -3,6 +3,7 @@ Patient Merge (Alias & Tombstone) Workflow
 Implements Section 9 of the Nexa Care v1.0 Architecture
 """
 
+import inspect
 import json
 from uuid import UUID
 
@@ -18,6 +19,13 @@ from app.services.merge_service import PatientMergeService
 
 router = APIRouter(prefix="/api/v2/patient", tags=["merge"])
 _MERGE_CHALLENGE_PREFIX = "merge_challenge:"
+
+
+async def _maybe_await(value):
+    """Support sync redis-py and async fakes without changing route semantics."""
+    if inspect.isawaitable(value):
+        return await value
+    return value
 
 
 class MergeRequest(BaseModel):
@@ -53,10 +61,14 @@ async def merge_patients(
     redis = get_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{x_merge_challenge}"
     
-    # Atomic get and delete (Redis 6.2+)
-    # If not supported, we'd use a Lua script.
-    # For this implementation, we fetch and then check.
-    cached = redis.get(key)
+    getdel = getattr(redis, "getdel", None)
+    if getdel is not None:
+        cached = await _maybe_await(getdel(key))
+    else:
+        cached = await _maybe_await(redis.get(key))
+        if cached:
+            await _maybe_await(redis.delete(key))
+
     if not cached:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -78,9 +90,6 @@ async def merge_patients(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Challenge bound to different provider.",
         )
-
-    # Consume immediately to prevent race conditions
-    redis.delete(key)
 
     try:
         from app.observability.audit_ledger import append_audit_log_or_503

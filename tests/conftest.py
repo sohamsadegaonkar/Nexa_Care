@@ -1,6 +1,7 @@
 """
 Shared test setup.
 """
+import os
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -13,7 +14,81 @@ if "document_processor" not in sys.modules:
     _stub.extract_document_data = lambda file_path: {}
     sys.modules["document_processor"] = _stub
 
+
+os.environ.setdefault("KEK_ROOT_SECRET", "test-kek-root-secret-32-bytes-minimum")
+os.environ.setdefault("NEXA_PEPPER_KEY", "test-pepper-key")
+os.environ.setdefault("ENVIRONMENT", "test")
+
 from app.main import app
+
+
+class AwaitableResponse:
+    """Response proxy that can be used directly or awaited."""
+
+    def __init__(self, response):
+        self._response = response
+
+    def __await__(self):
+        async def _return_response():
+            return self._response
+
+        return _return_response().__await__()
+
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+
+class DualModeTestClient:
+    """Expose TestClient methods in both sync and async test styles."""
+
+    def __init__(self, app):
+        self._client = TestClient(app)
+
+    def __getattr__(self, name):
+        attr = getattr(self._client, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            response = attr(*args, **kwargs)
+            try:
+                import asyncio
+                asyncio.get_running_loop()
+            except RuntimeError:
+                return response
+            return AwaitableResponse(response)
+
+        return call
+
+
+class FakeRedisPipeline:
+    def __init__(self, redis):
+        self.redis = redis
+        self.ops = []
+
+    def incr(self, key):
+        self.ops.append(("incr", key))
+        return self
+
+    def expire(self, key, ttl):
+        self.ops.append(("expire", key, ttl))
+        return self
+
+    async def execute(self):
+        import time
+        results = []
+        for op in self.ops:
+            if op[0] == "incr":
+                key = op[1]
+                val = int(self.redis.data.get(key, 0)) + 1
+                self.redis.data[key] = str(val)
+                results.append(val)
+            elif op[0] == "expire":
+                _, key, ttl = op
+                self.redis.ttls[key] = time.time() + ttl
+                results.append(True)
+        return results
+
 
 class FakeRedis:
     def __init__(self):
@@ -65,11 +140,7 @@ class FakeRedis:
         return 1
 
     def pipeline(self):
-        return self
-
-    async def execute(self):
-        # Very simple mock for pipeline execution
-        return [int(self.data.get(list(self.data.keys())[-1], 0))]
+        return FakeRedisPipeline(self)
 
     def register_script(self, script_body):
         import json
@@ -132,7 +203,7 @@ def mock_redis():
 
 @pytest.fixture
 def test_client():
-    return TestClient(app)
+    return DualModeTestClient(app)
 
 @pytest.fixture
 def admin_token():
@@ -198,6 +269,7 @@ def override_deps(request, mock_db, mock_redis):
          patch("app.api.v2.merge_routes.get_redis_client", return_value=sync_redis),
          patch("app.api.v2.auth_routes.get_redis_client", return_value=sync_redis),
          patch("app.api.v2.consent_routes.get_redis_client", return_value=sync_redis),
+         patch("app.services.provider_auth_service.get_redis_client", return_value=sync_redis),
          patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis),
          patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None),
          patch("app.core.supabase.get_supabase_client", return_value=mock_supabase),

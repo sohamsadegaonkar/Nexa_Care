@@ -51,6 +51,9 @@ jobs:
           SUPABASE_KEY: "placeholder-key"
           UPSTASH_REDIS_URL: "redis://localhost:6379"
           HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
+          KEK_ROOT_SECRET: "test-kek-root-secret-32-bytes-minimum"
+          NEXA_PEPPER_KEY: "test-pepper-key"
+          ENVIRONMENT: "test"
           DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/nexa_ci"
           # app/core/security.py::_load_key requires 32-byte base64 Fernet
           # keys for any code path that encrypts PII/MFA fields at rest
