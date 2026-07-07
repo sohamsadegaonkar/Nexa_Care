@@ -1,4 +1,4 @@
-# Nexa Care
+# Nexa Care a product by XFACTOR
 
 Nexa Care is a privacy-first health-record platform that helps track doctor productivity, patient revisit patterns, and appointment durations through consent-scoped dashboards.
 
