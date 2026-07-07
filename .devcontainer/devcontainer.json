@@ -1,0 +1,10 @@
+{
+  "name": "Nexa_Care",
+  "image": "mcr.microsoft.com/devcontainers/python:3.12",
+  "customizations": {
+    "vscode": {
+      "extensions": ["ms-python.python"]
+    }
+  },
+  "postCreateCommand": "sudo apt-get update && sudo apt-get install -y tesseract-ocr poppler-utils && python -m pip install -U pip"
+}

@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_dev.txt
+
+      - name: Lint
+        run: ruff check .
+
+      # F-12 fix: was `python -m unittest discover -s tests -v`
+      #
+      # unittest discover collected test_route_registration.py and
+      # test_sharding.py but found no TestCase subclasses in them (they use
+      # bare `assert` statements — pytest style).  It reported them as
+      # passing with zero tests run, meaning:
+      #   • the aadhaar_abha_id routing regression guard (test_sharding.py)
+      #   • the duplicate-route registration guard (test_route_registration.py)
+      # never executed in CI.  Switching to pytest collects and runs all
+      # test functions regardless of whether they are TestCase subclasses.
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+        env:
+          # Provider routes authenticate via get_provider_context(), which
+          # validates credentials against provider_credential in Postgres.
+          # DATABASE_URL is required at startup even though unit tests mock
+          # the session layer — no live database is contacted in CI.
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_KEY: "placeholder-key"
+          UPSTASH_REDIS_URL: "redis://localhost:6379"
+          HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
+          DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/nexa_ci"
+          # app/core/security.py::_load_key requires 32-byte base64 Fernet
+          # keys for any code path that encrypts PII/MFA fields at rest
+          # (patient registration, document pipeline, review approval).
+          # These are throwaway CI-only keys, not real secrets.
+          PII_ENCRYPTION_KEY: "vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw="
+          MFA_ENCRYPTION_KEY: "ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8="

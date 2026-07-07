@@ -1,0 +1,34 @@
+-- 0001_audit_ledger_atomic_chain.sql
+--
+-- Closes a race condition in the audit ledger's hash chain
+-- (app/observability/audit_ledger.py): two concurrent requests could
+-- previously both read the same "latest" record_hash and each insert a
+-- row pointing at that same previous_hash, forking the chain and
+-- breaking the tamper-evidence guarantee it exists to provide.
+--
+-- Why a UNIQUE constraint instead of a transaction wrapped around the
+-- existing select-then-insert: PostgREST (what supabase-py talks to)
+-- auto-commits each request as its own transaction, so there is no way
+-- to hold one open across the two separate round trips the Python code
+-- makes. A constraint enforced by Postgres itself doesn't have that
+-- problem -- if two inserts race for the same previous_hash, the second
+-- one blocks on the first's row lock and then fails with 23505
+-- (unique_violation) once the first commits, rather than both silently
+-- succeeding.
+--
+-- append_audit_log() catches that 23505, re-reads the now-current latest
+-- hash, and retries (bounded at 5 attempts) instead of treating it as a
+-- hard failure.
+--
+-- Apply this against your actual Supabase/Postgres instance (SQL editor,
+-- or whatever migration tool you use) -- it has not been run anywhere;
+-- this sandbox has no database connection.
+--
+-- If you already have rows in system_audit with duplicate previous_hash
+-- values from before this constraint existed, this ALTER TABLE will fail
+-- until those are de-duplicated -- which, if it happens, is itself
+-- evidence the race already occurred in production and that chain segment
+-- needs manual review before you trust it.
+
+ALTER TABLE system_audit
+ADD CONSTRAINT uq_system_audit_previous_hash UNIQUE (previous_hash);
