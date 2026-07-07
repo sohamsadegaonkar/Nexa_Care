@@ -7441,7 +7441,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"app@npm:0.0.0, app@workspace:packages/app":
+"app@npm:0.0.0, app@workspace:*, app@workspace:packages/app":
   version: 0.0.0-use.local
   resolution: "app@workspace:packages/app"
   dependencies:
@@ -13147,7 +13147,7 @@ __metadata:
     "@tamagui/next-plugin": "npm:2.0.0-rc.16"
     "@tamagui/next-theme": "npm:2.0.0-rc.16"
     "@types/node": "npm:^20.14.1"
-    app: "npm:0.0.0"
+    app: "workspace:*"
     next: "npm:16.1.1"
     next-compose-plugins: "npm:^2.2.1"
     next-transpile-modules: "npm:^10.0.1"
