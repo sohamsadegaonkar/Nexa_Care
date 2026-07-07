@@ -380,6 +380,16 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(data["redis"], "ok")
         self.assertEqual(data["postgres"], "ok")
 
+    def test_healthz_liveness_check(self):
+        """/healthz is the Render liveness probe: no Redis/Postgres/auth
+        dependency, so it must return 200 even if those patches above were
+        never applied (i.e. even if Redis/Postgres are genuinely down)."""
+        with patch("app.main.get_redis_client", side_effect=Exception("redis down")), \
+                patch("app.main.get_async_engine", side_effect=Exception("db down")):
+            response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 
     def test_register_without_provider_token_is_rejected(self):

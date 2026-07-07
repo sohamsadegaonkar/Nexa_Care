@@ -29,7 +29,8 @@ pip install -r requirements.txt -r requirements_dev.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Health check: `GET http://localhost:8000/health`  
+Liveness check (no dependencies): `GET http://localhost:8000/healthz`  
+Readiness check (verifies Redis + Postgres): `GET http://localhost:8000/health`  
 API docs: `http://localhost:8000/docs`
 
 ### 3. Tests
@@ -49,6 +50,29 @@ yarn install
 yarn web        # Next.js dev server
 yarn native     # Expo dev server
 ```
+
+## Deployment on Render
+
+Render's own platform health check should point at the **liveness** probe,
+not the readiness probe:
+
+- **Health Check Path: `/healthz`**
+
+`/healthz` returns `200 {"status": "ok"}` as soon as the FastAPI app has
+finished starting up, and it never touches Redis, Postgres, Supabase, or
+any other external dependency. That's what Render needs to decide "is the
+process alive" during and after a deploy.
+
+`GET /health` is a separate **readiness/dependency** check. It actively
+pings Redis and runs `SELECT 1` against Postgres, and returns `503` if
+either is unavailable. That's the correct behavior for `/health` (it's
+useful for your own monitoring/alerting), but it means `/health` can
+legitimately return `503` for reasons that have nothing to do with the
+app itself being up -- e.g. Redis briefly unreachable, a Postgres
+connection-pool blip. Pointing Render's health check at `/health` will
+cause Render to kill/restart an otherwise-healthy deploy whenever a
+dependency has a transient hiccup. Use `/healthz` for Render; keep using
+`/health` for dependency monitoring.
 
 ## Key flows
 
