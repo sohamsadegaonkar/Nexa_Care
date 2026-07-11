@@ -47,7 +47,7 @@ router = APIRouter(prefix="/api/v2/pipeline", tags=["pipeline"])
 
 
 class FieldReviewRequest(BaseModel):
-    action: str
+    action: str | None = None
     corrected_value: str | None = None
     review_notes: str | None = None
 
@@ -61,7 +61,7 @@ class EditFieldRequest(BaseModel):
 
 
 class CommitJobRequest(BaseModel):
-    patient_id: str
+    patient_id: str | None = None
     encounter_summary: str | None = None
     fields: list[dict[str, Any]] | None = None
 
@@ -71,6 +71,31 @@ def _parse_uuid(id_str: str) -> uuid.UUID:
         return uuid.UUID(str(id_str))
     except ValueError:
         return uuid.uuid5(uuid.NAMESPACE_DNS, str(id_str))
+
+
+VALID_RISK_LEVELS = {"LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "CRITICAL_RISK"}
+ALLOWED_COMMIT_STATUSES = {"auto_approved", "approved", "edited"}
+
+
+def _validate_commit_field_metadata(field: dict[str, Any]) -> None:
+    if "confidence" not in field or "risk_level" not in field or field.get("confidence") is None or not field.get("risk_level"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No extracted medical field may be saved without confidence and risk_level metadata.",
+        )
+
+    confidence = field["confidence"]
+    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid confidence score.",
+        )
+
+    if field["risk_level"] not in VALID_RISK_LEVELS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid risk_level.",
+        )
 
 
 # ── Upload (client provides patient_id — new entity) ────────────────────────
@@ -302,6 +327,14 @@ async def review_extracted_field(
     ALPHA: patient_id is derived server-side from the field's parent
     ExtractionJob, not from client-provided values.
     """
+    if not x_consent_token:
+        await validate_consent_for_patient(
+            patient_id=None,
+            purpose="field_adjudication",
+            provider=provider,
+            x_consent_token=x_consent_token,
+        )
+
     f_uuid = _parse_uuid(field_id)
     stmt_f = select(ExtractedFieldRecord).where(ExtractedFieldRecord.id == f_uuid)
     res_f = await db.execute(stmt_f)
@@ -323,6 +356,9 @@ async def review_extracted_field(
         provider=provider,
         x_consent_token=x_consent_token,
     )
+
+    if payload.action is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Adjudication action is required.")
 
     status_map = {
         "approve": "approved",
@@ -450,6 +486,37 @@ async def commit_extraction_job(
     """
     job_uuid = _parse_uuid(job_id)
 
+    if not x_consent_token:
+        await validate_consent_for_patient(
+            patient_id=payload.patient_id,
+            purpose="pipeline_commit",
+            provider=provider,
+            x_consent_token=x_consent_token,
+        )
+
+    if payload.fields is not None:
+        for f in payload.fields:
+            st_val = str(f.get("status") or "approved").lower()
+            if st_val == "needs_review":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Review incomplete: job contains unresolved fields needing review.",
+                )
+            if st_val == "rejected":
+                continue
+            if st_val not in ALLOWED_COMMIT_STATUSES:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Field with status '{st_val}' cannot be committed.",
+                )
+            if st_val == "auto_approved" and f.get("risk_level") in {"HIGH_RISK", "CRITICAL_RISK"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Field with risk_level='{f['risk_level']}' cannot have status 'auto_approved'. "
+                    f"HIGH_RISK and CRITICAL_RISK fields require human review (status 'approved' or 'edited').",
+                )
+            _validate_commit_field_metadata(f)
+
     # 1. Load the job first to derive patient_id server-side
     stmt_job = select(ExtractionJob).where(ExtractionJob.id == job_uuid)
     res_job = await db.execute(stmt_job)
@@ -470,7 +537,12 @@ async def commit_extraction_job(
 
     # 3. Verify payload.patient_id matches the job's actual patient_id
     server_pid = str(job.patient_id)
-    if _parse_uuid(payload.patient_id) != job.patient_id:
+    if not payload.patient_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="patient_id is required for pipeline commit.",
+        )
+    if str(_parse_uuid(payload.patient_id)) != str(job.patient_id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="patient_id in request body does not match the job's patient_id.",
@@ -483,7 +555,6 @@ async def commit_extraction_job(
     if isinstance(unres_rows, list) and len(unres_rows) > 0:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Review incomplete: job contains unresolved fields needing review.")
 
-    allowed_commit_statuses = {"auto_approved", "approved", "edited"}
     approved_models = []
     if payload.fields is not None:
         for idx, f in enumerate(payload.fields):
@@ -495,7 +566,7 @@ async def commit_extraction_job(
                 )
             if st_val == "rejected":
                 continue
-            if st_val not in allowed_commit_statuses:
+            if st_val not in ALLOWED_COMMIT_STATUSES:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Field with status '{st_val}' cannot be committed.",
@@ -510,21 +581,7 @@ async def commit_extraction_job(
                            f"HIGH_RISK and CRITICAL_RISK fields require human review (status 'approved' or 'edited').",
                 )
 
-            if "confidence" not in f or "risk_level" not in f or f.get("confidence") is None or not f.get("risk_level"):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="No extracted medical field may be saved without confidence and risk_level metadata."
-                )
-            if not isinstance(f["confidence"], (int, float)) or not (0.0 <= f["confidence"] <= 1.0):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid confidence score."
-                )
-            if f["risk_level"] not in {"LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "CRITICAL_RISK"}:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid risk_level."
-                )
+            _validate_commit_field_metadata(f)
             ef = ExtractedField(
                 field_id=str(f.get("field_id") or f"field-{idx}"),
                 job_id=str(f.get("job_id") or job_id),

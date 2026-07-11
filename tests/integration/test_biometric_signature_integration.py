@@ -6,7 +6,12 @@ Contract:
 - Signature required for 'approved' decision.
 """
 
+import base64
+from unittest.mock import AsyncMock
+
 import pytest
+
+from app.services.biometric_signature_verifier import BiometricSignatureVerifier
 
 @pytest.mark.integration
 @pytest.mark.xfail(reason="Squad B Day 4: Biometric signature verification not implemented")
@@ -49,9 +54,23 @@ async def test_invalid_signature_fails(test_client):
     assert respond_resp.status_code == 401
 
 @pytest.mark.integration
-@pytest.mark.xfail(reason="Squad B Day 4")
 @pytest.mark.asyncio
-async def test_signature_replay_fails(test_client):
-    """Test: Replayed nonce -> Returns 403."""
-    # Logic: The same nonce cannot be signed and submitted twice.
-    pass
+async def test_signature_replay_fails():
+    """Test: Replayed nonce fails before device-key lookup or signature acceptance."""
+    verifier = BiometricSignatureVerifier()
+    redis = AsyncMock()
+    redis.get.return_value = "1"
+
+    result = await verifier.verify_signature(
+        patient_id="p-123",
+        request_id="req-123",
+        signature_b64=base64.b64encode(b"signature").decode("utf-8"),
+        challenge_nonce="used-nonce",
+        redis=redis,
+        db=AsyncMock(),
+    )
+
+    assert result.verified is False
+    assert result.error == "Nonce already used"
+    redis.get.assert_awaited_once_with("biometric_nonce:used-nonce:used")
+    redis.setex.assert_not_awaited()

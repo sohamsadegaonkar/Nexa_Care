@@ -12,6 +12,7 @@ Verifies:
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,8 +28,25 @@ client = TestClient(app)
 class FakeScalarResult:
     def __init__(self, row):
         self._row = row
+
     def scalar_one_or_none(self):
         return self._row
+
+
+def _parse_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, str(value))
+
+
+def _job_for(patient_id: str = "pat-101", job_id: str | uuid.UUID | None = None):
+    return SimpleNamespace(
+        id=_parse_uuid(str(job_id or uuid.uuid4())),
+        patient_id=_parse_uuid(patient_id),
+        document_id=uuid.uuid4(),
+        status="scored",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -61,7 +79,7 @@ def test_approve_field(admin_headers):
         status="needs_review",
     )
     mock_db = MagicMock()
-    mock_db.execute = AsyncMock(side_effect=[FakeScalarResult(field_rec), FakeScalarResult(None)])
+    mock_db.execute = AsyncMock(side_effect=[FakeScalarResult(field_rec), FakeScalarResult(_job_for(job_id=field_rec.job_id)), FakeScalarResult(None)])
     mock_db.commit = AsyncMock()
 
     from app.core.database import get_db_session
@@ -104,7 +122,7 @@ def test_reject_field(admin_headers):
         status="needs_review",
     )
     mock_db = MagicMock()
-    mock_db.execute = AsyncMock(side_effect=[FakeScalarResult(field_rec), FakeScalarResult(None)])
+    mock_db.execute = AsyncMock(side_effect=[FakeScalarResult(field_rec), FakeScalarResult(_job_for(job_id=field_rec.job_id)), FakeScalarResult(None)])
     mock_db.commit = AsyncMock()
 
     from app.core.database import get_db_session
@@ -149,7 +167,7 @@ def test_edit_field_and_correction_logged(admin_headers):
     mock_db = MagicMock()
     added = []
     mock_db.add = lambda m: added.append(m)
-    mock_db.execute = AsyncMock(side_effect=[FakeScalarResult(field_rec), FakeScalarResult(None)])
+    mock_db.execute = AsyncMock(side_effect=[FakeScalarResult(field_rec), FakeScalarResult(_job_for(job_id=field_rec.job_id)), FakeScalarResult(None)])
     mock_db.commit = AsyncMock()
 
     from app.core.database import get_db_session
@@ -194,8 +212,8 @@ def test_commit_with_all_resolved(admin_headers):
     # Simulate DB query finding NO unresolved fields (empty list)
     mock_db.execute = AsyncMock(return_value=FakeScalarResult(None))
     mock_db.execute.side_effect = [
-        MagicMock(scalars=lambda: MagicMock(all=lambda: [])), # unres query
-        FakeScalarResult(None), # job query
+        FakeScalarResult(_job_for(job_id="job-res-1")),
+        MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
     ]
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
@@ -286,21 +304,11 @@ def test_rejected_field_not_ingested(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
-    rej_rec = ExtractedFieldRecord(
-        id=uuid.uuid4(),
-        job_id=uuid.uuid4(),
-        field_name="sugar",
-        raw_value="999 mg/dL",
-        confidence=0.40,
-        risk_level="CRITICAL_RISK",
-        status="rejected",
-    )
     mock_db = MagicMock()
     mock_db.execute = AsyncMock(return_value=FakeScalarResult(None))
     mock_db.execute.side_effect = [
-        MagicMock(scalars=lambda: MagicMock(all=lambda: [])),  # unres query returns 0 needs_review
-        MagicMock(scalars=lambda: MagicMock(all=lambda: [rej_rec])),  # approved/edited query
-        FakeScalarResult(None),  # job query
+        FakeScalarResult(_job_for(job_id="job-rej-1")),
+        MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
     ]
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()

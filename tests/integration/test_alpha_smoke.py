@@ -7,7 +7,9 @@ Walks the two core architectural seams of Nexa Care V2:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 import pytest
 from fastapi.testclient import TestClient
@@ -131,7 +133,7 @@ def test_seam_1_consent_to_record_flow(admin_headers, admin_context):
         assert res4.status_code == 200, f"[SEAM MISMATCH: Workstream 2 (Consent Grant) vs Workstream 3 (Record Access)] GET /patient/{patient_id}/record failed: {res4.text}"
 
 
-def test_seam_2_pipeline_to_timeline_flow(admin_headers):
+def test_seam_2_pipeline_to_timeline_flow(admin_headers, mock_db):
     """End-to-end smoke test for AI Pipeline document upload through timeline commit."""
     patient_id = "123e4567-e89b-12d3-a456-426614174001"
     provider_id = "987fcdeb-51a2-43d7-9012-345678901234"
@@ -145,6 +147,100 @@ def test_seam_2_pipeline_to_timeline_flow(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
+
+    db_state = {"added": [], "field_id": None, "field": None, "job": None}
+
+    class MockResult:
+        def __init__(self, one=None, rows=None):
+            self._one = one
+            self._rows = rows or []
+
+        def scalar_one_or_none(self):
+            return self._one
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    def remember_added(obj):
+        db_state["added"].append(obj)
+        if obj.__class__.__name__ == "ExtractionJob":
+            db_state["job"] = obj
+
+    async def execute_side_effect(statement, *args, **kwargs):
+        sql = str(statement).lower()
+        job = db_state["job"]
+
+        if "extraction_jobs" in sql:
+            return MockResult(one=job)
+
+        if "extracted_fields" in sql:
+            if db_state["field"] is None and db_state["field_id"]:
+                db_state["field"] = SimpleNamespace(
+                    id=uuid.UUID(db_state["field_id"]),
+                    job_id=job.id,
+                    field_name="hba1c",
+                    raw_value="6.8 %",
+                    normalized_value="6.8 %",
+                    confidence=0.96,
+                    risk_level="LOW_RISK",
+                    validation_result={"is_valid": True, "validation_errors": []},
+                    source_page=1,
+                    source_bbox=[0.1, 0.2, 0.3, 0.05],
+                    status="needs_review",
+                    corrected_value=None,
+                    source_document_id=job.document_id,
+                )
+            if db_state["field"] is None:
+                return MockResult(rows=[])
+            if "where extracted_fields.id" in sql:
+                return MockResult(one=db_state["field"], rows=[db_state["field"]])
+            if "status in" in sql:
+                return MockResult(rows=[db_state["field"]])
+            if "extracted_fields.status" in sql:
+                return MockResult(rows=[])
+            return MockResult(rows=[])
+
+        if "review_queue_items" in sql:
+            return MockResult(
+                one=SimpleNamespace(
+                    status="pending",
+                    adjudicated_by=None,
+                    adjudicated_at=None,
+                    notes=None,
+                )
+            )
+
+        if "pipeline_commits" in sql:
+            return MockResult(one=None)
+
+        if "timeline_events" in sql:
+            if "event_ref_id" in sql:
+                return MockResult(one=None)
+            rows = [obj for obj in db_state["added"] if obj.__class__.__name__ == "TimelineEvent"]
+            return MockResult(rows=rows)
+
+        if "patient_vitals" in sql:
+            rows = [obj for obj in db_state["added"] if obj.__class__.__name__ == "Vitals"]
+            return MockResult(rows=rows)
+
+        if "patient_medications" in sql:
+            rows = [obj for obj in db_state["added"] if obj.__class__.__name__ == "Medication"]
+            return MockResult(rows=rows)
+
+        if "patient_lab_results" in sql:
+            rows = [obj for obj in db_state["added"] if obj.__class__.__name__ == "LabResult"]
+            return MockResult(rows=rows)
+
+        if "document_references" in sql or "patient_allergies" in sql:
+            return MockResult(rows=[])
+
+        return MockResult()
+
+    mock_db.add.side_effect = remember_added
+    mock_db.execute.side_effect = execute_side_effect
 
     with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap):
         # Step 1: Upload Document
@@ -176,6 +272,7 @@ def test_seam_2_pipeline_to_timeline_flow(admin_headers):
         fields = data2["extracted_fields"]
         assert len(fields) >= 1
         field_id = fields[0]["field_id"]
+        db_state["field_id"] = field_id
 
         # Step 3: Human Steward Adjudicates / Edits Field
         review_payload = {
@@ -228,6 +325,12 @@ def test_seam_2_pipeline_to_timeline_flow(admin_headers):
         assert res5.status_code == 200, f"[SEAM MISMATCH: Workstream 4 (Pipeline Commit) vs Workstream 3 (Timeline)] Timeline read failed: {res5.text}"
         data5 = res5.json()
         assert len(data5["events"]) >= 1, f"[SEAM MISMATCH: Workstream 4 (Pipeline Commit) vs Workstream 3 (Timeline)] Committed event missing from timeline: {data5}"
+        ai_events = [event for event in data5["events"] if event.get("source") == "ai_extracted"]
+        assert ai_events, "Committed AI fields were not surfaced in the patient timeline"
+        assert any(event.get("confidence") is not None for event in ai_events)
+        assert any(event.get("risk_level") for event in ai_events)
+        assert any("5.6" in event.get("summary", "") for event in ai_events)
+        assert data5["patient_id"] == patient_id
 
 
 def test_seam_3_push_to_app_flow(admin_headers, admin_context):

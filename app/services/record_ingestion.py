@@ -29,6 +29,8 @@ from app.observability.audit_ledger import append_audit_log_or_503
 
 logger = logging.getLogger("nexa_logger")
 
+VALID_RISK_LEVELS = {"LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "CRITICAL_RISK"}
+
 
 class IngestionResult(BaseModel):
     """Result summary returned after ingesting a pipeline extraction job."""
@@ -118,6 +120,11 @@ async def ingest_extracted_fields(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Provenance error: field {field.field_name} lacks risk_level metadata.",
+            )
+        if str(field.risk_level) not in VALID_RISK_LEVELS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Provenance error: field {field.field_name} has invalid risk_level metadata.",
             )
 
         doc_id_str = field.source_document_id or job_id

@@ -47,7 +47,8 @@ def client(fake_redis, mock_provider):
          patch("app.observability.audit_ledger.append_audit_log", side_effect=m_audit), \
          patch("app.observability.audit_ledger.append_audit_log_or_503", side_effect=m_audit_503), \
          patch("app.services.consent_engine.append_audit_log", side_effect=m_audit), \
-         patch("app.services.consent_engine.append_audit_log_or_503", side_effect=m_audit_503):
+         patch("app.services.consent_engine.append_audit_log_or_503", side_effect=m_audit_503), \
+         patch("app.api.v2.consent_routes._break_glass_limiter", new=AsyncMock(return_value=None)):
         
         app.dependency_overrides[get_provider_context] = lambda: mock_provider
         db = AsyncMock(spec=AsyncSession)

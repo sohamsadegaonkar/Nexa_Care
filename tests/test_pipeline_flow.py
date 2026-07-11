@@ -17,6 +17,7 @@ Verifies:
 from __future__ import annotations
 
 import uuid
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,8 +38,25 @@ client = TestClient(app)
 class FakeScalarResult:
     def __init__(self, row):
         self._row = row
+
     def scalar_one_or_none(self):
         return self._row
+
+
+def _parse_uuid(value: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return uuid.uuid5(uuid.NAMESPACE_DNS, str(value))
+
+
+def _job_for(patient_id: str = "pat-101", job_id: str | uuid.UUID | None = None):
+    return SimpleNamespace(
+        id=_parse_uuid(str(job_id or uuid.uuid4())),
+        patient_id=_parse_uuid(patient_id),
+        document_id=uuid.uuid4(),
+        status="scored",
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -315,7 +333,7 @@ def test_review_edit_stores_corrected_value_and_status_edited(admin_headers):
         assert data["final_value"] == "115/75"
 
 
-def test_review_reject_skips_ingestion(admin_headers):
+def test_review_reject_skips_ingestion(admin_headers, mock_db):
     """Test 14: Rejected field is skipped and does not block job commit."""
     mock_cap = ConsentCapability(
         patient_id="pat-101",
@@ -326,6 +344,13 @@ def test_review_reject_skips_ingestion(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
+    mock_db.execute.side_effect = [
+        FakeScalarResult(_job_for(job_id="job-103")),
+        MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
+    ]
+    mock_db.add = MagicMock()
+    mock_db.commit = AsyncMock()
+
     with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap), \
          patch("app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
         payload = {
