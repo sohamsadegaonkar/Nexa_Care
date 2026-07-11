@@ -17,22 +17,28 @@ test('Next.js dev server starts', async () => {
     })
 
     let output = ''
-    devProcess.stdout?.on('data', (data) => {
+    const appendOutput = (data: Buffer): void => {
       output += data.toString()
-    })
+    }
+
+    devProcess.stdout?.on('data', appendOutput)
+    devProcess.stderr?.on('data', appendOutput)
 
     // Wait for the server to start (adjust timeout as needed)
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error('Timeout waiting for dev server to start'))
+        reject(new Error("Timeout waiting for dev server to start\n\nDev output:\n" + output))
       }, 30000)
 
-      devProcess?.stdout?.on('data', (data) => {
+      const handleReadyOutput = (data: Buffer): void => {
         if (data.toString().includes('Ready in')) {
           clearTimeout(timeout)
           resolve()
         }
-      })
+      }
+
+      devProcess?.stdout?.on('data', handleReadyOutput)
+      devProcess?.stderr?.on('data', handleReadyOutput)
     })
 
     // Check for expected output

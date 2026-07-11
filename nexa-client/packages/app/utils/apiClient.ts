@@ -497,3 +497,5 @@ export const NexaApiClient = {
     )
   },
 }
+
+export { apiClient } from './api'

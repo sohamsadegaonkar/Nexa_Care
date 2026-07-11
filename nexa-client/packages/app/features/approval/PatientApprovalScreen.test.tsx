@@ -104,11 +104,11 @@ describe('PatientApprovalScreen', () => {
         request_id: requestId,
         patient_id: mockRequest.patient_id,
         provider_id: mockRequest.clinician_id,
-        nonce: mockRequest.nonce,
+        challenge_nonce: mockRequest.nonce,
         decision: 'approved',
         scope: mockRequest.scope,
         purpose: mockRequest.purpose,
-        duration: mockRequest.access_duration,
+        access_duration: mockRequest.access_duration,
         expires_at: mockRequest.expires_at,
       })
       expect(respondToPushRequest).toHaveBeenCalledWith(
