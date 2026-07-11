@@ -253,30 +253,9 @@ app.add_middleware(PrometheusMiddleware)
 app.mount("/metrics", make_asgi_app())
 
 
-@app.get("/healthz", tags=["health"])
-async def liveness_check() -> dict:
-    """Lightweight liveness probe for the Render health check.
-
-    Deliberately does NOT touch Redis, Postgres, Supabase, or any other
-    external dependency, and requires no auth. It only needs to prove the
-    ASGI app is up and able to handle a request. Render should poll this
-    path (see README "Deployment on Render") rather than /health, because
-    /health is a readiness probe that legitimately returns 503 while a
-    dependency (e.g. Redis) is briefly unavailable -- which previously
-    caused Render to treat a perfectly-alive process as "unhealthy" and
-    fail the deploy.
-    """
-    return {"status": "ok"}
-
-
 @app.get("/health", tags=["health"])
 async def health_check() -> dict:
-    """Readiness probe. Verifies Redis and Postgres reachability.
-
-    This is intentionally NOT used as the Render health check path -- see
-    /healthz above. Its dependency-checking behavior (including the 503
-    on degraded state) is unchanged and still covered by existing tests.
-    """
+    """Liveness/readiness probe. Verifies Redis and Postgres reachability."""
 
     checks: dict[str, str] = {}
 

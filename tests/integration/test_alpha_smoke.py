@@ -45,10 +45,11 @@ def mock_device_enrolled(request):
     app.dependency_overrides.pop(get_db_session, None)
 
 
-def test_seam_1_consent_to_record_flow(admin_headers):
+def test_seam_1_consent_to_record_flow(admin_headers, admin_context):
     """End-to-end smoke test for Provider consent request through record retrieval."""
     patient_id = "123e4567-e89b-12d3-a456-426614174001"
-    provider_id = "987fcdeb-51a2-43d7-9012-345678901234"
+    # Use provider_id from authenticated session — the server validates this
+    provider_id = str(admin_context.provider.provider_id)
 
     # Step 1: Initiate Consent Challenge
     req_payload = {
@@ -229,10 +230,11 @@ def test_seam_2_pipeline_to_timeline_flow(admin_headers):
         assert len(data5["events"]) >= 1, f"[SEAM MISMATCH: Workstream 4 (Pipeline Commit) vs Workstream 3 (Timeline)] Committed event missing from timeline: {data5}"
 
 
-def test_seam_3_push_to_app_flow(admin_headers):
+def test_seam_3_push_to_app_flow(admin_headers, admin_context):
     """Verify push payload and deep-link format between Workstream 2 (Push Service) and Workstream 6 (Patient App)."""
     patient_id = "123e4567-e89b-12d3-a456-426614174001"
-    provider_id = "987fcdeb-51a2-43d7-9012-345678901234"
+    # Use provider_id from authenticated session — the server validates this
+    provider_id = str(admin_context.provider.provider_id)
 
     req_payload = {
         "patient_id": patient_id,

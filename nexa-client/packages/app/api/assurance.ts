@@ -29,9 +29,13 @@ export interface BiometricVerifyRequest {
 export interface PushApprovalStatusResponse {
   request_id: string
   patient_id: string
+  clinician_id: string
   clinician_name: string
   hospital_name: string
   purpose: string
+  scope: string
+  access_duration: number
+  expires_at: string
   status: 'pending' | 'approved' | 'denied' | 'expired'
   created_at: string
   nonce: string
@@ -41,6 +45,7 @@ export interface PushApprovalRespondRequest {
   decision: 'approved' | 'denied'
   signature?: string
   nonce?: string
+  device_id?: string
 }
 
 export async function getPushRequestStatus(

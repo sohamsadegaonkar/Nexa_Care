@@ -9,6 +9,7 @@
   "dependencies": {
     "@my/ui": "0.0.1",
     "@noble/curves": "^1.9.0",
+    "@noble/hashes": "^2.2.0",
     "@react-navigation/native": "^6.1.17",
     "@tamagui/animations-react-native": "2.0.0-rc.16",
     "@tamagui/colors": "2.0.0-rc.16",
@@ -24,7 +25,8 @@
     "expo-local-authentication": "~15.0.2",
     "expo-secure-store": "~14.0.1",
     "react-native-safe-area-context": "5.4.0",
-    "solito": "patch:solito@npm%3A5.0.0#~/.yarn/patches/solito-npm-5.0.0-44b0b420f4.patch"
+    "solito": "patch:solito@npm%3A5.0.0#~/.yarn/patches/solito-npm-5.0.0-44b0b420f4.patch",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/react": "~19.0.10",

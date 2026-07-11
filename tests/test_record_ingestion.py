@@ -201,9 +201,16 @@ async def test_timeline_event_created():
         assert te_models[0].source == "ai_extracted"
 
 
-def test_commit_endpoint_integration(admin_headers):
-    """Test 7: POST /api/v2/pipeline/jobs/{job_id}/commit triggers ingestion path."""
+def test_commit_endpoint_integration(admin_headers, mock_db):
+    """Test 7: POST /api/v2/pipeline/jobs/{job_id}/commit triggers ingestion path.
+
+    ALPHA: Commit handler now loads the job first and validates patient_id
+    server-side.  The mock DB must return a job with patient_id matching
+    the payload.
+    """
     from app.core.consent_gate import ConsentCapability
+    from app.api.v2.pipeline_routes import _parse_uuid
+
     mock_cap = ConsentCapability(
         patient_id="pat-101",
         clinician_id="doc-202",
@@ -213,6 +220,18 @@ def test_commit_endpoint_integration(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
+
+    # Mock job with patient_id matching the payload
+    mock_job = MagicMock()
+    mock_job.patient_id = _parse_uuid("pat-101")
+    mock_job.status = "review_required"
+
+    # DB query order: (1) load job → consent → (2) check unresolved fields
+    mock_db.execute.side_effect = [
+        MagicMock(scalar_one_or_none=MagicMock(return_value=mock_job)),
+        MagicMock(scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))),
+    ]
+
     with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap), \
          patch("app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
         payload = {

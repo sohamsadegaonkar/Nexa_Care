@@ -473,4 +473,27 @@ export const NexaApiClient = {
   getDashboardMetrics(): Promise<any> {
     return request<any>('/api/v2/dashboard/metrics', { method: 'GET' })
   },
+
+  resolveNfcCard(payload: { card_uid: string }): Promise<any> {
+    return request<any>('/api/v2/nfc/resolve', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
+  /** Cancel a pending consent request (real server-side cancellation). */
+  cancelConsentRequest(requestId: string): Promise<{ request_id: string; status: string; cancelled_at: string }> {
+    return request<{ request_id: string; status: string; cancelled_at: string }>(
+      `/api/v2/consent/request/${requestId}/cancel`,
+      { method: 'POST' },
+    )
+  },
+
+  /** Issue a break-glass emergency consent token (audited, rate-limited). */
+  breakGlassIssue(payload: { patient_id: string; reason_code: string; free_text: string }): Promise<{ consent_token: string; expires_at: string }> {
+    return request<{ consent_token: string; expires_at: string }>(
+      '/api/v2/consent/break-glass/issue',
+      { method: 'POST', body: JSON.stringify(payload) },
+    )
+  },
 }

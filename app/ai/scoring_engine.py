@@ -12,10 +12,14 @@ def score_extracted_field(field: ExtractedField) -> ExtractedField:
     """Score confidence and classify risk for an extracted field (WS4 -> WS5 seam).
 
     Ensures every field receives non-null confidence and risk_level metadata.
+    Validation always runs against the full ``raw_value`` because
+    ``normalized_value`` may be a processed/partial representation (e.g.
+    ``"500mg"`` or ``"Standard"``) that is missing drug-name or frequency
+    context required by the medical validation engine.
     """
     val_res = field.validation_result
     if val_res is None or (isinstance(val_res, dict) and not val_res.get("checks")):
-        val_res = validate_field(field.field_name, field.normalized_value or field.raw_value)
+        val_res = validate_field(field.field_name, field.raw_value)
         if getattr(field, "has_conflict", False):
             val_res.has_conflict = True
         field.validation_result = val_res

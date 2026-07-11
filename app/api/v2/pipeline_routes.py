@@ -6,6 +6,14 @@ Implements:
 - GET /api/v2/pipeline/review-queue (returns fields needing human adjudication)
 - POST /api/v2/pipeline/fields/{field_id}/review (steward adjudication action)
 - POST /api/v2/pipeline/jobs/{job_id}/commit (atomic commit of approved fields into patient records)
+
+ALPHA security note: Pipeline endpoints that reference existing entities (jobs,
+fields) now derive patient_id server-side from the DB row instead of trusting
+client-supplied values.  This eliminates the patient_id spoofing vector
+described in threat-model.md T-06.  The upload and review-queue endpoints
+still accept client-provided patient_id because they either create a new entity
+or filter by patient — in both cases the consent gate validates that the token
+grants access to the requested patient_id.
 """
 
 from __future__ import annotations
@@ -17,12 +25,12 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.consent_gate import require_consent
+from app.core.consent_gate import require_consent, validate_consent_for_patient
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider
 from app.models.extracted_field import ExtractedField
@@ -63,6 +71,9 @@ def _parse_uuid(id_str: str) -> uuid.UUID:
         return uuid.UUID(str(id_str))
     except ValueError:
         return uuid.uuid5(uuid.NAMESPACE_DNS, str(id_str))
+
+
+# ── Upload (client provides patient_id — new entity) ────────────────────────
 
 
 @router.post("/documents/upload", status_code=status.HTTP_202_ACCEPTED)
@@ -134,21 +145,41 @@ async def upload_pipeline_document(
     }
 
 
+# ── Job status (server-derived patient_id from job entity) ──────────────────
+
+
 @router.get("/jobs/{job_id}", status_code=status.HTTP_200_OK)
 async def get_extraction_job(
     job_id: str,
-    patient_id: str | None = None,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("pipeline_status")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Retrieve extraction job status and summary of auto-approved vs review fields."""
-    pid = patient_id or capability.patient_id
-    job_uuid = _parse_uuid(job_id)
+    """Retrieve extraction job status and summary of auto-approved vs review fields.
 
+    ALPHA: patient_id is derived server-side from the job's DB row, not from
+    client-provided query params or headers.  This eliminates the spoofing
+    vector where a client claims a different patient_id than the job belongs to.
+    """
+    job_uuid = _parse_uuid(job_id)
     stmt_j = select(ExtractionJob).where(ExtractionJob.id == job_uuid)
     res_j = await db.execute(stmt_j)
     job = res_j.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Extraction job not found.",
+        )
+
+    # ALPHA: Derive patient_id server-side from the job entity
+    capability = await validate_consent_for_patient(
+        patient_id=str(job.patient_id),
+        purpose="pipeline_status",
+        provider=provider,
+        x_consent_token=x_consent_token,
+    )
+    pid = capability.patient_id
 
     stmt_f = select(ExtractedFieldRecord).where(ExtractedFieldRecord.job_id == job_uuid)
     res_f = await db.execute(stmt_f)
@@ -198,14 +229,17 @@ async def get_extraction_job(
     return {
         "job_id": job_id,
         "patient_id": pid,
-        "status": job.status if job else "scored",
-        "document_type": job.document_type if job else "LAB_REPORT",
+        "status": job.status,
+        "document_type": job.document_type,
         "overall_confidence": 0.96,
         "auto_approved_count": auto_cnt,
         "needs_review_count": rev_cnt,
         "extracted_fields": fields,
-        "created_at": job.created_at.isoformat() if job else datetime.now(timezone.utc).isoformat(),
+        "created_at": job.created_at.isoformat(),
     }
+
+
+# ── Review queue (client provides patient_id as filter) ─────────────────────
 
 
 @router.get("/review-queue", status_code=status.HTTP_200_OK)
@@ -252,20 +286,43 @@ async def get_review_queue(
     return {"items": items}
 
 
+# ── Field review (server-derived patient_id from field → job chain) ─────────
+
+
 @router.post("/fields/{field_id}/review", status_code=status.HTTP_200_OK)
 async def review_extracted_field(
     field_id: str,
     payload: FieldReviewRequest,
-    patient_id: str | None = None,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("field_adjudication")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Adjudicate (approve/reject/edit) an extracted clinical observation."""
+    """Adjudicate (approve/reject/edit) an extracted clinical observation.
+
+    ALPHA: patient_id is derived server-side from the field's parent
+    ExtractionJob, not from client-provided values.
+    """
     f_uuid = _parse_uuid(field_id)
     stmt_f = select(ExtractedFieldRecord).where(ExtractedFieldRecord.id == f_uuid)
     res_f = await db.execute(stmt_f)
     field = res_f.scalar_one_or_none()
+
+    # ALPHA: Derive patient_id server-side from the field's parent job
+    server_patient_id: str | None = None
+    if field:
+        stmt_j = select(ExtractionJob).where(ExtractionJob.id == field.job_id)
+        res_j = await db.execute(stmt_j)
+        job = res_j.scalar_one_or_none()
+        if job:
+            server_patient_id = str(job.patient_id)
+
+    # ALPHA: Consent validation raises HTTPException on failure
+    await validate_consent_for_patient(
+        patient_id=server_patient_id,
+        purpose="field_adjudication",
+        provider=provider,
+        x_consent_token=x_consent_token,
+    )
 
     status_map = {
         "approve": "approved",
@@ -333,36 +390,48 @@ async def review_extracted_field(
 @router.post("/fields/{field_id}/approve", status_code=status.HTTP_200_OK)
 async def approve_extracted_field(
     field_id: str,
-    patient_id: str | None = None,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("field_adjudication")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await review_extracted_field(field_id, FieldReviewRequest(action="approve"), patient_id, provider, capability, db)
+    return await review_extracted_field(field_id, FieldReviewRequest(action="approve"), provider, x_consent_token, db)
 
 
 @router.post("/fields/{field_id}/reject", status_code=status.HTTP_200_OK)
 async def reject_extracted_field(
     field_id: str,
     payload: RejectFieldRequest | None = None,
-    patient_id: str | None = None,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("field_adjudication")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await review_extracted_field(field_id, FieldReviewRequest(action="reject", review_notes=payload.reason if payload else None), patient_id, provider, capability, db)
+    return await review_extracted_field(
+        field_id,
+        FieldReviewRequest(action="reject", review_notes=payload.reason if payload else None),
+        provider,
+        x_consent_token,
+        db,
+    )
 
 
 @router.post("/fields/{field_id}/edit", status_code=status.HTTP_200_OK)
 async def edit_extracted_field(
     field_id: str,
     payload: EditFieldRequest,
-    patient_id: str | None = None,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("field_adjudication")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await review_extracted_field(field_id, FieldReviewRequest(action="edit", corrected_value=payload.corrected_value), patient_id, provider, capability, db)
+    return await review_extracted_field(
+        field_id,
+        FieldReviewRequest(action="edit", corrected_value=payload.corrected_value),
+        provider,
+        x_consent_token,
+        db,
+    )
+
+
+# ── Job commit (server-derived patient_id from job entity) ──────────────────
 
 
 @router.post("/jobs/{job_id}/commit", status_code=status.HTTP_201_CREATED)
@@ -370,11 +439,44 @@ async def commit_extraction_job(
     job_id: str,
     payload: CommitJobRequest,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("pipeline_commit")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Commit adjudicated extraction job to permanent storage and timeline."""
+    """Commit adjudicated extraction job to permanent storage and timeline.
+
+    ALPHA: patient_id is derived server-side from the job's DB row.  If
+    payload.patient_id doesn't match the job's actual patient_id, the request
+    is rejected with 400.  This prevents writing records under the wrong patient.
+    """
     job_uuid = _parse_uuid(job_id)
+
+    # 1. Load the job first to derive patient_id server-side
+    stmt_job = select(ExtractionJob).where(ExtractionJob.id == job_uuid)
+    res_job = await db.execute(stmt_job)
+    job = res_job.scalar_one_or_none()
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Extraction job not found.",
+        )
+
+    # 2. ALPHA: Validate consent using server-derived patient_id (raises on failure)
+    await validate_consent_for_patient(
+        patient_id=str(job.patient_id),
+        purpose="pipeline_commit",
+        provider=provider,
+        x_consent_token=x_consent_token,
+    )
+
+    # 3. Verify payload.patient_id matches the job's actual patient_id
+    server_pid = str(job.patient_id)
+    if _parse_uuid(payload.patient_id) != job.patient_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="patient_id in request body does not match the job's patient_id.",
+        )
+
+    # 4. Check for unresolved fields
     stmt_unres = select(ExtractedFieldRecord).where(ExtractedFieldRecord.job_id == job_uuid, ExtractedFieldRecord.status == "needs_review")
     res_unres = await db.execute(stmt_unres)
     unres_rows = res_unres.scalars().all()
@@ -397,6 +499,15 @@ async def commit_extraction_job(
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Field with status '{st_val}' cannot be committed.",
+                )
+
+            # Defense-in-depth: HIGH_RISK/CRITICAL_RISK fields must never
+            # be auto_approved — they require explicit human review.
+            if st_val == "auto_approved" and f.get("risk_level") in {"HIGH_RISK", "CRITICAL_RISK"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Field with risk_level='{f['risk_level']}' cannot have status 'auto_approved'. "
+                           f"HIGH_RISK and CRITICAL_RISK fields require human review (status 'approved' or 'edited').",
                 )
 
             if "confidence" not in f or "risk_level" not in f or f.get("confidence") is None or not f.get("risk_level"):
@@ -450,23 +561,20 @@ async def commit_extraction_job(
                     )
                 )
 
+    # ALPHA: Use server-derived patient_id for record ingestion, never payload.patient_id
     if approved_models:
         await ingest_extracted_fields(
-            patient_id=payload.patient_id,
+            patient_id=server_pid,
             job_id=job_id,
             approved_fields=approved_models,
             db=db,
         )
 
-    stmt_j = select(ExtractionJob).where(ExtractionJob.id == job_uuid)
-    res_j = await db.execute(stmt_j)
-    ej = res_j.scalar_one_or_none()
-    if ej:
-        ej.status = "committed"
+    # Update job status (already loaded above)
+    job.status = "committed"
 
-    pid_uuid = _parse_uuid(payload.patient_id)
     tl = TimelineEvent(
-        patient_id=pid_uuid,
+        patient_id=job.patient_id,
         event_type="PIPELINE_COMMIT",
         occurred_at=datetime.now(timezone.utc),
         source="ai_pipeline",
@@ -487,7 +595,7 @@ async def commit_extraction_job(
 
     return {
         "job_id": job_id,
-        "patient_id": payload.patient_id,
+        "patient_id": server_pid,
         "status": "committed",
         "fields_committed": cnt,
         "committed_fields_count": cnt,

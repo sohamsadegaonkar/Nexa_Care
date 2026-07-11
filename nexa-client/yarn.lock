@@ -3326,6 +3326,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@noble/hashes@npm:^2.2.0":
+  version: 2.2.0
+  resolution: "@noble/hashes@npm:2.2.0"
+  checksum: 10/b1b78bedc2a01394be047429f3d888905015fe8a09f1b7e43e0b5736b54133df62f73dcc73ede43af38e96e86156afb45b86973fdeaa95d9f0880333c3fc0907
+  languageName: node
+  linkType: hard
+
 "@nodelib/fs.scandir@npm:2.1.5":
   version: 2.1.5
   resolution: "@nodelib/fs.scandir@npm:2.1.5"
@@ -7447,6 +7454,7 @@ __metadata:
   dependencies:
     "@my/ui": "npm:0.0.1"
     "@noble/curves": "npm:^1.9.0"
+    "@noble/hashes": "npm:^2.2.0"
     "@react-navigation/native": "npm:^6.1.17"
     "@tamagui/animations-react-native": "npm:2.0.0-rc.16"
     "@tamagui/colors": "npm:2.0.0-rc.16"
@@ -7465,6 +7473,7 @@ __metadata:
     expo-secure-store: "npm:~14.0.1"
     react-native-safe-area-context: "npm:5.4.0"
     solito: "patch:solito@npm%3A5.0.0#~/.yarn/patches/solito-npm-5.0.0-44b0b420f4.patch"
+    zod: "npm:^3.23.0"
   languageName: unknown
   linkType: soft
 
@@ -17557,5 +17566,12 @@ __metadata:
   version: 1.1.1
   resolution: "yocto-queue@npm:1.1.1"
   checksum: 10/f2e05b767ed3141e6372a80af9caa4715d60969227f38b1a4370d60bffe153c9c5b33a862905609afc9b375ec57cd40999810d20e5e10229a204e8bde7ef255c
+  languageName: node
+  linkType: hard
+
+"zod@npm:^3.23.0":
+  version: 3.25.76
+  resolution: "zod@npm:3.25.76"
+  checksum: 10/f0c963ec40cd96858451d1690404d603d36507c1fc9682f2dae59ab38b578687d542708a7fdbf645f77926f78c9ed558f57c3d3aa226c285f798df0c4da16995
   languageName: node
   linkType: hard

@@ -2,8 +2,14 @@
 
 Defines three distinct access gates:
 1. require_consent(purpose): For healthcare providers viewing patient clinical data.
-2. require_self_patient_access(): For patients viewing their own records/dashboard.
+2. require_self_patient_access(): For patients accessing their own records/dashboard.
 3. require_role(role): For data operators/admins reviewing AI ingestion jobs.
+
+ALPHA: validate_consent_for_patient() is the server-side patient_id consent
+path.  Pipeline routes that reference existing entities (ExtractionJob,
+ExtractedFieldRecord) MUST use it instead of require_consent() so that the
+patient_id is derived from the DB row, never from a client-supplied value.
+This eliminates the patient_id spoofing vector described in threat-model.md T-06.
 """
 
 from __future__ import annotations
@@ -28,8 +34,108 @@ logger = logging.getLogger("nexa_logger")
 require_role = deps_require_role
 
 
+# ── Core validation (shared by require_consent and direct callers) ─────────
+
+
+async def validate_consent_for_patient(
+    patient_id: str | None,
+    purpose: str,
+    provider: ProviderContext,
+    x_consent_token: str | None,
+) -> ConsentCapability:
+    """Validate consent for an explicitly provided patient_id.
+
+    ALPHA: Use this when patient_id is derived server-side from a DB entity
+    (ExtractionJob, ExtractedFieldRecord) to eliminate the patient_id
+    spoofing vector.  Unlike require_consent(), this function does NOT
+    discover patient_id from the request — it must be provided by the
+    caller.
+
+    Raises:
+        HTTPException 403: Missing consent token or patient_id, or
+            invalid/expired consent.
+        HTTPException 503: Consent engine (Redis) unavailable.
+    """
+    actor_uid = provider.actor_uid if provider else "UNKNOWN"
+    target_id = str(patient_id) if patient_id else "UNKNOWN"
+
+    if not x_consent_token or not patient_id:
+        await append_audit_log_or_503(
+            actor_uid=actor_uid,
+            event_type="CONSENT_GATED_DECRYPT_FAILED",
+            target_id=target_id,
+            status="MISSING_CONSENT_TOKEN",
+            metadata={"purpose": purpose},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active consent token required for patient data access.",
+        )
+
+    try:
+        capability = await validate_consent_capability(
+            token=x_consent_token,
+            patient_id=str(patient_id),
+            clinician_id=actor_uid,
+            purpose=purpose,
+        )
+    except ConsentEngineUnavailable as exc:
+        await append_audit_log_or_503(
+            actor_uid=actor_uid,
+            event_type="CONSENT_GATED_DECRYPT_FAILED",
+            target_id=target_id,
+            status="CONSENT_ENGINE_UNAVAILABLE",
+            metadata={"purpose": purpose, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Consent service is temporarily unavailable.",
+        ) from exc
+
+    if capability is None:
+        await append_audit_log_or_503(
+            actor_uid=actor_uid,
+            event_type="CONSENT_GATED_DECRYPT_FAILED",
+            target_id=target_id,
+            status="FORBIDDEN_INVALID_OR_EXPIRED",
+            metadata={"purpose": purpose},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Active consent token required or expired.",
+        )
+
+    await append_audit_log_or_503(
+        actor_uid=actor_uid,
+        event_type="CONSENT_GATED_DECRYPT_STARTED",
+        target_id=target_id,
+        status="SUCCESS",
+        metadata={"purpose": purpose, "scope": capability.scope},
+    )
+
+    await append_audit_log_or_503(
+        actor_uid=actor_uid,
+        event_type="PATIENT_RECORD_READ_SUCCESS",
+        target_id=target_id,
+        status="SUCCESS",
+        metadata={"purpose": purpose, "scope": capability.scope},
+    )
+
+    return capability
+
+
+# ── FastAPI dependency factories ────────────────────────────────────────────
+
+
 def require_consent(purpose: str) -> Callable[[Request, ProviderContext, str | None], Any]:
-    """FastAPI dependency factory enforcing live consent for provider access to patient data."""
+    """FastAPI dependency factory enforcing live consent for provider access to patient data.
+
+    Discovers patient_id from the request (path params, query params, headers,
+    or request body).  For pipeline endpoints that reference existing entities
+    (jobs, fields), prefer loading the entity first and calling
+    validate_consent_for_patient() directly — this eliminates the spoofing
+    vector where a client provides a patient_id that doesn't match the entity.
+    """
 
     async def _consent_gate(
         request: Request,
@@ -49,72 +155,12 @@ def require_consent(purpose: str) -> Callable[[Request, ProviderContext, str | N
             except Exception:
                 pass
 
-        actor_uid = provider.actor_uid if provider else "UNKNOWN"
-        target_id = str(patient_id) if patient_id else "UNKNOWN"
-
-        if not x_consent_token or not patient_id:
-            await append_audit_log_or_503(
-                actor_uid=actor_uid,
-                event_type="CONSENT_GATED_DECRYPT_FAILED",
-                target_id=target_id,
-                status="MISSING_CONSENT_TOKEN",
-                metadata={"purpose": purpose},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Active consent token required for patient data access.",
-            )
-
-        try:
-            capability = await validate_consent_capability(
-                token=x_consent_token,
-                patient_id=str(patient_id),
-                clinician_id=actor_uid,
-                purpose=purpose,
-            )
-        except ConsentEngineUnavailable as exc:
-            await append_audit_log_or_503(
-                actor_uid=actor_uid,
-                event_type="CONSENT_GATED_DECRYPT_FAILED",
-                target_id=target_id,
-                status="CONSENT_ENGINE_UNAVAILABLE",
-                metadata={"purpose": purpose, "error": str(exc)},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Consent service is temporarily unavailable.",
-            ) from exc
-
-        if capability is None:
-            await append_audit_log_or_503(
-                actor_uid=actor_uid,
-                event_type="CONSENT_GATED_DECRYPT_FAILED",
-                target_id=target_id,
-                status="FORBIDDEN_INVALID_OR_EXPIRED",
-                metadata={"purpose": purpose},
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Active consent token required or expired.",
-            )
-
-        await append_audit_log_or_503(
-            actor_uid=actor_uid,
-            event_type="CONSENT_GATED_DECRYPT_STARTED",
-            target_id=target_id,
-            status="SUCCESS",
-            metadata={"purpose": purpose, "scope": capability.scope},
+        return await validate_consent_for_patient(
+            patient_id=patient_id,
+            purpose=purpose,
+            provider=provider,
+            x_consent_token=x_consent_token,
         )
-
-        await append_audit_log_or_503(
-            actor_uid=actor_uid,
-            event_type="PATIENT_RECORD_READ_SUCCESS",
-            target_id=target_id,
-            status="SUCCESS",
-            metadata={"purpose": purpose, "scope": capability.scope},
-        )
-
-        return capability
 
     return _consent_gate
 

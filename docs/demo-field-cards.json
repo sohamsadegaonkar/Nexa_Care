@@ -1,0 +1,94 @@
+{
+  "job_id": "demo-job-001",
+  "generated_at": "2026-07-07T21:16:45.161293+00:00",
+  "conflict_count": 0,
+  "auto_approved_count": 2,
+  "needs_review_count": 2,
+  "fields": [
+    {
+      "field_id": "demo-bp-1",
+      "field_name": "bp",
+      "raw_value": "120/80 mmHg",
+      "confidence": 1.0,
+      "risk_level": "MEDIUM_RISK",
+      "is_valid": true,
+      "validation_message": "All checks passed",
+      "reference_range": null,
+      "has_conflict": false,
+      "status": "auto_approved",
+      "auto_approve_reason": "MEDIUM_RISK confidence 1.00 meets threshold 0.97",
+      "source_page": 1,
+      "source_bbox": [
+        0.12,
+        0.08,
+        0.35,
+        0.04
+      ]
+    },
+    {
+      "field_id": "demo-sugar-2",
+      "field_name": "sugar",
+      "raw_value": "Fasting Glucose 95 mg/dL",
+      "confidence": 1.0,
+      "risk_level": "MEDIUM_RISK",
+      "is_valid": true,
+      "validation_message": "All checks passed",
+      "reference_range": {
+        "min": 70.0,
+        "max": 100.0,
+        "unit": "mg/dL",
+        "is_abnormal": false
+      },
+      "has_conflict": false,
+      "status": "auto_approved",
+      "auto_approve_reason": "MEDIUM_RISK confidence 1.00 meets threshold 0.97",
+      "source_page": 1,
+      "source_bbox": [
+        0.12,
+        0.16,
+        0.4,
+        0.04
+      ]
+    },
+    {
+      "field_id": "demo-medication-3",
+      "field_name": "medication",
+      "raw_value": "Metformin 500mg twice daily",
+      "confidence": 0.9,
+      "risk_level": "HIGH_RISK",
+      "is_valid": true,
+      "validation_message": "All checks passed",
+      "reference_range": null,
+      "has_conflict": false,
+      "status": "needs_review",
+      "auto_approve_reason": "HIGH_RISK fields always require human review",
+      "source_page": 1,
+      "source_bbox": [
+        0.12,
+        0.24,
+        0.38,
+        0.04
+      ]
+    },
+    {
+      "field_id": "demo-allergy-4",
+      "field_name": "allergy",
+      "raw_value": "Penicillin",
+      "confidence": 1.0,
+      "risk_level": "HIGH_RISK",
+      "is_valid": true,
+      "validation_message": "All checks passed",
+      "reference_range": null,
+      "has_conflict": false,
+      "status": "needs_review",
+      "auto_approve_reason": "Allergy fields are forced to HIGH_RISK and require review",
+      "source_page": 1,
+      "source_bbox": [
+        0.12,
+        0.32,
+        0.25,
+        0.04
+      ]
+    }
+  ]
+}

@@ -271,10 +271,10 @@ async def validate_consent(
 
 class ConsentChallengeRequestPayload(BaseModel):
     patient_id: str
-    provider_id: str | None = None
+    provider_id: str | None = None  # DEPRECATED — server derives from session; rejects mismatch
     purpose: str = "routine_checkup"
     scope: str = "clinical"
-    access_duration_seconds: int = 120
+    access_duration_seconds: int = 900
 
 
 class ConsentChallengeResponsePayload(BaseModel):
@@ -311,7 +311,32 @@ async def create_consent_request(
     provider: ProviderContext = Depends(get_current_provider),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Initiate a push-based consent request generating a cryptographic challenge."""
+    """Initiate a push-based consent request generating a cryptographic challenge.
+
+    SECURITY: provider_id is derived from the authenticated session (provider.actor_uid).
+    If a caller supplies provider_id in the body, it must match the session identity
+    or the request is rejected as an IDOR probe.  The server never trusts client-
+    supplied identity — the Bearer token is the single source of truth.
+    """
+    # ── IDOR guard: reject if caller supplied provider_id that doesn't match session ──
+    if payload.provider_id is not None and str(payload.provider_id) != str(provider.actor_uid):
+        await append_audit_log_or_503(
+            actor_uid=provider.actor_uid,
+            event_type="CONSENT_REQUEST_IDOR_REJECTED",
+            target_id=payload.patient_id,
+            status="REJECTED",
+            metadata={"supplied_provider_id": payload.provider_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="provider_id in request body does not match authenticated session",
+        )
+
+    # ── Duration bounds ───────────────────────────────────────────────────────
+    MIN_DURATION = 300    # 5 minutes
+    MAX_DURATION = 3600   # 60 minutes
+    access_duration = max(MIN_DURATION, min(MAX_DURATION, payload.access_duration_seconds))
+
     try:
         pid_uuid = uuid.UUID(payload.patient_id)
     except ValueError:
@@ -332,19 +357,19 @@ async def create_consent_request(
     request_id = str(uuid.uuid4())
     challenge_nonce = secrets.token_hex(32)
     challenge_ttl_seconds = 120
-    access_duration = payload.access_duration_seconds if payload.access_duration_seconds > 0 else 900
+    # access_duration already clamped to [300, 3600] above
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(seconds=challenge_ttl_seconds)
 
     challenge_payload = {
         "request_id": request_id,
         "patient_id": payload.patient_id,
-        "provider_id": provider.actor_uid,
+        "provider_id": provider.actor_uid,  # Server-derived — NEVER from request body
         "provider_name": "Provider",
         "hospital_name": "Hospital",
         "purpose": payload.purpose,
         "scope": payload.scope,
-        "access_duration": access_duration,
+        "access_duration": access_duration,  # Clamped to [300, 3600]
         "challenge_nonce": challenge_nonce,
         "created_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
@@ -535,7 +560,13 @@ async def get_consent_request_status(
     request_id: str,
     provider: ProviderContext = Depends(get_current_provider),
 ):
-    """Poll consent request resolution status. Fails if polled by non-requesting provider."""
+    """Poll consent request resolution status.
+
+    SECURITY:
+    - Only the provider who created the request may poll it.
+    - Cache-Control: no-store prevents browser/CDN caching of consent state.
+    - Returns minimal data (status + responded_at) — no consent tokens.
+    """
     redis = get_redis_client()
     raw = redis.get(f"consent_request:{request_id}")
     if not raw:
@@ -555,4 +586,135 @@ async def get_consent_request_status(
         request_id=request_id,
         status=data.get("status", "pending"),
         responded_at=data.get("responded_at"),
+    )
+
+
+class ConsentCancelResponsePayload(BaseModel):
+    request_id: str
+    status: str = "cancelled"
+    cancelled_at: str
+
+
+@router.post("/request/{request_id}/cancel", status_code=status.HTTP_200_OK, response_model=ConsentCancelResponsePayload)
+async def cancel_consent_request(
+    request_id: str,
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    """Cancel a pending consent request.
+
+    SECURITY: Only the provider who created the request may cancel it.
+    Cancellation prevents the patient from later approving an abandoned request.
+    Only pending requests can be cancelled; approved/denied/expired are terminal.
+    """
+    redis = get_redis_client()
+    raw = redis.get(f"consent_request:{request_id}")
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Consent request not found or already expired",
+        )
+
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    data = json.loads(raw)
+
+    # Ownership check
+    if data.get("provider_id") and str(data["provider_id"]) != str(provider.actor_uid):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only requesting provider may cancel this request",
+        )
+
+    # Terminal state check
+    current_status = data.get("status", "pending")
+    if current_status != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Cannot cancel request in '{current_status}' state — only pending requests can be cancelled",
+        )
+
+    now = datetime.now(timezone.utc)
+    data["status"] = "cancelled"
+    data["cancelled_at"] = now.isoformat()
+
+    # Keep the cancelled record briefly for audit, then let it expire
+    redis.set(f"consent_request:{request_id}", json.dumps(data), ex=300)
+
+    await append_audit_log_or_503(
+        actor_uid=provider.actor_uid,
+        event_type="CONSENT_REQUEST_CANCELLED",
+        target_id=request_id,
+        status="SUCCESS",
+        metadata={"patient_id": data.get("patient_id")},
+    )
+
+    return ConsentCancelResponsePayload(
+        request_id=request_id,
+        status="cancelled",
+        cancelled_at=now.isoformat(),
+    )
+
+
+class ConsentChallengeForPatientPayload(BaseModel):
+    request_id: str
+    patient_id: str
+    provider_id: str
+    provider_name: str
+    hospital_name: str
+    purpose: str
+    scope: str
+    access_duration: int
+    challenge_nonce: str
+    expires_at: str
+    status: str
+
+
+@router.get("/challenge/{request_id}", status_code=status.HTTP_200_OK, response_model=ConsentChallengeForPatientPayload)
+async def get_challenge_for_patient(
+    request_id: str,
+    patient_id: str = Depends(get_scoped_session),
+):
+    """Patient-facing: fetch full challenge details for a consent request.
+
+    Returns provider name, hospital, purpose, scope, nonce, and expiry
+    so the mobile app can display the request and construct the signing
+    input.  Only the authenticated patient whose ID matches the challenge
+    may access it.
+    """
+    redis = get_redis_client()
+    raw = redis.get(f"consent_request:{request_id}")
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Challenge expired or not found",
+        )
+
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    data = json.loads(raw)
+
+    if str(data.get("patient_id")) != str(patient_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated patient does not match challenge target",
+        )
+
+    if data.get("status") != "pending":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Request already resolved: {data.get('status')}",
+        )
+
+    return ConsentChallengeForPatientPayload(
+        request_id=data["request_id"],
+        patient_id=str(data.get("patient_id", "")),
+        provider_id=str(data.get("provider_id", "")),
+        provider_name=data.get("provider_name", "Provider"),
+        hospital_name=data.get("hospital_name", "Hospital"),
+        purpose=data.get("purpose", ""),
+        scope=str(data.get("scope", "")),
+        access_duration=int(data.get("access_duration", 900)),
+        challenge_nonce=data.get("challenge_nonce", ""),
+        expires_at=data.get("expires_at", ""),
+        status=data.get("status", "pending"),
     )

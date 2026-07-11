@@ -21,7 +21,8 @@
     "react-native": "0.79.2",
     "react-native-web": "^0.21.2",
     "tamagui": "2.0.0-rc.16",
-    "vercel": "latest"
+    "vercel": "latest",
+    "@tamagui/animation-helpers": "2.0.0-rc.16"
   },
   "devDependencies": {
     "@playwright/test": "^1.57.0",

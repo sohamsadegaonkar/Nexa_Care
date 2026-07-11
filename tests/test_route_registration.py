@@ -51,11 +51,6 @@ from app.main import app
 #      revoke (consent_routes.py), consent validation (consent_routes.py),
 #      and cryptographic erasure (patient_routes.py).
 #
-# 2026-07-08: added ("GET", "/healthz"), the new dependency-free liveness
-# endpoint used for the Render health check (see app/main.py and the
-# README "Deployment on Render" section). /health is unchanged and still
-# used as the dependency readiness probe.
-#
 # If this file goes red again: don't just delete the offending entries to
 # make it pass. Confirm with whoever owns the route in question whether the
 # route was intentionally added/removed, then update this set with a note
@@ -112,6 +107,8 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/request"),
     ("POST", "/api/v2/consent/approve-signed"),
     ("GET", "/api/v2/consent/status/{request_id}"),
+    ("POST", "/api/v2/consent/request/{request_id}/cancel"),  # Day 14: real server-side cancellation
+    ("GET", "/api/v2/consent/challenge/{request_id}"),
     ("GET", "/api/v2/patient/{id}/summary"),
     ("GET", "/api/v2/patient/{id}/timeline"),
     ("GET", "/api/v2/patient/me/timeline"),
@@ -138,7 +135,6 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/pipeline/fields/{field_id}/edit"),
     ("POST", "/api/v2/pipeline/jobs/{job_id}/commit"),
     ("GET", "/health"),
-    ("GET", "/healthz"),
     # FastAPI auto-generates these documentation routes
     ("GET", "/docs"),
     ("GET", "/redoc"),

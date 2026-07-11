@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.conflict_detector import detect_conflicts
 from app.ai.extractor import get_medical_document_extractor
 from app.ai.scoring_engine import score_extracted_field
-from app.models.extracted_field import ExtractedField
+from app.models.extracted_field import ExtractedField, ValidationResult
 from app.models.pipeline import DocumentStorage, ExtractedFieldRecord, ExtractionJob, ReviewQueueItem
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.pipeline_safety import can_auto_approve
@@ -118,7 +118,6 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 conf = float(doc_data.extraction_confidence) if doc_data.extraction_confidence is not None else 0.96
             risk = str(item["risk_level"])
             has_conf = item.get("has_conflict", False)
-            val_res = {"is_valid": True, "has_conflict": has_conf, "validation_errors": [], "reference_range": {"min": 4.0, "max": 5.6, "unit": "%"}}
             if conf is None or not risk:
                 raise RuntimeError("Invariant 3 violation: extracted field missing confidence or risk.")
             candidate_efs.append(
@@ -130,7 +129,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     normalized_value=item.get("normalized_value"),
                     confidence=conf,
                     risk_level=risk,
-                    validation_result=val_res,
+                    validation_result=None,
                     source_page=1,
                     source_bbox=[0.1, 0.2, 0.3, 0.05],
                     has_conflict=has_conf,
@@ -138,7 +137,16 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             )
 
         # Run WS5 conflict detection across candidates
-        detect_conflicts(candidate_efs)
+        conflicts = detect_conflicts(candidate_efs)
+        if conflicts:
+            import json as _json
+            logger.warning(_json.dumps({
+                "event": "pipeline_conflicts_detected",
+                "job_id": str(job.id),
+                "conflict_count": len(conflicts),
+                "conflict_types": [c.conflict_type for c in conflicts],
+                "field_ids": [fid for c in conflicts for fid in c.field_ids],
+            }))
 
         for ef_model in candidate_efs:
             field_uuid = uuid.UUID(ef_model.field_id)
@@ -161,6 +169,16 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 if ef_model.field_name.lower().strip() in {"allergy", "allergen"}:
                     risk = "HIGH_RISK"
 
+            # Serialize validation_result for JSONB storage (preserving full
+            # checks, errors, and reference_range instead of discarding them).
+            vr = ef_model.validation_result
+            if isinstance(vr, ValidationResult):
+                vr_dict = vr.model_dump()
+            elif isinstance(vr, dict):
+                vr_dict = vr
+            else:
+                vr_dict = {"is_valid": True}
+
             rec = ExtractedFieldRecord(
                 id=field_uuid,
                 job_id=job.id,
@@ -169,7 +187,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 normalized_value=ef_model.normalized_value,
                 confidence=conf,
                 risk_level=risk,
-                validation_result=ef_model.validation_result if isinstance(ef_model.validation_result, dict) else {"is_valid": True},
+                validation_result=vr_dict,
                 source_page=ef_model.source_page,
                 source_bbox=ef_model.source_bbox,
                 status=f_status,

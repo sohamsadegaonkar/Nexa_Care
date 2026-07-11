@@ -4,7 +4,7 @@ import { Button, Card, H1, H4, Paragraph, Spinner, Text, YStack, XStack, Theme }
 import { CheckCircle, XCircle, ShieldAlert } from '@tamagui/lucide-icons'
 import { useEffect, useState, useCallback } from 'react'
 import { getPushRequestStatus, respondToPushRequest, type PushApprovalStatusResponse } from '../../api/assurance'
-import { signPushChallenge } from '../../utils/deviceKey'
+import { signConsentChallenge, getDeviceId } from '../../utils/deviceKey'
 
 interface PatientApprovalScreenProps {
   requestId: string
@@ -95,21 +95,29 @@ export function PatientApprovalScreen({ requestId }: PatientApprovalScreenProps)
     setState('biometric')
 
     try {
-      // signPushChallenge() internally prompts Face ID/Touch ID/fingerprint
-      // via expo-local-authentication and only returns a signature if that
-      // succeeds -- no separate authenticateAsync() call needed here.
-      const signature = await signPushChallenge({
-        nonce: request.nonce,
-        requestId,
-        patientId: request.patient_id,
+      // signConsentChallenge() uses the canonical 9-pipe signing input
+      // and internally prompts Face ID/Touch ID/fingerprint via
+      // expo-local-authentication before accessing the private key.
+      const signature = await signConsentChallenge({
+        request_id: requestId,
+        patient_id: request.patient_id,
+        provider_id: request.clinician_id,
+        challenge_nonce: request.nonce,
+        decision: 'approved',
+        scope: request.scope,
+        purpose: request.purpose,
+        access_duration: request.access_duration,
+        expires_at: request.expires_at,
       })
 
       setState('submitting')
 
+      const deviceId = await getDeviceId()
       await respondToPushRequest(requestId, {
         decision: 'approved',
         signature,
         nonce: request.nonce,
+        device_id: deviceId ?? undefined,
       })
       setState('success_approved')
     } catch (err) {

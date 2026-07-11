@@ -12,6 +12,8 @@ module.exports = {
     'expo-linking',
     'expo-constants',
     'expo-modules-core',
+    '@noble/curves',
+    '@noble/hashes',
   ],
   experimental: {
     scrollRestoration: true,

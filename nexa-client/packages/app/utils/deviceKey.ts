@@ -1,10 +1,13 @@
 /**
- * Device signing key management for push-approval biometric assurance.
+ * Device signing key management for Nexa Care patient app.
  *
- * Backend contract (app/services/biometric_signature_verifier.py):
- *   - EC key on the P-256 curve (secp256r1)
- *   - Public key stored/sent as DER (X.509 SubjectPublicKeyInfo), base64
- *   - Signature: ECDSA-SHA256 over utf8(`${nonce}${requestId}${patientId}`)
+ * Canonical signing contract (9-pipe, matches signed_approval_verifier.py):
+ *   request_id|patient_id|provider_id|challenge_nonce|decision|scope|purpose|access_duration|expires_at
+ *
+ * This is the SAME format used by the consent approve-signed route
+ * (SignedApprovalVerifier) and the consentSigning service. The older
+ * 3-field concat format (nonce+requestId+patientId) used by
+ * BiometricSignatureVerifier is superseded.
  *
  * Architecture note, deliberately chosen over react-native-biometrics:
  * react-native-biometrics generates RSA keys via native Keychain/Keystore
@@ -17,8 +20,7 @@
  * (audited, widely used) and stores the private key via expo-secure-store,
  * which is backed by iOS Keychain / Android Keystore at rest. The
  * biometric gate (Face ID / Touch ID / fingerprint) happens via
- * expo-local-authentication immediately before each signing operation,
- * matching the flow already built in PatientApprovalScreen.tsx.
+ * expo-local-authentication immediately before each signing operation.
  *
  * Honest limitation vs. true hardware-backed signing: the private key is
  * briefly resident in JS memory during signing, unlike a key that never
@@ -28,19 +30,23 @@
  * a native module (e.g. a small Secure Enclave/StrongBox wrapper) --
  * scope that as its own task rather than assuming this covers it.
  *
- * NOT YET VERIFIED ON DEVICE: this file was written and syntax-checked in
- * a sandboxed environment with no ability to run a native Expo build.
- * Run it on a real iOS/Android device or simulator with biometrics
- * enrolled before relying on it for a demo.
+ * ALPHA: P-256 keypair generated client-side and private key stored in
+ * platform secure storage. Not yet: hardware-backed non-exportable
+ * signing key with biometric-gated key usage.
  */
 
 import * as SecureStore from 'expo-secure-store'
 import { p256 } from '@noble/curves/p256'
 import * as LocalAuthentication from 'expo-local-authentication'
 import * as Crypto from 'expo-crypto'
-import { registerDeviceKey } from '../api/assurance'
+import { apiClient } from '../utils/apiClient'
+
+// ── Constants ────────────────────────────────────────────────────────────────
 
 const PRIVATE_KEY_STORAGE_KEY = 'nexa_device_signing_private_key_v1'
+const DEVICE_ID_STORAGE_KEY = 'nexa_device_id_v1'
+
+// ── Internal helpers ─────────────────────────────────────────────────────────
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
@@ -50,6 +56,7 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 function base64ToBytes(b64: string): Uint8Array {
+  // eslint-disable-next-line no-undef
   if (typeof atob === 'function') {
     const binary = atob(b64)
     const bytes = new Uint8Array(binary.length)
@@ -66,11 +73,6 @@ function base64ToBytes(b64: string): Uint8Array {
  * directly with no format translation on the server side.
  */
 function wrapEcPublicKeyAsDer(rawPoint: Uint8Array): Uint8Array {
-  // SubjectPublicKeyInfo ::= SEQUENCE {
-  //   algorithm AlgorithmIdentifier { id-ecPublicKey, prime256v1 },
-  //   subjectPublicKey BIT STRING }
-  // This header is fixed for P-256 + id-ecPublicKey and is standard
-  // across OpenSSL/cryptography-produced P-256 DER keys.
   const ecPublicKeyOid = [0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01]
   const prime256v1Oid = [0x06, 0x08, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07]
   const algIdContent = [...ecPublicKeyOid, ...prime256v1Oid]
@@ -110,36 +112,103 @@ async function loadOrCreateKeyPair(): Promise<DeviceKeyPair> {
   return { privateKey, publicKeyDer: wrapEcPublicKeyAsDer(publicKey) }
 }
 
+// ── Public API: Key management ───────────────────────────────────────────────
+
 /**
  * One-time (per device) enrollment: generate a P-256 keypair, keep the
  * private key in the OS keystore, and register the public key with the
- * backend via POST /api/v2/push/register-device-key.
- *
- * Requires the patient to have already completed provider-led NFC
- * enrollment in person -- the backend will reject this call with 409 if
- * no active biometric_registry row exists yet for the patient.
+ * backend via POST /api/v2/patient/devices/enroll.
  *
  * Call this once, e.g. on first login or from a "Security" settings
  * screen -- not on every approval.
  */
 export async function enrollDeviceKey(): Promise<void> {
   const { publicKeyDer } = await loadOrCreateKeyPair()
-  await registerDeviceKey({ public_key: bytesToBase64(publicKeyDer) })
+  await apiClient.post('/api/v2/patient/devices/enroll', {
+    device_public_key: bytesToBase64(publicKeyDer),
+    device_label: 'Patient Device',
+    platform: 'ios',
+  } as unknown as Record<string, unknown>)
 }
 
 /**
- * Prompts for biometric confirmation, then signs the push-approval
- * challenge with the device's private key. Returns a base64 ECDSA
- * signature ready to send as `signature` in respondToPushRequest().
+ * Check whether a device signing key already exists in SecureStore.
+ */
+export async function hasDeviceKey(): Promise<boolean> {
+  const existing = await SecureStore.getItemAsync(PRIVATE_KEY_STORAGE_KEY)
+  return !!existing
+}
+
+/**
+ * Store the enrolled device ID for later use in approval payloads.
+ */
+export async function setDeviceId(deviceId: string): Promise<void> {
+  await SecureStore.setItemAsync(DEVICE_ID_STORAGE_KEY, deviceId)
+}
+
+/**
+ * Retrieve the enrolled device ID.
+ */
+export async function getDeviceId(): Promise<string | null> {
+  const id = await SecureStore.getItemAsync(DEVICE_ID_STORAGE_KEY)
+  return id ?? null
+}
+
+// ── Public API: Signing ──────────────────────────────────────────────────────
+
+/**
+ * Canonical 9-attribute signing input that the backend verifier
+ * (SignedApprovalVerifier) reconstructs and checks against.
+ *
+ * MUST match signed_approval_verifier.py byte-for-byte:
+ *   f"{request_id}|{patient_id}|{provider_id or ''}|{challenge_nonce}|{decision}|"
+ *   f"{scope or ''}|{purpose or ''}|{access_duration or ''}|{expires_at}"
+ */
+export function constructSigningInput(params: {
+  request_id: string
+  patient_id: string
+  provider_id: string
+  challenge_nonce: string
+  decision: 'approved' | 'denied'
+  scope: string
+  purpose: string
+  access_duration: number
+  expires_at: string
+}): string {
+  return [
+    params.request_id,
+    params.patient_id,
+    params.provider_id ?? '',
+    params.challenge_nonce,
+    params.decision,
+    params.scope ?? '',
+    params.purpose ?? '',
+    params.access_duration ?? '',
+    params.expires_at,
+  ].join('|')
+}
+
+/**
+ * Prompt for biometric confirmation (Face ID / Touch ID / fingerprint),
+ * then sign the 9-attribute consent challenge with the device private key.
+ *
+ * The private key is ONLY accessed after successful biometric authentication.
+ * Returns a base64 DER-encoded ECDSA signature.
  *
  * Throws if biometric hardware is unavailable/unenrolled, if the user
  * cancels/fails the prompt, or if no device key has been enrolled yet
  * (call enrollDeviceKey() first).
  */
-export async function signPushChallenge(params: {
-  nonce: string
-  requestId: string
-  patientId: string
+export async function signConsentChallenge(params: {
+  request_id: string
+  patient_id: string
+  provider_id: string
+  challenge_nonce: string
+  decision: 'approved' | 'denied'
+  scope: string
+  purpose: string
+  access_duration: number
+  expires_at: string
 }): Promise<string> {
   const hasHardware = await LocalAuthentication.hasHardwareAsync()
   const isEnrolled = await LocalAuthentication.isEnrolledAsync()
@@ -165,22 +234,36 @@ export async function signPushChallenge(params: {
   }
   const privateKey = base64ToBytes(existing)
 
-  // Must match biometric_signature_verifier.py exactly:
-  // message = f"{challenge_nonce}{request_id}{patient_id}".encode("utf-8")
-  const message = new TextEncoder().encode(`${params.nonce}${params.requestId}${params.patientId}`)
+  // Construct the canonical 9-attribute signing input
+  const message = constructSigningInput(params)
+  const messageBytes = new TextEncoder().encode(message)
 
-  // Hash explicitly with SHA-256 first: the backend verifies with
-  // ec.ECDSA(hashes.SHA256()), which signs/verifies over a SHA-256 digest
-  // of the message, not the raw message bytes. Using expo-crypto rather
-  // than crypto.subtle -- the latter is a browser API not reliably
-  // present in React Native/Hermes.
+  // Hash with SHA-256: the backend verifies with ec.ECDSA(hashes.SHA256())
   const digest = new Uint8Array(
-    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, message)
+    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, messageBytes)
   )
   const signature = p256.sign(digest, privateKey)
 
-  // Python's `cryptography` library verifies DER-encoded ECDSA signatures
-  // by default (public_key.verify(signature, ...)) -- send DER, not the
-  // compact r||s form.
+  // Python's cryptography library verifies DER-encoded ECDSA signatures
   return bytesToBase64(signature.toDERRawBytes())
+}
+
+/**
+ * @deprecated Use signConsentChallenge() instead.
+ * Legacy 3-field signing for biometric_signature_verifier.py.
+ * Retained only for backward compatibility during transition.
+ * The canonical contract is the 9-pipe format (signConsentChallenge).
+ */
+export async function signPushChallenge(params: {
+  nonce: string
+  requestId: string
+  patientId: string
+}): Promise<string> {
+  // Delegate to the canonical 9-pipe signing.
+  // Callers should migrate to signConsentChallenge() with full attributes.
+  // This stub preserves the export name but the 3-field contract is
+  // no longer supported — callers must provide full attributes.
+  throw new Error(
+    'signPushChallenge() is deprecated. Use signConsentChallenge() with the full 9-attribute signing input.'
+  )
 }
