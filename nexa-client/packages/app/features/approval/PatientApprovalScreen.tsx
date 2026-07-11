@@ -4,7 +4,8 @@ import { Button, Card, H1, H4, Paragraph, Spinner, Text, YStack, XStack, Theme }
 import { CheckCircle, XCircle, ShieldAlert } from '@tamagui/lucide-icons'
 import { useEffect, useState, useCallback } from 'react'
 import { getPushRequestStatus, respondToPushRequest, type PushApprovalStatusResponse } from '../../api/assurance'
-import { signConsentChallenge, getDeviceId } from '../../utils/deviceKey'
+import { authenticateWithBiometrics, signConsentChallenge, getDeviceId } from '../../services/deviceKeys'
+import { apiClient } from '../../utils/apiClient'
 
 interface PatientApprovalScreenProps {
   requestId: string
@@ -95,6 +96,7 @@ export function PatientApprovalScreen({ requestId }: PatientApprovalScreenProps)
     setState('biometric')
 
     try {
+      await authenticateWithBiometrics()
       // signConsentChallenge() uses the canonical 9-pipe signing input
       // and internally prompts Face ID/Touch ID/fingerprint via
       // expo-local-authentication before accessing the private key.
@@ -113,11 +115,10 @@ export function PatientApprovalScreen({ requestId }: PatientApprovalScreenProps)
       setState('submitting')
 
       const deviceId = await getDeviceId()
-      await respondToPushRequest(requestId, {
-        decision: 'approved',
-        signature,
-        nonce: request.nonce,
-        device_id: deviceId ?? undefined,
+      if (!deviceId) throw new Error('This device is not enrolled. Please secure this device before approving consent.')
+      await apiClient.post('/api/v2/consent/approve-signed', {
+        request_id: requestId, patient_id: request.patient_id, decision: 'approved',
+        challenge_nonce: request.nonce, signature, device_id: deviceId,
       })
       setState('success_approved')
     } catch (err) {

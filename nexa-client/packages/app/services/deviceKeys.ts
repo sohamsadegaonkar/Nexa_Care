@@ -27,14 +27,16 @@
  */
 
 import * as SecureStore from 'expo-secure-store'
+import * as Crypto from 'expo-crypto'
+import * as LocalAuthentication from 'expo-local-authentication'
 import { p256 } from '@noble/curves/p256'
 import { Platform } from 'react-native'
-import { apiClient } from '../utils/api'
+import { apiClient } from '../utils/apiClient'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const PRIVATE_KEY_STORE_KEY = 'nexa_device_private_key_v1'
-const DEVICE_ID_STORE_KEY = 'nexa_device_id_v1'
+export const DEVICE_PRIVATE_KEY_STORAGE_KEY = 'nexa_device_private_key_v1'
+export const DEVICE_ID_STORAGE_KEY = 'nexa_device_id_v1'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,7 +76,7 @@ export interface DevicesListResponse {
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = ''
   for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
+    binary += String.fromCharCode(bytes[i]!)
   }
   // eslint-disable-next-line no-undef
   return typeof btoa === 'function' ? btoa(binary) : Buffer.from(bytes).toString('base64')
@@ -140,7 +142,7 @@ export function getDeviceLabel(): string {
  */
 export async function generateDeviceKeypair(): Promise<DeviceKeyResult> {
   // Check if a key already exists in secure storage
-  const existing = await SecureStore.getItemAsync(PRIVATE_KEY_STORE_KEY)
+  const existing = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
 
   if (existing) {
     const privateKey = base64ToBytes(existing)
@@ -151,7 +153,7 @@ export async function generateDeviceKeypair(): Promise<DeviceKeyResult> {
   // Generate new P-256 keypair using @noble/curves (audited library)
   const privateKey = p256.utils.randomPrivateKey()
   await SecureStore.setItemAsync(
-    PRIVATE_KEY_STORE_KEY,
+    DEVICE_PRIVATE_KEY_STORAGE_KEY,
     bytesToBase64(privateKey),
     { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
   )
@@ -203,11 +205,13 @@ export async function generateAndEnrollDevice(
   deviceLabel?: string,
 ): Promise<EnrollDeviceResponse> {
   const { publicKeyDerBase64 } = await generateDeviceKeypair()
-  return enrollDevice({
+  const enrollment = await enrollDevice({
     device_public_key: publicKeyDerBase64,
     device_label: deviceLabel ?? getDeviceLabel(),
     platform: Platform.OS === 'ios' ? 'ios' : 'android',
   })
+  await setDeviceId(enrollment.device_id)
+  return enrollment
 }
 
 /**
@@ -217,7 +221,7 @@ export async function generateAndEnrollDevice(
  * device (the key could be orphaned if the backend was reset).
  */
 export async function hasDeviceKey(): Promise<boolean> {
-  const existing = await SecureStore.getItemAsync(PRIVATE_KEY_STORE_KEY)
+  const existing = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
   return !!existing
 }
 
@@ -228,7 +232,8 @@ export async function hasDeviceKey(): Promise<boolean> {
  * Does NOT revoke the device on the backend — call the revoke API separately.
  */
 export async function deleteDeviceKey(): Promise<void> {
-  await SecureStore.deleteItemAsync(PRIVATE_KEY_STORE_KEY)
+  await SecureStore.deleteItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
+  await SecureStore.deleteItemAsync(DEVICE_ID_STORAGE_KEY)
 }
 
 /**
@@ -236,7 +241,7 @@ export async function deleteDeviceKey(): Promise<void> {
  * (e.g. including device_id in signed approval payloads).
  */
 export async function setDeviceId(deviceId: string): Promise<void> {
-  await SecureStore.setItemAsync(DEVICE_ID_STORE_KEY, deviceId)
+  await SecureStore.setItemAsync(DEVICE_ID_STORAGE_KEY, deviceId)
 }
 
 /**
@@ -244,6 +249,22 @@ export async function setDeviceId(deviceId: string): Promise<void> {
  * Returns null if the device has not been enrolled.
  */
 export async function getDeviceId(): Promise<string | null> {
-  const id = await SecureStore.getItemAsync(DEVICE_ID_STORE_KEY)
+  const id = await SecureStore.getItemAsync(DEVICE_ID_STORAGE_KEY)
   return id ?? null
+}
+
+export interface ConsentSigningFields { request_id: string; patient_id: string; provider_id: string; challenge_nonce: string; decision: "approved" | "denied"; scope: string; purpose: string; access_duration: number; expires_at: string }
+export function constructConsentSigningInput(params: ConsentSigningFields): string { return [params.request_id, params.patient_id, params.provider_id ?? "", params.challenge_nonce, params.decision, params.scope ?? "", params.purpose ?? "", params.access_duration ?? "", params.expires_at].join("|") }
+export async function authenticateWithBiometrics(): Promise<void> {
+  if (!(await LocalAuthentication.hasHardwareAsync()) || !(await LocalAuthentication.isEnrolledAsync())) throw new Error("Biometric authentication is not available on this device.")
+  const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Confirm your identity to approve this request", fallbackLabel: "Use Passcode", cancelLabel: "Cancel" })
+  if (!result.success) throw new Error("Biometric verification cancelled.")
+}
+/** ALPHA: SecureStore-backed JS signing, not hardware-backed non-exportable signing. */
+export async function signConsentChallenge(params: ConsentSigningFields): Promise<string> {
+  const encodedPrivateKey = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
+  if (!encodedPrivateKey) throw new Error("This device is not enrolled. Please secure this device before approving consent.")
+  const message = new TextEncoder().encode(constructConsentSigningInput(params))
+  const digest = new Uint8Array(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, message))
+  return bytesToBase64(p256.sign(digest, base64ToBytes(encodedPrivateKey)).toDERRawBytes())
 }

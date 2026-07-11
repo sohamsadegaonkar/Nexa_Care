@@ -1,7 +1,7 @@
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { YStack, H2, Paragraph, Button, Text, XStack, Separator } from 'tamagui'
 import { useState, useEffect } from 'react'
-import { apiClient } from '../../utils/api'
+import { apiClient } from '../../utils/apiClient'
 
 /**
  * Approval result screen — shows approved / denied / expired state.

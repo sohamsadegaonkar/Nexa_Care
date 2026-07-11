@@ -9,7 +9,7 @@
  */
 
 import { Platform } from 'react-native'
-import { apiClient } from '../utils/api'
+import { apiClient } from '../utils/apiClient'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

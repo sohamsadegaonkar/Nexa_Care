@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Text, ScrollView, XStack, Separator, Button, Spinner } from 'tamagui'
 import { useState, useEffect, useCallback } from 'react'
-import { apiClient } from '../../utils/api'
+import { apiClient } from '../../utils/apiClient'
 import SourceBadge from './badges/SourceBadge'
 import RiskBadge, { type RiskLevel } from './badges/RiskBadge'
 

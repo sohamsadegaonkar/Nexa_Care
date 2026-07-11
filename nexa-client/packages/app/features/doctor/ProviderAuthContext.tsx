@@ -36,7 +36,7 @@
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
-import { setAuthTokenProvider } from '../../utils/api'
+import { setAuthTokenProvider } from '../../utils/apiClient'
 import {
   validateLoginResponse,
   validateOrThrow,

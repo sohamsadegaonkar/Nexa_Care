@@ -21,7 +21,7 @@ import { useRouter } from 'solito/navigation'
 import { useRef, useState } from 'react'
 import { Platform } from 'react-native'
 
-import { setAuthTokenProvider } from '../../utils/api'
+import { setAuthTokenProvider } from '../../utils/apiClient'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 
 interface ProviderMfaVerifyResponse {

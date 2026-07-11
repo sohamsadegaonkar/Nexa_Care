@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { apiClient } from '../utils/api'
+import { apiClient } from '../utils/apiClient'
 
 export interface MergeChallengeResponse {
   challenge_token: string

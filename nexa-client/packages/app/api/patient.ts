@@ -1,6 +1,6 @@
 import axios, { type AxiosResponse } from 'axios'
 
-import { apiClient } from '../utils/api'
+import { apiClient } from '../utils/apiClient'
 
 export interface PatientDemographics {
   patient_name?: string

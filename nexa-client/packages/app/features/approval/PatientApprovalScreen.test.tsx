@@ -2,7 +2,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { PatientApprovalScreen } from './PatientApprovalScreen'
 import { getPushRequestStatus, respondToPushRequest } from '../../api/assurance'
-import { signConsentChallenge, getDeviceId } from '../../utils/deviceKey'
+import { signConsentChallenge, getDeviceId, authenticateWithBiometrics } from '../../services/deviceKeys'
+import { apiClient } from '../../utils/apiClient'
 import { renderWithTamagui } from '../../../../test/test-utils'
 
 vi.mock('../../api/assurance', () => ({
@@ -10,8 +11,11 @@ vi.mock('../../api/assurance', () => ({
   respondToPushRequest: vi.fn(),
 }))
 
-vi.mock('../../utils/deviceKey', () => ({
+vi.mock('../../utils/apiClient', () => ({ apiClient: { post: vi.fn() } }))
+
+vi.mock('../../services/deviceKeys', () => ({
   signConsentChallenge: vi.fn(),
+  authenticateWithBiometrics: vi.fn(),
   getDeviceId: vi.fn(),
 }))
 
@@ -111,14 +115,18 @@ describe('PatientApprovalScreen', () => {
         access_duration: mockRequest.access_duration,
         expires_at: mockRequest.expires_at,
       })
-      expect(respondToPushRequest).toHaveBeenCalledWith(
-        requestId,
-        expect.objectContaining({
+      expect(apiClient.post).toHaveBeenCalledWith(
+        '/api/v2/consent/approve-signed',
+        {
+          request_id: requestId,
+          patient_id: mockRequest.patient_id,
           decision: 'approved',
+          challenge_nonce: mockRequest.nonce,
           signature: 'signature-123',
-          nonce: mockRequest.nonce,
-        })
+          device_id: 'device-abc',
+        },
       )
+      expect(JSON.stringify(vi.mocked(apiClient.post).mock.calls)).not.toContain('private')
       expect(screen.getByText(/Approved/i)).toBeTruthy()
     })
   })

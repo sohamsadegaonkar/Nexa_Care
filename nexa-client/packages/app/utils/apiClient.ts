@@ -4,10 +4,13 @@
  * Direct fetch() or axios calls in feature modules are strictly prohibited.
  */
 
-import { getAuthToken } from './api'
+export type AuthTokenProvider = () => Promise<string | null | undefined> | string | null | undefined
+let authTokenProvider: AuthTokenProvider = () => null
+export function setAuthTokenProvider(provider: AuthTokenProvider): void { authTokenProvider = provider }
+export async function getAuthToken(): Promise<string | null> { const token = await authTokenProvider(); return typeof token === 'string' && token.trim() ? token.trim() : null }
 
 // Must read from environment variable; never hardcode localhost/IPs or URLs
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || ''
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
 
 // ── Types Matching docs/DATA-MODELS.md & docs/API-CONTRACTS.md ──
 
@@ -245,9 +248,10 @@ export function setApiErrorHandlers(reAuth: ReAuthHandler, toast: ErrorToastHand
 async function request<T>(
   path: string,
   options: RequestInit = {},
-  customHeaders: Record<string, string> = {}
+  customHeaders: Record<string, string> = {},
+  noAuth = false,
 ): Promise<T> {
-  const token = await getAuthToken()
+  const token = noAuth ? null : await getAuthToken()
   const headers: Record<string, string> = {
     ...customHeaders,
   }
@@ -498,4 +502,17 @@ export const NexaApiClient = {
   },
 }
 
-export { apiClient } from './api'
+
+export interface ApiRequestConfig { headers?: Record<string, unknown>; noAuth?: boolean }
+export interface ApiResponse<T> { data: T }
+async function transport<T>(path: string, method: string, body?: unknown, config: ApiRequestConfig = {}): Promise<ApiResponse<T>> {
+  const data = await request<T>(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, config.headers as Record<string, string> | undefined, config.noAuth)
+  return { data }
+}
+export const apiClient = {
+  get: <T, R = ApiResponse<T>>(path: string, config?: ApiRequestConfig) => transport<T>(path, "GET", undefined, config) as Promise<R>,
+  post: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) => transport<T>(path, "POST", body, config) as Promise<R>,
+  put: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) => transport<T>(path, "PUT", body, config) as Promise<R>,
+  patch: <T>(path: string, body?: unknown, config?: ApiRequestConfig) => transport<T>(path, "PATCH", body, config),
+  delete: <T>(path: string, config?: ApiRequestConfig) => transport<T>(path, "DELETE", undefined, config),
+}

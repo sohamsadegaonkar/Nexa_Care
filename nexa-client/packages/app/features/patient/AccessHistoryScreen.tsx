@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Text, ScrollView, XStack, Separator, Button, Spinner } from 'tamagui'
 import { useState, useEffect, useCallback } from 'react'
-import { apiClient } from '../../utils/api'
+import { apiClient } from '../../utils/apiClient'
 
 /**
  * Access history screen — who accessed the patient's data and when.

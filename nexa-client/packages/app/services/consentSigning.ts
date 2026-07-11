@@ -13,12 +13,12 @@
  * signing key with biometric-gated key usage.
  */
 
-import * as SecureStore from 'expo-secure-store'
-import * as LocalAuthentication from 'expo-local-authentication'
-import * as Crypto from 'expo-crypto'
-import { p256 } from '@noble/curves/p256'
-import { apiClient } from '../utils/api'
-import { getDeviceId } from './deviceKeys'
+import { apiClient } from '../utils/apiClient'
+import { authenticateWithBiometrics as requireBiometrics, constructConsentSigningInput, getDeviceId, signConsentChallenge } from './deviceKeys'
+
+export const constructSigningInput = constructConsentSigningInput
+export const signConsentDecision = signConsentChallenge
+export async function authenticateWithBiometrics(): Promise<boolean> { await requireBiometrics(); return true }
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -51,141 +51,7 @@ export interface SignedApprovalResponse {
   responded_at: string
 }
 
-// ── Internal helpers ─────────────────────────────────────────────────────────
 
-const PRIVATE_KEY_STORE_KEY = 'nexa_device_private_key_v1'
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
-  }
-  // eslint-disable-next-line no-undef
-  return typeof btoa === 'function' ? btoa(binary) : Buffer.from(bytes).toString('base64')
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  // eslint-disable-next-line no-undef
-  if (typeof atob === 'function') {
-    const binary = atob(b64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) {
-      bytes[i] = binary.charCodeAt(i)
-    }
-    return bytes
-  }
-  return new Uint8Array(Buffer.from(b64, 'base64'))
-}
-
-// ── Signing input construction ───────────────────────────────────────────────
-
-/**
- * Build the canonical 9-attribute signing input that the backend
- * verifier reconstructs and checks against.
- *
- * MUST match signed_approval_verifier.py byte-for-byte:
- *   f"{request_id}|{patient_id}|{provider_id or ''}|{challenge_nonce}|{decision}|"
- *   f"{scope or ''}|{purpose or ''}|{access_duration or ''}|{expires_at}"
- */
-export function constructSigningInput(params: {
-  request_id: string
-  patient_id: string
-  provider_id: string
-  challenge_nonce: string
-  decision: 'approved' | 'denied'
-  scope: string
-  purpose: string
-  access_duration: number
-  expires_at: string
-}): string {
-  return [
-    params.request_id,
-    params.patient_id,
-    params.provider_id ?? '',
-    params.challenge_nonce,
-    params.decision,
-    params.scope ?? '',
-    params.purpose ?? '',
-    params.access_duration ?? '',
-    params.expires_at,
-  ].join('|')
-}
-
-// ── Biometric gating ─────────────────────────────────────────────────────────
-
-/**
- * Prompt the user for biometric authentication (Face ID / Touch ID).
- * Returns true if successful, false if cancelled or unavailable.
- *
- * ALPHA: In a real device build this gates access to the private key.
- * Not yet: hardware-backed non-exportable signing key with biometric-gated
- * key usage.
- */
-export async function authenticateWithBiometrics(): Promise<boolean> {
-  const hasHardware = await LocalAuthentication.hasHardwareAsync()
-  const isEnrolled = await LocalAuthentication.isEnrolledAsync()
-
-  if (!hasHardware || !isEnrolled) {
-    // No biometric hardware — allow fallback for alpha
-    return true
-  }
-
-  const result = await LocalAuthentication.authenticateAsync({
-    promptMessage: 'Confirm your identity to approve this request',
-    fallbackLabel: 'Use Passcode',
-    cancelLabel: 'Cancel',
-  })
-
-  return result.success
-}
-
-// ── Core signing ─────────────────────────────────────────────────────────────
-
-/**
- * Sign a consent decision with the device private key.
- *
- * 1. Load the private key from SecureStore.
- * 2. Construct the canonical 9-attribute signing input.
- * 3. SHA-256 hash the input (expo-crypto).
- * 4. Sign the hash with ECDSA P-256.
- * 5. Return the DER/base64 signature.
- *
- * The private key is NEVER sent to the backend.
- */
-export async function signConsentDecision(params: {
-  request_id: string
-  patient_id: string
-  provider_id: string
-  challenge_nonce: string
-  decision: 'approved' | 'denied'
-  scope: string
-  purpose: string
-  access_duration: number
-  expires_at: string
-}): Promise<string> {
-  // Load private key from secure storage
-  const existing = await SecureStore.getItemAsync(PRIVATE_KEY_STORE_KEY)
-  if (!existing) {
-    throw new Error('No device signing key found. Enroll your device first.')
-  }
-  const privateKey = base64ToBytes(existing)
-
-  // Construct canonical signing input
-  const message = constructSigningInput(params)
-  const messageBytes = new TextEncoder().encode(message)
-
-  // Hash with SHA-256 using expo-crypto
-  const digest = new Uint8Array(
-    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, messageBytes),
-  )
-
-  // Sign the digest with ECDSA P-256
-  // @noble/curves p256.sign takes the hash (not the raw message)
-  const signature = p256.sign(digest, privateKey)
-
-  // Backend verifies with DER-encoded signature
-  return bytesToBase64(signature.toDERRawBytes())
-}
 
 // ── Full approval flow ───────────────────────────────────────────────────────
 

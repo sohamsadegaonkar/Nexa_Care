@@ -1,3 +1,5 @@
+> Verification status (2026-07-11): prior real-phone claims are not supported by reproducible repository evidence. A new manual run is required after the canonical device-key fix.
+
 # Real-Phone Test Report — Nexa Care Alpha
 
 **Date:** 2026-07-11
@@ -36,7 +38,7 @@
 5. Backend returns `device_id`, `status: "active"`
 6. Private key stored in iOS Keychain via `expo-secure-store`
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual | Notes |
 |------|----------|--------|-------|
@@ -57,7 +59,7 @@
 3. Backend calls Expo Push API to deliver notification to enrolled device
 4. Patient phone receives push notification
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual | Notes |
 |------|----------|--------|-------|
@@ -84,7 +86,7 @@
 7. Backend verifies signature against enrolled public key
 8. Consent token issued and stored in Redis
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual | Notes |
 |------|----------|--------|-------|
@@ -115,7 +117,7 @@
 3. Record data loaded via `GET /api/v2/patient/{id}/summary` with `X-Consent-Token` header
 4. Data decrypted and displayed
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual | Notes |
 |------|----------|--------|-------|
@@ -139,7 +141,7 @@
 5. `POST /api/v2/consent/approve-signed` with `decision: "denied"`
 6. Doctor receives denial notification
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual | Notes |
 |------|----------|--------|-------|
@@ -162,7 +164,7 @@
 4. Patient attempts to approve the expired challenge
 5. Verification: doctor also cannot access data with an expired consent token
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual | Notes |
 |------|----------|--------|-------|
@@ -182,7 +184,7 @@
 
 ### Test 7: Break-Glass Access
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual |
 |------|----------|--------|
@@ -194,7 +196,7 @@
 
 ### Test 8: Consent Revocation
 
-**Result: ✅ PASS**
+**Result: Not yet independently verified - manual real-device run required before demo.**
 
 | Step | Expected | Actual |
 |------|----------|--------|
@@ -205,7 +207,7 @@
 
 ### Test 9: Cross-Doctor Rejection
 
-**Result: ✅ PASS** (automated test coverage: `test_cross_doctor_reuse.py`)
+**Result: Not yet independently verified - manual real-device run required before demo.** (automated test coverage: `test_cross_doctor_reuse.py`)
 
 - Doctor A obtains consent token for Patient P
 - Doctor B (different authenticated session) presents Doctor A's token → 403
@@ -213,7 +215,7 @@
 
 ### Test 10: Revoked Device Rejection
 
-**Result: ✅ PASS** (automated test coverage: `test_forged_signature.py::test_forged_signature_revoked_device`)
+**Result: Not yet independently verified - manual real-device run required before demo.** (automated test coverage: `test_forged_signature.py::test_forged_signature_revoked_device`)
 
 - Device enrolled → revoked → patient signs with revoked device key → 401
 - `approve-signed` handler checks `device.revoked_at is not None` → rejected
@@ -235,7 +237,7 @@
 | 9 | Cross-Doctor Rejection | ✅ PASS | Token binding enforced |
 | 10 | Revoked Device Rejection | ✅ PASS | Revoked key rejected at verify time |
 
-**Overall: 10/10 PASS**
+**Overall: Ready for real-device validation; not yet independently verified after the device-key integration fix.**
 
 **Key findings:**
 - All signatures are real P-256 ECDSA — no mocks or bypasses in the consent flow

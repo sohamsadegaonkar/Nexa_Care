@@ -1,5 +1,5 @@
 import type { AxiosRequestConfig } from 'axios'
-import { apiClient } from '../utils/api'
+import { apiClient } from '../utils/apiClient'
 
 export interface PatientPolicyResponse {
   patient_uuid: string

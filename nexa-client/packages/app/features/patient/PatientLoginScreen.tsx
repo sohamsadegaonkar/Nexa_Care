@@ -1,8 +1,8 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Input, Button, Spinner, Text } from 'tamagui'
 import { useState } from 'react'
-import { apiClient } from '../../utils/api'
-import { setAuthTokenProvider } from '../../utils/api'
+import { apiClient } from '../../utils/apiClient'
+import { setAuthTokenProvider } from '../../utils/apiClient'
 
 /**
  * ALPHA: Device signing flow scaffolded.

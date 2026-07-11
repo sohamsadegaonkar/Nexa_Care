@@ -1,4 +1,4 @@
-import { apiClient } from '../utils/api'
+import { apiClient } from '../utils/apiClient'
 
 export interface PushApprovalRequest {
   patient_id: string
