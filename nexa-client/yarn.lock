@@ -13152,6 +13152,7 @@ __metadata:
   resolution: "next-app@workspace:apps/next"
   dependencies:
     "@playwright/test": "npm:^1.57.0"
+    "@tamagui/animation-helpers": "npm:2.0.0-rc.16"
     "@tamagui/config": "npm:2.0.0-rc.16"
     "@tamagui/next-plugin": "npm:2.0.0-rc.16"
     "@tamagui/next-theme": "npm:2.0.0-rc.16"
