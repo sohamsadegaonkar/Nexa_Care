@@ -10,9 +10,20 @@ from app.models.patient_tombstone import PatientTombstone
 from app.models.nfc_card_registry import NFCCardRegistry
 
 
+class TombstoneIntegrityError(RuntimeError):
+    """Raised when tombstone data is duplicate, cyclic, or ambiguous."""
+
+
 class CardRedirectService:
     def __init__(self, db: AsyncSession):
         self.db = db
+
+    async def _tombstones_for_old(self, patient_uuid) -> list[PatientTombstone]:
+        tombstone_stmt = select(PatientTombstone).where(
+            PatientTombstone.old_patient_uuid == patient_uuid
+        )
+        tombstone_result = await self.db.execute(tombstone_stmt)
+        return list(tombstone_result.scalars().all())
 
     async def resolve_card_with_redirect(self, card_id: str) -> dict:
         """
@@ -21,8 +32,8 @@ class CardRedirectService:
         """
         # First resolve the card to a patient
         stmt = select(NFCCardRegistry).where(
-            NFCCardRegistry.card_id == card_id,
-            NFCCardRegistry.status == "ACTIVE"
+            NFCCardRegistry.card_uid == card_id,
+            NFCCardRegistry.status == "active"
         )
         result = await self.db.execute(stmt)
         card = result.scalar_one_or_none()
@@ -30,30 +41,34 @@ class CardRedirectService:
         if not card:
             return {"error": "CARD_NOT_FOUND"}
 
-        current_uuid = card.patient_uuid
+        current_uuid = card.patient_id
         redirect_chain = []
+        seen = set()
 
-        # Follow tombstone chain (max 5 hops to prevent infinite loops)
-        for _ in range(5):
-            tombstone_stmt = select(PatientTombstone).where(
-                PatientTombstone.old_patient_uuid == current_uuid
-            )
-            tombstone_result = await self.db.execute(tombstone_stmt)
-            tombstone = tombstone_result.scalar_one_or_none()
+        for _ in range(10):
+            if current_uuid in seen:
+                raise TombstoneIntegrityError("Tombstone cycle detected during card redirect")
+            seen.add(current_uuid)
 
-            if not tombstone:
+            tombstones = await self._tombstones_for_old(current_uuid)
+            if len(tombstones) > 1:
+                raise TombstoneIntegrityError(f"Duplicate tombstones found for patient {current_uuid}")
+            if not tombstones:
                 break
 
+            tombstone = tombstones[0]
             redirect_chain.append({
                 "from": str(current_uuid),
                 "to": str(tombstone.canonical_patient_uuid),
                 "merged_at": tombstone.merged_at.isoformat()
             })
             current_uuid = tombstone.canonical_patient_uuid
+        else:
+            raise TombstoneIntegrityError("Tombstone redirect chain exceeded maximum depth")
 
         return {
             "canonical_patient_uuid": str(current_uuid),
             "redirect_chain": redirect_chain,
-            "original_patient_uuid": str(card.patient_uuid),
+            "original_patient_uuid": str(card.patient_id),
             "is_redirected": len(redirect_chain) > 0
         }

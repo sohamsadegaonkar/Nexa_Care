@@ -33,7 +33,7 @@ PEPPER_SECRET="<stored_in_render_or_github_secret_manager>"
 
 # ── Mobile Push Notification Service (Expo Cloud API) ─────────────────────────
 EXPO_PUSH_API_URL="https://exp.host/--/api/v2/push/send"
-PUSH_STATUS_TRANSPORT="poll"
+PUSH_STATUS_TRANSPORT="poll"  # websocket requires Redis keyspace notifications; polling is the demo default
 ```
 
 ---
@@ -45,3 +45,10 @@ Before routing traffic to the demo environment, operators must execute the autom
 ./scripts/setup_demo_env.sh
 ```
 This script confirms TLS database connectivity, verifies Alembic schema migration health, registers demo patient identities, and outputs an explicit **GO / NO-GO** certification.
+
+
+## 3. Optional WebSocket Push Transport
+
+PUSH_STATUS_TRANSPORT="websocket" is experimental and remains off by default. If enabled, Redis must have keyspace notifications enabled for push request keys. The backend checks CONFIG GET notify-keyspace-events on WebSocket connection; managed Redis providers that block CONFIG GET or leave notifications disabled will receive a clear websocket_unavailable response and should fall back to polling.
+
+Recommended demo setting: keep PUSH_STATUS_TRANSPORT="poll".

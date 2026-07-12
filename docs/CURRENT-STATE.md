@@ -4,7 +4,7 @@
 
 **Verification method:** Every claim below is mapped to a specific implementation file or integration test.
 
-**Last updated:** 2026-07-11 (source and automated tests verified; manual device validation pending)
+**Last updated:** 2026-07-12 (source and automated tests verified; manual device validation pending)
 
 ---
 
@@ -54,11 +54,18 @@
 
 **Verification Details:**
 - `X-Merge-Challenge` header is mandatory for all merge operations. A challenge token is verified via TOTP and valid for 120 seconds (`tests/test_merge_challenge_security.py`).
+- Merge/tombstone integrity now rejects self-merges, duplicate tombstones, and cyclical merge chains; old card redirects fail closed with explicit integrity errors (`tests/test_merge_tombstone_integrity.py`).
 - Merged patient redirects are surfaced in the UI via `MergedPatientBanner` in `screen.tsx`.
 
 ---
 
-## 4. Audit & Observability
+## 4. Structured Records, Emergency, and FHIR
+
+- **Emergency snapshot source of truth**: `app/services/emergency_snapshot_service.py` reads current structured records first (Allergy, Medication, Vitals, LabResult, TimelineEvent). The legacy `nexa_emergency_snapshot` projection is a fallback only and is not required for demo-visible emergency data.
+- **FHIR export source of truth**: `app/api/v2/fhir_routes.py` reads current structured records first and maps them to lightweight FHIR R4 resources. The legacy `nexa_clinical` table is deprecated fallback support for older rows only.
+- **FHIR coverage limitation**: mapping is partial (MedicationRequest, Observation, AllergyIntolerance, Condition from timeline/legacy diagnoses). Full FHIR profile validation remains future work.
+
+## 5. Audit & Observability
 
 - **Chain Integrity**: Every audit write is hash-chained. The sequence `Record(N).previous_hash = SHA256(Record(N-1))` is enforced.
 - **Tamper Evidence**: `scripts/verify_audit_chain.py` successfully detects unauthorized database modifications.
@@ -66,10 +73,10 @@
 
 ---
 
-## 5. What's NOT Done / Remaining Risks
+## 6. What's NOT Done / Remaining Risks
 
-1. **WebSocket Stability**: The push status transport defaults to `poll` (2s interval). The `websocket` transport is feature-flagged and requires more load testing before production rollout.
-2. **FHIR R4 Coverage**: The FHIR export in `fhir_converter.py` only maps a subset of fields. Full R4 validation is deferred to Sprint 3.
+1. **WebSocket Stability**: The push status transport defaults to `poll` (2s interval). The `websocket` transport is feature-flagged, requires Redis keyspace notifications (`notify-keyspace-events` including keyspace and set/generic/expiry events), and returns a clear polling fallback error if Redis cannot support it.
+2. **FHIR R4 Coverage**: The FHIR export uses current structured records but only maps a subset of FHIR R4 resources. Full R4 validation is deferred to Sprint 3.
 3. **Fail-Open Policy**: Rate limiters (Redis outages) still fail-open. While safe for availability, this remains a minor brute-force vector during infra failure.
 4. **Manual Real-Device Validation Required**: enrollment and canonical signed approval are implemented and test-covered, but no fresh physical-device run is evidenced after this fix.
 5. **Signing Key Is Not Hardware-Isolated**: `signConsentChallenge()` signs the canonical 9-field SHA-256 digest with ECDSA P-256. However, the private key is briefly resident in JS memory during signing rather than never leaving a Secure Enclave/StrongBox. It is encrypted at rest by the OS keystore (`expo-secure-store`) and gated by a biometric prompt before each use, but this is a weaker guarantee than true hardware-isolated signing. If that stronger guarantee is required, it needs a native module and is a separate, larger task — not a quick swap.

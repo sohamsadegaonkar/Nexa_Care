@@ -6,6 +6,7 @@ Wires the refactored AssuranceService into the backend.
 from __future__ import annotations
 
 import logging
+import inspect
 import hashlib
 import os
 import asyncio
@@ -48,6 +49,48 @@ PUSH_STATUS_TRANSPORT = os.getenv("PUSH_STATUS_TRANSPORT", "poll")
 async def get_transport_config():
     """Returns the configured transport for push status updates."""
     return {"transport": PUSH_STATUS_TRANSPORT}
+
+
+async def _maybe_await(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
+
+async def _check_keyspace_notifications(redis) -> tuple[bool, str]:
+    """Verify Redis keyspace notifications required by push WebSockets."""
+
+    config_get = getattr(redis, "config_get", None)
+    if config_get is None:
+        config = getattr(redis, "config", None)
+        if config is None:
+            return False, "Redis client does not expose CONFIG GET for keyspace notification checks."
+        try:
+            raw = await _maybe_await(config("GET", "notify-keyspace-events"))
+        except Exception as exc:
+            return False, f"Redis CONFIG GET notify-keyspace-events is unavailable: {exc}"
+    else:
+        try:
+            raw = await _maybe_await(config_get("notify-keyspace-events"))
+        except Exception as exc:
+            return False, f"Redis CONFIG GET notify-keyspace-events is unavailable: {exc}"
+
+    if isinstance(raw, dict):
+        value = raw.get("notify-keyspace-events") or raw.get(b"notify-keyspace-events") or ""
+    elif isinstance(raw, list | tuple) and len(raw) >= 2:
+        value = raw[1]
+    else:
+        value = raw or ""
+    if isinstance(value, bytes):
+        value = value.decode("utf-8", errors="replace")
+    flags = str(value)
+
+    if "K" not in flags or not any(flag in flags for flag in ("A", "$", "g", "x")):
+        return False, (
+            "Redis keyspace notifications are disabled or incomplete for push WebSockets. "
+            "Set notify-keyspace-events to include K and string/generic/expired events, or use polling."
+        )
+    return True, flags
 
 class PushRequestPayload(BaseModel):
     patient_id: str
@@ -334,6 +377,18 @@ async def push_status_websocket(
 
     from app.services.consent_engine import get_consent_redis_client
     redis = get_consent_redis_client()
+
+    keyspace_ready, keyspace_detail = await _check_keyspace_notifications(redis)
+    if not keyspace_ready:
+        logger.warning("Push WebSocket transport unavailable: %s", keyspace_detail)
+        await websocket.send_json({
+            "request_id": request_id,
+            "status": "websocket_unavailable",
+            "fallback": "poll",
+            "detail": keyspace_detail,
+        })
+        await websocket.close(code=status.WS_1013_TRY_AGAIN_LATER)
+        return
     
     # Prefix for keyspace notifications
     # Requires 'notify-keyspace-events' set to include 'K' and 'g' (or 'E' and 'x' for expiry)

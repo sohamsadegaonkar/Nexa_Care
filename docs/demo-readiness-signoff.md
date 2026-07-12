@@ -200,3 +200,8 @@ The following limitations must be acknowledged if asked by the audience:
 ```
 
 **Signed off for demo on:** 2026-07-11
+
+
+## Structured emergency and FHIR source-of-truth update (2026-07-12)
+
+Emergency card reads and FHIR export are backed by current structured records, with legacy projection/shard tables retained only as fallback. Patient merge rejects duplicate and cyclical tombstones. WebSocket push remains optional and requires Redis keyspace notifications if enabled. Manual real-device validation is still required before changing readiness evidence to a full PASS.

@@ -17,7 +17,7 @@ from app.core.redis import get_redis_client
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.card_resolution_service import CardResolutionService
-from app.services.card_redirect_service import CardRedirectService
+from app.services.card_redirect_service import CardRedirectService, TombstoneIntegrityError
 
 router = APIRouter(prefix="/api/v2/nfc", tags=["nfc"])
 
@@ -96,6 +96,18 @@ async def resolve_nfc_card(
 
     except HTTPException:
         raise
+    except TombstoneIntegrityError as exc:
+        await append_audit_log(
+            actor_uid=provider.actor_uid,
+            event_type="TOMBSTONE_INTEGRITY_VIOLATION",
+            target_id=payload.card_uid,
+            status="FAILED",
+            metadata={"reason": str(exc)},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Patient merge tombstone integrity violation: {exc}",
+        ) from exc
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

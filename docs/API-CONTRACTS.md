@@ -506,3 +506,13 @@ interface CommitJobResponse {
   committed_at: string; // ISO 8601 Timestamp
 }
 ```
+
+
+---
+
+## Legacy/Current Data Source Notes (2026-07-12)
+
+- Emergency card reads use current structured clinical records (Allergy, Medication, Vitals, LabResult, TimelineEvent) as the source of truth. The deprecated nexa_emergency_snapshot projection is fallback only.
+- FHIR export uses current structured clinical records as the source of truth. The deprecated nexa_clinical shard is fallback only for older data and must not be required for current manual or AI-pipeline records.
+- Patient merge rejects duplicate tombstones, self-merges, and cyclical merge chains. NFC/card redirect fails closed with a clear tombstone-integrity error when old duplicate/cyclic data is detected.
+- Push WebSocket transport is optional. If PUSH_STATUS_TRANSPORT=websocket, Redis must support CONFIG GET notify-keyspace-events and enable keyspace notifications. Otherwise clients must use polling.

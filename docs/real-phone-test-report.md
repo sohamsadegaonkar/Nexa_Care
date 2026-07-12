@@ -249,7 +249,7 @@
 **Alpha limitations observed:**
 - Private key is stored in JS memory briefly during signing (not hardware-isolated)
 - No native NFC scanning on the doctor app — manual UID entry only
-- WebSocket push transport not enabled — polling only (2s interval)
+- WebSocket push transport not enabled — polling only (2s interval). If enabled later, Redis keyspace notifications must be configured and verified.
 - No server-side session revocation on logout
 
 ## Required Manual QA After This Fix
@@ -263,3 +263,8 @@
 - [ ] Confirm doctor polling observes approved and unlocks only the authorized record scope.
 - [ ] Confirm patient access history records the event.
 - [ ] Record build commit, device/OS, timestamps, and reproducible evidence before changing this report to PASS.
+
+
+## Emergency/FHIR data source note
+
+Emergency card reads and FHIR export now use current structured clinical records first. Manual real-device validation is still required before any real-phone PASS claim is restored.

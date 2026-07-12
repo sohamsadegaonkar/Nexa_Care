@@ -13,6 +13,7 @@ def mock_redis():
     # Mock pubsub
     mock_pubsub = AsyncMock()
     m.pubsub.return_value = mock_pubsub
+    m.config_get = AsyncMock(return_value={"notify-keyspace-events": "K$gx"})
     return m
 
 @pytest.mark.asyncio
@@ -29,6 +30,20 @@ async def test_ws_authentication_failure(client):
             with pytest.raises(Exception):
                 with client.websocket_connect("/api/v2/push/req-1/ws?token=invalid"):
                     pass
+
+@pytest.mark.asyncio
+async def test_ws_clear_error_when_keyspace_notifications_disabled(client, mock_redis):
+    mock_redis.config_get = AsyncMock(return_value={"notify-keyspace-events": ""})
+    with patch("app.api.v2.assurance_routes.PUSH_STATUS_TRANSPORT", "websocket"), \
+         patch("app.api.v2.assurance_routes.resolve_provider_session_context", return_value={"authenticated": True}), \
+         patch("app.services.consent_engine.get_consent_redis_client", return_value=mock_redis):
+
+        with client.websocket_connect("/api/v2/push/req-disabled/ws?token=t") as websocket:
+            data = websocket.receive_json()
+            assert data["status"] == "websocket_unavailable"
+            assert data["fallback"] == "poll"
+            assert "keyspace notifications" in data["detail"]
+
 
 @pytest.mark.asyncio
 async def test_ws_happy_path_resolution(client, mock_redis):

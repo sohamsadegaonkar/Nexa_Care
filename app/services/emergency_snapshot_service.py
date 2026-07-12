@@ -1,8 +1,9 @@
-"""Read-only emergency snapshot retrieval service.
+"""Emergency snapshot retrieval service.
 
-The emergency snapshot is a projection table populated elsewhere. This module
-never writes to that table; it only retrieves the current projection for a
-masked patient identity after upstream authorization has succeeded.
+Emergency reads use the current structured patient-record tables as the source
+of truth. The legacy nexa_emergency_snapshot projection remains a
+backward-compatible fallback only; it is not allowed to hide real structured
+medical data by returning an empty projection.
 """
 
 from __future__ import annotations
@@ -15,10 +16,12 @@ from uuid import UUID
 
 from fastapi import HTTPException, status
 from pydantic import JsonValue
-from sqlalchemy import bindparam, text
+from sqlalchemy import bindparam, select, text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.patient_records import Allergy, LabResult, Medication, TimelineEvent, Vitals
 
 logger = logging.getLogger("nexa_logger")
 
@@ -49,26 +52,157 @@ def _serialize_snapshot_row(row: dict[str, object]) -> dict[str, JsonValue]:
     return {key: _to_json_value(value) for key, value in row.items()}
 
 
-async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> dict[str, object]:
-    """Return the read-only emergency snapshot for a masked patient UUID.
+def _provenance(row: object) -> dict[str, JsonValue]:
+    """Return common provenance fields from a structured clinical row."""
 
-    The ``nexa_emergency_snapshot`` table is treated as a projection owned by a
-    separate writer. This service intentionally performs no INSERT, UPDATE,
-    DELETE, commit, or rollback operations. If no projection exists, it returns
-    a structured ``No Known Medical Data`` response because the absence of known
-    emergency facts is itself clinically relevant.
-    """
+    return {
+        "source": _to_json_value(getattr(row, "source", None)),
+        "confidence": _to_json_value(getattr(row, "confidence", None)),
+        "risk_level": _to_json_value(getattr(row, "risk_level", None)),
+        "source_document_id": _to_json_value(getattr(row, "source_document_id", None)),
+    }
+
+
+def _latest_timestamp(rows: list[object]) -> datetime | None:
+    """Return the newest timestamp-like attribute from emergency-relevant rows."""
+
+    latest: datetime | None = None
+    for row in rows:
+        for attr in ("recorded_at", "prescribed_at", "occurred_at"):
+            value = getattr(row, attr, None)
+            if isinstance(value, datetime) and (latest is None or value > latest):
+                latest = value
+    return latest
+
+
+async def _scalars_all(db_session: AsyncSession, stmt) -> list[object]:
+    result = await db_session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def _fetch_structured_snapshot(patient_id: UUID, db_session: AsyncSession) -> dict[str, JsonValue]:
+    """Build an emergency snapshot from current structured clinical records."""
+
+    allergies = await _scalars_all(
+        db_session,
+        select(Allergy).where(Allergy.patient_id == patient_id).order_by(Allergy.severity.desc()),
+    )
+    medications = await _scalars_all(
+        db_session,
+        select(Medication).where(Medication.patient_id == patient_id).order_by(Medication.prescribed_at.desc()),
+    )
+    vitals = await _scalars_all(
+        db_session,
+        select(Vitals).where(Vitals.patient_id == patient_id).order_by(Vitals.recorded_at.desc()),
+    )
+    labs = await _scalars_all(
+        db_session,
+        select(LabResult).where(LabResult.patient_id == patient_id).order_by(LabResult.recorded_at.desc()),
+    )
+    timeline_events = await _scalars_all(
+        db_session,
+        select(TimelineEvent).where(TimelineEvent.patient_id == patient_id).order_by(TimelineEvent.occurred_at.desc()).limit(20),
+    )
+
+    if not any((allergies, medications, vitals, labs, timeline_events)):
+        return {}
+
+    serialized_allergies = [
+        {
+            "allergen": allergy.allergen,
+            "severity": allergy.severity,
+            **_provenance(allergy),
+        }
+        for allergy in allergies
+    ]
+    serialized_meds = [
+        {
+            "name": med.name,
+            "strength": med.strength,
+            "frequency": med.frequency,
+            "prescribed_at": _to_json_value(med.prescribed_at),
+            **_provenance(med),
+        }
+        for med in medications
+    ]
+    serialized_vitals = [
+        {
+            "type": vital.type,
+            "value": vital.value,
+            "unit": vital.unit,
+            "recorded_at": _to_json_value(vital.recorded_at),
+            **_provenance(vital),
+        }
+        for vital in vitals
+    ]
+    serialized_labs = [
+        {
+            "test_name": lab.test_name,
+            "value": lab.value,
+            "unit": lab.unit,
+            "reference_range": lab.reference_range,
+            "is_abnormal": lab.is_abnormal,
+            "recorded_at": _to_json_value(lab.recorded_at),
+            **_provenance(lab),
+        }
+        for lab in labs
+    ]
+    high_risk_allergies = [
+        allergy
+        for allergy in serialized_allergies
+        if str(allergy.get("risk_level") or "").upper() in {"HIGH_RISK", "CRITICAL_RISK"}
+        or str(allergy.get("severity") or "").lower() in {"severe", "anaphylaxis", "critical"}
+    ]
+    abnormal_labs = [
+        lab
+        for lab in serialized_labs
+        if lab["is_abnormal"] or str(lab.get("risk_level") or "").upper() in {"HIGH_RISK", "CRITICAL_RISK"}
+    ]
+    critical_diagnoses = [
+        event.summary
+        for event in timeline_events
+        if any(term in event.summary.lower() for term in ("diabetes", "critical", "diagnosis"))
+    ]
+    last_updated = _latest_timestamp([*allergies, *medications, *vitals, *labs, *timeline_events])
+
+    return {
+        "source": "structured_patient_records",
+        "allergies": serialized_allergies,
+        "high_risk_allergies": high_risk_allergies,
+        "active_medications": serialized_meds,
+        "latest_vitals": serialized_vitals[:5],
+        "lab_results": serialized_labs,
+        "abnormal_labs": abnormal_labs,
+        "critical_diagnoses": critical_diagnoses,
+        "last_updated": _to_json_value(last_updated),
+    }
+
+
+async def _fetch_legacy_projection(patient_id: UUID, db_session: AsyncSession) -> dict[str, JsonValue] | None:
+    """Return the deprecated emergency projection row, if one exists."""
 
     stmt = text(
         "SELECT * FROM nexa_emergency_snapshot "
         "WHERE patient_id = :patient_id LIMIT 1"
     ).bindparams(bindparam("patient_id", type_=PG_UUID(as_uuid=True)))
+    result = await db_session.execute(stmt, {"patient_id": patient_id})
+    row = result.mappings().first()
+    if row is None:
+        return None
+    snapshot = _serialize_snapshot_row(dict(row))
+    snapshot.setdefault("source", "legacy_emergency_projection")
+    return snapshot
+
+
+async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> dict[str, object]:
+    """Return emergency-visible medical facts for a masked patient UUID."""
 
     try:
-        result = await db_session.execute(stmt, {"patient_id": patient_id})
+        structured_snapshot = await _fetch_structured_snapshot(patient_id, db_session)
     except SQLAlchemyError as exc:
         logger.critical(json.dumps({
             "event": "emergency_snapshot_db_error",
+            "source": "structured_patient_records",
             "patient_id": str(patient_id),
             "exception": str(exc),
             "action": "raising_503_fail_closed",
@@ -78,10 +212,29 @@ async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> 
             detail="Emergency snapshot retrieval is temporarily unavailable.",
         ) from exc
 
-    row = result.mappings().first()
     retrieved_at = datetime.now(timezone.utc)
 
-    if row is None:
+    if structured_snapshot:
+        return {
+            "patient_id": patient_id,
+            "snapshot_status": "available",
+            "message": None,
+            "snapshot": structured_snapshot,
+            "retrieved_at": retrieved_at,
+        }
+
+    try:
+        legacy_snapshot = await _fetch_legacy_projection(patient_id, db_session)
+    except SQLAlchemyError as exc:
+        logger.warning(json.dumps({
+            "event": "legacy_emergency_projection_unavailable",
+            "patient_id": str(patient_id),
+            "exception": str(exc),
+            "action": "returning_no_known_medical_data_after_empty_structured_records",
+        }))
+        legacy_snapshot = None
+
+    if legacy_snapshot is None:
         return {
             "patient_id": patient_id,
             "snapshot_status": "no_known_medical_data",
@@ -94,6 +247,6 @@ async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> 
         "patient_id": patient_id,
         "snapshot_status": "available",
         "message": None,
-        "snapshot": _serialize_snapshot_row(dict(row)),
+        "snapshot": legacy_snapshot,
         "retrieved_at": retrieved_at,
     }

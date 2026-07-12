@@ -91,30 +91,48 @@ async def merge_patients(
             detail="Challenge bound to different provider.",
         )
 
-    try:
-        from app.observability.audit_ledger import append_audit_log_or_503
-        await append_audit_log_or_503(
-            actor_uid=provider.actor_uid,
-            event_type="MERGE_EXECUTED",
-            target_id=str(payload.old_patient_uuid),
-            status="SUCCESS",
-            metadata={"canonical_patient_uuid": str(payload.canonical_patient_uuid)}
-        )
+    from app.observability.audit_ledger import append_audit_log_or_503
 
+    try:
         service = PatientMergeService(db)
         tombstone = await service.merge_patients(
             old_uuid=payload.old_patient_uuid,
             canonical_uuid=payload.canonical_patient_uuid,
             reason=payload.reason,
             evidence=payload.evidence,
+            merged_by=provider.actor_uid,
+        )
+
+        resolved_canonical_uuid = (
+            tombstone.canonical_patient_uuid
+            if isinstance(getattr(tombstone, "canonical_patient_uuid", None), UUID)
+            else payload.canonical_patient_uuid
+        )
+
+        await append_audit_log_or_503(
+            actor_uid=provider.actor_uid,
+            event_type="MERGE_EXECUTED",
+            target_id=str(payload.old_patient_uuid),
+            status="SUCCESS",
+            metadata={"canonical_patient_uuid": str(resolved_canonical_uuid)}
         )
 
         return MergeResponse(
             message="Patient merged successfully. Old record is now a tombstone.",
             tombstone_id=tombstone.tombstone_id,
-            canonical_patient_uuid=payload.canonical_patient_uuid,
+            canonical_patient_uuid=resolved_canonical_uuid,
         )
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        raise HTTPException(status_code=500, detail="Merge operation failed")
+        await append_audit_log_or_503(
+            actor_uid=provider.actor_uid,
+            event_type="MERGE_REJECTED",
+            target_id=str(payload.old_patient_uuid),
+            status="FAILED",
+            metadata={
+                "canonical_patient_uuid": str(payload.canonical_patient_uuid),
+                "reason": str(e),
+            },
+        )
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Merge operation failed") from exc
