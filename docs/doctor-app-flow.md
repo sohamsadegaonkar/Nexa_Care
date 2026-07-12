@@ -398,8 +398,9 @@ Real provider account
 → doctor dashboard
 → real NFC or manual search
 → canonical patient resolution
-→ consent request (controlled purpose/scope, server-clamped duration)
-→ patient approval (cryptographic signature)
+→ consent request (controlled purpose/scope, server-clamped duration; atomic pending lock)
+→ delivery state visible as queued/sent/failed/unavailable
+→ patient approval (cryptographic signature using patient_device_keys)
 → doctor record access (X-Consent-Token header + authenticated session)
 → audit-history verification
 ```

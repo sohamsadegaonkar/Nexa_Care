@@ -5,6 +5,7 @@ Refactored for asynchronous approval flow (Sprint 2).
 
 from __future__ import annotations
 
+import inspect
 import json
 import uuid
 import logging
@@ -20,6 +21,13 @@ from app.observability.audit_ledger import append_audit_log, append_audit_log_or
 from app.models.push_token import PushRequestLog
 
 logger = logging.getLogger("nexa_logger")
+
+
+async def _maybe_await(value):
+    if inspect.isawaitable(value):
+        return await value
+    return value
+
 
 PUSH_REQUEST_PREFIX = "push_request:"
 PUSH_REQUEST_TTL = 90
@@ -94,6 +102,10 @@ class AssuranceService:
             "challenge_nonce": challenge_nonce,
             "responded_at": None,
             "biometric_token_hash": None,
+            "delivery_status": "queued",
+            "delivery_error": None,
+            "delivery_attempted_at": None,
+            "delivery_completed_at": None,
         }
 
         await redis.setex(
@@ -119,7 +131,72 @@ class AssuranceService:
             "challenge_nonce": challenge_nonce,
             "status": "pending",
             "expires_in_seconds": PUSH_REQUEST_TTL,
+            "notification_dispatch": "queued",
+            "notification_queued": True,
+            "delivery_status": "queued",
         }
+
+    async def _write_request_state(self, redis: Redis, request_id: str, data: dict) -> None:
+        """Persist request state while preserving the remaining Redis TTL."""
+        key = f"{PUSH_REQUEST_PREFIX}{request_id}"
+        ttl_func = getattr(redis, "ttl", None)
+        ttl = PUSH_REQUEST_TTL
+        if ttl_func is not None:
+            try:
+                raw_ttl = await _maybe_await(ttl_func(key))
+                if isinstance(raw_ttl, int) and raw_ttl > 0:
+                    ttl = raw_ttl
+            except Exception:
+                ttl = PUSH_REQUEST_TTL
+        await _maybe_await(redis.setex(key, ttl, json.dumps(data, sort_keys=True)))
+
+    async def mark_delivery_attempted(self, redis: Redis, request_id: str) -> None:
+        key = f"{PUSH_REQUEST_PREFIX}{request_id}"
+        raw_data = await _maybe_await(redis.get(key))
+        if not raw_data:
+            return
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode("utf-8")
+        data = json.loads(raw_data)
+        data["delivery_status"] = "queued"
+        data["delivery_attempted_at"] = datetime.now(timezone.utc).isoformat()
+        await self._write_request_state(redis, request_id, data)
+
+    async def mark_delivery_result(
+        self,
+        redis: Redis,
+        request_id: str,
+        *,
+        success: bool,
+        error: str | None = None,
+    ) -> None:
+        """Record final push delivery outcome in request state."""
+        key = f"{PUSH_REQUEST_PREFIX}{request_id}"
+        raw_data = await _maybe_await(redis.get(key))
+        if not raw_data:
+            return
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode("utf-8")
+        data = json.loads(raw_data)
+        data["delivery_status"] = "sent" if success else "failed"
+        data["delivery_error"] = None if success else (error or "Push delivery failed")
+        data["delivery_completed_at"] = datetime.now(timezone.utc).isoformat()
+        await self._write_request_state(redis, request_id, data)
+
+    async def mark_delivery_unavailable(self, redis: Redis, request_id: str, reason: str) -> None:
+        key = f"{PUSH_REQUEST_PREFIX}{request_id}"
+        raw_data = await _maybe_await(redis.get(key))
+        if not raw_data:
+            return
+        if isinstance(raw_data, bytes):
+            raw_data = raw_data.decode("utf-8")
+        data = json.loads(raw_data)
+        now = datetime.now(timezone.utc).isoformat()
+        data["delivery_status"] = "unavailable"
+        data["delivery_error"] = reason
+        data["delivery_attempted_at"] = now
+        data["delivery_completed_at"] = now
+        await self._write_request_state(redis, request_id, data)
 
     async def resolve_push_approval(
         self,
@@ -185,6 +262,22 @@ class AssuranceService:
             "status": decision,
         }
 
+    def _status_payload(self, request_id: str, data: dict) -> dict:
+        delivery_status = data.get("delivery_status", "queued")
+        status = data.get("status", "pending")
+        doctor_status = "delivery_failed" if status == "pending" and delivery_status in {"failed", "unavailable"} else status
+        return {
+            "request_id": request_id,
+            "status": status,
+            "doctor_status": doctor_status,
+            "responded_at": data.get("responded_at"),
+            "patient_id": data.get("patient_id"),
+            "delivery_status": delivery_status,
+            "delivery_error": data.get("delivery_error"),
+            "delivery_attempted_at": data.get("delivery_attempted_at"),
+            "delivery_completed_at": data.get("delivery_completed_at"),
+        }
+
     async def get_push_status(self, redis: Redis, db: AsyncSession, request_id: str) -> dict:
         """
         Fetch status and handle inferred timeout logic.
@@ -218,26 +311,23 @@ class AssuranceService:
                         logger.info(json.dumps({
                             "event": "standard_fallback_from_push",
                             "request_id": request_id,
-                            "patient_id": patient_id_str
+                            "patient_ref": patient_id_str[-8:],
                         }))
                         
-                        return {"request_id": request_id, "status": "timeout", "patient_id": patient_id_str}
+                        return {"request_id": request_id, "status": "timeout", "doctor_status": "timeout", "patient_id": patient_id_str, "delivery_status": "unknown"}
                     
                     return {
                         "request_id": request_id, 
                         "status": log_entry.status,
+                        "doctor_status": log_entry.status,
                         "responded_at": log_entry.responded_at.isoformat() if log_entry.responded_at else None,
-                        "patient_id": patient_id_str
+                        "patient_id": patient_id_str,
+                        "delivery_status": "unknown",
                     }
             except Exception as e:
                 logger.error(f"Error checking push timeout in Postgres: {e}")
             
-            return {"request_id": request_id, "status": "timeout", "patient_id": None}
+            return {"request_id": request_id, "status": "timeout", "doctor_status": "timeout", "patient_id": None, "delivery_status": "unknown"}
 
         data = json.loads(raw_data)
-        return {
-            "request_id": request_id,
-            "status": data["status"],
-            "responded_at": data.get("responded_at"),
-            "patient_id": data.get("patient_id"),
-        }
+        return self._status_payload(request_id, data)

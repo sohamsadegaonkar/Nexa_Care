@@ -136,14 +136,17 @@ interface ConsentChallengeResponse {
   request_id: string; // UUIDv4
   challenge_nonce: string; // High-entropy 32-byte hex string
   expires_in_seconds: number; // Default 90 seconds
-  notification_sent: boolean;
+  notification_dispatch?: "queued" | "sent" | "failed" | "unavailable";
+  notification_queued?: boolean;
+  delivery_status?: "queued" | "sent" | "failed" | "unavailable" | "unknown";
+  delivery_error?: string | null;
   status: "pending";
 }
 ```
 
 #### Error Responses
 - `401 Unauthorized`: Invalid provider credential.
-- `429 Too Many Requests`: Concurrent consent request pending for this patient or rate limit exceeded.
+- `429 Too Many Requests`: Concurrent consent request pending for this patient or rate limit exceeded. The pending-request lock is acquired atomically with Redis `SET NX EX`.
 
 ---
 

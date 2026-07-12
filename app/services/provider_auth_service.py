@@ -60,6 +60,8 @@ _MFA_ISSUER_NAME = "Nexa Care"
 _MAX_FAILED_MFA_ATTEMPTS = 5
 _MFA_LOCKOUT_SECONDS = 15 * 60
 _MFA_FAILS_PREFIX = "mfa_fails:"
+_MFA_USED_TOTP_PREFIX = "mfa_totp_used:"
+_TOTP_VALID_WINDOW = 1
 
 
 logger = logging.getLogger("nexa_logger")
@@ -138,15 +140,56 @@ def get_totp_provisioning_uri(secret: str, login_identifier: str) -> str:
     )
 
 
+def _matched_totp_counter(secret: str, code: str, valid_window: int = _TOTP_VALID_WINDOW) -> int | None:
+    """Return the accepted TOTP counter for ``code``, or None if invalid."""
+    if not secret or not code:
+        return None
+    try:
+        totp = pyotp.totp.TOTP(secret)
+        now = datetime.now(timezone.utc)
+        for offset in range(-valid_window, valid_window + 1):
+            candidate_time = now + timedelta(seconds=offset * totp.interval)
+            if totp.verify(code, for_time=candidate_time, valid_window=0):
+                return int(totp.timecode(candidate_time))
+    except Exception:
+        return None
+    return None
+
+
 def verify_totp_code(secret: str, code: str) -> bool:
     """Verify a 6-digit TOTP code against the stored secret."""
 
-    if not secret or not code:
-        return False
+    return _matched_totp_counter(secret, code) is not None
+
+
+async def _consume_totp_counter(provider_id: uuid.UUID, counter: int, redis_client: Any | None = None) -> bool:
+    """Atomically mark a TOTP timestep used for replay protection.
+
+    Returns False on replay or Redis failure. MFA replay protection is
+    fail-closed: a valid code is not accepted unless the used-counter marker
+    can be written atomically.
+    """
     try:
-        return pyotp.totp.TOTP(secret).verify(code, valid_window=1)
+        redis = redis_client or get_redis_client()
+        ttl_seconds = (_TOTP_VALID_WINDOW * 2 + 2) * 30
+        key = f"{_MFA_USED_TOTP_PREFIX}{provider_id}:{counter}"
+        set_result = redis.set(key, "1", nx=True, ex=ttl_seconds)
+        if hasattr(set_result, "__await__"):
+            set_result = await set_result
+        return bool(set_result)
     except Exception:
+        logger.warning("MFA TOTP replay store unavailable; failing closed")
         return False
+
+
+async def verify_totp_code_once(provider_id: uuid.UUID, secret: str, code: str, redis_client: Any | None = None) -> bool:
+    """Verify a TOTP code and atomically consume its accepted timestep."""
+    if not verify_totp_code(secret, code):
+        return False
+    accepted_counter = _matched_totp_counter(secret, code)
+    if accepted_counter is None:
+        accepted_counter = int(datetime.now(timezone.utc).timestamp() // 30)
+    return await _consume_totp_counter(provider_id, accepted_counter, redis_client=redis_client)
 
 
 async def issue_mfa_pending_token(provider_id: uuid.UUID) -> str:
@@ -653,7 +696,14 @@ async def complete_mfa_login(
     if not mfa_secret or not provider.credential.mfa_enabled:
         return ProviderAuthResult(None, ProviderAuthFailure.MFA_NOT_CONFIGURED)
 
-    if not verify_totp_code(mfa_secret, totp_code):
+    accepted_counter = _matched_totp_counter(mfa_secret, totp_code)
+    if accepted_counter is None:
+        count = await _record_failed_mfa_attempt(provider_id, ip_hash)
+        if count >= _MAX_FAILED_MFA_ATTEMPTS:
+            return ProviderAuthResult(None, ProviderAuthFailure.MFA_RATE_LIMITED)
+        return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
+
+    if not await _consume_totp_counter(provider_id, accepted_counter):
         count = await _record_failed_mfa_attempt(provider_id, ip_hash)
         if count >= _MAX_FAILED_MFA_ATTEMPTS:
             return ProviderAuthResult(None, ProviderAuthFailure.MFA_RATE_LIMITED)

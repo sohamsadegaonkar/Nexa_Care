@@ -78,7 +78,10 @@ export interface ConsentChallengeResponse {
   request_id: string
   challenge_nonce: string
   expires_in_seconds: number
-  notification_sent: boolean
+  notification_dispatch?: 'queued' | 'sent' | 'failed' | 'unavailable'
+  notification_queued?: boolean
+  delivery_status?: 'queued' | 'sent' | 'failed' | 'unavailable' | 'unknown'
+  delivery_error?: string | null
   status: 'pending'
 }
 
@@ -113,11 +116,17 @@ export interface SignedApprovalResponse {
 
 export interface ConsentStatusResponse {
   request_id: string
-  patient_id: string
-  status: 'pending' | 'approved' | 'denied' | 'timeout'
+  patient_id?: string
+  status: 'pending' | 'approved' | 'denied' | 'expired' | 'timeout' | 'cancelled'
+  doctor_status?: 'pending' | 'approved' | 'denied' | 'expired' | 'timeout' | 'cancelled' | 'delivery_failed'
+  delivery_status?: 'queued' | 'sent' | 'failed' | 'unavailable' | 'unknown'
+  delivery_error?: string | null
+  delivery_attempted_at?: string | null
+  delivery_completed_at?: string | null
   consent_token?: string
   scope?: 'clinical' | 'full'
   resolved_at?: string
+  responded_at?: string | null
 }
 
 export interface PatientSummaryResponse {

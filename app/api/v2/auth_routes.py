@@ -436,8 +436,8 @@ async def provider_mfa_setup_verify(
         return {"message": "MFA is already enabled."}
 
     secret = decrypt_mfa_secret(row.mfa_secret_encrypted)
-    from app.services.provider_auth_service import verify_totp_code
-    if not verify_totp_code(secret, payload.totp_code):
+    from app.services.provider_auth_service import verify_totp_code_once
+    if not await verify_totp_code_once(provider.provider.provider_id, secret, payload.totp_code, redis_client=get_redis_client()):
         await append_audit_log(
             actor_uid=provider.actor_uid,
             event_type="PROVIDER_MFA_SETUP_VERIFY_FAILED",
@@ -587,7 +587,7 @@ async def verify_merge_challenge(
 
     # Re-use existing MFA logic
     from app.services.provider_auth_service import (
-        verify_totp_code,
+        verify_totp_code_once,
         _record_failed_mfa_attempt,
         _clear_mfa_fails,
         _is_mfa_rate_limited,
@@ -614,7 +614,7 @@ async def verify_merge_challenge(
         )
 
     mfa_secret = decrypt_mfa_secret(cred.mfa_secret_encrypted)
-    if not verify_totp_code(mfa_secret, payload.totp_code):
+    if not await verify_totp_code_once(provider.provider.provider_id, mfa_secret, payload.totp_code, redis_client=redis):
         await _record_failed_mfa_attempt(provider.provider.provider_id, ip_hash)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

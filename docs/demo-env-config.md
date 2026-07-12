@@ -51,4 +51,4 @@ This script confirms TLS database connectivity, verifies Alembic schema migratio
 
 PUSH_STATUS_TRANSPORT="websocket" is experimental and remains off by default. If enabled, Redis must have keyspace notifications enabled for push request keys. The backend checks CONFIG GET notify-keyspace-events on WebSocket connection; managed Redis providers that block CONFIG GET or leave notifications disabled will receive a clear websocket_unavailable response and should fall back to polling.
 
-Recommended demo setting: keep PUSH_STATUS_TRANSPORT="poll".
+Recommended demo setting: keep PUSH_STATUS_TRANSPORT="poll". Polling now exposes push delivery metadata (`queued`, `sent`, `failed`, `unavailable`) so the doctor UI does not claim notification delivery before the Expo send completes.

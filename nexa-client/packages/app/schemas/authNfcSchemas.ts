@@ -71,6 +71,10 @@ export const ConsentChallengeResponseSchema = z.object({
   status: z.string().min(1, 'status must be present'),
   expires_in_seconds: z.number().int().positive('expires_in_seconds must be positive'),
   challenge_nonce: z.string().nullable().default(null),
+  notification_dispatch: z.enum(['queued', 'sent', 'failed', 'unavailable']).optional(),
+  notification_queued: z.boolean().optional(),
+  delivery_status: z.enum(['queued', 'sent', 'failed', 'unavailable', 'unknown']).optional(),
+  delivery_error: z.string().nullable().optional(),
 })
 
 /**
@@ -83,9 +87,14 @@ export const ConsentChallengeResponseSchema = z.object({
  */
 export const ConsentStatusResponseSchema = z.object({
   request_id: z.string().min(1, 'request_id must be a non-empty string'),
-  status: z.enum(['pending', 'approved', 'denied', 'expired', 'cancelled'], {
-    errorMap: () => ({ message: 'status must be pending, approved, denied, expired, or cancelled' }),
+  status: z.enum(['pending', 'approved', 'denied', 'expired', 'timeout', 'cancelled'], {
+    errorMap: () => ({ message: 'status must be pending, approved, denied, expired, timeout, or cancelled' }),
   }),
+  doctor_status: z.enum(['pending', 'approved', 'denied', 'expired', 'timeout', 'cancelled', 'delivery_failed']).optional(),
+  delivery_status: z.enum(['queued', 'sent', 'failed', 'unavailable', 'unknown']).optional(),
+  delivery_error: z.string().nullable().optional(),
+  delivery_attempted_at: z.string().nullable().optional(),
+  delivery_completed_at: z.string().nullable().optional(),
   responded_at: z.string().nullable().default(null),
 })
 

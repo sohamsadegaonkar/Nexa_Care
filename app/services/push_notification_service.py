@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import httpx
 from dataclasses import dataclass
@@ -9,6 +10,12 @@ from dataclasses import dataclass
 logger = logging.getLogger("nexa_logger")
 
 EXPO_PUSH_API_URL = "https://exp.host/--/api/v2/push/send"
+
+
+def _safe_ref(value: str) -> str:
+    """Return a short non-reversible reference for log correlation."""
+    return hashlib.sha256(str(value).encode("utf-8")).hexdigest()[:12]
+
 
 @dataclass
 class PushDeliveryResult:
@@ -44,6 +51,9 @@ class PushNotificationService:
             "channelId": "consent-requests"
         }
 
+        patient_ref = _safe_ref(patient_id)
+        request_ref = _safe_ref(request_id)
+
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(EXPO_PUSH_API_URL, json=payload)
@@ -54,16 +64,16 @@ class PushNotificationService:
                     # Data is a list of results
                     data = result_data.get("data", [])
                     if data and data[0].get("status") == "ok":
-                        logger.info(f"Push notification sent successfully to {patient_id}")
+                        logger.info("push_notification_sent", extra={"patient_ref": patient_ref, "request_ref": request_ref})
                         return PushDeliveryResult(success=True, message_id=data[0].get("id"))
                     else:
                         error_msg = data[0].get("message") if data else "Unknown Expo error"
-                        logger.error(f"Expo reported delivery failure for {patient_id}: {error_msg}")
+                        logger.error("push_notification_delivery_failed", extra={"patient_ref": patient_ref, "request_ref": request_ref, "error": error_msg})
                         return PushDeliveryResult(success=False, error=error_msg)
                 else:
-                    logger.error(f"Expo Push API returned {response.status_code}: {response.text}")
+                    logger.error("expo_push_api_error", extra={"request_ref": request_ref, "status_code": response.status_code})
                     return PushDeliveryResult(success=False, error=f"HTTP {response.status_code}")
 
         except Exception as exc:
-            logger.error(f"Failed to send push notification to {patient_id}: {exc}")
+            logger.error("push_notification_exception", extra={"patient_ref": patient_ref, "request_ref": request_ref, "error": str(exc)})
             return PushDeliveryResult(success=False, error=str(exc))

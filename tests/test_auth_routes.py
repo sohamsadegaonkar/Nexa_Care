@@ -25,7 +25,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.services.provider_auth_service import ProviderAuthFailure, ProviderAuthResult
+from app.services.provider_auth_service import ProviderAuthFailure, ProviderAuthResult, _consume_totp_counter, verify_totp_code
 
 
 def run(coro):
@@ -206,6 +206,36 @@ class TestMfaFlow(unittest.TestCase):
         _, kwargs = mock_complete.await_args
         self.assertEqual(kwargs["client_ip"], "10.0.0.1")
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_SUCCEEDED")
+
+
+class FakeReplayRedis:
+    def __init__(self) -> None:
+        self.data = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.data:
+            return False
+        self.data[key] = value
+        return True
+
+
+class TestMfaReplayProtection(unittest.TestCase):
+    @patch("app.services.provider_auth_service.get_redis_client")
+    def test_totp_counter_can_only_be_consumed_once(self, mock_redis) -> None:
+        provider_id = uuid.uuid4()
+        fake = FakeReplayRedis()
+        mock_redis.return_value = fake
+
+        self.assertTrue(run(_consume_totp_counter(provider_id, 12345)))
+        self.assertFalse(run(_consume_totp_counter(provider_id, 12345)))
+        self.assertTrue(run(_consume_totp_counter(provider_id, 12346)))
+
+    @patch("app.services.provider_auth_service.get_redis_client", side_effect=ConnectionError("redis down"))
+    def test_totp_replay_store_unavailable_fails_closed(self, _mock_redis) -> None:
+        self.assertFalse(run(_consume_totp_counter(uuid.uuid4(), 12345)))
+
+    def test_invalid_totp_code_still_fails(self) -> None:
+        self.assertFalse(verify_totp_code("", "000000"))
 
 
 if __name__ == "__main__":

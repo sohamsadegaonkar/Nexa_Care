@@ -24,6 +24,9 @@
 **Verification Details:**
 - `ConsentEngine.issue()` now calls `AssuranceVerifier.verify()` to validate that the claimed level (e.g., `push_biometric`) matches a verified record in Redis.
 - Canonical approval signs `request_id|patient_id|provider_id|challenge_nonce|decision|scope|purpose|access_duration|expires_at`; the backend verifies the SHA-256 digest with ECDSA P-256 and uses `biometric_nonce:{nonce}:used` for replay protection.
+- Canonical device keys live in `patient_device_keys` via `/api/v2/patient/devices/enroll`; `/api/v2/push/register-device-key` is deprecated legacy biometric-registry compatibility only.
+- Push pending-request concurrency uses atomic Redis `SET NX EX`; delivery state is tracked separately as `queued`, `sent`, `failed`, or `unavailable` and exposed to polling clients without claiming delivery before the Expo send completes.
+- Provider MFA blocks TOTP replay by atomically consuming the accepted timestep in Redis. MFA replay protection fails closed if Redis cannot store the used timestep.
 
 ---
 
@@ -81,7 +84,7 @@
 
 ## 7. What's NOT Done / Remaining Risks
 
-1. **WebSocket Stability**: The push status transport defaults to `poll` (2s interval). The `websocket` transport is feature-flagged, requires Redis keyspace notifications (`notify-keyspace-events` including keyspace and set/generic/expiry events), and returns a clear polling fallback error if Redis cannot support it.
+1. **WebSocket Stability**: The push status transport defaults to `poll` (2s interval). Push delivery metadata is available through polling; WebSocket remains optional.  The `websocket` transport is feature-flagged, requires Redis keyspace notifications (`notify-keyspace-events` including keyspace and set/generic/expiry events), and returns a clear polling fallback error if Redis cannot support it.
 2. **FHIR R4 Coverage**: The FHIR export uses current structured records but only maps a subset of FHIR R4 resources. Full R4 validation is deferred to Sprint 3.
 3. **Fail-Open Policy**: Rate limiters (Redis outages) still fail-open. While safe for availability, this remains a minor brute-force vector during infra failure.
 4. **Manual Real-Device Validation Required**: enrollment and canonical signed approval are implemented and test-covered, but no fresh physical-device run is evidenced after this fix.

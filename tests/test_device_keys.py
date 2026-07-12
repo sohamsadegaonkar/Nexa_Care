@@ -686,3 +686,16 @@ class TestEnrollmentHappyPathPayload:
         assert "device_public_key: publicKeyDerBase64" in full_flow_body, (
             "Must pass publicKeyDerBase64 as device_public_key to enrollDevice"
         )
+
+
+def test_legacy_register_device_key_is_deprecated_not_canonical() -> None:
+    """Legacy biometric_registry registration must not be the flagship device-key path."""
+    assurance_source = Path("nexa-client/packages/app/api/assurance.ts").read_text()
+    consent_source = Path("app/api/v2/consent_routes.py").read_text()
+    verifier_source = Path("app/services/signed_approval_verifier.py").read_text()
+
+    assert "@deprecated Device enrollment belongs to services/deviceKeys.ts" in assurance_source
+    assert "throw new Error('Use the canonical deviceKeys enrollment service.')" in assurance_source
+    assert "PatientDeviceKey" in consent_source
+    assert "PatientDeviceKey" in verifier_source
+    assert "biometric_registry" not in consent_source

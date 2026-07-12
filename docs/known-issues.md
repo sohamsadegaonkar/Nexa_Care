@@ -21,7 +21,7 @@
 | **Severity** | P1 |
 | **Category** | Missing Feature |
 | **Owner** | WS2 (Patient App) |
-| **Description** | `enrollDeviceKey()` in `nexa-client/packages/app/utils/deviceKey.ts` is implemented — real P-256 keypair generation, `expo-secure-store` for private key, `POST /api/v2/push/register-device-key` — but no screen in the app currently calls it. The SecureDeviceScreen exists in the flow spec but is not wired to invoke enrollment. |
+| **Description** | `/api/v2/push/register-device-key` is deprecated legacy biometric-registry compatibility. Canonical enrollment uses `patient_device_keys` through `/api/v2/patient/devices/enroll` and the active device-key screens/services; the legacy frontend `registerDeviceKey()` function intentionally throws to prevent accidental use. |
 | **Impact** | No real patient will have a usable signing key until a screen calls `enrollDeviceKey()`. Demo must use a pre-seeded test device or manual API call to enroll. |
 | **Mitigation** | For demo: seed a test device via direct API call before the demo. For production: wire SecureDeviceScreen to call `enrollDeviceKey()` on first login. |
 | **Evidence** | `docs/CURRENT-STATE.md §5 item 4` |

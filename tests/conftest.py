@@ -110,8 +110,10 @@ class FakeRedis:
         self.ttls[key] = time.time() + ttl
         return True
 
-    async def set(self, key, value, ex=None):
+    async def set(self, key, value, ex=None, nx=False):
         import time
+        if nx and key in self.data:
+            return False
         self.data[key] = value
         if ex:
             self.ttls[key] = time.time() + ex
@@ -178,8 +180,10 @@ class FakeSyncRedis:
         self._a.ttls[key] = time.time() + ttl
         return True
 
-    def set(self, key, value, ex=None):
+    def set(self, key, value, ex=None, nx=False):
         import time
+        if nx and key in self._a.data:
+            return False
         self._a.data[key] = value
         if ex:
             self._a.ttls[key] = time.time() + ex

@@ -110,6 +110,39 @@ class PushTokenRegistration(BaseModel):
 class DeviceKeyRegistration(BaseModel):
     public_key: str = Field(..., min_length=1, max_length=4096)
 
+
+async def _send_push_and_record_delivery(
+    *,
+    request_id: str,
+    patient_id: str,
+    provider_name: str,
+    purpose: str,
+    expo_push_token: str,
+) -> None:
+    redis = get_redis_client()
+    await service.mark_delivery_attempted(redis, request_id)
+    result = await push_service.send_approval_request(
+        patient_id=patient_id,
+        request_id=request_id,
+        provider_name=provider_name,
+        purpose=purpose,
+        expo_push_token=expo_push_token,
+    )
+    if result is None:
+        await service.mark_delivery_result(
+            redis,
+            request_id,
+            success=False,
+            error="Push delivery did not return a result",
+        )
+        return
+    await service.mark_delivery_result(
+        redis,
+        request_id,
+        success=result.success,
+        error=result.error,
+    )
+
 @router.post("/register-token", status_code=status.HTTP_204_NO_CONTENT)
 async def register_push_token(
     payload: PushTokenRegistration,
@@ -141,13 +174,18 @@ async def register_push_token(
     await db.commit()
     return
 
-@router.post("/register-device-key", status_code=status.HTTP_204_NO_CONTENT)
+@router.post("/register-device-key", status_code=status.HTTP_204_NO_CONTENT, deprecated=True)
 async def register_device_key(
     payload: DeviceKeyRegistration,
     patient_id: str = Depends(get_scoped_session),
     db: AsyncSession = Depends(get_db_session)
 ):
-    """Attach a patient device signing public key to an existing biometric binding."""
+    """Deprecated legacy biometric-registry key attachment.
+
+    Canonical signed approval uses ``patient_device_keys`` via
+    ``/api/v2/patient/devices/enroll`` and ``/api/v2/consent/approve-signed``.
+    This route is retained only for legacy push-approval compatibility.
+    """
     try:
         device_public_key = base64.b64decode(payload.public_key, validate=True)
         public_key = serialization.load_der_public_key(device_public_key)
@@ -216,48 +254,60 @@ async def initiate_push_request(
     )
 
     redis = get_redis_client()
-    
-    # 2. Create the pending request in Redis and Postgres
-    result = await service.create_push_request(
-        redis=redis,
-        db=db,
-        patient_id=payload.patient_id,
-        provider_id=payload.provider_id,
-        purpose=payload.purpose,
-        scope=payload.scope
-    )
-    
-    # Look up the patient's push token
-    stmt = select(PatientPushToken).where(
-        PatientPushToken.patient_id == payload.patient_id,
-        PatientPushToken.is_active
-    ).order_by(PatientPushToken.updated_at.desc()).limit(1)
-    
-    db_result = await db.execute(stmt)
-    push_token_record = db_result.scalar_one_or_none()
-    
-    if not push_token_record:
-        logger.warning(f"PUSH_TOKEN_NOT_FOUND for patient {payload.patient_id}")
+    try:
+        # 2. Create the pending request in Redis and Postgres
+        result = await service.create_push_request(
+            redis=redis,
+            db=db,
+            patient_id=payload.patient_id,
+            provider_id=payload.provider_id,
+            purpose=payload.purpose,
+            scope=payload.scope,
+        )
+        
+        # Look up the patient's push token
+        stmt = select(PatientPushToken).where(
+            PatientPushToken.patient_id == payload.patient_id,
+            PatientPushToken.is_active,
+        ).order_by(PatientPushToken.updated_at.desc()).limit(1)
+        
+        db_result = await db.execute(stmt)
+        push_token_record = db_result.scalar_one_or_none()
+        
+        if not push_token_record:
+            logger.warning(
+                "push_token_not_found",
+                extra={"patient_ref": str(payload.patient_id)[-8:]},
+            )
+            await service.mark_delivery_unavailable(redis, result["request_id"], "No active push token")
+            return {
+                **result,
+                "notification_dispatch": "unavailable",
+                "notification_queued": False,
+                "delivery_status": "unavailable",
+                "fallback": "standard",
+            }
+            
+        # Trigger push asynchronously. The endpoint reports queuing only; the
+        # background task records sent/failed delivery status after the Expo call.
+        background_tasks.add_task(
+            _send_push_and_record_delivery,
+            request_id=result["request_id"],
+            patient_id=payload.patient_id,
+            provider_name=provider.provider.display_name,
+            purpose=payload.purpose,
+            expo_push_token=push_token_record.expo_push_token,
+        )
+        
         return {
             **result,
-            "notification_sent": False,
-            "fallback": "standard"
+            "notification_dispatch": "queued",
+            "notification_queued": True,
+            "delivery_status": "queued",
         }
-        
-    # Trigger push asynchronously
-    background_tasks.add_task(
-        push_service.send_approval_request,
-        patient_id=payload.patient_id,
-        request_id=result["request_id"],
-        provider_name=provider.provider.display_name,
-        purpose=payload.purpose,
-        expo_push_token=push_token_record.expo_push_token
-    )
-    
-    return {
-        **result,
-        "notification_sent": True
-    }
+    except Exception:
+        await push_limiter.release(patient_id=payload.patient_id)
+        raise
 
 @router.post("/{request_id}/respond", deprecated=True)
 async def respond_to_push(
@@ -441,9 +491,9 @@ async def push_status_websocket(
                 break
 
     except WebSocketDisconnect:
-        logger.info(f"WebSocket disconnected for request {request_id}")
+        logger.info("Push WebSocket disconnected", extra={"request_id": request_id})
     except Exception as e:
-        logger.error(f"WebSocket error for request {request_id}: {e}")
+        logger.error("Push WebSocket error", extra={"request_id": request_id, "error": str(e)})
     finally:
         await pubsub.unsubscribe(channel)
         if 'timeout_task' in locals():

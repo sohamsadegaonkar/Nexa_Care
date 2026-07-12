@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch, MagicMock
 import json
 import uuid
+from pathlib import Path
 
 from app.main import app
 from app.core.dependencies import get_current_provider, get_scoped_session, get_db_session
@@ -16,6 +17,11 @@ def mock_redis():
     class FakeRedis:
         def __init__(self):
             self.data = {}
+        async def set(self, key, value, nx=False, ex=None):
+            if nx and key in self.data:
+                return False
+            self.data[key] = value
+            return True
         async def setex(self, key, ttl, value):
             self.data[key] = value
             return True
@@ -52,8 +58,12 @@ async def test_initiate_request_creates_pending_record(client, mock_redis, mock_
         payload = {"patient_id": str(uuid.uuid4()), "provider_id": str(uuid.uuid4()), "purpose": "t", "scope": "s"}
         response = client.post("/api/v2/push/request", json=payload, headers={"Authorization": "Bearer doc"})
         assert response.status_code == 201
-        assert response.json()["status"] == "pending"
-        assert "challenge_nonce" in response.json()
+        body = response.json()
+        assert body["status"] == "pending"
+        assert "challenge_nonce" in body
+        assert body["notification_dispatch"] == "unavailable"
+        assert body["delivery_status"] == "unavailable"
+        assert "notification_sent" not in body
     app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
@@ -74,3 +84,32 @@ async def test_respond_approves(client, mock_redis, mock_db):
             assert response.status_code == 200
             assert response.json()["status"] == "approved"
     app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_delivery_result_updates_status_metadata(mock_redis, mock_db):
+    from app.services.assurance_service import AssuranceService
+
+    service = AssuranceService()
+    created = await service.create_push_request(
+        redis=mock_redis,
+        db=mock_db,
+        patient_id=str(uuid.uuid4()),
+        provider_id=str(uuid.uuid4()),
+        purpose="t",
+        scope="s",
+    )
+    await service.mark_delivery_result(mock_redis, created["request_id"], success=False, error="Expo down")
+    status = await service.get_push_status(mock_redis, mock_db, created["request_id"])
+
+    assert status["status"] == "pending"
+    assert status["doctor_status"] == "delivery_failed"
+    assert status["delivery_status"] == "failed"
+    assert status["delivery_error"] == "Expo down"
+
+
+def test_push_notification_service_does_not_log_raw_patient_id():
+    source = Path("app/services/push_notification_service.py").read_text()
+    assert "to {patient_id}" not in source
+    assert "for {patient_id}" not in source
+    assert "patient_ref" in source

@@ -36,7 +36,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
 
-type ConsentState = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'error' | 'unauthorized' | 'not_found' | 'forbidden'
+type ConsentState = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'delivery_failed' | 'error' | 'unauthorized' | 'not_found' | 'forbidden'
 
 // ── Adaptive polling intervals ──────────────────────────────────────────────
 const POLL_FAST_MS = 2000     // First 20 seconds
@@ -55,6 +55,7 @@ export function WaitingForApprovalScreen() {
   const [consentState, setConsentState] = useState<ConsentState>('pending')
   const [elapsed, setElapsed] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [deliveryStatus, setDeliveryStatus] = useState<string>('queued')
   const [cancelling, setCancelling] = useState(false)
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -104,11 +105,18 @@ export function WaitingForApprovalScreen() {
     if (!requestId) return
     try {
       const data = await NexaApiClient.getConsentStatus(requestId, '') as any
-      const newStatus = data?.status ?? 'pending'
+      const newStatus = data?.doctor_status ?? data?.status ?? 'pending'
+      const nextDeliveryStatus = data?.delivery_status ?? 'queued'
+      setDeliveryStatus(nextDeliveryStatus)
       setConsentState(newStatus as ConsentState)
+      if (newStatus === 'delivery_failed') {
+        setError(data?.delivery_error || 'Could not deliver notification. Ask the patient to open the app or retry.')
+      } else if (nextDeliveryStatus === 'sent') {
+        setError(null)
+      }
 
       // Stop polling on any terminal state
-      if (newStatus === 'approved' || newStatus === 'denied' || newStatus === 'expired' || newStatus === 'cancelled') {
+      if (newStatus === 'approved' || newStatus === 'denied' || newStatus === 'expired' || newStatus === 'timeout' || newStatus === 'cancelled') {
         stopPolling()
         return
       }
@@ -271,7 +279,7 @@ export function WaitingForApprovalScreen() {
 
   // ── Render: Expired / Not Found ───────────────────────────────────────
 
-  if (consentState === 'expired' || consentState === 'not_found') {
+  if (consentState === 'expired' || consentState === 'timeout' || consentState === 'not_found') {
     return (
       <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
         <Clock size={64} color="$yellow10" />
@@ -281,6 +289,28 @@ export function WaitingForApprovalScreen() {
         </Paragraph>
         <XStack gap="$3">
           <Button theme="blue" size="$4" onPress={handleRetry}>New Request</Button>
+          <Button size="$4" chromeless onPress={() => router.push('/doctor/dashboard')}>
+            Back to Dashboard
+          </Button>
+        </XStack>
+      </YStack>
+    )
+  }
+
+
+  // ── Render: Delivery Failed ──────────────────────────────────────────
+
+  if (consentState === 'delivery_failed') {
+    return (
+      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
+        <ShieldAlert size={64} color="$yellow10" />
+        <H4 textAlign="center" color="$yellow10">Notification Not Delivered</H4>
+        <Paragraph textAlign="center" color="$color11" maxWidth={420}>
+          Could not deliver notification. Ask the patient to open the app or retry.
+        </Paragraph>
+        {error && <Text color="$red10" fontSize={14}>{error}</Text>}
+        <XStack gap="$3">
+          <Button theme="blue" size="$4" onPress={handleRetry}>Retry</Button>
           <Button size="$4" chromeless onPress={() => router.push('/doctor/dashboard')}>
             Back to Dashboard
           </Button>
@@ -347,8 +377,9 @@ export function WaitingForApprovalScreen() {
       <Spinner size="large" color="$blue10" />
       <H4 textAlign="center" color="$color12">Waiting for Patient Approval</H4>
       <Paragraph textAlign="center" color="$color11" maxWidth={400}>
-        A consent request has been sent to the patient. Waiting for
-        them to approve or deny. Delivery may not be guaranteed.
+        {deliveryStatus === 'sent'
+          ? 'Notification sent. Waiting for the patient to approve or deny.'
+          : 'Notification queued. Waiting for delivery and patient response.'}
       </Paragraph>
 
       {/* Request ID display */}
