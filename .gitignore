@@ -23,3 +23,5 @@ env/
 
 # Secure local demo keys
 .demo_device_*
+
+.env.alpha
