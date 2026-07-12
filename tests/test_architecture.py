@@ -35,7 +35,7 @@ FAMILY_MODULE_PREFIXES = {
 
 
 def _families_imported(file_path: Path) -> set[str]:
-    tree = ast.parse(file_path.read_text(), filename=str(file_path))
+    tree = ast.parse(file_path.read_text(encoding="utf-8"), filename=str(file_path))
     found: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module:

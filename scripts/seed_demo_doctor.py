@@ -3,7 +3,7 @@
 
 Creates:
 - Hospital: Nexa Care Demo Hospital (NEXA-DEMO-HOSPITAL)
-- Provider: Dr. Meera Joshi (demo.doctor@nexacare.in / Demo@1234)
+- Provider: Dr. Meera Joshi (password supplied through DEMO_PROVIDER_PASSWORD)
 - MFA: disabled (for demo simplicity)
 - Patient: Aarav Sharma (demo NFC card + clinical data)
 - Patient: Priya Patel (second demo patient)
@@ -14,6 +14,7 @@ Run with DATABASE_URL pointed at the target database.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -27,7 +28,6 @@ if str(ROOT) not in sys.path:
 
 from app.core.database import get_session_factory  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402
-from app.models.patient_device_keys import PatientDeviceKey  # noqa: E402
 from app.models.provider import (  # noqa: E402
     AffiliationType,
     HospitalRegistry,
@@ -35,15 +35,12 @@ from app.models.provider import (  # noqa: E402
     ProviderHospitalAffiliation,
     ProviderIdentity,
 )
-from app.services.provider_auth_service import (  # noqa: E402
-    hash_provider_password,
-    issue_provider_session_token,
-)
+from app.services.provider_auth_service import hash_provider_password  # noqa: E402
 
 # ── Demo credentials ─────────────────────────────────────────────────────────
 
 DEMO_PROVIDER_EMAIL = "demo.doctor@nexacare.in"
-DEMO_PROVIDER_PASSWORD = "Demo@1234"
+DEMO_PROVIDER_PASSWORD = os.getenv("DEMO_PROVIDER_PASSWORD")
 DEMO_HOSPITAL_CODE = "NEXA-DEMO-HOSPITAL"
 DEMO_NFC_UID = "04:B3:C1:DE:55:01"
 
@@ -148,26 +145,6 @@ async def seed_nfc_card(session, patient_id: uuid.UUID, provider_id: uuid.UUID) 
     await session.execute(stmt)
 
 
-async def seed_patient_device(session, patient_id: uuid.UUID) -> None:
-    """Ensure the demo patient has an active device key (required for consent push)."""
-    stmt = select(PatientDeviceKey).where(
-        PatientDeviceKey.patient_id == patient_id,
-        PatientDeviceKey.status == "active",
-    ).limit(1)
-    result = await session.execute(stmt)
-    device = result.scalar_one_or_none()
-
-    if device is None:
-        device = PatientDeviceKey(
-            patient_id=patient_id,
-            device_label="demo-device",
-            public_key="demo-public-key-not-for-production",
-            status="active",
-        )
-        session.add(device)
-        await session.flush()
-
-
 async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> None:
     """Insert clinical shard row if missing."""
     await session.execute(
@@ -201,6 +178,12 @@ async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> No
 
 
 async def main() -> int:
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
+    if env in {"prod", "production"}:
+        raise RuntimeError(f"Refusing to seed demo doctor in production environment ('{env}').")
+    if not DEMO_PROVIDER_PASSWORD:
+        raise RuntimeError("Missing required script environment variable: DEMO_PROVIDER_PASSWORD")
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         try:
@@ -209,11 +192,9 @@ async def main() -> int:
 
             # Patient 1: Aarav Sharma (NFC card holder)
             await seed_nfc_card(session, DEMO_PATIENT_1_ID, provider_id)
-            await seed_patient_device(session, DEMO_PATIENT_1_ID)
             await seed_clinical_records(session, DEMO_PATIENT_1_ID, "aarav")
 
             # Patient 2: Priya Patel (manual search only)
-            await seed_patient_device(session, DEMO_PATIENT_2_ID)
             await seed_clinical_records(session, DEMO_PATIENT_2_ID, "priya")
 
             await session.commit()
@@ -221,18 +202,11 @@ async def main() -> int:
             await session.rollback()
             raise
 
-    provider_token: str | None = None
-    try:
-        provider_token = await issue_provider_session_token(provider_id)
-    except Exception as exc:
-        print(f"WARNING: Provider bearer token was not issued: {type(exc).__name__}: {exc}")
-
     print("\n" + "=" * 72)
     print("NEXA CARE DEMO DOCTOR SEEDED")
     print("=" * 72)
     print("Doctor Name:     Dr. Meera Joshi")
     print(f"Doctor Email:    {DEMO_PROVIDER_EMAIL}")
-    print(f"Doctor Password: {DEMO_PROVIDER_PASSWORD}")
     print(f"Provider ID:     {provider_id}")
     print(f"Hospital ID:     {hospital_id}")
     print()
@@ -242,8 +216,6 @@ async def main() -> int:
     print()
     print("Patient 2 (Manual): Priya Patel")
     print(f"  Patient ID:    {DEMO_PATIENT_2_ID}")
-    if provider_token:
-        print(f"\nBearer Token:    {provider_token}")
     print("=" * 72 + "\n")
     return 0
 

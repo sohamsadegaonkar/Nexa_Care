@@ -9,6 +9,11 @@ __pycache__/
 
 # Environments
 .env
+.env.*.backup
+.env.backup-*
+*.local
+alpha-test-credentials.local.txt
+environment-validation*.tmp
 .venv/
 venv/
 ENV/

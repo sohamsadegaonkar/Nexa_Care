@@ -29,7 +29,7 @@ KEY_FILE_PATH = ROOT / ".demo_device_private_key.pem"
 
 
 def enroll_demo_device() -> dict[str, str]:
-    env = os.getenv("ENVIRONMENT", "development").lower().strip()
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
     if env in {"prod", "production"}:
         raise RuntimeError(f"Refusing to enroll demo device in production environment ('{env}').")
 

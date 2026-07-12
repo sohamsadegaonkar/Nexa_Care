@@ -225,7 +225,7 @@ async def seed_aarav_sharma(session: AsyncSession) -> None:
 
 
 async def main() -> None:
-    env = os.getenv("ENVIRONMENT", "development").lower().strip()
+    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
     if env in {"prod", "production"}:
         raise RuntimeError(f"Refusing to seed demo patient in production environment ('{env}').")
 
