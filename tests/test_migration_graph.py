@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260713_device_key_timestamps"
+EXPECTED_HEAD = "20260714_provider_schema"
 
 
 def _scripts() -> ScriptDirectory:
@@ -42,7 +42,7 @@ def test_no_root_revision_references_cross_root_tables() -> None:
 
 
 def test_device_timestamp_correction_descends_from_previous_head() -> None:
-    correction = _scripts().get_revision(EXPECTED_HEAD)
+    correction = _scripts().get_revision("20260713_device_key_timestamps")
     assert correction is not None
     assert correction.down_revision == "20260712_tombstone_integrity"
 

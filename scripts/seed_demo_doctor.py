@@ -19,8 +19,8 @@ import sys
 import uuid
 from pathlib import Path
 
-from sqlalchemy import select, text
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import String, bindparam, select, text
+from sqlalchemy.dialects.postgresql import JSONB, insert
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -151,10 +151,16 @@ async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> No
         text(
             "INSERT INTO nexa_clinical "
             "(masked_internal_id, diagnoses, lab_results, prescriptions) "
-            "SELECT :patient_id, :diagnoses, :lab_results, :prescriptions "
+            "SELECT CAST(:patient_id AS VARCHAR(64)), :diagnoses, :lab_results, :prescriptions "
             "WHERE NOT EXISTS ("
-            "  SELECT 1 FROM nexa_clinical WHERE masked_internal_id = :patient_id"
+            "  SELECT 1 FROM nexa_clinical "
+            "  WHERE masked_internal_id = CAST(:patient_id AS VARCHAR(64))"
             ")"
+        ).bindparams(
+            bindparam("patient_id", type_=String(64)),
+            bindparam("diagnoses", type_=JSONB),
+            bindparam("lab_results", type_=JSONB),
+            bindparam("prescriptions", type_=JSONB),
         ),
         {
             "patient_id": str(patient_id),
