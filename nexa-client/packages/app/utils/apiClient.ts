@@ -82,6 +82,20 @@ export interface ConsentChallengeResponse {
   status: 'pending'
 }
 
+export interface FullConsentChallenge {
+  request_id: string
+  patient_id: string
+  provider_id: string
+  provider_name: string
+  hospital_name: string
+  purpose: string
+  scope: string
+  access_duration: number
+  challenge_nonce: string
+  expires_at: string
+  status: string
+}
+
 export interface SignedApprovalRequest {
   request_id: string
   patient_id: string
@@ -94,9 +108,7 @@ export interface SignedApprovalRequest {
 export interface SignedApprovalResponse {
   request_id: string
   status: 'approved' | 'denied'
-  consent_token: string | null
-  scope: 'clinical' | 'full' | null
-  expires_at: string | null
+  responded_at: string
 }
 
 export interface ConsentStatusResponse {
@@ -347,11 +359,28 @@ export const NexaApiClient = {
     })
   },
 
+  fetchConsentChallenge(requestId: string): Promise<FullConsentChallenge> {
+    return request<FullConsentChallenge>(`/api/v2/consent/challenge/${requestId}`, { method: 'GET' })
+  },
+
   approveSignedConsent(payload: SignedApprovalRequest): Promise<SignedApprovalResponse> {
     return request<SignedApprovalResponse>('/api/v2/consent/approve-signed', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
+  },
+
+  denySignedConsent(payload: SignedApprovalRequest): Promise<SignedApprovalResponse> {
+    if (payload.decision !== 'denied') throw new Error('denySignedConsent requires decision=denied')
+    return request<SignedApprovalResponse>('/api/v2/consent/approve-signed', { method: 'POST', body: JSON.stringify(payload) })
+  },
+
+  revokeDevice(deviceId: string): Promise<{ device_id: string; status: string; revoked_at: string }> {
+    return request(`/api/v2/patient/devices/${deviceId}/revoke`, { method: 'POST' })
+  },
+
+  providerLogin(payload: unknown): Promise<unknown> {
+    return request('/api/v2/auth/login', { method: 'POST', body: JSON.stringify(payload) }, {}, true)
   },
 
   getConsentStatus(requestId: string, hospitalId: string): Promise<ConsentStatusResponse> {
@@ -513,6 +542,6 @@ export const apiClient = {
   get: <T, R = ApiResponse<T>>(path: string, config?: ApiRequestConfig) => transport<T>(path, "GET", undefined, config) as Promise<R>,
   post: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) => transport<T>(path, "POST", body, config) as Promise<R>,
   put: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) => transport<T>(path, "PUT", body, config) as Promise<R>,
-  patch: <T>(path: string, body?: unknown, config?: ApiRequestConfig) => transport<T>(path, "PATCH", body, config),
-  delete: <T>(path: string, config?: ApiRequestConfig) => transport<T>(path, "DELETE", undefined, config),
+  patch: <T,>(path: string, body?: unknown, config?: ApiRequestConfig) => transport<T>(path, "PATCH", body, config),
+  delete: <T,>(path: string, config?: ApiRequestConfig) => transport<T>(path, "DELETE", undefined, config),
 }

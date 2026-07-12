@@ -53,7 +53,6 @@ export function ScannerScreen({
 
   // Assurance flow states
   const [patientPolicy, setPatientPolicy] = useState<ConsentAssurance>('standard')
-  const [showBiometric, setShowBiometric] = useState(false)
 
   // Polling states
   const [pollingRequestId, setPollingRequestId] = useState<string | null>(null)
@@ -144,8 +143,6 @@ export function ScannerScreen({
       })
 
       setShowConsentModal(false)
-      setShowPushApproval(false)
-      setShowBiometric(false)
 
       router.push(
         `/patient/${encodeURIComponent(effectivePatientId)}?consentToken=${encodeURIComponent(
@@ -207,8 +204,7 @@ export function ScannerScreen({
         setShowConsentModal(true)
       }
     } else if (policy === 'biometric_confirmed') {
-      setShowConsentModal(false)
-      setShowBiometric(true)
+      await handleGenerateConsent()
     } else {
       // Standard - proceed immediately
       await proceedWithConsent('standard')
@@ -281,16 +277,6 @@ export function ScannerScreen({
     )
   }
 
-  if (showBiometric) {
-    return (
-      <BiometricPrompt
-        onSuccess={handleBiometricSuccess}
-        onCancel={handleBiometricCancel}
-      />
-    )
-  }
-
-  // ─────────────────────────────────────────────
   // MAIN SCANNER UI
   // ─────────────────────────────────────────────
   return (

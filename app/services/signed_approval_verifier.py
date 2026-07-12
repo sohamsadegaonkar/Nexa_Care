@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import time
 import uuid
@@ -15,7 +16,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from cryptography.hazmat.primitives import hashes, serialization
-from cryptography.hazmat.primitives.asymmetric import ec
+from cryptography.hazmat.primitives.asymmetric import ec, utils
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -119,7 +120,11 @@ class SignedApprovalVerifier:
                     continue
                 for candidate_bytes in signing_inputs:
                     try:
-                        pub_key.verify(raw_sig, candidate_bytes, ec.ECDSA(hashes.SHA256()))
+                        pub_key.verify(
+                            raw_sig,
+                            hashlib.sha256(candidate_bytes).digest(),
+                            ec.ECDSA(utils.Prehashed(hashes.SHA256())),
+                        )
                         matched_device_id = str(dev_key.id)
                         break
                     except Exception:

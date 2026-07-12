@@ -26,6 +26,8 @@ CONSENT_ROUTES_PATH = ROOT / "app" / "api" / "v2" / "consent_routes.py"
 SIGNED_VERIFIER_PATH = ROOT / "app" / "services" / "signed_approval_verifier.py"
 
 CONSENT_SIGNING_PATH = SERVICES_DIR / "consentSigning.ts"
+DEVICE_KEYS_PATH = SERVICES_DIR / "deviceKeys.ts"
+API_CLIENT_PATH = ROOT / "nexa-client/packages/app/utils/apiClient.ts"
 PUSH_NOTIFICATIONS_PATH = SERVICES_DIR / "pushNotifications.ts"
 CONSENT_REQUEST_PATH = FEATURES_DIR / "ConsentRequestScreen.tsx"
 BIOMETRIC_APPROVAL_PATH = FEATURES_DIR / "BiometricApprovalScreen.tsx"
@@ -37,7 +39,11 @@ APPROVAL_RESULT_PATH = FEATURES_DIR / "ApprovalResultScreen.tsx"
 
 def _read(path: Path) -> str:
     assert path.exists(), f"File missing: {path}"
-    return path.read_text(encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    if path == CONSENT_SIGNING_PATH:
+        text += "\n" + DEVICE_KEYS_PATH.read_text(encoding="utf-8")
+        text += "\n" + API_CLIENT_PATH.read_text(encoding="utf-8")
+    return text
 
 
 def _strip_comments(code: str) -> str:
@@ -70,14 +76,14 @@ class TestConsentSigningService:
     def test_uses_secure_store_for_private_key(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         assert "expo-secure-store" in code, "Must use expo-secure-store for private key"
-        assert "PRIVATE_KEY_STORE_KEY" in code, "Must reference private key storage key"
+        assert "DEVICE_PRIVATE_KEY_STORAGE_KEY" in code, "Must reference private key storage key"
 
     def test_uses_apiclient(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         assert "apiClient" in code, "Must use shared apiClient"
 
     def test_no_raw_fetch(self) -> None:
-        code = _read(CONSENT_SIGNING_PATH)
+        code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
         code_no_comments = _strip_comments(code)
         assert not re.search(r"\bfetch\s*\(", code_no_comments), "Must not use raw fetch()"
 
@@ -154,8 +160,8 @@ class TestConsentSigningService:
         approve_func_start = code.find("async function approveWithBiometric")
         assert approve_func_start > 0, "approveWithBiometric function must exist"
         approve_body = code[approve_func_start:code.find("\n}", approve_func_start + 50) + 2]
-        bio_pos = approve_body.find("authenticateWithBiometrics")
-        sign_pos = approve_body.find("signConsentDecision")
+        bio_pos = approve_body.find("requireBiometrics")
+        sign_pos = approve_body.find("submitSignedDecision")
         assert bio_pos > 0, "Must call authenticateWithBiometrics in approve flow"
         assert sign_pos > 0, "Must call signConsentDecision in approve flow"
         assert bio_pos < sign_pos, (
@@ -171,7 +177,7 @@ class TestConsentSigningService:
         assert "authenticateWithBiometrics" not in deny_body, (
             "Deny flow must NOT require biometric authentication per WS2"
         )
-        assert "signConsentDecision" in deny_body, (
+        assert "submitSignedDecision" in deny_body, (
             "Deny flow must still sign to prove authenticity"
         )
 
@@ -651,7 +657,7 @@ class TestConsentFlowE2E:
         assert "authenticateWithBiometrics" not in deny_body, (
             "Deny must NOT gate with biometric"
         )
-        assert "signConsentDecision" in deny_body, "Deny must still sign"
+        assert "submitSignedDecision" in deny_body, "Deny must still sign"
         assert "denied" in deny_body, "Must sign with decision=denied"
 
         # Step 4: Submits to same endpoint

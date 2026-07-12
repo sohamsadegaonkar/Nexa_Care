@@ -1,6 +1,5 @@
-import axios, { type AxiosResponse } from 'axios'
 
-import { apiClient } from '../utils/apiClient'
+import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface NfcResolveRequest {
   card_uid: string
@@ -53,14 +52,14 @@ export async function resolveNfcCardV1(cardUid: string): Promise<NfcResolveRespo
   try {
     const response = await apiClient.post<
       NfcResolveResponse,
-      AxiosResponse<NfcResolveResponse>,
+      ApiResponse<NfcResolveResponse>,
       NfcResolveRequest
     >('/api/v2/nfc/resolve', { card_uid: normalized })
 
     return response.data
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
+    if (error instanceof ApiError) {
+      const status = error.status
       if (status === 404) {
         throw new NfcResolveError('Card not found', 'NFC_CARD_NOT_FOUND', status)
       }

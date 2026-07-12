@@ -1,7 +1,7 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCAN = [ROOT / 'nexa-client/packages/app/features', ROOT / 'nexa-client/packages/app/services', ROOT / 'nexa-client/packages/app/utils', ROOT / 'nexa-client/apps/next/app', ROOT / 'nexa-client/apps/expo/app']
+SCAN = [ROOT / 'nexa-client/packages/app/api', ROOT / 'nexa-client/packages/app/features', ROOT / 'nexa-client/packages/app/services', ROOT / 'nexa-client/packages/app/utils', ROOT / 'nexa-client/apps/next/app', ROOT / 'nexa-client/apps/expo/app']
 
 def _sources():
     for root in SCAN:

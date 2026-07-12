@@ -1,5 +1,4 @@
-import type { AxiosRequestConfig } from 'axios'
-import { apiClient } from '../utils/apiClient'
+import { apiClient, type ApiRequestConfig } from '../utils/apiClient'
 
 export interface PatientPolicyResponse {
   patient_uuid: string
@@ -14,7 +13,7 @@ export async function getPatientPolicy(patientUuid: string): Promise<PatientPoli
 export async function updatePatientPolicy(
   patientUuid: string,
   policy: string,
-  config?: AxiosRequestConfig
+  config?: ApiRequestConfig
 ): Promise<PatientPolicyResponse> {
   const res = await apiClient.put<PatientPolicyResponse>(
     `/api/v2/patient/${patientUuid}/policy`,

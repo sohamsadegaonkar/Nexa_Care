@@ -216,14 +216,17 @@ async def initiate_push_request(
         "notification_sent": True
     }
 
-@router.post("/{request_id}/respond")
+@router.post("/{request_id}/respond", deprecated=True)
 async def respond_to_push(
     request_id: str,
     payload: PushRespondPayload,
     patient_id: str = Depends(get_scoped_session),
     db: AsyncSession = Depends(get_db_session)
 ):
-    """Patient responds to a push approval request with biometric signature."""
+    """LEGACY 3-field approval compatibility endpoint.
+
+    Deprecated: production patient approval uses POST /api/v2/consent/approve-signed.
+    """
     redis = get_redis_client()
     
     # 1. Verify Biometric Signature

@@ -1,6 +1,5 @@
-import axios, { type AxiosResponse } from 'axios'
 
-import { apiClient } from '../utils/apiClient'
+import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface PatientMergeRequest {
   old_patient_uuid: string
@@ -42,7 +41,7 @@ export async function mergePatients(
   try {
     const response = await apiClient.post<
       PatientMergeResponse,
-      AxiosResponse<PatientMergeResponse>,
+      ApiResponse<PatientMergeResponse>,
       PatientMergeRequest
     >('/api/v2/patient/merge', payload, {
       headers: {
@@ -52,10 +51,10 @@ export async function mergePatients(
 
     return response.data
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
+    if (error instanceof ApiError) {
+      const status = error.status
       throw new MergeError(
-        error.response?.data?.detail || 'Merge failed',
+        error.message || 'Merge failed',
         'MERGE_FAILED',
         status
       )

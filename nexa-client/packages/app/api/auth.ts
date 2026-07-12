@@ -1,4 +1,3 @@
-import axios from 'axios'
 import { apiClient } from '../utils/apiClient'
 
 export interface MergeChallengeResponse {
@@ -16,7 +15,7 @@ export async function verifyMergeChallenge(
   challengeToken: string,
   totpCode: string
 ): Promise<{ challenge_token: string; verified: boolean }> {
-  const res = await apiClient.post('/api/v2/auth/challenge/merge/verify', {
+  const res = await apiClient.post<{ challenge_token: string; verified: boolean }>('/api/v2/auth/challenge/merge/verify', {
     challenge_token: challengeToken,
     totp_code: totpCode,
   })

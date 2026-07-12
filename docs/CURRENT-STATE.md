@@ -4,7 +4,7 @@
 
 **Verification method:** Every claim below is mapped to a specific implementation file or integration test.
 
-**Last updated:** 2026-07-07 (verified against source directly, not against prior test/doc claims)
+**Last updated:** 2026-07-11 (source and automated tests verified; manual device validation pending)
 
 ---
 
@@ -14,16 +14,16 @@
 
 | Feature | implementation | Status | Verification |
 |---|---|---|---|
-| **Async Push Flow** | `app/services/assurance_service.py` | **Complete** | `tests/integration/test_push_roundtrip.py` |
-| **Biometric Signatures** | `app/services/biometric_signature_verifier.py` | **ECDSA P-256 Enabled** | `tests/test_biometric_signature.py` |
+| **Canonical Signed Approval** | `app/api/v2/consent_routes.py` (`/approve-signed`) and `app/services/signed_approval_verifier.py` | **Implemented and test-covered** | `tests/test_signed_approval.py`, `tests/integration/test_consent_flow_qa.py` |
+| **Biometric Signatures** | `services/deviceKeys.ts` and `SignedApprovalVerifier` | **ECDSA P-256 Enabled** | Canonical 9-field cross-contract tests |
 | **Assurance Verifier** | `app/services/assurance_verifier.py` | **Integrated** | `tests/integration/test_full_chain.py` |
 | **Consent Revocation** | `app/services/consent_engine.py` (`revoke`) | **Enabled** | `tests/integration/test_consent_revoke_integration.py` |
-| **Device Key Registration (backend)** | `app/api/v2/assurance_routes.py` (`/register-device-key`), `app/services/biometric_registry.py` (`update_device_public_key`) | **Complete** | Update-only; requires an existing provider-enrolled biometric binding, cannot create one |
-| **Client-Side Signing** | `nexa-client/packages/app/utils/deviceKey.ts` | **Real ECDSA P-256, no UI entry point yet** | See §5 item 4 — implemented but unreachable from any screen today |
+| **Device Enrollment** | `app/api/v2/device_routes.py`, `services/deviceKeys.ts` | **Implemented** | Public key only; private key remains in SecureStore |
+| **Client-Side Signing** | `services/deviceKeys.ts` | **Reachable through canonical biometric screens** | Manual real-device validation required |
 
 **Verification Details:**
 - `ConsentEngine.issue()` now calls `AssuranceVerifier.verify()` to validate that the claimed level (e.g., `push_biometric`) matches a verified record in Redis.
-- Biometric signatures are verified using ECDSA P-256 over a 32-byte nonce challenge (`biometric_nonce:{nonce}:used` prevents replay).
+- Canonical approval signs `request_id|patient_id|provider_id|challenge_nonce|decision|scope|purpose|access_duration|expires_at`; the backend verifies the SHA-256 digest with ECDSA P-256 and uses `biometric_nonce:{nonce}:used` for replay protection.
 
 ---
 
@@ -71,5 +71,5 @@
 1. **WebSocket Stability**: The push status transport defaults to `poll` (2s interval). The `websocket` transport is feature-flagged and requires more load testing before production rollout.
 2. **FHIR R4 Coverage**: The FHIR export in `fhir_converter.py` only maps a subset of fields. Full R4 validation is deferred to Sprint 3.
 3. **Fail-Open Policy**: Rate limiters (Redis outages) still fail-open. While safe for availability, this remains a minor brute-force vector during infra failure.
-4. **Device Key Enrollment Has No UI Entry Point**: `enrollDeviceKey()` (`nexa-client/packages/app/utils/deviceKey.ts`) is implemented and correct — real P-256 keypair generation, `expo-secure-store` for the private key, `POST /api/v2/push/register-device-key` on the backend — but nothing in the app currently calls it. No patient will have a usable signing key until this is wired into a real screen (first-login flow or a dedicated security settings screen; this project has not yet decided which). Until that's done, `respondToPushRequest`'s signature verification can only succeed for manually-seeded test data, not a real patient.
-5. **Signing Key Is Not Hardware-Isolated**: `signPushChallenge()` produces a real ECDSA-P256 signature, not a placeholder — this replaces what was previously a `sig_v1_...` mock string. However, the private key is briefly resident in JS memory during signing rather than never leaving a Secure Enclave/StrongBox. It is encrypted at rest by the OS keystore (`expo-secure-store`) and gated by a biometric prompt before each use, but this is a weaker guarantee than true hardware-isolated signing. If that stronger guarantee is required, it needs a native module and is a separate, larger task — not a quick swap.
+4. **Manual Real-Device Validation Required**: enrollment and canonical signed approval are implemented and test-covered, but no fresh physical-device run is evidenced after this fix.
+5. **Signing Key Is Not Hardware-Isolated**: `signConsentChallenge()` signs the canonical 9-field SHA-256 digest with ECDSA P-256. However, the private key is briefly resident in JS memory during signing rather than never leaving a Secure Enclave/StrongBox. It is encrypted at rest by the OS keystore (`expo-secure-store`) and gated by a biometric prompt before each use, but this is a weaker guarantee than true hardware-isolated signing. If that stronger guarantee is required, it needs a native module and is a separate, larger task — not a quick swap.

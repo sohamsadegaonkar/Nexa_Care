@@ -226,23 +226,23 @@
 
 | Test # | Scenario | Result | Notes |
 |--------|----------|--------|-------|
-| 1 | Device Enrollment | ✅ PASS | Real P-256 keypair, Keychain storage |
-| 2 | Push Notification Receipt | ✅ PASS | Expo push delivered in <3s |
-| 3 | Approval with Face ID | ✅ PASS | Real ECDSA signature verified by backend |
-| 4 | Doctor Sees Approval | ✅ PASS | Auto-transition to record viewer |
-| 5 | Denial Path | ✅ PASS | No Face ID for denial, signed denial |
-| 6 | Expiry Path | ✅ PASS | 120s TTL enforced, expired challenge rejected |
-| 7 | Break-Glass Access | ✅ PASS | Reason code + justification + 15-min TTL + audit |
-| 8 | Consent Revocation | ✅ PASS | Immediate revocation, doctor blocked |
-| 9 | Cross-Doctor Rejection | ✅ PASS | Token binding enforced |
-| 10 | Revoked Device Rejection | ✅ PASS | Revoked key rejected at verify time |
+| 1 | Device Enrollment | Manual validation required | Real P-256 keypair, Keychain storage |
+| 2 | Push Notification Receipt | Manual validation required | Expo push delivered in <3s |
+| 3 | Approval with Face ID | Manual validation required | Real ECDSA signature verified by backend |
+| 4 | Doctor Sees Approval | Manual validation required | Auto-transition to record viewer |
+| 5 | Denial Path | Manual validation required | No Face ID for denial, signed denial |
+| 6 | Expiry Path | Manual validation required | 120s TTL enforced, expired challenge rejected |
+| 7 | Break-Glass Access | Manual validation required | Reason code + justification + 15-min TTL + audit |
+| 8 | Consent Revocation | Manual validation required | Immediate revocation, doctor blocked |
+| 9 | Cross-Doctor Rejection | Manual validation required | Token binding enforced |
+| 10 | Revoked Device Rejection | Manual validation required | Revoked key rejected at verify time |
 
 **Overall: Ready for real-device validation; not yet independently verified after the device-key integration fix.**
 
 **Key findings:**
-- All signatures are real P-256 ECDSA — no mocks or bypasses in the consent flow
-- Push notification delivery is reliable on WiFi (<3s latency)
-- Face ID integration works correctly for approval; denial does NOT require Face ID (correct UX decision)
+- Signed approval uses real P-256 ECDSA in automated compatibility tests; physical-device behavior is not yet independently verified
+- Push notification delivery requires fresh manual real-device validation
+- Biometric approval is implemented; Face ID or fingerprint behavior requires a fresh real-device run
 - Backend re-validates consent on every data request (frontend lock is UX only)
 - Deep-link fallback works when push notification doesn't arrive
 
@@ -251,3 +251,15 @@
 - No native NFC scanning on the doctor app — manual UID entry only
 - WebSocket push transport not enabled — polling only (2s interval)
 - No server-side session revocation on logout
+
+## Required Manual QA After This Fix
+
+- [ ] Enroll the patient device and confirm the backend stores only its public key.
+- [ ] Create a canonical doctor consent request.
+- [ ] Open the patient challenge from the notification or deep link.
+- [ ] Confirm the biometric prompt appears.
+- [ ] Confirm the app signs the exact canonical 9-field payload.
+- [ ] Confirm the backend verifies the signature and marks the request approved.
+- [ ] Confirm doctor polling observes approved and unlocks only the authorized record scope.
+- [ ] Confirm patient access history records the event.
+- [ ] Record build commit, device/OS, timestamps, and reproducible evidence before changing this report to PASS.

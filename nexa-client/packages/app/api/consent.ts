@@ -1,6 +1,5 @@
-import axios, { type AxiosResponse } from 'axios'
 
-import { apiClient } from '../utils/apiClient'
+import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface RoutineConsentIssueRequest {
   patient_id: string
@@ -55,7 +54,7 @@ export async function requestRoutineConsent(patientId: string, purpose: string):
   try {
     const response = await apiClient.post<
       RoutineConsentIssueResponse,
-      AxiosResponse<RoutineConsentIssueResponse>,
+      ApiResponse<RoutineConsentIssueResponse>,
       RoutineConsentIssueRequest
     >('/api/v2/consent/routine/issue', {
       patient_id: normalizedPatientId,
@@ -64,8 +63,8 @@ export async function requestRoutineConsent(patientId: string, purpose: string):
 
     return response.data.consent_token
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
+    if (error instanceof ApiError) {
+      const status = error.status
 
       if (status === 400 || status === 422) {
         throw new RoutineConsentError(
@@ -162,7 +161,7 @@ export async function requestBreakGlassConsent(
   try {
     const response = await apiClient.post<
       BreakGlassConsentIssueResponse,
-      AxiosResponse<BreakGlassConsentIssueResponse>,
+      ApiResponse<BreakGlassConsentIssueResponse>,
       BreakGlassConsentIssueRequest
     >('/api/v2/consent/break-glass/issue', {
       patient_id: normalizedPatientId,
@@ -172,8 +171,8 @@ export async function requestBreakGlassConsent(
 
     return response.data.consent_token
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
+    if (error instanceof ApiError) {
+      const status = error.status
 
       if (status === 400 || status === 422) {
         throw new BreakGlassConsentError(

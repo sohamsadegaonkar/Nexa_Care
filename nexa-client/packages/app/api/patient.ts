@@ -1,6 +1,5 @@
-import axios, { type AxiosResponse } from 'axios'
 
-import { apiClient } from '../utils/apiClient'
+import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface PatientDemographics {
   patient_name?: string
@@ -81,7 +80,7 @@ export async function fetchPatientRecord(
   try {
     const response = await apiClient.get<
       PatientRecordResponse,
-      AxiosResponse<PatientRecordResponse>
+      ApiResponse<PatientRecordResponse>
     >(`/api/v2/patient/${encodeURIComponent(normalizedPatientId)}/record`, {
       headers: {
         'X-Consent-Token': normalizedConsentToken,
@@ -91,8 +90,8 @@ export async function fetchPatientRecord(
 
     return response.data
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
+    if (error instanceof ApiError) {
+      const status = error.status
 
       if (status === 401 || status === 403) {
         throw new PatientRecordError(

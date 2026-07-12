@@ -1,6 +1,5 @@
-import axios, { type AxiosResponse } from 'axios'
 
-import { apiClient } from '../utils/apiClient'
+import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export type ConsentAssurance =
   | 'standard'
@@ -61,7 +60,7 @@ export async function issueRoutineConsentV1(
   try {
     const response = await apiClient.post<
       ConsentResponse,
-      AxiosResponse<ConsentResponse>,
+      ApiResponse<ConsentResponse>,
       RoutineConsentRequest
     >('/api/v2/consent/routine/issue', {
       ...payload,
@@ -69,10 +68,10 @@ export async function issueRoutineConsentV1(
     })
     return response.data
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
-      const status = error.response?.status
+    if (error instanceof ApiError) {
+      const status = error.status
       throw new ConsentError(
-        error.response?.data?.detail || 'Failed to issue consent',
+        error.message || 'Failed to issue consent',
         'CONSENT_FAILED',
         status
       )
@@ -90,16 +89,16 @@ export async function issueBreakGlassV1(
   try {
     const response = await apiClient.post<
       ConsentResponse,
-      AxiosResponse<ConsentResponse>,
+      ApiResponse<ConsentResponse>,
       BreakGlassRequest
     >('/api/v2/consent/break-glass/issue', payload)
     return response.data
   } catch (error: unknown) {
-    if (axios.isAxiosError(error)) {
+    if (error instanceof ApiError) {
       throw new ConsentError(
-        error.response?.data?.detail || 'Break-glass failed',
+        error.message || 'Break-glass failed',
         'CONSENT_FAILED',
-        error.response?.status
+        error.status
       )
     }
     throw new ConsentError('Break-glass request failed', 'CONSENT_FAILED')
