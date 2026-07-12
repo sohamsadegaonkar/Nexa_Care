@@ -18,6 +18,7 @@ if "document_processor" not in sys.modules:
 os.environ.setdefault("KEK_ROOT_SECRET", "test-kek-root-secret-32-bytes-minimum")
 os.environ.setdefault("NEXA_PEPPER_KEY", "test-pepper-key")
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ["TRUSTED_HOSTS"] = "localhost,127.0.0.1,testserver"
 
 from app.main import app
 

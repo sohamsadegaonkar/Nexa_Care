@@ -137,8 +137,75 @@ def upgrade() -> None:
     )
     op.create_index('idx_consent_sessions_token', 'consent_sessions', ['consent_token'])
 
+    # Tables used by the application and by later Alembic revisions.  Older
+    # deployments may already have created these through the legacy SQL
+    # bootstrap files, so preserve those tables when present.
+    inspector = sa.inspect(op.get_bind())
+    if not inspector.has_table('nexa_vault'):
+        op.create_table(
+            'nexa_vault',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+            sa.Column('masked_internal_id', sa.String(64), nullable=False, unique=True),
+            sa.Column('patient_name', sa.String(255)),
+            sa.Column('phone', sa.String(32)),
+            sa.Column('aadhaar_abha_id', sa.String(64)),
+            sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+        )
+        op.create_index('ix_nexa_vault_masked_internal_id', 'nexa_vault', ['masked_internal_id'])
+    if not inspector.has_table('nexa_clinical'):
+        op.create_table(
+            'nexa_clinical',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+            sa.Column('masked_internal_id', sa.String(64), nullable=False),
+            sa.Column('diagnoses', postgresql.JSONB()),
+            sa.Column('lab_results', postgresql.JSONB()),
+            sa.Column('prescriptions', postgresql.JSONB()),
+            sa.Column('clinical_data', postgresql.JSONB()),
+            sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+        )
+        op.create_index('ix_nexa_clinical_masked_internal_id', 'nexa_clinical', ['masked_internal_id'])
+    if not inspector.has_table('consent_grant_log'):
+        op.create_table(
+            'consent_grant_log',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+            sa.Column('token_hash', sa.String(64), nullable=False, unique=True),
+            sa.Column('patient_id', sa.String(64), nullable=False),
+            sa.Column('clinician_id', sa.String(64), nullable=False),
+            sa.Column('purpose', sa.String(64), nullable=False),
+            sa.Column('scope', postgresql.JSONB(), nullable=False),
+            sa.Column('is_break_glass', sa.Boolean(), nullable=False, server_default=sa.text('false')),
+            sa.Column('reason_code', sa.String(256)),
+            sa.Column('issued_at', sa.TIMESTAMP(timezone=True), nullable=False),
+            sa.Column('expires_at', sa.TIMESTAMP(timezone=True), nullable=False),
+            sa.Column('consumed_at', sa.TIMESTAMP(timezone=True)),
+            sa.Column('revoked_at', sa.TIMESTAMP(timezone=True)),
+            sa.Column('revoked_reason', sa.String(256)),
+            sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.CheckConstraint('NOT is_break_glass OR reason_code IS NOT NULL', name='ck_consent_grant_log_break_glass_requires_reason'),
+        )
+        op.create_index('ix_consent_grant_log_token_hash', 'consent_grant_log', ['token_hash'])
+        op.create_index('ix_consent_grant_log_patient_id', 'consent_grant_log', ['patient_id'])
+        op.create_index('ix_consent_grant_log_clinician_id', 'consent_grant_log', ['clinician_id'])
+    if not inspector.has_table('biometric_registry'):
+        op.create_table(
+            'biometric_registry',
+            sa.Column('id', postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text('gen_random_uuid()')),
+            sa.Column('masked_internal_id', postgresql.UUID(as_uuid=True), nullable=False, unique=True),
+            sa.Column('bio_verifier_hash', sa.CHAR(64), nullable=False),
+            sa.Column('revoked_at', sa.TIMESTAMP(timezone=True)),
+            sa.Column('enrolled_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('created_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+            sa.Column('updated_at', sa.TIMESTAMP(timezone=True), nullable=False, server_default=sa.text('now()')),
+        )
+        op.create_index('idx_biometric_registry_patient', 'biometric_registry', ['masked_internal_id'])
+
 
 def downgrade() -> None:
+    # These four tables may predate Alembic (legacy SQL bootstrap).  Do not
+    # destroy potentially pre-existing healthcare data during downgrade.
     op.drop_table('consent_sessions')
     op.drop_table('patient_tombstones')
     op.drop_table('audit_ledger')

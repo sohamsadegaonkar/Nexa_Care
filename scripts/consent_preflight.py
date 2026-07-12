@@ -66,7 +66,7 @@ async def run_preflight() -> bool:
     # 2. Verify Consent Endpoints Respond (Read-Only)
     print(" [2/4] Verifying Consent Endpoints Respond (Read-Only)...")
     try:
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://localhost")
         res = client.get("/health")
         if res.status_code == 200:
             print("       ✅ API Service healthy (HTTP 200).")

@@ -20,6 +20,19 @@ The backend requires `SUPABASE_URL`, `SUPABASE_KEY` (service-role key), `DATABAS
 
 `ENV` is canonical. The three reviewed legacy seed/enrollment scripts accept `ENVIRONMENT` only as a compatibility fallback when `ENV` is absent. Optional runtime controls are `ENCRYPTION_BACKEND`, `DATABASE_ECHO_SQL`, `MAX_UPLOAD_BYTES`, `PUSH_STATUS_TRANSPORT`, `DOCUMENT_AI_API_KEY`, `DOCUMENT_AI_API_URL`, `CORS_ALLOWED_ORIGINS`, and `TRUSTED_HOSTS`.
 
+For local alpha and in-process tests, use:
+
+```env
+TRUSTED_HOSTS=localhost,127.0.0.1,testserver
+```
+
+`localhost` supports browser/local API calls, `127.0.0.1` supports direct
+loopback calls, and `testserver` is the synthetic hostname used by
+Starlette/FastAPI `TestClient`. Physical-phone testing may additionally
+require the laptop's current LAN IP in the ignored local environment. Never
+commit a workstation LAN IP. Deployed environments must list only their real
+deployment domains.
+
 Generate every value independently and never reuse secrets:
 
 ```powershell
