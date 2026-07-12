@@ -253,9 +253,16 @@ app.add_middleware(PrometheusMiddleware)
 app.mount("/metrics", make_asgi_app())
 
 
+@app.get("/healthz", tags=["health"])
+async def liveness_check() -> dict:
+    """Dependency-free liveness probe for deployment platforms."""
+
+    return {"status": "ok"}
+
+
 @app.get("/health", tags=["health"])
 async def health_check() -> dict:
-    """Liveness/readiness probe. Verifies Redis and Postgres reachability."""
+    """Readiness probe. Verifies Redis and Postgres reachability."""
 
     checks: dict[str, str] = {}
 

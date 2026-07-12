@@ -372,6 +372,20 @@ class TestNexaCareLifecycle(unittest.TestCase):
 
     # ── Health ───────────────────────────────────────────────────────────
 
+    def test_healthz_liveness_check(self):
+        response = self.client.get("/healthz")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    def test_healthz_does_not_call_dependency_health_checks(self):
+        with patch("app.main.get_redis_client") as redis_check, patch("app.main.get_async_engine") as postgres_check:
+            response = self.client.get("/healthz")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+        redis_check.assert_not_called()
+        postgres_check.assert_not_called()
+
     def test_health_check(self):
         response = self.client.get("/health")
         self.assertEqual(response.status_code, 200)

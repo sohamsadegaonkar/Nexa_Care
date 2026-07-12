@@ -40,6 +40,12 @@ PUSH_STATUS_TRANSPORT="poll"  # websocket requires Redis keyspace notifications;
 
 ## 2. Infrastructure Preflight Verification Check
 
+Render and other hosting platforms should use `GET /healthz` as the
+dependency-free liveness probe. It returns only `{"status": "ok"}` and does
+not touch Redis, Postgres, KMS, Supabase, or any other external dependency.
+Use `GET /health` for operational readiness because it verifies Redis and
+Postgres reachability.
+
 Before routing traffic to the demo environment, operators must execute the automated setup verification script:
 ```bash
 ./scripts/setup_demo_env.sh

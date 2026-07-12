@@ -134,6 +134,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/pipeline/fields/{field_id}/reject"),
     ("POST", "/api/v2/pipeline/fields/{field_id}/edit"),
     ("POST", "/api/v2/pipeline/jobs/{job_id}/commit"),
+    ("GET", "/healthz"),
     ("GET", "/health"),
     # FastAPI auto-generates these documentation routes
     ("GET", "/docs"),

@@ -29,7 +29,8 @@ pip install -r requirements.txt -r requirements_dev.txt
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Health check: `GET http://localhost:8000/health`  
+Liveness check: `GET http://localhost:8000/healthz`  
+Readiness check: `GET http://localhost:8000/health`  
 API docs: `http://localhost:8000/docs`
 
 ### 3. Tests
