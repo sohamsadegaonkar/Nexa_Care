@@ -68,3 +68,37 @@ def test_failed_validation_escalates_risk():
     val_res = {"is_valid": False, "validation_errors": ["Out of bounds"]}
     risk = classify_risk("sugar", "999 mg/dL", val_res)
     assert risk == "HIGH_RISK"
+
+
+def test_unknown_reference_lab_escalates_to_high_risk():
+    """Unknown lab reference ranges are review-required and escalate risk."""
+    val_res = {
+        "is_valid": True,
+        "validation_errors": ["unknown reference range requires review"],
+        "reference_range": {
+            "unit": "mg/dL",
+            "is_abnormal": None,
+            "reference_range_known": False,
+            "unknown_reference_range": True,
+            "requires_review": True,
+        },
+    }
+    risk = classify_risk("lab_result", "450 mg/dL", val_res)
+    assert risk == "HIGH_RISK"
+
+
+def test_score_extracted_field_marks_unknown_lab_high_risk():
+    """End-to-end scoring keeps generic unknown labs out of LOW/MEDIUM risk."""
+    field = ExtractedField(
+        field_id="f-unknown-lab",
+        job_id="job-1",
+        field_name="lab_result",
+        raw_value="450 mg/dL",
+        confidence=0.99,
+        risk_level="LOW_RISK",
+    )
+    scored = score_extracted_field(field)
+    assert scored.risk_level == "HIGH_RISK"
+    assert scored.validation_result is not None
+    assert scored.validation_result.reference_range is not None  # type: ignore[union-attr]
+    assert scored.validation_result.reference_range["unknown_reference_range"] is True  # type: ignore[union-attr]

@@ -32,13 +32,13 @@ This authoritative specification defines the deterministic validation rules exec
 - **Failure Action:** Sets `is_valid = false`, appends error `"Medication name failed formulary verification match"`.
 
 ### 1.6 Diagnostic Laboratory Reference Interval Evaluation (`abnormal_lab_flag_check`)
-- **Applicability:** Diagnostic laboratory evaluations (`hba1c`, `potassium`, `sodium`, `creatinine`).
-- **Rule Specification:** Evaluates quantitative value against established reference bounds (`reference_range.min` to `reference_range.max`).
-- **Failure Action:** If value falls outside bounds, sets `reference_range.is_abnormal = true`, flags `passed = false` on check, and escalates observation risk tier to `HIGH_RISK`.
+- **Applicability:** Diagnostic laboratory evaluations with configured ranges (`sugar`, `fasting_glucose`, `hba1c`).
+- **Rule Specification:** Evaluates quantitative value against established reference bounds (`reference_range.min` to `reference_range.max`). Generic labs (`lab_result`, `lab_value`, `cbc`, `lipid_panel`) require a numeric value and recognized unit but are marked `reference_range_known=false` when no configured range exists.
+- **Failure Action:** If value falls outside configured bounds, sets `reference_range.is_abnormal = true` and escalates observation risk tier to `HIGH_RISK`. Unknown/generic ranges set `unknown_reference_range=true` and `requires_review=true`, which blocks auto-approval.
 
 ---
 
 ## 2. Validation Execution & Pipeline Integration
 
 When `can_auto_approve(...)` evaluates an observation:
-If any automated validation check fails (`ValidationResult.is_valid == false` or `ValidationResult.validation_errors` contains items), the candidate field is strictly blocked from auto-approval and assigned `status="needs_review"`.
+If any automated validation check fails (`ValidationResult.is_valid == false`, `ValidationResult.validation_errors` contains items, or `reference_range.requires_review == true`), the candidate field is strictly blocked from auto-approval and assigned `status="needs_review"`.

@@ -15,8 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from app.ai.auto_approval import should_auto_approve
+from app.ai.medical_validator import validate_field
 from app.core.consent_gate import ConsentCapability
 from app.main import app
+from app.models.extracted_field import ExtractedField
 from app.services.biometric_signature_verifier import BiometricSignatureVerifier
 from app.services.consent_engine import validate as validate_consent_capability
 
@@ -120,6 +123,19 @@ def test_invariant_no_critical_risk_field_auto_approves():
         and field["validation_result"]["is_valid"]
     )
     assert not is_auto_approved, "Invariant broken: CRITICAL_RISK evaluated to auto_approved"
+
+
+def test_invariant_unknown_reference_lab_cannot_auto_approve():
+    """Unknown lab reference ranges must require human review in Alpha."""
+    field = ExtractedField(
+        field_name="lab_result",
+        raw_value="450 mg/dL",
+        confidence=0.99,
+        risk_level="LOW_RISK",
+        validation_result=validate_field("lab_result", "450 mg/dL"),
+    )
+    decision = should_auto_approve(field)
+    assert not decision.auto_approve, "Invariant broken: unknown lab range auto-approved"
 
 
 def test_invariant_no_consent_grant_without_verified_signed_approval(admin_headers):

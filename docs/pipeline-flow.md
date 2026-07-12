@@ -26,13 +26,13 @@ Human review (WS8) → Commit approved fields to patient record (WS3) → Audit
 - Each observation is bound to an `ExtractedField` structure with mandatory spatial and scoring slots: `confidence` $[0.0, 1.0]$, `source_page` (1-indexed), and `source_bbox` $[x, y, w, h]$.
 
 ### Phase 3: Clinical Validation & Scoring (`WS5` Integration)
-- Candidate fields pass through reference range rules (`validation_result.reference_range`).
+- Candidate fields pass through deterministic validation and reference range rules (`validation_result.reference_range`). Unknown/generic lab ranges are marked `requires_review=true` rather than assigned fabricated normal bounds.
 - Risk scoring assigns one of four clinical tiers: `LOW_RISK`, `MEDIUM_RISK`, `HIGH_RISK`, `CRITICAL_RISK`.
 - **Strict Adjudication Rules (Alpha vs. Pilot Behavior):**
   - **Alpha Rule (`v2.0.0-alpha`):**
     - `LOW_RISK`: May auto-approve if `confidence >= 0.95`, validation is clean (`is_valid == true`), source evidence exists (`source_page` / `source_bbox`), and no clinical conflict exists.
     - `MEDIUM_RISK`: May auto-approve only if `confidence >= 0.97`, validation is clean, source evidence exists, and no clinical conflict exists.
-    - `HIGH_RISK` / `CRITICAL_RISK` / Conflicting Data / Failed Validation: Always route to human review (`status="needs_review"`).
+    - `HIGH_RISK` / `CRITICAL_RISK` / Conflicting Data / Failed Validation / Unknown Reference Range: Always route to human review (`status="needs_review"`).
   - **Pilot Rule (`v2.1.0-pilot`):**
     - `MEDIUM_RISK` strictly defaults to human review unless hospital organizational governance policy explicitly enables auto-approval for low-consequence diagnostic parameters.
   - **Human Review Routing:** Any candidate field failing auto-approval criteria is assigned `status="needs_review"` and linked to a `ReviewQueueItem`.
@@ -43,7 +43,7 @@ Human review (WS8) → Commit approved fields to patient record (WS3) → Audit
 - Adjudicated fields transition to `status="approved"`, `status="rejected"`, or `status="edited"`.
 
 ### Phase 5: Patient Record Commit & Hard Audit (`POST /api/v2/pipeline/jobs/{job_id}/commit`)
-- Only fields with `status` in `{"auto_approved", "approved", "edited"}` are passed to `ingest_extracted_fields(...)` (`WS3`). Unreviewed (`needs_review`) or `rejected` fields are strictly blocked (`400 Bad Request`).
+- Only fields with `status` in `{"auto_approved", "approved", "edited"}` are passed to `ingest_extracted_fields(...)` (`WS3`). Unreviewed (`needs_review`) fields block commit with `409 Conflict`; `rejected` fields are skipped and are not ingested.
 - Approved fields are routed by clinical name into persistent sub-models (`Vitals`, `Medication`, `LabResult`, `Allergy`).
 - Chronological `TimelineEvent` records are appended with full provenance display.
 - Every ingested observation triggers an immutable audit log entry (`EXTRACTED_DATA_INGESTED`) chained into the Supabase ledger.

@@ -73,7 +73,7 @@ _BP_FIELDS = frozenset({"bp", "blood_pressure", "systolic_bp", "diastolic_bp"})
 _DOSAGE_FIELDS = frozenset({"dosage", "strength", "frequency"})
 _MEDICATION_FIELDS = frozenset({"medication", "prescription", "drug"})
 _DATE_FIELDS = frozenset({"date", "recorded_at", "prescribed_at", "uploaded_at", "dob"})
-_LAB_FIELDS = frozenset({"sugar", "fasting_glucose", "hba1c", "lab_result", "lab"})
+_LAB_FIELDS = frozenset({"sugar", "fasting_glucose", "hba1c", "lab_result", "lab", "lab_value", "cbc", "lipid_panel"})
 
 # ── Reference ranges for common lab observations ────────────────────────────
 _LAB_REFERENCE_RANGES: dict[str, dict[str, Any]] = {
@@ -332,7 +332,8 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
                 "message": f"Numeric value with unit ({unit_str})",
             })
 
-            # Abnormal lab flagging against reference range
+            # Abnormal lab flagging against configured reference ranges only.
+            # Unknown/generic lab fields must not receive fake normal bounds.
             is_abnorm = False
             ref_def = _LAB_REFERENCE_RANGES.get(fname)
             if ref_def is not None:
@@ -345,20 +346,30 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
                     "max": high,
                     "unit": ref_def["unit"],
                     "is_abnormal": is_abnorm,
+                    "reference_range_known": True,
+                    "unknown_reference_range": False,
+                    "requires_review": False,
                 }
+                checks.append({
+                    "check_name": "abnormal_lab_check",
+                    "passed": True,
+                    "message": "Abnormal lab flagged" if is_abnorm else "Normal lab bounds",
+                })
             else:
+                msg = "unknown reference range requires review"
+                errors.append(msg)
                 ref_range = {
-                    "min": 0.0,
-                    "max": 100.0,
                     "unit": unit_str,
-                    "is_abnormal": False,
+                    "is_abnormal": None,
+                    "reference_range_known": False,
+                    "unknown_reference_range": True,
+                    "requires_review": True,
                 }
-
-            checks.append({
-                "check_name": "abnormal_lab_check",
-                "passed": True,
-                "message": "Abnormal lab flagged" if is_abnorm else "Normal lab bounds",
-            })
+                checks.append({
+                    "check_name": "reference_range_known",
+                    "passed": False,
+                    "message": msg,
+                })
         else:
             is_valid = False
             msg = "Missing numeric lab value or recognized unit"

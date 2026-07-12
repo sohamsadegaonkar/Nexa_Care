@@ -23,6 +23,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.ai.auto_approval import should_auto_approve
+from app.ai.medical_validator import validate_field
 from app.models.extracted_field import ExtractedField
 from app.services.pipeline_safety import can_auto_approve
 from app.core.dependencies import get_current_provider
@@ -272,6 +273,23 @@ def test_missing_confidence_forces_review():
     assert not decision.auto_approve, (
         "Field without confidence must not be auto-approved"
     )
+
+
+
+
+def test_unknown_reference_lab_never_auto_approved():
+    """T-08l: Unknown lab reference ranges are not eligible for auto-approval."""
+    field = ExtractedField(
+        field_name="lab_result",
+        raw_value="450 mg/dL",
+        confidence=0.99,
+        risk_level="LOW_RISK",
+        status="auto_approved",
+        validation_result=validate_field("lab_result", "450 mg/dL"),
+    )
+    decision = should_auto_approve(field)
+    assert not decision.auto_approve
+    assert "validation" in decision.reason.lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

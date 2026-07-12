@@ -120,10 +120,10 @@ understanding; WS5 is the safety net.
 
 | Component | Method | What It Checks |
 |---|---|---|
-| Medical Validator | regex + `difflib` fuzzy match + reference ranges | BP format, lab value + unit, medication 3-component (drug + strength + frequency), drug formulary ≥ 0.65 ratio, sugar 70–100 normal / >100 abnormal, HbA1c 4.0–5.6 %, future-date rejection |
+| Medical Validator | regex + `difflib` fuzzy match + configured reference ranges | BP format, lab value + unit, medication 3-component (drug + strength + frequency), drug formulary ≥ 0.65 ratio, sugar 70–100 normal / >100 abnormal, HbA1c 4.0–5.6 %, future-date rejection, unknown generic lab ranges marked review-required |
 | Confidence Scorer | heuristic ± on extractor confidence | Format conformance bonus / malus |
 | Risk Classifier | field-type catalog + escalation rules | Base tier by category, +1 on abnormal / validation failure / conflict, allergy never below HIGH |
-| Conflict Detector | value comparison + cross-reactivity | Sugar Δ >15, BP mismatch (after stripping "mmHg"), allergy↔medication contraindication, penicillin + "-cillin" |
+| Conflict Detector | value comparison + cross-reactivity | Sugar Δ >15, BP mismatch (after stripping "mmHg"), HbA1c / heart rate / SpO2 / temperature / weight thresholds, same-unit generic lab discrepancies, incompatible generic lab units, allergy↔medication contraindication, penicillin + "-cillin" |
 | Auto-Approval Engine | threshold decision matrix | Single source of truth, no other module may implement auto-approval logic |
 
 ---
@@ -181,7 +181,7 @@ policies, roles, documents, patient records, review.
    is deterministic rules. API server runs GPU-free.
 
 2. **Fail-closed auto-approval** — if anything is wrong (validation
-   failure, conflict, missing confidence, HIGH/CRITICAL risk, allergy),
+   failure, review-required unknown reference range, conflict, missing confidence, HIGH/CRITICAL risk, allergy),
    the field goes to human review. False-auto-approve rate is 0%.
 
 3. **Allergy invariant** — allergy fields are forced to HIGH_RISK and

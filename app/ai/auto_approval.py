@@ -59,26 +59,47 @@ _THRESHOLDS: dict[str, float] = {
 
 def _extract_validation_diagnostics(
     field: ExtractedField,
-) -> tuple[bool, bool, list[str]]:
-    """Return ``(is_valid, has_conflict, validation_errors)`` from whatever
-    shape ``validation_result`` takes (model, dict, or None).
+) -> tuple[bool, bool, list[str], bool]:
+    """Return validation safety diagnostics from ``validation_result``.
+
+    The fourth value is a hard review-required signal used for cases where a
+    field is syntactically valid but lacks enough clinical context for safe
+    auto-approval, such as an unknown lab reference range.
     """
     val_res: Any = getattr(field, "validation_result", None)
     if val_res is None:
-        return True, False, []
+        return True, False, [], False
 
     if isinstance(val_res, dict):
+        ref = val_res.get("reference_range")
+        requires_review = bool(val_res.get("requires_review", False))
+        if isinstance(ref, dict):
+            requires_review = requires_review or bool(
+                ref.get("requires_review")
+                or ref.get("unknown_reference_range")
+                or ref.get("reference_range_known") is False
+            )
         return (
             val_res.get("is_valid", True),
             val_res.get("has_conflict", False),
             val_res.get("validation_errors") or [],
+            requires_review,
         )
 
     # Pydantic ValidationResult model
+    ref = getattr(val_res, "reference_range", None)
+    requires_review = bool(getattr(val_res, "requires_review", False))
+    if isinstance(ref, dict):
+        requires_review = requires_review or bool(
+            ref.get("requires_review")
+            or ref.get("unknown_reference_range")
+            or ref.get("reference_range_known") is False
+        )
     return (
         getattr(val_res, "is_valid", True),
         getattr(val_res, "has_conflict", False),
         getattr(val_res, "validation_errors", []) or [],
+        requires_review,
     )
 
 
@@ -115,7 +136,7 @@ def should_auto_approve(field: ExtractedField) -> AutoApprovalDecision:
         )
 
     # ── 4. Validation result diagnostics ───────────────────────────────────
-    is_valid, vr_has_conflict, validation_errors = _extract_validation_diagnostics(field)
+    is_valid, vr_has_conflict, validation_errors, vr_requires_review = _extract_validation_diagnostics(field)
 
     if vr_has_conflict:
         return AutoApprovalDecision(
@@ -133,6 +154,12 @@ def should_auto_approve(field: ExtractedField) -> AutoApprovalDecision:
         return AutoApprovalDecision(
             auto_approve=False,
             reason=f"Validation errors: {', '.join(validation_errors[:3])}",
+        )
+
+    if vr_requires_review:
+        return AutoApprovalDecision(
+            auto_approve=False,
+            reason="Validation requires human review",
         )
 
     # ── 5. Risk-tier thresholds ────────────────────────────────────────────

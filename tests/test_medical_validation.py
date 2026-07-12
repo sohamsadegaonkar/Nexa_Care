@@ -30,6 +30,8 @@ Verifies:
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.ai.conflict_detector import detect_conflicts
 from app.ai.medical_validator import validate_field
 from app.models.extracted_field import ExtractedField
@@ -485,3 +487,125 @@ def test_unrecognised_field_name_no_validation_errors():
     res = validate_field("hair_colour", "brown")
     assert res.is_valid is True
     assert res.checks == []
+
+
+# ── Unknown Lab Safety Guardrails ────────────────────────────────────────────
+
+
+def test_generic_lab_unknown_reference_requires_review():
+    """Generic labs with no configured range must require human review."""
+    res = validate_field("lab_result", "450 mg/dL")
+    assert res.is_valid is True
+    assert "unknown reference range requires review" in res.validation_errors
+    assert res.reference_range is not None
+    assert res.reference_range["reference_range_known"] is False
+    assert res.reference_range["unknown_reference_range"] is True
+    assert res.reference_range["requires_review"] is True
+    assert res.reference_range["is_abnormal"] is None
+
+
+def test_generic_lab_unknown_reference_not_fake_normal():
+    """Unknown labs must not receive fabricated 0-100 normal bounds."""
+    res = validate_field("lab_value", "450 mg/dL")
+    assert res.reference_range is not None
+    assert "min" not in res.reference_range
+    assert "max" not in res.reference_range
+    assert res.reference_range["is_abnormal"] is None
+
+
+def test_medical_validator_source_has_no_fake_generic_lab_range():
+    """Guard against reintroducing the old fake generic lab normal range."""
+    source = Path("app/ai/medical_validator.py").read_text()
+    assert "unknown reference range requires review" in source
+    assert '"min": 0.0' not in source
+    assert '{"min": 0.0, "max": 100.0' not in source
+
+
+# ── Expanded Conflict Detection Guardrails ──────────────────────────────────
+
+
+def _field(field_id: str, field_name: str, value: str) -> ExtractedField:
+    return ExtractedField(
+        field_id=field_id,
+        job_id="j-conflict",
+        field_name=field_name,
+        raw_value=value,
+        confidence=0.98,
+    )
+
+
+def test_hba1c_discrepancy_conflict():
+    """HbA1c readings with materially different values force review."""
+    f1 = _field("a1", "hba1c", "7.2 %")
+    f2 = _field("a2", "hba1c", "9.8 %")
+    conflicts = detect_conflicts([f1, f2])
+    assert len(conflicts) == 1
+    assert conflicts[0].conflict_type == "VALUE_DISCREPANCY"
+    assert f1.has_conflict is True
+    assert f2.has_conflict is True
+
+
+def test_close_hba1c_no_conflict():
+    """Close HbA1c values do not create false conflicts."""
+    f1 = _field("a1", "hba1c", "7.2 %")
+    f2 = _field("a2", "hba1c", "7.3 %")
+    assert detect_conflicts([f1, f2]) == []
+
+
+def test_heart_rate_discrepancy_conflict():
+    """Materially different pulse/heart-rate values force review."""
+    f1 = _field("hr1", "heart_rate", "78 bpm")
+    f2 = _field("hr2", "pulse", "140 bpm")
+    conflicts = detect_conflicts([f1, f2])
+    assert len(conflicts) == 1
+    assert f1.has_conflict is True
+    assert f2.has_conflict is True
+
+
+def test_close_heart_rate_no_conflict():
+    """Small heart-rate variance is not treated as a conflict."""
+    assert detect_conflicts([_field("hr1", "heart_rate", "78 bpm"), _field("hr2", "pulse", "82 bpm")]) == []
+
+
+def test_spo2_discrepancy_conflict():
+    """Materially different oxygen saturation values force review."""
+    f1 = _field("o1", "spo2", "98 %")
+    f2 = _field("o2", "sp_o2", "88 %")
+    conflicts = detect_conflicts([f1, f2])
+    assert len(conflicts) == 1
+    assert f1.has_conflict is True
+    assert f2.has_conflict is True
+
+
+def test_temperature_unit_mismatch_conflict():
+    """Temperature values with incompatible units require review."""
+    f1 = _field("t1", "temperature", "37 C")
+    f2 = _field("t2", "temp", "98.6 F")
+    conflicts = detect_conflicts([f1, f2])
+    assert len(conflicts) == 1
+    assert "unit" in conflicts[0].message.lower()
+
+
+def test_generic_lab_same_unit_discrepancy_conflict():
+    """Generic lab values of the same type and unit use conservative thresholds."""
+    f1 = _field("l1", "lab_result", "120 mg/dL")
+    f2 = _field("l2", "lab_result", "180 mg/dL")
+    conflicts = detect_conflicts([f1, f2])
+    assert len(conflicts) == 1
+    assert f1.has_conflict is True
+    assert f2.has_conflict is True
+
+
+def test_generic_lab_incompatible_units_conflict():
+    """Generic labs with incompatible units are forced to review."""
+    f1 = _field("l1", "lab_value", "120 mg/dL")
+    f2 = _field("l2", "lab_value", "6.7 mmol/L")
+    conflicts = detect_conflicts([f1, f2])
+    assert len(conflicts) == 1
+    assert "unit" in conflicts[0].message.lower()
+
+
+def test_unrelated_numeric_fields_do_not_conflict():
+    """Different clinical categories are not compared to each other."""
+    conflicts = detect_conflicts([_field("x1", "hba1c", "7.2 %"), _field("x2", "heart_rate", "140 bpm")])
+    assert conflicts == []

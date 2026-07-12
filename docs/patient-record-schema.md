@@ -77,8 +77,8 @@ Stores quantitative and qualitative diagnostic laboratory evaluations.
 | `test_name` | VARCHAR(128)| No | | LOINC / test label (`hba1c`, `cholesterol`) |
 | `value` | VARCHAR(64) | No | | Observed value (`6.8`, `195`) |
 | `unit` | VARCHAR(32) | No | | Unit of measurement (`%`, `mg/dL`) |
-| `reference_range`| VARCHAR(64)| No | | Standard clinical bounds (`4.0-5.6 %`) |
-| `is_abnormal` | BOOLEAN | No | `false` | Flag for out-of-bounds observations |
+| `reference_range`| VARCHAR(64)| No | | Standard clinical bounds (`4.0-5.6 %`) after human/validator confirmation |
+| `is_abnormal` | BOOLEAN | No | `false` | Flag for out-of-bounds observations; unknown automated ranges require review before write |
 | `recorded_at` | TIMESTAMPTZ | No | `now()` | Specimen / analysis timestamp |
 | `source` | VARCHAR(20) | No | `'manual'` | Provenance (`manual` \| `ai_extracted`) |
 | `confidence` | FLOAT | Yes | `NULL` | AI confidence score `[0.0, 1.0]` |

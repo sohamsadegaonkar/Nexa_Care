@@ -88,9 +88,13 @@ interface ValidationResult {
   is_valid: boolean;
   validation_errors: string[];
   reference_range?: {
-    min: number;
-    max: number;
+    min?: number;
+    max?: number;
     unit: string;
+    is_abnormal?: boolean | null;
+    reference_range_known?: boolean;
+    unknown_reference_range?: boolean;
+    requires_review?: boolean;
   };
 }
 

@@ -65,7 +65,13 @@
 - **FHIR export source of truth**: `app/api/v2/fhir_routes.py` reads current structured records first and maps them to lightweight FHIR R4 resources. The legacy `nexa_clinical` table is deprecated fallback support for older rows only.
 - **FHIR coverage limitation**: mapping is partial (MedicationRequest, Observation, AllergyIntolerance, Condition from timeline/legacy diagnoses). Full FHIR profile validation remains future work.
 
-## 5. Audit & Observability
+## 5. AI Pipeline Safety Layer
+
+- **Unknown lab ranges fail closed**: generic labs such as `lab_result`, `lab_value`, `cbc`, and `lipid_panel` are validated for numeric value and recognized unit, but no fabricated `0-100` normal range is assigned. They carry `reference_range_known=false`, `unknown_reference_range=true`, and `requires_review=true`, which blocks auto-approval and escalates risk to review.
+- **Conflict detection expanded**: intra-job discrepancy checks now cover sugar, blood pressure, HbA1c, pulse/heart rate, SpO2, temperature, weight, same-unit generic labs, and incompatible generic lab units. Any conflict marks involved fields `has_conflict=true`.
+- **Commit safety**: `needs_review` fields block pipeline commit; `rejected` fields are skipped and never ingested.
+
+## 6. Audit & Observability
 
 - **Chain Integrity**: Every audit write is hash-chained. The sequence `Record(N).previous_hash = SHA256(Record(N-1))` is enforced.
 - **Tamper Evidence**: `scripts/verify_audit_chain.py` successfully detects unauthorized database modifications.
@@ -73,7 +79,7 @@
 
 ---
 
-## 6. What's NOT Done / Remaining Risks
+## 7. What's NOT Done / Remaining Risks
 
 1. **WebSocket Stability**: The push status transport defaults to `poll` (2s interval). The `websocket` transport is feature-flagged, requires Redis keyspace notifications (`notify-keyspace-events` including keyspace and set/generic/expiry events), and returns a clear polling fallback error if Redis cannot support it.
 2. **FHIR R4 Coverage**: The FHIR export uses current structured records but only maps a subset of FHIR R4 resources. Full R4 validation is deferred to Sprint 3.

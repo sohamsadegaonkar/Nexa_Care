@@ -21,9 +21,13 @@ interface ValidationResult {
   checks: ValidationCheck[];   // Granular execution trace of all diagnostic checks run
   validation_errors: string[]; // Aggregated error strings if is_valid === false
   reference_range?: {          // Diagnostic laboratory biological reference interval
-    min: number;
-    max: number;
+    min?: number;
+    max?: number;
     unit: string;
+    is_abnormal?: boolean | null;
+    reference_range_known?: boolean;
+    unknown_reference_range?: boolean;
+    requires_review?: boolean;
   };
 }
 ```
@@ -56,6 +60,7 @@ Workstream 4's pipeline orchestrator strictly enforces the following adjudicatio
 | `HIGH_RISK` | Any ($0.0 - 1.0$) | Any | Any | Any | `needs_review` |
 | `CRITICAL_RISK`| Any ($0.0 - 1.0$) | Any | Any | Any | `needs_review` |
 | **Any Tier** | Any ($0.0 - 1.0$) | `false` | Any | Any | `needs_review` |
+| **Any Tier** | Any ($0.0 - 1.0$) | `requires_review=true` | Any | Any | `needs_review` |
 | **Any Tier** | Any ($0.0 - 1.0$) | Any | `true` | Any | `needs_review` |
 | **Any Tier** | Any ($0.0 - 1.0$) | Any | Any | `true` (`field_name == "allergy"`) | Forced to `HIGH_RISK` $\rightarrow$ `needs_review` |
 
@@ -67,7 +72,7 @@ To maintain strict clinical safety while enabling institutional flexibility at d
 
 ### Alpha vs. Pilot Medium-Risk Adjudication
 - **Alpha Behavior (`v2.0.0-alpha`):**
-  Some medium-risk fields (`MEDIUM_RISK`) may qualify for auto-approval only when `confidence >= 0.97`, validation passes (`is_valid == true`), source evidence exists (`source_page` / `source_bbox`), and zero clinical conflict is detected.
+  Some medium-risk fields (`MEDIUM_RISK`) may qualify for auto-approval only when `confidence >= 0.97`, validation passes (`is_valid == true`), no review-required diagnostic is present, source evidence exists (`source_page` / `source_bbox`), and zero clinical conflict is detected.
 - **Pilot Default (`v2.1.0-pilot`):**
   Medium-risk fields route strictly to human review by default unless the healthcare organization explicitly enables a medium-risk auto-approval governance policy.
 

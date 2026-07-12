@@ -28,6 +28,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.ai.auto_approval import should_auto_approve
+from app.ai.medical_validator import validate_field
 from app.ai.correction_logger import _redact_value, export_corrections, log_correction
 from app.models.extracted_field import ExtractedField, ValidationResult
 from app.services.pipeline_safety import can_auto_approve
@@ -147,6 +148,23 @@ def test_validation_errors_block_auto_approval():
     )
     decision = should_auto_approve(field)
     assert decision.auto_approve is False
+
+
+def test_unknown_reference_lab_blocks_auto_approval():
+    """A valid-looking generic lab with unknown reference range requires review."""
+    validation = validate_field("lab_result", "450 mg/dL")
+    field = ExtractedField(
+        field_id="f-unknown-lab",
+        job_id="j1",
+        field_name="lab_result",
+        raw_value="450 mg/dL",
+        confidence=0.99,
+        risk_level="LOW_RISK",
+        validation_result=validation,
+    )
+    decision = should_auto_approve(field)
+    assert decision.auto_approve is False
+    assert "validation" in decision.reason.lower()
 
 
 # ═══════════════════════════════════════════════════════════════════════════

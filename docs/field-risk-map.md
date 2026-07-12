@@ -13,7 +13,7 @@ This authoritative catalog defines the deterministic baseline clinical risk tier
 | `heart_rate`, `pulse`, `resp_rate`, `temp`| Vital Signs | `MEDIUM_RISK` | Standard observation within normal physiological range | `MEDIUM_RISK` |
 | `sugar`, `fasting_glucose`, `postprandial`| Diagnostic Lab / Vitals | `MEDIUM_RISK` | Value outside standard physiological range ($\ge 126$ mg/dL fasting) | `HIGH_RISK` |
 | `hba1c` | Diagnostic Lab | `MEDIUM_RISK` | Value outside standard reference range ($\ge 6.5\%$) | `HIGH_RISK` |
-| `lab_value`, `cbc`, `lipid_panel`, *general labs* | Diagnostic Laboratory | `MEDIUM_RISK` | Automated reference range check flags `is_abnormal == true` | `HIGH_RISK` |
+| `lab_value`, `cbc`, `lipid_panel`, *general labs* | Diagnostic Laboratory | `MEDIUM_RISK` | Unknown automated reference range sets `requires_review=true`; configured abnormal ranges escalate | `HIGH_RISK` / review-only |
 | `medication`, `prescription`, `drug` | Active Prescriptions | `HIGH_RISK` | High clinical impact on patient safety and pharmacotherapy | `HIGH_RISK` |
 | `dosage`, `strength`, `frequency` | Prescription Dosing | `HIGH_RISK` | Incorrect dosing creates severe adverse drug event risk | `HIGH_RISK` |
 | `allergy`, `allergen`, `sensitivity` | Immunological Sensitivities | `HIGH_RISK` | **Strict Rule:** Forced to `HIGH_RISK` (or `CRITICAL_RISK` if anaphylaxis) | `HIGH_RISK` / `CRITICAL_RISK` |
@@ -22,4 +22,4 @@ This authoritative catalog defines the deterministic baseline clinical risk tier
 
 ## Enforcement Invariants
 1. **Never Downgrade Allergies:** Any candidate extraction where `field_name` matches `allergy` or `allergen` is unconditionally assigned at least `HIGH_RISK`. Even if remote AI inference scores the observation as `LOW_RISK`, Workstream 5 safety logic overrides the tier to `HIGH_RISK`.
-2. **Abnormal Lab Escalation:** Any diagnostic laboratory observation where `validation_result.is_abnormal == true` (or outside established biological reference limits) escalates immediately from `MEDIUM_RISK` to `HIGH_RISK`.
+2. **Abnormal / Unknown Lab Escalation:** Any diagnostic laboratory observation where `validation_result.reference_range.is_abnormal == true` escalates from `MEDIUM_RISK` to `HIGH_RISK`. Generic labs without configured reference ranges must carry `requires_review=true` / `unknown_reference_range=true` and are review-only rather than treated as normal.

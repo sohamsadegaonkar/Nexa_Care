@@ -102,8 +102,8 @@ def test_get_job_status(admin_headers):
 
 
 @pytest.mark.asyncio
-async def test_extraction_routes_auto_approve():
-    """Test 3: Extraction orchestrator routes safe LOW_RISK fields to auto_approved."""
+async def test_extraction_routes_unknown_generic_lab_to_review():
+    """Test 3: Unknown generic labs route to review, not auto_approval."""
     job_uuid = uuid.uuid4()
     doc_uuid = uuid.uuid4()
     now = datetime.now(timezone.utc)
@@ -132,9 +132,14 @@ async def test_extraction_routes_auto_approve():
         mock_get_ext.return_value = mock_extractor
 
         res = await process_extraction_job(str(job_uuid), mock_db)
-        assert res["auto_approved_count"] >= 1
+        assert res["auto_approved_count"] == 0
+        assert res["needs_review_count"] >= 1
         ef_records = [m for m in added if isinstance(m, ExtractedFieldRecord)]
-        assert any(r.status == "auto_approved" for r in ef_records)
+        assert any(r.status == "needs_review" for r in ef_records)
+        lab_records = [r for r in ef_records if r.field_name == "lab_result"]
+        assert lab_records
+        assert lab_records[0].validation_result["reference_range"]["unknown_reference_range"] is True
+        assert lab_records[0].validation_result["reference_range"]["requires_review"] is True
 
 
 @pytest.mark.asyncio

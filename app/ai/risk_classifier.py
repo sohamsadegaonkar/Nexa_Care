@@ -56,22 +56,28 @@ def classify_risk(
     is_valid = True
     has_conflict = False
     is_abnormal = False
+    requires_review = False
 
     if validation_result is not None:
         if isinstance(validation_result, dict):
             is_valid = validation_result.get("is_valid", True)
             has_conflict = validation_result.get("has_conflict", False)
+            requires_review = bool(validation_result.get("requires_review", False))
             ref = validation_result.get("reference_range")
             if isinstance(ref, dict):
-                is_abnormal = ref.get("is_abnormal", False)
+                is_abnormal = bool(ref.get("is_abnormal", False))
+                requires_review = requires_review or bool(ref.get("requires_review") or ref.get("unknown_reference_range") or ref.get("reference_range_known") is False)
         else:
             is_valid = getattr(validation_result, "is_valid", True)
             has_conflict = getattr(validation_result, "has_conflict", False)
+            requires_review = bool(getattr(validation_result, "requires_review", False))
             ref = getattr(validation_result, "reference_range", None)
             if isinstance(ref, dict):
-                is_abnormal = ref.get("is_abnormal", False)
+                is_abnormal = bool(ref.get("is_abnormal", False))
+                requires_review = requires_review or bool(ref.get("requires_review") or ref.get("unknown_reference_range") or ref.get("reference_range_known") is False)
             elif ref is not None:
-                is_abnormal = getattr(ref, "is_abnormal", False)
+                is_abnormal = bool(getattr(ref, "is_abnormal", False))
+                requires_review = requires_review or bool(getattr(ref, "requires_review", False) or getattr(ref, "unknown_reference_range", False))
 
     # Check abnormal keywords
     if "abnormal" in val or "critical" in val or ("high" in val and fname in {"hba1c", "sugar"}):
@@ -79,11 +85,14 @@ def classify_risk(
 
     current_risk = base_risk
 
-    # Escalate if abnormal lab value
+    # Escalate if abnormal lab value or unknown clinical context requires review.
     if is_abnormal and current_risk in {"LOW_RISK", "MEDIUM_RISK"}:
         current_risk = "HIGH_RISK"
         if "critical" in val:
             current_risk = "CRITICAL_RISK"
+
+    if requires_review and current_risk in {"LOW_RISK", "MEDIUM_RISK"}:
+        current_risk = "HIGH_RISK"
 
     # Escalate on validation failure
     if not is_valid:
