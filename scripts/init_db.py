@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 # Explicit model imports are required for Base.metadata registration.
 import app.models.document_review  # noqa: E402,F401
 import app.models.nfc_card_registry  # noqa: E402,F401
+import app.models.patient_auth_identity  # noqa: E402,F401
 import app.models.provider  # noqa: E402,F401
 import app.models.shards  # noqa: E402,F401
 from app.core.database import get_async_engine  # noqa: E402

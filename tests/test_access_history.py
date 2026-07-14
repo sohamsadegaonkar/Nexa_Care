@@ -1,7 +1,7 @@
 """Test suite for hardened Access-History and Timeline Provenance display (Days 9-11).
 
 Verifies:
-1. Access history reflects complete read entries from system_audit.
+1. Access history reflects complete reads from the canonical audit ledger.
 2. Break-glass accesses are visibly flagged (is_break_glass=True).
 3. Timeline items distinguish AI vs. Manual provenance with confidence and risk badges.
 4. Read attempts without active consent tokens are blocked with 403 (Invariant 1).
@@ -60,14 +60,13 @@ def test_access_history_reflects_reads():
             }
         },
     }
-    mock_supabase = MagicMock()
-    mock_res = MagicMock(data=[sample_audit_row])
-    mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = mock_res
-
     from app.core.dependencies import get_scoped_session
     app.dependency_overrides[get_scoped_session] = lambda: pat_id
     try:
-        with patch("app.api.v2.patient_record_routes.get_supabase_client", return_value=mock_supabase):
+        with patch(
+            "app.api.v2.patient_record_routes.read_audit_events",
+            new=AsyncMock(return_value=[sample_audit_row]),
+        ):
             res = client.get("/api/v2/patient/me/access-history", headers={"Authorization": f"Bearer {pat_id}"})
             assert res.status_code == 200
             data = res.json()
@@ -102,14 +101,13 @@ def test_access_history_flags_break_glass():
             }
         },
     }
-    mock_supabase = MagicMock()
-    mock_res = MagicMock(data=[sample_bg_row])
-    mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = mock_res
-
     from app.core.dependencies import get_scoped_session
     app.dependency_overrides[get_scoped_session] = lambda: pat_id
     try:
-        with patch("app.api.v2.patient_record_routes.get_supabase_client", return_value=mock_supabase):
+        with patch(
+            "app.api.v2.patient_record_routes.read_audit_events",
+            new=AsyncMock(return_value=[sample_bg_row]),
+        ):
             res = client.get("/api/v2/patient/me/access-history", headers={"Authorization": f"Bearer {pat_id}"})
             assert res.status_code == 200
             data = res.json()
@@ -210,11 +208,10 @@ def test_admin_audit_trail_returns_full_ledger(admin_headers):
         {"record_hash": "h1", "actor_uid": "sys", "event_type": "EXTRACTED_DATA_INGESTED", "status": "SUCCESS"},
         {"record_hash": "h2", "actor_uid": "doc", "event_type": "PATIENT_RECORD_READ_SUCCESS", "status": "SUCCESS"},
     ]
-    mock_supabase = MagicMock()
-    mock_res = MagicMock(data=sample_rows)
-    mock_supabase.table.return_value.select.return_value.eq.return_value.order.return_value.limit.return_value.execute.return_value = mock_res
-
-    with patch("app.api.v2.patient_record_routes.get_supabase_client", return_value=mock_supabase):
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=sample_rows),
+    ):
         res = client.get(f"/api/v2/patient/{pat_id}/audit-trail", headers=admin_headers)
         assert res.status_code == 200
         data = res.json()

@@ -235,9 +235,9 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
         </Button>
       </YStack>
 
-      {error && (
+      {error !== null ? (
         <Text col="$red10" ta="center" size="$3" px="$4">{error}</Text>
-      )}
+      ) : null}
     </YStack>
   )
 }

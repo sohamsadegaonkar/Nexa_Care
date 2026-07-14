@@ -10,6 +10,7 @@ from app.models.dek_store import PatientDEKStore
 from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.patient import Patient
+from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.patient_device_keys import PatientDeviceKey
 from app.models.patient_policy import PatientPolicy
 from app.models.patient_records import (
@@ -60,6 +61,7 @@ __all__ = [
     "NFCCardRegistry",
     "NFCCardStatus",
     "Patient",
+    "PatientAuthIdentity",
     "PatientDeviceKey",
     "PatientPolicy",
     "PatientRecord",

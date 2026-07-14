@@ -109,10 +109,10 @@ async def diagnose_token(token: str, redis, engine):
             # 3. Audit Check
             print(f"\n{BOLD}Audit Trail:{RESET}")
             audit_stmt = text(
-                "SELECT event_type, status, created_at, payload "
-                "FROM system_audit "
-                "WHERE target_resource_id = :h "
-                "OR (payload->'metadata'->>'consent_token_hash' = :h) "
+                "SELECT action AS event_type, status, created_at, details AS payload "
+                "FROM public.audit_ledger "
+                "WHERE resource = :h "
+                "OR (details->'metadata'->>'consent_token_hash' = :h) "
                 "ORDER BY created_at ASC"
             )
             audit_results = await conn.execute(audit_stmt, {"h": h})

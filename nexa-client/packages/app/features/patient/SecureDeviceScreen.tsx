@@ -1,7 +1,7 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Button, Spinner, Text, AnimatePresence } from 'tamagui'
 import { useState } from 'react'
-import { generateAndEnrollDevice, setDeviceId } from '../../services/deviceKeys'
+import { generateAndEnrollDevice } from '../../services/deviceKeys'
 
 /**
  * ALPHA: Device key generation and enrollment screen.
@@ -37,13 +37,10 @@ export default function SecureDeviceScreen({
       // Step 1: Generate P-256 keypair + enroll with backend
       // Private key stays in SecureStore (Keychain / Keystore) — NEVER sent to server.
       setStep('generating')
-      const enrollment = await generateAndEnrollDevice()
+      const enrollment = await generateAndEnrollDevice(undefined, setStep)
 
       const deviceId = enrollment?.device_id
       if (!deviceId) throw new Error('No device ID returned from enrollment')
-
-      // Store device_id for later use in signed approval payloads
-      await setDeviceId(deviceId)
 
       // Step 2: Navigate to enrolled confirmation
       onEnrolled?.(deviceId)
@@ -55,8 +52,17 @@ export default function SecureDeviceScreen({
           deviceLabel: enrollment.status,
         },
       })
-    } catch {
-      setError('Device enrollment failed. Please try again.')
+    } catch (err: unknown) {
+      console.error('DEVICE_ENROLLMENT_ERROR', err)
+
+      const message =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'string'
+            ? err
+            : 'Unknown enrollment error'
+
+      setError(`Device enrollment failed: ${message}`)
       setStep('ready')
     } finally {
       setLoading(false)
@@ -127,11 +133,11 @@ export default function SecureDeviceScreen({
         </AnimatePresence>
       </YStack>
 
-      {error && (
+      {error !== null ? (
         <Text col="$red10" ta="center" size="$3">
           {error}
         </Text>
-      )}
+      ) : null}
     </YStack>
   )
 }

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -17,7 +19,7 @@ if str(ROOT) not in sys.path:
 from sqlalchemy import text  # noqa: E402
 from app.core.config import (  # noqa: E402
     get_clinic_config, get_database_config, get_handshake_config,
-    get_kms_config, get_redis_config, get_supabase_config,
+    get_kms_config, get_otp_rate_limit_config, get_redis_config, get_supabase_config,
 )
 from app.core.database import get_async_engine  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
@@ -64,6 +66,8 @@ def validate_config() -> bool:
         "CLINIC_API_KEY": lambda: get_clinic_config().api_key,
         "MFA_ENCRYPTION_KEY": lambda: _load_key("MFA_ENCRYPTION_KEY").decode(),
         "PII_ENCRYPTION_KEY": lambda: _load_key("PII_ENCRYPTION_KEY").decode(),
+        "PATIENT_JWT_SECRET": lambda: os.environ["PATIENT_JWT_SECRET"],
+        "OTP_RATE_LIMIT_HMAC_SECRET": lambda: get_otp_rate_limit_config().hmac_secret,
     }
     for name, getter in getters.items():
         try:
@@ -131,7 +135,19 @@ def check_supabase() -> bool:
         with urlopen(request, timeout=10) as response:
             if not 200 <= response.status < 300:
                 raise RuntimeError(f"health endpoint returned HTTP {response.status}")
-        print("PASS: authentication service health endpoint; table access skipped")
+        settings_request = Request(
+            f"{config.url.rstrip('/')}/auth/v1/settings",
+            headers={"apikey": config.key},
+            method="GET",
+        )
+        with urlopen(settings_request, timeout=10) as response:
+            settings = json.loads(response.read().decode("utf-8"))
+        phone_enabled = bool(settings.get("external", {}).get("phone"))
+        if not phone_enabled:
+            print("FAIL: Supabase Phone Auth is not enabled")
+            return False
+        print("PASS: authentication health and Phone Auth enabled")
+        print("NOTE: SMS provider delivery must be confirmed with an end-to-end OTP on the physical phone")
         return True
     except Exception as exc:
         print(f"FAIL: {type(exc).__name__}")

@@ -9,8 +9,12 @@ let authTokenProvider: AuthTokenProvider = () => null
 export function setAuthTokenProvider(provider: AuthTokenProvider): void { authTokenProvider = provider }
 export async function getAuthToken(): Promise<string | null> { const token = await authTokenProvider(); return typeof token === 'string' && token.trim() ? token.trim() : null }
 
-// Must read from environment variable; never hardcode localhost/IPs or URLs
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+// Expo only exposes EXPO_PUBLIC_* variables to native bundles. Keep the Next
+// variable as the web fallback so this shared client works on both platforms.
+// Never hardcode localhost, LAN IPs, or deployment URLs here.
+export const API_BASE_URL = (
+  process.env.EXPO_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? ''
+).replace(/\/$/, '')
 
 // ── Types Matching docs/DATA-MODELS.md & docs/API-CONTRACTS.md ──
 
@@ -272,6 +276,15 @@ async function request<T>(
   customHeaders: Record<string, string> = {},
   noAuth = false,
 ): Promise<T> {
+  if (!API_BASE_URL) {
+    throw new ApiError(
+      'API base URL is not configured. Set EXPO_PUBLIC_API_URL for Expo or NEXT_PUBLIC_API_URL for web.',
+      0,
+      'MISSING_API_BASE_URL',
+      false,
+    )
+  }
+
   const token = noAuth ? null : await getAuthToken()
   const headers: Record<string, string> = {
     ...customHeaders,

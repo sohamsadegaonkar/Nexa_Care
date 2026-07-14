@@ -1,33 +1,32 @@
-"""Canonical Demo Patient Seeder for Nexa Care V2 Alpha Demo (Days 12-13).
+"""Seed the canonical Nexa Care alpha patient and clinical demo records.
 
-Seeds rich clinical records for canonical demo patient Aarav Sharma
-(123e4567-e89b-12d3-a456-426614174001):
-  - Patient Account & Demographics: Age 42, Type 2 Diabetes
-  - Vitals: BP 130/85, Blood Sugar 145 mg/dL, Heart Rate 78 bpm (source="manual")
-  - Medication: Metformin 500mg twice daily (source="manual")
-  - Allergy: Penicillin severe sensitivity (source="manual", HIGH_RISK)
-  - Lab Result: HbA1c 7.2% abnormal flagged (source="ai_extracted", confidence=0.96)
-  - Chronological Timeline & Document Reference
+The authoritative ``patients`` row contains only the canonical identifier and
+account status.  Demo PII is intentionally not copied into plaintext-capable
+columns; the encrypted vault is not needed for patient authentication or
+device enrollment.
 
-Strictly idempotent: safe to execute repeatedly without duplicating rows.
+All authoritative and clinical writes share one transaction.  Re-running the
+seeder fills missing demo records without duplicating existing records.
 """
 
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-# Add parent directory to path so app modules can be imported
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import get_async_engine
+from app.core.database import get_async_engine, get_session_factory
+from app.models.patient import Patient
 from app.models.patient_records import (
     Allergy,
     DocumentReference,
@@ -38,85 +37,135 @@ from app.models.patient_records import (
     Vitals,
 )
 
-logging.basicConfig(level=logging.INFO, format="%(message)s")
-logger = logging.getLogger(__name__)
-
 DEMO_PATIENT_ID = "123e4567-e89b-12d3-a456-426614174001"
-DEMO_DOC_ID = "444e4567-e89b-12d3-a456-426614174444"
+DEMO_PATIENT_UUID = uuid.UUID(DEMO_PATIENT_ID)
+DEMO_DOC_UUID = uuid.UUID("444e4567-e89b-12d3-a456-426614174444")
 
 
-async def seed_aarav_sharma(session: AsyncSession) -> None:
-    pid_uuid = uuid.UUID(DEMO_PATIENT_ID)
-    doc_uuid = uuid.UUID(DEMO_DOC_ID)
+class DemoPatientConflict(RuntimeError):
+    """Existing canonical data is incompatible with the demo patient."""
+
+
+def _require_values(record: object, **expected: object) -> None:
+    if any(getattr(record, field) != value for field, value in expected.items()):
+        raise DemoPatientConflict(f"existing {type(record).__name__} conflicts with canonical demo data")
+
+
+def _validate_existing_patient(patient: Patient) -> None:
+    if patient.is_deleted:
+        raise DemoPatientConflict("canonical patient is soft-deleted")
+
+    # A legacy seed may have stored the canonical display name.  Accept it,
+    # but never add it to a new row because this table is plaintext-capable.
+    if patient.full_name not in (None, "Aarav Sharma"):
+        raise DemoPatientConflict("canonical patient UUID belongs to another patient")
+
+    prohibited_pii = (
+        patient.phone,
+        patient.email,
+        patient.address_line1,
+        patient.address_line2,
+        patient.emergency_contact_phone,
+    )
+    if any(value is not None for value in prohibited_pii):
+        raise DemoPatientConflict("canonical patient contains plaintext-capable contact PII")
+
+
+async def _ensure_authoritative_patient(session: AsyncSession) -> str:
+    patient = await session.get(Patient, DEMO_PATIENT_UUID)
+    if patient is not None:
+        _validate_existing_patient(patient)
+        return "already-exists"
+
+    session.add(
+        Patient(
+            patient_uuid=DEMO_PATIENT_UUID,
+            is_deleted=False,
+            full_name=None,
+            date_of_birth=None,
+            gender=None,
+            phone=None,
+            email=None,
+            abha_id=None,
+            address_line1=None,
+            address_line2=None,
+            city=None,
+            state=None,
+            pincode=None,
+            emergency_contact_name=None,
+            emergency_contact_phone=None,
+            dek_id=None,
+        )
+    )
+    # Establish the authoritative row before any dependent clinical inserts.
+    await session.flush()
+    return "created"
+
+
+async def _seed_clinical_records(session: AsyncSession) -> None:
+    patient_id = DEMO_PATIENT_UUID
     now = datetime.now(timezone.utc)
 
-    # 1. Ensure PatientRecord anchor exists
-    stmt_pr = select(PatientRecord).where(PatientRecord.patient_id == pid_uuid)
-    res_pr = await session.execute(stmt_pr)
-    if res_pr.scalar_one_or_none() is None:
-        logger.info(" -> Creating PatientRecord anchor for Aarav Sharma...")
-        session.add(PatientRecord(patient_id=pid_uuid))
+    if await session.scalar(select(PatientRecord).where(PatientRecord.patient_id == patient_id)) is None:
+        session.add(PatientRecord(patient_id=patient_id))
 
-    # 2. Ensure DocumentReference exists for AI lab extraction
-    stmt_doc = select(DocumentReference).where(DocumentReference.id == doc_uuid)
-    res_doc = await session.execute(stmt_doc)
-    if res_doc.scalar_one_or_none() is None:
-        logger.info(" -> Seeding DocumentReference (Diagnostic Lab Slip)...")
+    document = await session.get(DocumentReference, DEMO_DOC_UUID)
+    if document is None:
         session.add(
             DocumentReference(
-                id=doc_uuid,
-                patient_id=pid_uuid,
+                id=DEMO_DOC_UUID,
+                patient_id=patient_id,
                 document_type="LAB_REPORT",
                 uploaded_at=now - timedelta(hours=3),
                 storage_ref="s3://nexa-care-demo/aarav_sharma_hba1c_report.pdf",
             )
         )
-
-    # 3. Seed Vitals (BP, Sugar, Heart Rate) - source="manual"
-    stmt_v = select(Vitals).where(Vitals.patient_id == pid_uuid, Vitals.type == "BP")
-    if (await session.execute(stmt_v)).scalar_one_or_none() is None:
-        logger.info(" -> Seeding Vitals (BP 130/85, Sugar 145, HR 78)...")
-        session.add(
-            Vitals(
-                patient_id=pid_uuid,
-                type="BP",
-                value="130/85",
-                unit="mmHg",
-                recorded_at=now - timedelta(days=2),
-                source="manual",
-                risk_level="LOW_RISK",
-            )
-        )
-        session.add(
-            Vitals(
-                patient_id=pid_uuid,
-                type="SUGAR",
-                value="145",
-                unit="mg/dL",
-                recorded_at=now - timedelta(days=2),
-                source="manual",
-                risk_level="MEDIUM_RISK",
-            )
-        )
-        session.add(
-            Vitals(
-                patient_id=pid_uuid,
-                type="HR",
-                value="78",
-                unit="bpm",
-                recorded_at=now - timedelta(days=2),
-                source="manual",
-                risk_level="LOW_RISK",
-            )
+    elif document.patient_id != patient_id:
+        raise DemoPatientConflict("canonical document UUID belongs to another patient")
+    else:
+        _require_values(
+            document,
+            document_type="LAB_REPORT",
+            storage_ref="s3://nexa-care-demo/aarav_sharma_hba1c_report.pdf",
         )
 
-    # 4. Seed Medication - source="manual"
-    stmt_m = select(Medication).where(Medication.patient_id == pid_uuid, Medication.name == "Metformin")
-    if (await session.execute(stmt_m)).scalar_one_or_none() is None:
-        logger.info(" -> Seeding Medication (Metformin 500mg Twice daily)...")
+    vitals = (
+        ("BP", "130/85", "mmHg", "LOW_RISK"),
+        ("SUGAR", "145", "mg/dL", "MEDIUM_RISK"),
+        ("HR", "78", "bpm", "LOW_RISK"),
+    )
+    for vital_type, value, unit, risk_level in vitals:
+        existing = await session.scalar(
+            select(Vitals).where(Vitals.patient_id == patient_id, Vitals.type == vital_type)
+        )
+        if existing is None:
+            session.add(
+                Vitals(
+                    patient_id=patient_id,
+                    type=vital_type,
+                    value=value,
+                    unit=unit,
+                    recorded_at=now - timedelta(days=2),
+                    source="manual",
+                    risk_level=risk_level,
+                )
+            )
+        else:
+            _require_values(
+                existing,
+                value=value,
+                unit=unit,
+                source="manual",
+                risk_level=risk_level,
+            )
+
+    medication = await session.scalar(
+        select(Medication).where(Medication.patient_id == patient_id, Medication.name == "Metformin")
+    )
+    if medication is None:
         session.add(
             Medication(
-                patient_id=pid_uuid,
+                patient_id=patient_id,
                 name="Metformin",
                 strength="500mg",
                 frequency="Twice daily",
@@ -125,28 +174,43 @@ async def seed_aarav_sharma(session: AsyncSession) -> None:
                 risk_level="MEDIUM_RISK",
             )
         )
+    else:
+        _require_values(
+            medication,
+            strength="500mg",
+            frequency="Twice daily",
+            source="manual",
+            risk_level="MEDIUM_RISK",
+        )
 
-    # 5. Seed Allergy - source="manual", HIGH_RISK
-    stmt_a = select(Allergy).where(Allergy.patient_id == pid_uuid, Allergy.allergen == "Penicillin")
-    if (await session.execute(stmt_a)).scalar_one_or_none() is None:
-        logger.info(" -> Seeding Allergy (Penicillin Severe - HIGH_RISK)...")
+    allergy = await session.scalar(
+        select(Allergy).where(Allergy.patient_id == patient_id, Allergy.allergen == "Penicillin")
+    )
+    if allergy is None:
         session.add(
             Allergy(
-                patient_id=pid_uuid,
+                patient_id=patient_id,
                 allergen="Penicillin",
                 severity="Severe",
                 source="manual",
                 risk_level="HIGH_RISK",
             )
         )
+    else:
+        _require_values(
+            allergy,
+            severity="Severe",
+            source="manual",
+            risk_level="HIGH_RISK",
+        )
 
-    # 6. Seed Lab Result - source="ai_extracted"
-    stmt_l = select(LabResult).where(LabResult.patient_id == pid_uuid, LabResult.test_name == "HbA1c")
-    if (await session.execute(stmt_l)).scalar_one_or_none() is None:
-        logger.info(" -> Seeding Lab Result (HbA1c 7.2% AI-extracted, confidence=0.96)...")
+    lab_result = await session.scalar(
+        select(LabResult).where(LabResult.patient_id == patient_id, LabResult.test_name == "HbA1c")
+    )
+    if lab_result is None:
         session.add(
             LabResult(
-                patient_id=pid_uuid,
+                patient_id=patient_id,
                 test_name="HbA1c",
                 value="7.2",
                 unit="%",
@@ -156,88 +220,119 @@ async def seed_aarav_sharma(session: AsyncSession) -> None:
                 source="ai_extracted",
                 confidence=0.96,
                 risk_level="HIGH_RISK",
-                source_document_id=doc_uuid,
+                source_document_id=DEMO_DOC_UUID,
             )
+        )
+    else:
+        _require_values(
+            lab_result,
+            value="7.2",
+            unit="%",
+            reference_range="4.0-5.6 %",
+            is_abnormal=True,
+            source="ai_extracted",
+            confidence=0.96,
+            risk_level="HIGH_RISK",
+            source_document_id=DEMO_DOC_UUID,
         )
 
-    # 7. Seed Timeline Events
-    stmt_te = select(TimelineEvent).where(TimelineEvent.patient_id == pid_uuid)
-    if len((await session.execute(stmt_te)).scalars().all()) == 0:
-        logger.info(" -> Seeding Clinical Timeline Feed for Aarav Sharma...")
-        session.add(
-            TimelineEvent(
-                patient_id=pid_uuid,
-                event_type="ENCOUNTER",
-                occurred_at=now - timedelta(days=14),
-                source="manual",
-                summary="Encounter recorded: Initial Type 2 Diabetes management checkup",
+    existing_timeline = (
+        await session.scalars(select(TimelineEvent).where(TimelineEvent.patient_id == patient_id))
+    ).all()
+    existing_events = {(event.event_type, event.summary) for event in existing_timeline}
+    timeline = (
+        (
+            "ENCOUNTER",
+            now - timedelta(days=14),
+            "manual",
+            "Encounter recorded: Initial Type 2 Diabetes management checkup",
+            None,
+        ),
+        (
+            "MEDICATION",
+            now - timedelta(days=14),
+            "manual",
+            "Medication prescribed: Metformin 500mg (Twice daily)",
+            None,
+        ),
+        (
+            "ALLERGY",
+            now - timedelta(days=14),
+            "manual",
+            "Allergy recorded: Penicillin (Severe)",
+            None,
+        ),
+        (
+            "VITALS",
+            now - timedelta(days=2),
+            "manual",
+            "Vitals recorded: BP 130/85 mmHg, Blood Sugar 145 mg/dL, HR 78 bpm",
+            None,
+        ),
+        (
+            "DOCUMENT",
+            now - timedelta(hours=3),
+            "manual",
+            "Document uploaded: Diagnostic Lab Report (HbA1c Panel)",
+            None,
+        ),
+        (
+            "EXTRACTED_DATA_INGESTED",
+            now - timedelta(hours=2),
+            "ai_extracted",
+            "AI ingested HbA1c: 7.2 % (Confidence: 0.96)",
+            DEMO_DOC_UUID,
+        ),
+    )
+    for event_type, occurred_at, source, summary, event_ref_id in timeline:
+        if (event_type, summary) not in existing_events:
+            session.add(
+                TimelineEvent(
+                    patient_id=patient_id,
+                    event_type=event_type,
+                    event_ref_id=event_ref_id,
+                    occurred_at=occurred_at,
+                    source=source,
+                    summary=summary,
+                )
             )
-        )
-        session.add(
-            TimelineEvent(
-                patient_id=pid_uuid,
-                event_type="MEDICATION",
-                occurred_at=now - timedelta(days=14),
-                source="manual",
-                summary="Medication prescribed: Metformin 500mg (Twice daily)",
-            )
-        )
-        session.add(
-            TimelineEvent(
-                patient_id=pid_uuid,
-                event_type="ALLERGY",
-                occurred_at=now - timedelta(days=14),
-                source="manual",
-                summary="Allergy recorded: Penicillin (Severe)",
-            )
-        )
-        session.add(
-            TimelineEvent(
-                patient_id=pid_uuid,
-                event_type="VITALS",
-                occurred_at=now - timedelta(days=2),
-                source="manual",
-                summary="Vitals recorded: BP 130/85 mmHg, Blood Sugar 145 mg/dL, HR 78 bpm",
-            )
-        )
-        session.add(
-            TimelineEvent(
-                patient_id=pid_uuid,
-                event_type="DOCUMENT",
-                occurred_at=now - timedelta(hours=3),
-                source="manual",
-                summary="Document uploaded: Diagnostic Lab Report (HbA1c Panel)",
-            )
-        )
-        session.add(
-            TimelineEvent(
-                patient_id=pid_uuid,
-                event_type="EXTRACTED_DATA_INGESTED",
-                event_ref_id=doc_uuid,
-                occurred_at=now - timedelta(hours=2),
-                source="ai_extracted",
-                summary="AI ingested HbA1c: 7.2 % (Confidence: 0.96)",
-            )
-        )
-
-    await session.commit()
-    logger.info(" ✅ Canonical Demo Patient Aarav Sharma seeded successfully.")
 
 
-async def main() -> None:
+async def seed_aarav_sharma(session: AsyncSession) -> str:
+    """Stage the complete canonical seed in ``session`` without committing it."""
+
+    status = await _ensure_authoritative_patient(session)
+    await _seed_clinical_records(session)
+    return status
+
+
+async def _run() -> int:
     env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
     if env in {"prod", "production"}:
         raise RuntimeError(f"Refusing to seed demo patient in production environment ('{env}').")
 
-    logger.info("==========================================================================")
-    logger.info(" 🌱 NEXA CARE CANONICAL DEMO PATIENT SEEDER (Aarav Sharma)")
-    logger.info("==========================================================================")
-    engine = get_async_engine()
-    async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-    async with async_session() as session:
-        await seed_aarav_sharma(session)
-    await engine.dispose()
+    session_factory = get_session_factory()
+    try:
+        async with session_factory() as session:
+            try:
+                status = await seed_aarav_sharma(session)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
+    except DemoPatientConflict:
+        print(f"status=rejected patient_id={DEMO_PATIENT_ID} reason=conflict", file=sys.stderr)
+        return 1
+    finally:
+        await get_async_engine().dispose()
+
+    print(f"status={status} patient_id={DEMO_PATIENT_ID}")
+    return 0
+
+
+def main() -> int:
+    return asyncio.run(_run())
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(main())

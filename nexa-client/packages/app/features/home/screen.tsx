@@ -147,7 +147,7 @@ export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => vo
           color="$color10"
           text="center"
         >
-          Provider-facing scanner and emergency break-glass access.
+          Secure patient access and verified provider workflows.
         </Paragraph>
         <Separator />
       </YStack>
@@ -209,6 +209,17 @@ export function HomeScreen({ onNavigate }: { onNavigate?: (screen: string) => vo
           </Text>
         )}
       </Card>
+
+      <Button
+        width="100%"
+        maxW={320}
+        theme="blue"
+        onPress={() => router.push('/patient/login')}
+      >
+        Continue as Patient
+      </Button>
+
+      <Separator width="100%" maxW={320} />
 
       <YStack gap="$4" width="100%" maxW={320}>
         <Button theme="blue" onPress={() => router.push('/scanner')}>

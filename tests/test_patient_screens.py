@@ -268,13 +268,17 @@ class TestPatientLoginScreen:
 
     def test_checks_enrollment_state_after_login(self) -> None:
         code = _read_screen("PatientLoginScreen")
-        assert "/api/v2/devices/status" in code, "Must check device enrollment state"
+        assert "getDevices" in code, "Must use the real patient device-list contract"
+        assert "/api/v2/devices/status" not in code, "Must not call the nonexistent device status route"
 
-    def test_checks_pending_consent_after_login(self) -> None:
+    def test_uses_final_token_contract_and_real_routes(self) -> None:
         code = _read_screen("PatientLoginScreen")
-        assert "/api/v2/consent/requests/pending" in code, (
-            "Must check for pending consent requests"
-        )
+        assert "data.access_token" in code
+        assert "storePatientAuthSession" in code
+        assert "device_enrollment_token" in code
+        assert "/api/v2/consent/requests/pending" not in code
+        assert "/patient/secure-device" in code
+        assert "/patient/access-history" in code
 
 
 class TestSecureDeviceScreen:
@@ -537,6 +541,35 @@ class TestPatientTimelineScreen:
         code = _read_screen("PatientTimelineScreen")
         assert "badges/SourceBadge" in code, "Must import SourceBadge"
         assert "badges/RiskBadge" in code, "Must import RiskBadge"
+
+    def test_api_strings_cannot_render_as_raw_native_children(self) -> None:
+        code = _read_screen("PatientTimelineScreen")
+        assert "{error &&" not in code
+        assert "{riskLevel &&" not in code
+        assert "{event.source_display &&" not in code
+        assert "event.source_display.length > 0 ?" in code
+
+
+def test_access_history_api_values_cannot_render_as_raw_native_children() -> None:
+    code = _read_screen("AccessHistoryScreen")
+    assert "{error &&" not in code
+    assert "{entry.data_categories &&" not in code
+    assert "Array.isArray(entry.data_categories)" in code
+
+
+@pytest.mark.parametrize(
+    "screen_name",
+    [
+        "PatientLoginScreen",
+        "SecureDeviceScreen",
+        "ConsentRequestScreen",
+        "BiometricApprovalScreen",
+    ],
+)
+def test_patient_error_messages_use_explicit_jsx_branches(screen_name: str) -> None:
+    code = _read_screen(screen_name)
+    assert "{error &&" not in code
+    assert "{error !== null ?" in code
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

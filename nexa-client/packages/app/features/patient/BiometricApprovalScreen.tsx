@@ -170,9 +170,9 @@ export default function BiometricApprovalScreen({
           in platform secure storage. Not yet: hardware-backed non-exportable
           signing key with biometric-gated key usage.
         </Paragraph>
-        {error && (
+        {error !== null ? (
           <Text col="$red10" ta="center" size="$3">{error}</Text>
-        )}
+        ) : null}
         <YStack gap="$3" w="100%" mt="$4">
           <Button theme="blue" size="$4" onPress={handleBiometricAuth}>
             Authenticate

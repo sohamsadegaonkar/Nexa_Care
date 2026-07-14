@@ -84,7 +84,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
         )}
 
         {/* Error state */}
-        {error && (
+        {error !== null ? (
           <YStack ai="center" py="$8" gap="$2">
             <Text fontSize={36}>⚠️</Text>
             <Paragraph col="$red10" size="$4" ta="center">{error}</Paragraph>
@@ -92,10 +92,10 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
               Retry
             </Button>
           </YStack>
-        )}
+        ) : null}
 
         {/* Empty state */}
-        {!loading && !error && history.length === 0 && (
+        {!loading && error === null && history.length === 0 ? (
           <YStack ai="center" py="$8" gap="$2">
             <Text fontSize={48}>📭</Text>
             <Paragraph col="$colorSubdued" size="$4" ta="center">
@@ -105,10 +105,10 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
               When a provider requests or accesses your data, it will appear here.
             </Paragraph>
           </YStack>
-        )}
+        ) : null}
 
         {/* Access entries */}
-        {!loading && !error && history.map((entry) => (
+        {!loading && error === null ? history.map((entry) => (
           <YStack key={entry.audit_id} bg="$backgroundHover" br="$4" p="$3" gap="$2">
             {/* Header: icon + event type + break-glass badge + timestamp */}
             <XStack ai="center" gap="$2" fw="wrap">
@@ -120,12 +120,12 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
               <Text col="$color" fontWeight="600" size="$4">
                 {entry.is_break_glass ? 'Emergency Access' : 'Data Accessed'}
               </Text>
-              {entry.is_break_glass && (
+              {entry.is_break_glass ? (
                 <XStack bg="$red5" br="$2" px="$2" py="$1" ai="center" gap="$1">
                   <Text size="$1">⚠️</Text>
                   <Text col="$red10" size="$1" fontWeight="700">BREAK-GLASS</Text>
                 </XStack>
-              )}
+              ) : null}
               <Text col="$colorSubdued" size="$2" ml="auto">
                 {formatTimestamp(entry.accessed_at)}
               </Text>
@@ -144,7 +144,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             </Paragraph>
 
             {/* Data categories */}
-            {entry.data_categories && entry.data_categories.length > 0 && (
+            {Array.isArray(entry.data_categories) && entry.data_categories.length > 0 ? (
               <XStack fw="wrap" gap="$1" mt="$1">
                 {entry.data_categories.map((cat) => (
                   <YStack key={cat} bg="$backgroundFocus" br="$2" px="$2" py="$1">
@@ -152,9 +152,9 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                   </YStack>
                 ))}
               </XStack>
-            )}
+            ) : null}
           </YStack>
-        ))}
+        )) : null}
       </ScrollView>
 
       <YStack p="$4" gap="$3" bc="$background">

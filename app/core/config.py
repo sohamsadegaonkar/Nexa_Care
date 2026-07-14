@@ -39,6 +39,11 @@ class RedisConfig:
 
 
 @dataclass(frozen=True)
+class OtpRateLimitConfig:
+    hmac_secret: str
+
+
+@dataclass(frozen=True)
 class HandshakeConfig:
     pepper_secret: str
 
@@ -76,6 +81,15 @@ def get_redis_config() -> RedisConfig:
     """
 
     return RedisConfig(url=_require_env("UPSTASH_REDIS_URL"))
+
+
+def get_otp_rate_limit_config() -> OtpRateLimitConfig:
+    """Load the independent secret used to pseudonymize OTP limiter keys."""
+
+    secret = _require_env("OTP_RATE_LIMIT_HMAC_SECRET")
+    if len(secret.encode("utf-8")) < 32:
+        raise ConfigError("OTP_RATE_LIMIT_HMAC_SECRET must be at least 32 bytes")
+    return OtpRateLimitConfig(hmac_secret=secret)
 
 
 def get_handshake_config() -> HandshakeConfig:

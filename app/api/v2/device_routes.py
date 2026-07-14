@@ -23,6 +23,11 @@ from app.core.database import get_db_session
 from app.core.dependencies import get_scoped_session
 from app.models.patient_device_keys import PatientDeviceKey
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.services.patient_auth_service import (
+    claim_device_enrollment_token,
+    finalize_device_enrollment_token,
+    release_device_enrollment_claim,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -34,6 +39,7 @@ class DeviceEnrollRequest(BaseModel):
     device_label: str = Field(..., max_length=100, description="Friendly name e.g. iPhone 14")
     platform: str = Field(..., max_length=20, description="ios or android")
     expo_push_token: str | None = None
+    device_enrollment_token: str = Field(..., min_length=32, max_length=256)
 
 
 class DeviceEnrollResponse(BaseModel):
@@ -121,27 +127,38 @@ async def enroll_device(
     res_existing = await db.execute(stmt_existing)
     existing = res_existing.scalar_one_or_none()
     now = datetime.now(timezone.utc)
-    if existing:
-        existing.status = "active"
-        existing.device_label = payload.device_label
-        existing.platform = payload.platform
-        existing.revoked_at = None
-        device_id = str(existing.id)
-    else:
-        new_key = PatientDeviceKey(
-            patient_id=pid_uuid,
-            device_public_key=raw_key,
-            device_label=payload.device_label,
-            platform=payload.platform,
-            key_algorithm="ECDSA-P256",
-            status="active",
-            enrolled_at=now,
-        )
-        db.add(new_key)
-        await db.flush()
-        device_id = str(new_key.id or uuid.uuid4())
+    claim_id = await claim_device_enrollment_token(payload.device_enrollment_token, patient_id)
+    if claim_id is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired device enrollment token.")
 
-    await db.commit()
+    try:
+        if existing:
+            existing.status = "active"
+            existing.device_label = payload.device_label
+            existing.platform = payload.platform
+            existing.revoked_at = None
+            device_id = str(existing.id)
+        else:
+            new_key = PatientDeviceKey(
+                patient_id=pid_uuid,
+                device_public_key=raw_key,
+                device_label=payload.device_label,
+                platform=payload.platform,
+                key_algorithm="ECDSA-P256",
+                status="active",
+                enrolled_at=now,
+            )
+            db.add(new_key)
+            await db.flush()
+            device_id = str(new_key.id or uuid.uuid4())
+
+        await db.commit()
+    except Exception:
+        await release_device_enrollment_claim(payload.device_enrollment_token, claim_id)
+        raise
+
+    if not await finalize_device_enrollment_token(payload.device_enrollment_token, claim_id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Device enrollment token was already consumed.")
 
     await append_audit_log_or_503(
         actor_uid=patient_id,

@@ -9,9 +9,11 @@ limiting during that window. Accept that trade-off explicitly, or
 replace with a fail-closed limiter if your threat model demands it.
 """
 
-from __future__ import annotations
-
 import logging
+import asyncio
+import hashlib
+import hmac
+import inspect
 from collections.abc import Callable
 from typing import Any
 
@@ -20,6 +22,95 @@ from fastapi import HTTPException, Request, status
 from app.core.config import get_redis_config
 
 logger = logging.getLogger("nexa_logger")
+
+
+class OtpRateLimitBackendUnavailable(RuntimeError):
+    """Raised when OTP throttling cannot be enforced safely."""
+
+
+class OtpRateLimitExceeded(RuntimeError):
+    """Raised when one OTP throttle bucket exceeds its limit."""
+
+
+class OtpRedisRateLimiter:
+    """Atomic, fail-closed Redis limiter for patient OTP send and verify.
+
+    Identifiers are pseudonymized with an independent HMAC-SHA-256 secret
+    before becoming Redis keys, so raw values and plain candidate digests are
+    not stored in Redis key names.
+    """
+
+    _SCRIPT = """
+    local count = redis.call('INCR', KEYS[1])
+    if count == 1 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+    end
+    return count
+    """
+
+    def __init__(
+        self,
+        *,
+        send_ip_limit: int = 5,
+        send_phone_limit: int = 3,
+        verify_ip_limit: int = 5,
+        verify_phone_limit: int = 5,
+        window_seconds: int = 300,
+        redis_client: Any | None = None,
+        hmac_secret: str | None = None,
+    ) -> None:
+        self.limits = {
+            ("send", "ip"): send_ip_limit,
+            ("send", "phone"): send_phone_limit,
+            ("verify", "ip"): verify_ip_limit,
+            ("verify", "phone"): verify_phone_limit,
+        }
+        self.window_seconds = window_seconds
+        self._redis_client = redis_client
+        self._hmac_secret = hmac_secret
+
+    def redis_key(self, action: str, dimension: str, identifier: str) -> str:
+        secret = self._hmac_secret
+        if secret is None:
+            from app.core.config import get_otp_rate_limit_config
+
+            secret = get_otp_rate_limit_config().hmac_secret
+        digest = hmac.new(
+            secret.encode("utf-8"),
+            identifier.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        return f"otp:{action}:{dimension}:{digest}"
+
+    async def _increment(self, key: str) -> int:
+        try:
+            redis_client = self._redis_client
+            if redis_client is None:
+                from app.core.redis import get_redis_client
+
+                redis_client = get_redis_client()
+            result = await asyncio.to_thread(
+                redis_client.eval,
+                self._SCRIPT,
+                1,
+                key,
+                self.window_seconds,
+            )
+            if inspect.isawaitable(result):
+                result = await result
+            return int(result)
+        except Exception as exc:
+            logger.error("OTP rate limiter Redis failure; denying request: %s", type(exc).__name__)
+            raise OtpRateLimitBackendUnavailable("OTP rate limiting is unavailable") from exc
+
+    async def check(self, *, action: str, ip: str, normalized_phone: str) -> None:
+        if action not in {"send", "verify"}:
+            raise ValueError("Unsupported OTP rate-limit action")
+        for dimension, identifier in (("ip", ip), ("phone", normalized_phone)):
+            key = self.redis_key(action, dimension, identifier)
+            count = await self._increment(key)
+            if count > self.limits[(action, dimension)]:
+                raise OtpRateLimitExceeded(f"OTP {action} {dimension} limit exceeded")
 
 
 def _import_redis() -> Any:

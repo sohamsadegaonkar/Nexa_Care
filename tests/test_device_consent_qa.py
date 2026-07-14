@@ -16,7 +16,7 @@ import base64
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -106,6 +106,13 @@ def overrides():
     mgr.clear()
 
 
+@pytest.fixture(autouse=True)
+def valid_device_enrollment_grant():
+    with patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")), \
+         patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)):
+        yield
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # 1. DEVICE ENROLLMENT
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -140,6 +147,7 @@ class TestDeviceEnrollmentValidation:
                     "device_label": "iPhone 16",
                     "platform": "ios",
                     "expo_push_token": None,
+                    "device_enrollment_token": "e" * 43,
                 },
             )
             assert resp.status_code == 201
@@ -167,6 +175,7 @@ class TestDeviceEnrollmentValidation:
                     "device_public_key": "not-valid-der-key!!!",
                     "device_label": "Bad Device",
                     "platform": "android",
+                    "device_enrollment_token": "e" * 43,
                 },
             )
             assert resp.status_code == 400
@@ -197,6 +206,7 @@ class TestDeviceEnrollmentValidation:
                     "device_public_key": pub_b64,
                     "device_label": "RSA Device",
                     "platform": "ios",
+                    "device_enrollment_token": "e" * 43,
                 },
             )
             assert resp.status_code == 400
@@ -225,6 +235,7 @@ class TestDeviceEnrollmentValidation:
                     "device_public_key": pub_b64,
                     "device_label": "6th Device",
                     "platform": "ios",
+                    "device_enrollment_token": "e" * 43,
                 },
             )
             assert resp.status_code == 409

@@ -18,7 +18,8 @@ $ErrorActionPreference = 'Stop'
 $required = @(
     'SUPABASE_URL', 'SUPABASE_KEY', 'DATABASE_URL', 'UPSTASH_REDIS_URL',
     'HANDSHAKE_PEPPER_SECRET', 'KEK_ROOT_SECRET', 'MFA_ENCRYPTION_KEY',
-    'PII_ENCRYPTION_KEY', 'CLINIC_API_KEY'
+    'PII_ENCRYPTION_KEY', 'CLINIC_API_KEY', 'PATIENT_JWT_SECRET',
+    'OTP_RATE_LIMIT_HMAC_SECRET'
 )
 $placeholderPattern = '(?i)(your-project|your-service-role-key|username:password|user:pass|change-me|REPLACE_WITH|GENERATED_|<[^>]+>)'
 

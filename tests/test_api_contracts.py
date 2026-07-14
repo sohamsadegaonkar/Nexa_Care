@@ -115,6 +115,7 @@ def test_device_enrollment_response_schema():
     b64_key = base64.b64encode(der_bytes).decode("utf-8")
 
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     mock_res_count = MagicMock()
     mock_res_count.scalar.return_value = 0
     mock_res_exist = MagicMock()
@@ -129,8 +130,11 @@ def test_device_enrollment_response_schema():
             "device_label": "Test iPhone",
             "platform": "ios",
             "expo_push_token": "ExponentPushToken[123]",
+            "device_enrollment_token": "e" * 43,
         }
-        with patch("app.api.v2.device_routes.append_audit_log_or_503", new_callable=AsyncMock):
+        with patch("app.api.v2.device_routes.append_audit_log_or_503", new_callable=AsyncMock), \
+             patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")), \
+             patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)):
             res = client.post(
                 "/api/v2/patient/devices/enroll",
                 headers={"Authorization": "Bearer pat-tok"},

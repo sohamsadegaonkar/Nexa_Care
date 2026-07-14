@@ -307,7 +307,7 @@ class EncryptionVerifier:
         session_factory = get_session_factory()
         async with session_factory() as db:
             for pii_val in TEST_PII.values():
-                stmt = text("SELECT 1 FROM system_audit WHERE metadata::text LIKE :val LIMIT 1")
+                stmt = text("SELECT 1 FROM public.audit_ledger WHERE details::text LIKE :val LIMIT 1")
                 res = await db.execute(stmt, {"val": f"%{pii_val}%"})
                 if res.first():
                     print(f"FAIL: Plaintext PII found in audit logs: {pii_val}")

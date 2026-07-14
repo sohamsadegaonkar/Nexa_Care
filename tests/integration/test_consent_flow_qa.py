@@ -19,7 +19,7 @@ import json
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
@@ -251,6 +251,8 @@ def _apply_overrides(overrides, provider, patient_id):
 def _patch_stack(fake_redis, fake_sync_redis):
     """Return an ExitStack with all Redis/Supabase/audit patches applied."""
     stack = ExitStack()
+    stack.enter_context(patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")))
+    stack.enter_context(patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)))
 
     # Redis patches
     stack.enter_context(
@@ -273,9 +275,6 @@ def _patch_stack(fake_redis, fake_sync_redis):
     mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
     stack.enter_context(
         patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
-    )
-    stack.enter_context(
-        patch("app.observability.audit_ledger.get_supabase_client", return_value=mock_supabase)
     )
     stack.enter_context(
         patch("app.services.biometric_signature_verifier.get_supabase_client", return_value=mock_supabase)
@@ -356,6 +355,7 @@ class TestConsentFlowIntegration:
                     "device_public_key": der_b64,
                     "device_label": "Integration Test Device",
                     "platform": "ios",
+                    "device_enrollment_token": "e" * 43,
                 },
             )
             assert enroll_resp.status_code == 201, f"Enroll failed: {enroll_resp.text}"
@@ -461,7 +461,7 @@ class TestConsentFlowIntegration:
             ])
             enroll_resp = client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": der_b64, "device_label": "Deny Device", "platform": "android"},
+                json={"device_public_key": der_b64, "device_label": "Deny Device", "platform": "android", "device_enrollment_token": "e" * 43},
             )
             assert enroll_resp.status_code == 201
 
@@ -528,7 +528,7 @@ class TestConsentFlowIntegration:
             ])
             enroll_resp = client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": enrolled_der_b64, "device_label": "Key Mismatch Device", "platform": "ios"},
+                json={"device_public_key": enrolled_der_b64, "device_label": "Key Mismatch Device", "platform": "ios", "device_enrollment_token": "e" * 43},
             )
             assert enroll_resp.status_code == 201
 
@@ -588,7 +588,7 @@ class TestConsentFlowIntegration:
             ])
             client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": der_b64, "device_label": "Poll Device", "platform": "ios"},
+                json={"device_public_key": der_b64, "device_label": "Poll Device", "platform": "ios", "device_enrollment_token": "e" * 43},
             )
 
             # Request
@@ -652,7 +652,7 @@ class TestConsentFlowIntegration:
             ])
             client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": der_b64, "device_label": "Replay Device", "platform": "ios"},
+                json={"device_public_key": der_b64, "device_label": "Replay Device", "platform": "ios", "device_enrollment_token": "e" * 43},
             )
 
             # Request

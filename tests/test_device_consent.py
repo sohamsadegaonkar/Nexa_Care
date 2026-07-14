@@ -60,8 +60,10 @@ def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
         "device_public_key": sample_p256_der_b64,
         "device_label": "iPhone 15 Pro Max",
         "platform": "ios",
+        "device_enrollment_token": "e" * 43,
     }
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     mock_res_count = MagicMock()
     mock_res_count.scalar.return_value = 0
     mock_res_exist = MagicMock()
@@ -71,7 +73,9 @@ def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
     from app.core.database import get_db_session
     app.dependency_overrides[get_db_session] = lambda: mock_db
     try:
-        with patch("app.api.v2.device_routes.append_audit_log_or_503", new_callable=AsyncMock):
+        with patch("app.api.v2.device_routes.append_audit_log_or_503", new_callable=AsyncMock), \
+             patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")), \
+             patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)):
             res = client.post(
                 "/api/v2/patient/devices/enroll",
                 headers={"Authorization": "Bearer pat-tok"},

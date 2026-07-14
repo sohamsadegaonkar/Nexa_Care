@@ -318,12 +318,7 @@ async def test_audit_ledger_coverage_and_chaining():
         "EXTRACTION_FIELD_REVIEWED",
         "PIPELINE_COMMITTED_TO_TIMELINE",
     ]
-    with patch("app.observability.audit_ledger.get_supabase_client") as mock_supa:
-        mock_supa.return_value.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
-            data=[{"entry_hash": "prev-hash-12345"}]
-        )
-        mock_supa.return_value.table.return_value.insert.return_value.execute.return_value = MagicMock()
-
+    with patch("app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})):
         for ev in events:
             ok = await append_audit_log(actor_uid="doc-1", event_type=ev, target_id="pat-1", status="SUCCESS")
             assert ok, f"Failed to append audit log for {ev}"
