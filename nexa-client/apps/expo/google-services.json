@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "623065585587",
+    "project_id": "nexa-care-alpha-2026",
+    "storage_bucket": "nexa-care-alpha-2026.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:623065585587:android:5c49f6577bd8aef9f45dc6",
+        "android_client_info": {
+          "package_name": "ai.nexacare.patient"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDjXq6Jc63To8bphueO76qtDhfT7EiEJB0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

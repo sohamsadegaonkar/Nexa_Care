@@ -101,7 +101,7 @@
 ## 6. Mobile and device-enrollment readiness
 
 - API URL configuration: canonical source variable is `NEXT_PUBLIC_API_URL` in the shared API client.
-- LAN access: documented with a placeholder `http://192.168.x.x:8000`; no developer-specific IP is committed.
+- LAN access: documented with a placeholder `http://<LOCAL_LAN_IP>:8000`; no developer-specific IP is committed.
 - Backend binding: runbook uses Uvicorn `--host 0.0.0.0`.
 - UI enrollment path: Expo route `/patient/secure-device` renders `SecureDeviceScreen`, which calls `generateAndEnrollDevice`.
 - Secure key storage: private P-256 bytes remain in Expo SecureStore with device-only accessibility; alpha documentation accurately states this is exportable JS key material, not hardware-backed non-exportable storage.
@@ -264,7 +264,7 @@ In a separate terminal, replace the example with the workstation's current priva
 
 ```powershell
 Set-Location C:\Users\DELL\Nexa_Care\nexa-client
-$env:NEXT_PUBLIC_API_URL='http://192.168.x.x:8000'
+$env:NEXT_PUBLIC_API_URL='http://<LOCAL_LAN_IP>:8000'
 yarn workspace expo start --dev-client
 ```
 

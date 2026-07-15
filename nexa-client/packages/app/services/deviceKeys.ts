@@ -31,14 +31,20 @@ import * as Crypto from 'expo-crypto'
 import * as LocalAuthentication from 'expo-local-authentication'
 import { p256 } from '@noble/curves/p256'
 import { Platform } from 'react-native'
-import { apiClient, getAuthToken, setAuthTokenProvider } from '../utils/apiClient'
+import { apiClient, getAuthToken } from '../utils/apiClient'
+import { DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY } from './patientAuthSession'
+
+export {
+  DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY,
+  PATIENT_ACCESS_TOKEN_STORAGE_KEY,
+  configurePatientAuthTokenProvider,
+  storePatientAuthSession,
+} from './patientAuthSession'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const DEVICE_PRIVATE_KEY_STORAGE_KEY = 'nexa_device_private_key_v1'
 export const DEVICE_ID_STORAGE_KEY = 'nexa_device_id_v1'
-export const DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY = 'nexa_device_enrollment_token_v1'
-export const PATIENT_ACCESS_TOKEN_STORAGE_KEY = 'nexa_patient_access_token_v1'
 
 export type DeviceEnrollmentStage = 'generating' | 'enrolling'
 
@@ -54,6 +60,7 @@ export interface EnrollDeviceParams {
   device_label: string
   platform: string
   device_enrollment_token: string
+  expo_push_token?: string
 }
 
 export interface EnrollDeviceResponse {
@@ -69,6 +76,7 @@ export interface DeviceInfo {
   platform: string
   status: string
   enrolled_at: string
+  public_key_fingerprint: string
 }
 
 export interface DevicesListResponse {
@@ -98,6 +106,14 @@ function base64ToBytes(b64: string): Uint8Array {
     return bytes
   }
   return new Uint8Array(Buffer.from(b64, 'base64'))
+}
+
+/** SHA-256 fingerprint of the raw DER bytes, matching the backend response. */
+export async function fingerprintDevicePublicKey(publicKeyDerBase64: string): Promise<string> {
+  const digest = new Uint8Array(
+    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, base64ToBytes(publicKeyDerBase64)),
+  )
+  return Array.from(digest, (value) => value.toString(16).padStart(2, '0')).join('')
 }
 
 async function requireSecureStore(): Promise<void> {
@@ -258,39 +274,10 @@ export async function generateAndEnrollDevice(
   await setDeviceId(enrollment.device_id)
   try {
     await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
-  } catch (error) {
-    console.warn('DEVICE_ENROLLMENT_TOKEN_CLEANUP_ERROR', error)
+  } catch {
+    console.warn('DEVICE_ENROLLMENT_TOKEN_CLEANUP_ERROR')
   }
   return enrollment
-}
-
-export function configurePatientAuthTokenProvider(): void {
-  setAuthTokenProvider(() => SecureStore.getItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY))
-}
-
-export async function storePatientAuthSession(
-  accessToken: string,
-  enrollmentToken: string,
-): Promise<void> {
-  await requireSecureStore()
-  try {
-    await Promise.all([
-      SecureStore.setItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY, accessToken, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      }),
-      SecureStore.setItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, enrollmentToken, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      }),
-    ])
-  } catch (error) {
-    // Never leave a half-written patient session behind.
-    await Promise.allSettled([
-      SecureStore.deleteItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY),
-      SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY),
-    ])
-    throw error
-  }
-  configurePatientAuthTokenProvider()
 }
 
 /**
@@ -300,8 +287,21 @@ export async function storePatientAuthSession(
  * device (the key could be orphaned if the backend was reset).
  */
 export async function hasDeviceKey(): Promise<boolean> {
+  return (await getStoredDevicePublicKey()) !== null
+}
+
+/** Return public installation metadata only when the matching private key is usable. */
+export async function getStoredDevicePublicKey(): Promise<DeviceKeyResult | null> {
+  await requireSecureStore()
   const existing = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
-  return !!existing
+  if (!existing) return null
+  const privateKey = base64ToBytes(existing)
+  if (!p256.utils.isValidPrivateKey(privateKey)) {
+    await deleteDeviceKey()
+    return null
+  }
+  const publicKey = p256.getPublicKey(privateKey, false)
+  return { publicKeyDerBase64: bytesToBase64(wrapEcPublicKeyAsDer(publicKey)) }
 }
 
 /**

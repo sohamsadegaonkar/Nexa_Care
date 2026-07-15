@@ -1,45 +1,169 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-
-async function loadApiBaseUrl(): Promise<string> {
+async function loadClient(apiUrl = 'https://native.example.test') {
   vi.resetModules()
-  return (await import('./apiClient')).API_BASE_URL
+  vi.stubGlobal('navigator', { product: 'ReactNative' })
+  vi.stubEnv('EXPO_PUBLIC_API_URL', apiUrl)
+  vi.stubEnv('EXPO_PUBLIC_APP_ENV', 'preview')
+  vi.stubEnv('EXPO_PUBLIC_ALLOW_HTTP', 'false')
+  return import('./apiClient')
 }
 
-
-describe('API base URL resolution', () => {
+describe('shared API transport', () => {
   afterEach(() => {
-    delete process.env.EXPO_PUBLIC_API_URL
-    delete process.env.NEXT_PUBLIC_API_URL
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
     vi.resetModules()
   })
 
-  it('uses the Expo public URL for native bundles', async () => {
-    process.env.EXPO_PUBLIC_API_URL = 'https://native.example.test/'
-    process.env.NEXT_PUBLIC_API_URL = 'https://web.example.test'
+  it('uses the Expo URL, normalizes it, and sends the exact OTP contract without auth', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ message: 'sent' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { API_BASE_URL, apiClient } = await loadClient('https://native.example.test/')
 
-    await expect(loadApiBaseUrl()).resolves.toBe('https://native.example.test')
+    await apiClient.post('/api/v2/auth/otp/send', { phone: '+919876543210' }, { noAuth: true })
+
+    expect(API_BASE_URL).toBe('https://native.example.test')
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://native.example.test/api/v2/auth/otp/send')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body)).toEqual({ phone: '+919876543210' })
+    expect(init.headers.Authorization).toBeUndefined()
   })
 
-  it('falls back to the Next public URL for web', async () => {
-    process.env.NEXT_PUBLIC_API_URL = 'https://web.example.test/'
-
-    await expect(loadApiBaseUrl()).resolves.toBe('https://web.example.test')
-  })
-
-  it('stays empty when neither public URL is configured', async () => {
-    await expect(loadApiBaseUrl()).resolves.toBe('')
-  })
-
-  it('fails before fetch with a specific error when no URL is configured', async () => {
+  it('keeps the Next.js URL separate even when a mobile variable also exists', async () => {
     vi.resetModules()
-    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    vi.stubGlobal('navigator', { product: 'Gecko' })
+    vi.stubEnv('EXPO_PUBLIC_API_URL', 'https://mobile.example.test')
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://web.example.test/')
+    const { API_BASE_URL } = await import('./apiClient')
+
+    expect(API_BASE_URL).toBe('https://web.example.test')
+  })
+
+  it('fails before fetch when no API URL is configured', async () => {
+    vi.resetModules()
+    vi.stubGlobal('navigator', { product: 'ReactNative' })
+    vi.stubEnv('EXPO_PUBLIC_API_URL', '')
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
     const { apiClient } = await import('./apiClient')
 
     await expect(
-      apiClient.post('/api/v2/auth/otp/send', { phone: '0000000000' }, { noAuth: true }),
+      apiClient.post('/api/v2/auth/otp/send', {}, { noAuth: true })
     ).rejects.toMatchObject({ code: 'MISSING_API_BASE_URL', status: 0 })
-    expect(fetchSpy).not.toHaveBeenCalled()
-    fetchSpy.mockRestore()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [422, { detail: [{ msg: 'Enter a valid Indian mobile number.' }] }, 'VALIDATION_ERROR'],
+    [429, { detail: 'Too many OTP requests. Please try again later.' }, 'RATE_LIMITED'],
+  ])('preserves HTTP %s and backend detail', async (status, payload, code) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    )
+    const { apiClient } = await loadClient()
+
+    await expect(
+      apiClient.post('/api/v2/auth/otp/send', {}, { noAuth: true })
+    ).rejects.toMatchObject({
+      status,
+      code,
+      message: expect.stringMatching(/valid Indian|Too many OTP/),
+    })
+  })
+
+  it('classifies a true transport failure without exposing the request body', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Network request failed')))
+    const { apiClient } = await loadClient()
+
+    await expect(
+      apiClient.post(
+        '/api/v2/auth/otp/send',
+        { phone: '+919876543210', otp: '123456' },
+        { noAuth: true }
+      )
+    ).rejects.toMatchObject({ status: 0, code: 'NETWORK_ERROR' })
+
+    const diagnostics = JSON.stringify(consoleSpy.mock.calls)
+    expect(diagnostics).toContain('/api/v2/auth/otp/send')
+    expect(diagnostics).not.toContain('+919876543210')
+    expect(diagnostics).not.toContain('123456')
+  })
+
+  it('classifies a timeout separately', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(
+        (_url, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () =>
+              reject(new DOMException('Aborted', 'AbortError'))
+            )
+          })
+      )
+    )
+    const { apiClient } = await loadClient()
+
+    await expect(
+      apiClient.post('/api/v2/auth/otp/send', {}, { noAuth: true, timeoutMs: 5 })
+    ).rejects.toMatchObject({ status: 0, code: 'REQUEST_TIMEOUT' })
+  })
+
+  it('rejects a malformed successful response', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not-json', { status: 200 })))
+    const { apiClient } = await loadClient()
+
+    await expect(apiClient.get('/health', { noAuth: true })).rejects.toMatchObject({
+      code: 'MALFORMED_RESPONSE',
+    })
+  })
+
+  it('fails an authenticated request locally when the current token is missing', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { apiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => null)
+
+    await expect(apiClient.post('/api/v2/push/register-token', {})).rejects.toMatchObject({
+      status: 0,
+      code: 'AUTH_REQUIRED',
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('reads the latest token for every request instead of caching one at module load', async () => {
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify({ ok: true }),
+      {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { apiClient, setAuthTokenProvider } = await loadClient()
+    let token = 'first-session'
+    setAuthTokenProvider(() => token)
+
+    await apiClient.get('/api/v2/patient/devices')
+    token = 'current-session'
+    await apiClient.get('/api/v2/patient/devices')
+
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer first-session')
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer current-session')
   })
 })

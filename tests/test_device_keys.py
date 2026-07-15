@@ -240,18 +240,18 @@ class TestDeviceKeysService:
 
 
 class TestSecureDeviceScreenIntegration:
-    """Validate SecureDeviceScreen uses the deviceKeys service correctly."""
+    """Validate SecureDeviceScreen uses current-installation reconciliation."""
 
     def test_imports_device_keys_service(self) -> None:
         code = _read(SECURE_DEVICE_PATH)
-        assert "deviceKeys" in code, (
-            "Must import from deviceKeys service"
+        assert "currentDeviceEnrollment" in code, (
+            "Must import the current-device enrollment service"
         )
 
     def test_uses_generate_and_enroll(self) -> None:
         code = _read(SECURE_DEVICE_PATH)
-        assert "generateAndEnrollDevice" in code, (
-            "Must use generateAndEnrollDevice for the enrollment flow"
+        assert "ensureCurrentDeviceEnrollment" in code, (
+            "Must reconcile the exact local installation before enrollment"
         )
 
     def test_no_local_keypair_function(self) -> None:

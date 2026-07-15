@@ -22,6 +22,7 @@ demo backend with seeded test data.
 # Backend
 export DATABASE_URL="postgresql://user:pass@localhost:5432/nexacare"
 export REDIS_URL="redis://localhost:6379/0"
+export DEMO_PROVIDER_PASSWORD="<GENERATE_A_STRONG_LOCAL_DEMO_PASSWORD>"
 
 # Frontend — point at your running backend
 export NEXT_PUBLIC_API_URL="http://localhost:8000"
@@ -34,10 +35,17 @@ export NEXT_PUBLIC_API_URL="http://localhost:8000"
 
 ## 2. Seed the Demo Doctor
 
-```bash
-cd /path/to/Nexa_Care
-python scripts/seed_demo_doctor.py
+```powershell
+Set-Location C:\Users\DELL\Nexa_Care
+$password = .\venv\Scripts\python.exe -c "import secrets; print('Aa1!' + secrets.token_urlsafe(32))"
+# Copy $password into the ignored .env as DEMO_PROVIDER_PASSWORD, then:
+Remove-Variable password
+.\venv\Scripts\python.exe scripts\seed_demo_doctor.py
 ```
+
+The normal seed command creates a missing credential but never overwrites an
+existing password. Never commit `.env` or place the generated password directly
+in a command argument.
 
 This creates:
 
@@ -45,7 +53,7 @@ This creates:
 |----------|-------|
 | **Doctor** | Dr. Meera Joshi |
 | **Email** | `demo.doctor@nexacare.in` |
-| **Password** | `Demo@1234` |
+| **Password** | Value of the ignored local `DEMO_PROVIDER_PASSWORD` variable |
 | **Hospital** | Nexa Demo Hospital (Mumbai) |
 | **MFA** | Disabled (for demo simplicity) |
 
@@ -96,7 +104,7 @@ Open http://localhost:3000/doctor/login in your browser.
 
 1. Open http://localhost:3000/doctor/login
 2. Enter **Email:** `demo.doctor@nexacare.in`
-3. Enter **Password:** `Demo@1234`
+3. Enter **Password:** the value of your ignored local `DEMO_PROVIDER_PASSWORD`
 4. Click **Sign In**
 5. You are redirected to the Dashboard
 
@@ -246,7 +254,7 @@ When consent expires, the viewer **locks immediately** with 🔒 and
 
 | Problem | Solution |
 |---------|----------|
-| Login fails with 401 | Verify `DATABASE_URL` and run `seed_demo_doctor.py` |
+| Login fails with 401 | Verify the configured database and account status. Normal seeding does not reset an existing password. Use the explicit rotation command below when required. |
 | "Patient device not enrolled" error | The patient needs a device key; the seed script creates one |
 | Consent challenge not found | Redis must be running; challenges are stored in Redis with 120s TTL |
 | Frontend shows blank page | Check `NEXT_PUBLIC_API_URL` is set correctly |
@@ -255,14 +263,46 @@ When consent expires, the viewer **locks immediately** with 🔒 and
 
 ---
 
-## 8. Demo Reset
+## 8. Demo Password Rotation and Seed Reruns
 
-To reset demo data and start fresh:
+Re-running the normal seed command is non-destructive and leaves the password,
+lockout state, and active-state decisions unchanged:
 
-```bash
-# Re-run the seed script (it uses upsert, so it's idempotent)
-python scripts/seed_demo_doctor.py
+```powershell
+.\venv\Scripts\python.exe scripts\seed_demo_doctor.py
+```
 
-# Clear Redis consent state
-redis-cli FLUSHDB
+To intentionally rotate only `demo.doctor@nexacare.in`, first generate a new
+strong value and place it in the ignored `.env`, then run both confirmation
+flags:
+
+```powershell
+.\venv\Scripts\python.exe scripts\seed_demo_doctor.py `
+  --reset-password `
+  --confirm-demo-provider-reset
+```
+
+Rotation writes only the canonical `password_hash`, clears password lockout and
+failed attempts, updates `password_changed_at`, revokes existing provider and
+pending-MFA sessions, and writes an audit event. It does not reactivate a
+disabled identity or credential unless the corresponding explicit flag is also
+provided. Restarting Uvicorn is not required after a database-only rotation.
+
+Verify login without displaying the returned token:
+
+```powershell
+$body = @{
+  login_identifier = "demo.doctor@nexacare.in"
+  password = (Get-Content .env | Where-Object { $_ -match '^DEMO_PROVIDER_PASSWORD=' } | Select-Object -First 1).Split('=', 2)[1].Trim('"')
+} | ConvertTo-Json
+$response = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v2/auth/login" -Method POST -ContentType "application/json" -Body $body
+$json = $response.Content | ConvertFrom-Json
+[pscustomobject]@{
+  http_status = $response.StatusCode
+  token_present = [bool]$json.access_token
+  provider_uid_present = [bool]$json.provider_uid
+  hospital_id_present = [bool]$json.hospital_id
+  mfa_required = [bool]$json.mfa_token
+}
+Remove-Variable body, response, json
 ```

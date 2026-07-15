@@ -1,8 +1,18 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Input, Button, Spinner, Text } from 'tamagui'
-import { useState } from 'react'
-import { ApiError, apiClient } from '../../utils/apiClient'
-import { getDevices, storePatientAuthSession } from '../../services/deviceKeys'
+import { useRef, useState } from 'react'
+import {
+  CurrentDeviceError,
+  ensureCurrentDeviceEnrollment,
+} from '../../services/currentDeviceEnrollment'
+import { storePatientAuthSession } from '../../services/patientAuthSession'
+import { getRegisteredPushTokenForCurrentSession } from '../../services/pushNotifications'
+import {
+  patientAuthError,
+  requestPatientOtp,
+  tryBeginPatientOtpSubmission,
+  verifyPatientOtp,
+} from '../../services/patientOtp'
 
 /**
  * ALPHA: Device signing flow scaffolded.
@@ -15,30 +25,6 @@ interface PatientLoginScreenProps {
   initialPhone?: string
 }
 
-interface PatientOtpVerifyResponse {
-  access_token: string
-  token_type: 'bearer'
-  expires_at: string
-  device_enrollment_token: string
-}
-
-function normalizePhoneInput(value: string): string {
-  const digits = value.replace(/\D/g, '')
-  if (digits.length === 10) return `+91${digits}`
-  if (digits.length === 12 && digits.startsWith('91')) return `+${digits}`
-  return value.trim()
-}
-
-function patientAuthError(error: unknown, fallback: string): string {
-  if (!(error instanceof ApiError)) return fallback
-  if (error.status === 0) return 'Cannot reach Nexa Care. Check your connection and try again.'
-  if (error.status === 401) return 'The OTP is invalid or expired. Request a new code and try again.'
-  if (error.status === 403) return 'No patient account is linked to this verified phone number.'
-  if (error.status === 429) return 'Too many attempts. Please wait a few minutes and try again.'
-  if (error.status === 503) return 'The SMS service is temporarily unavailable. Please try again later.'
-  return fallback
-}
-
 export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginScreenProps) {
   const router = useRouter()
   const [phone, setPhone] = useState(initialPhone)
@@ -46,42 +32,46 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
   const [step, setStep] = useState<'phone' | 'otp'>('phone')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const submissionInFlight = useRef(false)
 
   const handleSendOtp = async () => {
+    if (!tryBeginPatientOtpSubmission(submissionInFlight)) return
     setLoading(true)
     setError(null)
     try {
-      const normalizedPhone = normalizePhoneInput(phone)
-      await apiClient.post('/api/v2/auth/otp/send', { phone: normalizedPhone }, { noAuth: true })
+      const normalizedPhone = await requestPatientOtp(phone)
       setPhone(normalizedPhone)
       setStep('otp')
     } catch (requestError) {
       setError(patientAuthError(requestError, 'Failed to send OTP. Please try again.'))
     } finally {
+      submissionInFlight.current = false
       setLoading(false)
     }
   }
 
   const handleVerifyOtp = async () => {
+    if (!tryBeginPatientOtpSubmission(submissionInFlight)) return
     setLoading(true)
     setError(null)
     try {
-      const { data } = await apiClient.post<PatientOtpVerifyResponse>(
-        '/api/v2/auth/otp/verify',
-        { phone, otp },
-        { noAuth: true },
-      )
+      const data = await verifyPatientOtp(phone, otp)
       await storePatientAuthSession(data.access_token, data.device_enrollment_token)
 
-      const deviceData = await getDevices()
-      if (deviceData.devices.some((device) => device.status === 'active')) {
-        router.replace('/patient/access-history')
-      } else {
-        router.replace('/patient/secure-device')
-      }
+      // Enrollment is installation-specific: another active patient device
+      // must never stand in for this installation's local key + device_id.
+      await ensureCurrentDeviceEnrollment({
+        expoPushToken: getRegisteredPushTokenForCurrentSession(),
+      })
+      router.replace('/patient/access-history')
     } catch (requestError) {
-      setError(patientAuthError(requestError, 'Unable to verify OTP. Please try again.'))
+      setError(
+        requestError instanceof CurrentDeviceError
+          ? requestError.message
+          : patientAuthError(requestError, 'Unable to verify OTP. Please try again.'),
+      )
     } finally {
+      submissionInFlight.current = false
       setLoading(false)
     }
   }

@@ -7,6 +7,7 @@ Never stores private keys server-side.
 from __future__ import annotations
 
 import base64
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -55,6 +56,7 @@ class EnrolledDeviceInfo(BaseModel):
     platform: str
     status: str
     enrolled_at: str
+    public_key_fingerprint: str
 
 
 class EnrolledDevicesListResponse(BaseModel):
@@ -200,6 +202,7 @@ async def list_devices(
             platform=row.platform,
             status=row.status,
             enrolled_at=row.enrolled_at.isoformat(),
+            public_key_fingerprint=hashlib.sha256(row.device_public_key).hexdigest(),
         )
         for row in rows
     ]

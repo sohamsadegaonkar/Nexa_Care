@@ -4,12 +4,10 @@
 Usage:
     BASE_URL=https://staging.example.com \\
     PROVIDER_EMAIL=test.doctor@nexa-care.local \\
-    PROVIDER_PASSWORD=test_hospital_api_key_123 \\
+    PROVIDER_PASSWORD=<STRONG_IGNORED_TEST_PASSWORD> \\
     python3 scripts/smoke_test.py
 
-    Defaults match scripts/seed_test_data.py's seeded test provider, so
-    this works out of the box against a freshly-seeded instance without
-    setting anything.
+    Provider credentials must be supplied through the process environment.
 
 Exercises the endpoint chain in dependency order: register (as an
 authenticated provider) -> enroll-biometric (binds the test device to the
@@ -49,7 +47,9 @@ BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
 
 # Matches scripts/seed_test_data.py's TEST_PROVIDER_EMAIL / TEST_PROVIDER_PASSWORD.
 PROVIDER_EMAIL = os.environ.get("PROVIDER_EMAIL", "test.doctor@nexa-care.local")
-PROVIDER_PASSWORD = os.environ.get("PROVIDER_PASSWORD", "test_hospital_api_key_123")
+PROVIDER_PASSWORD = os.environ.get("PROVIDER_PASSWORD")
+if not PROVIDER_PASSWORD:
+    raise RuntimeError("PROVIDER_PASSWORD must be set for the smoke test")
 
 _basic_value = base64.b64encode(f"{PROVIDER_EMAIL}:{PROVIDER_PASSWORD}".encode("utf-8")).decode("ascii")
 PROVIDER_HEADER = {"Authorization": f"Basic {_basic_value}"}

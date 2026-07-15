@@ -1,7 +1,11 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Button, Spinner, Text, AnimatePresence } from 'tamagui'
 import { useState } from 'react'
-import { generateAndEnrollDevice } from '../../services/deviceKeys'
+import {
+  CurrentDeviceError,
+  ensureCurrentDeviceEnrollment,
+} from '../../services/currentDeviceEnrollment'
+import { getRegisteredPushTokenForCurrentSession } from '../../services/pushNotifications'
 
 /**
  * ALPHA: Device key generation and enrollment screen.
@@ -37,9 +41,12 @@ export default function SecureDeviceScreen({
       // Step 1: Generate P-256 keypair + enroll with backend
       // Private key stays in SecureStore (Keychain / Keystore) — NEVER sent to server.
       setStep('generating')
-      const enrollment = await generateAndEnrollDevice(undefined, setStep)
+      const enrollment = await ensureCurrentDeviceEnrollment({
+        onStage: setStep,
+        expoPushToken: getRegisteredPushTokenForCurrentSession(),
+      })
 
-      const deviceId = enrollment?.device_id
+      const deviceId = enrollment?.deviceId
       if (!deviceId) throw new Error('No device ID returned from enrollment')
 
       // Step 2: Navigate to enrolled confirmation
@@ -48,13 +55,16 @@ export default function SecureDeviceScreen({
         pathname: '/patient/enrolled',
         params: {
           deviceId,
-          enrolledAt: enrollment.enrolled_at,
+          enrolledAt: new Date().toISOString(),
           deviceLabel: enrollment.status,
         },
       })
     } catch (err: unknown) {
-      console.error('DEVICE_ENROLLMENT_ERROR', err)
-
+      // Diagnostic is metadata-only: never log tokens, signatures, or key material.
+      console.error('DEVICE_ENROLLMENT_ERROR', {
+        code: err instanceof CurrentDeviceError ? err.code : 'UNKNOWN',
+        status: err instanceof CurrentDeviceError ? err.status : 0,
+      })
       const message =
         err instanceof Error
           ? err.message

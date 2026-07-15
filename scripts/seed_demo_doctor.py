@@ -14,17 +14,26 @@ Run with DATABASE_URL pointed at the target database.
 from __future__ import annotations
 
 import asyncio
+import argparse
+import hashlib
 import os
 import sys
 import uuid
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import String, bindparam, select, text
+from dotenv import load_dotenv
+from sqlalchemy import String, bindparam, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB, insert
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# Standalone alpha tooling deliberately prefers the ignored repository .env
+# over stale parent-shell values. The API and Alembic both use app.core.config.
+load_dotenv(ROOT / ".env", override=True)
 
 from app.core.database import get_session_factory  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402
@@ -35,18 +44,72 @@ from app.models.provider import (  # noqa: E402
     ProviderHospitalAffiliation,
     ProviderIdentity,
 )
-from app.services.provider_auth_service import hash_provider_password  # noqa: E402
+from app.observability.audit_ledger import append_audit_log  # noqa: E402
+from app.services.provider_auth_service import (  # noqa: E402
+    hash_provider_password,
+    normalize_provider_login_identifier,
+    revoke_provider_auth_sessions,
+)
 
 # ── Demo credentials ─────────────────────────────────────────────────────────
 
 DEMO_PROVIDER_EMAIL = "demo.doctor@nexacare.in"
-DEMO_PROVIDER_PASSWORD = os.getenv("DEMO_PROVIDER_PASSWORD")
 DEMO_HOSPITAL_CODE = "NEXA-DEMO-HOSPITAL"
 DEMO_NFC_UID = "04:B3:C1:DE:55:01"
 
 # Demo patient IDs (deterministic UUIDs from namespace)
 DEMO_PATIENT_1_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "nexa-care-demo:patient:aarav-sharma")
 DEMO_PATIENT_2_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "nexa-care-demo:patient:priya-patel")
+
+_REJECTED_PASSWORDS = {
+    "password",
+    "changeme",
+    "generated_alpha_demo_password",
+    "<generate_a_strong_local_demo_password>",
+}
+_OBSOLETE_DEMO_PASSWORD_DIGEST = (
+    "29d1281934b777f0aa3256eba7886479dfab1d2637927b73f6657344a0ea59b0"
+)
+
+
+@dataclass(frozen=True)
+class ProviderSeedResult:
+    provider_id: uuid.UUID
+    provider_created: bool
+    credential_created: bool
+    affiliation_created: bool
+    password_reset: bool
+    provider_active: bool
+    credential_active: bool
+
+
+def require_demo_provider_password() -> str:
+    """Load and validate the demo password without ever returning it in output."""
+
+    password = os.getenv("DEMO_PROVIDER_PASSWORD", "")
+    if not password:
+        raise RuntimeError("Missing required script environment variable: DEMO_PROVIDER_PASSWORD")
+    normalized = password.strip().lower()
+    obsolete = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+    if (
+        normalized in _REJECTED_PASSWORDS
+        or "generate_a_strong" in normalized
+        or obsolete == _OBSOLETE_DEMO_PASSWORD_DIGEST
+    ):
+        raise RuntimeError("DEMO_PROVIDER_PASSWORD is a placeholder or obsolete example value")
+    if len(password) < 14:
+        raise RuntimeError("DEMO_PROVIDER_PASSWORD must contain at least 14 characters")
+    character_classes = (
+        any(char.islower() for char in password),
+        any(char.isupper() for char in password),
+        any(char.isdigit() for char in password),
+        any(not char.isalnum() for char in password),
+    )
+    if not all(character_classes):
+        raise RuntimeError(
+            "DEMO_PROVIDER_PASSWORD must contain upper, lower, numeric, and symbol characters"
+        )
+    return password
 
 
 async def seed_hospital(session) -> uuid.UUID:
@@ -69,11 +132,23 @@ async def seed_hospital(session) -> uuid.UUID:
     return hospital.id
 
 
-async def seed_provider(session, hospital_id: uuid.UUID) -> uuid.UUID:
-    """Create or reuse Dr. Meera Joshi."""
+async def seed_provider(
+    session,
+    hospital_id: uuid.UUID,
+    *,
+    reset_password: bool = False,
+    reactivate_provider: bool = False,
+    reactivate_credential: bool = False,
+) -> ProviderSeedResult:
+    """Create or safely reuse Dr. Meera Joshi and the canonical credential."""
+
+    normalized_login = normalize_provider_login_identifier(DEMO_PROVIDER_EMAIL)
     provider = await session.scalar(
-        select(ProviderIdentity).where(ProviderIdentity.contact_email == DEMO_PROVIDER_EMAIL)
+        select(ProviderIdentity).where(
+            func.lower(func.trim(ProviderIdentity.contact_email)) == normalized_login
+        )
     )
+    provider_created = provider is None
     if provider is None:
         provider = ProviderIdentity(
             display_name="Dr. Meera Joshi",
@@ -81,25 +156,46 @@ async def seed_provider(session, hospital_id: uuid.UUID) -> uuid.UUID:
             specialty="Internal Medicine",
             contact_email=DEMO_PROVIDER_EMAIL,
             contact_phone="+91 98765 00001",
+            status="active",
             is_active=True,
         )
         session.add(provider)
         await session.flush()
+    elif reactivate_provider:
+        provider.is_active = True
+        provider.status = "active"
 
-    credential = await session.scalar(
+    credentials = list((await session.scalars(
         select(ProviderCredential).where(
-            ProviderCredential.login_identifier == DEMO_PROVIDER_EMAIL
+            func.lower(func.trim(ProviderCredential.login_identifier)) == normalized_login
         )
-    )
+    )).all())
+    if len(credentials) > 1:
+        raise RuntimeError("Multiple credentials exist for the normalized demo provider login")
+    credential = credentials[0] if credentials else None
+    credential_created = credential is None
     if credential is None:
+        password = require_demo_provider_password()
         credential = ProviderCredential(
             provider_id=provider.id,
-            login_identifier=DEMO_PROVIDER_EMAIL,
-            password_hash=hash_provider_password(DEMO_PROVIDER_PASSWORD),
+            login_identifier=normalized_login,
+            password_hash=hash_provider_password(password),
             mfa_enabled=False,
             is_active=True,
         )
         session.add(credential)
+    else:
+        if credential.provider_id != provider.id:
+            raise RuntimeError("Demo credential is bound to a different provider identity")
+        if credential.login_identifier != normalized_login:
+            credential.login_identifier = normalized_login
+        if reset_password:
+            credential.password_hash = hash_provider_password(require_demo_provider_password())
+            credential.failed_login_attempts = 0
+            credential.locked_until = None
+            credential.password_changed_at = datetime.now(timezone.utc)
+        if reactivate_credential:
+            credential.is_active = True
 
     affiliation = await session.scalar(
         select(ProviderHospitalAffiliation).where(
@@ -107,6 +203,7 @@ async def seed_provider(session, hospital_id: uuid.UUID) -> uuid.UUID:
             ProviderHospitalAffiliation.hospital_id == hospital_id,
         )
     )
+    affiliation_created = affiliation is None
     if affiliation is None:
         affiliation = ProviderHospitalAffiliation(
             provider_id=provider.id,
@@ -120,7 +217,15 @@ async def seed_provider(session, hospital_id: uuid.UUID) -> uuid.UUID:
         session.add(affiliation)
 
     await session.flush()
-    return provider.id
+    return ProviderSeedResult(
+        provider_id=provider.id,
+        provider_created=provider_created,
+        credential_created=credential_created,
+        affiliation_created=affiliation_created,
+        password_reset=reset_password and not credential_created,
+        provider_active=bool(provider.is_active and provider.status == "active"),
+        credential_active=bool(credential.is_active),
+    )
 
 
 async def seed_nfc_card(session, patient_id: uuid.UUID, provider_id: uuid.UUID) -> None:
@@ -183,18 +288,52 @@ async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> No
     )
 
 
-async def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Seed the canonical Nexa Care demo provider")
+    parser.add_argument("--reset-password", action="store_true")
+    parser.add_argument("--confirm-demo-provider-reset", action="store_true")
+    parser.add_argument("--reactivate-provider", action="store_true")
+    parser.add_argument("--reactivate-credential", action="store_true")
+    args = parser.parse_args(argv)
+    if args.reset_password != args.confirm_demo_provider_reset:
+        parser.error(
+            "password reset requires both --reset-password and "
+            "--confirm-demo-provider-reset"
+        )
+    if (args.reactivate_provider or args.reactivate_credential) and not args.reset_password:
+        parser.error("reactivation flags are allowed only during an explicit password reset")
+    return args
+
+
+async def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
     env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
     if env in {"prod", "production"}:
         raise RuntimeError(f"Refusing to seed demo doctor in production environment ('{env}').")
-    if not DEMO_PROVIDER_PASSWORD:
-        raise RuntimeError("Missing required script environment variable: DEMO_PROVIDER_PASSWORD")
 
     session_factory = get_session_factory()
     async with session_factory() as session:
         try:
             hospital_id = await seed_hospital(session)
-            provider_id = await seed_provider(session, hospital_id)
+            provider_result = await seed_provider(
+                session,
+                hospital_id,
+                reset_password=args.reset_password,
+                reactivate_provider=args.reactivate_provider,
+                reactivate_credential=args.reactivate_credential,
+            )
+            provider_id = provider_result.provider_id
+
+            if provider_result.password_reset:
+                await revoke_provider_auth_sessions(provider_id)
+                audited = await append_audit_log(
+                    actor_uid="DEMO_PROVIDER_RESET_TOOL",
+                    event_type="PROVIDER_PASSWORD_RESET",
+                    target_id=str(provider_id),
+                    status="SUCCESS",
+                )
+                if not audited:
+                    raise RuntimeError("Audit write failed; demo provider password reset aborted")
 
             # Patient 1: Aarav Sharma (NFC card holder)
             await seed_nfc_card(session, DEMO_PATIENT_1_ID, provider_id)
@@ -211,10 +350,14 @@ async def main() -> int:
     print("\n" + "=" * 72)
     print("NEXA CARE DEMO DOCTOR SEEDED")
     print("=" * 72)
-    print("Doctor Name:     Dr. Meera Joshi")
-    print(f"Doctor Email:    {DEMO_PROVIDER_EMAIL}")
-    print(f"Provider ID:     {provider_id}")
-    print(f"Hospital ID:     {hospital_id}")
+    print(f"provider={'created' if provider_result.provider_created else 'reused'}")
+    print(f"credential={'created' if provider_result.credential_created else 'reused'}")
+    print(f"affiliation={'created' if provider_result.affiliation_created else 'reused'}")
+    print(f"password={'reset' if provider_result.password_reset else 'unchanged'}")
+    print(f"provider_active={str(provider_result.provider_active).lower()}")
+    print(f"credential_active={str(provider_result.credential_active).lower()}")
+    print(f"provider_id={provider_id}")
+    print(f"hospital_id={hospital_id}")
     print()
     print("Patient 1 (NFC): Aarav Sharma")
     print(f"  Patient ID:    {DEMO_PATIENT_1_ID}")

@@ -8,6 +8,15 @@ const mocks = vi.hoisted(() => ({
   setAuthTokenProvider: vi.fn(),
 }))
 
+const patientId = '123e4567-e89b-12d3-a456-426614174001'
+const patientPayload = Buffer.from(JSON.stringify({
+  sub: patientId,
+  patient_id: patientId,
+  exp: Math.floor(Date.now() / 1000) + 3600,
+  jti: 'device-test-session',
+})).toString('base64url')
+const patientAccessToken = `header.${patientPayload}.signature`
+
 vi.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
   isAvailableAsync: vi.fn(async () => mocks.secureStoreAvailable),
@@ -27,7 +36,11 @@ vi.mock('expo-crypto', () => ({
     privateKey[31] = 1
     return privateKey
   }),
-  digest: vi.fn(),
+  digest: vi.fn(async () => {
+    const bytes = new Uint8Array(32)
+    bytes[0] = 0xab
+    return bytes.buffer
+  }),
 }))
 
 vi.mock('expo-local-authentication', () => ({}))
@@ -44,6 +57,7 @@ import {
   DEVICE_PRIVATE_KEY_STORAGE_KEY,
   PATIENT_ACCESS_TOKEN_STORAGE_KEY,
   generateAndEnrollDevice,
+  fingerprintDevicePublicKey,
   storePatientAuthSession,
 } from './deviceKeys'
 
@@ -51,21 +65,27 @@ describe('physical-device enrollment prerequisites', () => {
   beforeEach(() => {
     mocks.storage.clear()
     mocks.secureStoreAvailable = true
-    mocks.accessToken = 'patient-access-token'
+    mocks.accessToken = patientAccessToken
     mocks.post.mockReset()
     mocks.setAuthTokenProvider.mockClear()
   })
 
   it('persists patient and enrollment tokens only in SecureStore', async () => {
-    await storePatientAuthSession('patient-access-token', 'enrollment-token-value')
+    await storePatientAuthSession(patientAccessToken, 'enrollment-token-value')
 
-    expect(mocks.storage.get(PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe('patient-access-token')
+    expect(mocks.storage.get(PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe(patientAccessToken)
     expect(mocks.storage.get(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)).toBe('enrollment-token-value')
     expect(mocks.setAuthTokenProvider).toHaveBeenCalledOnce()
   })
 
+  it('fingerprints decoded DER bytes rather than the base64 text', async () => {
+    await expect(fingerprintDevicePublicKey('AQID')).resolves.toBe(
+      `ab${'00'.repeat(31)}`,
+    )
+  })
+
   it('uses Expo secure randomness, enrolls, and retains only device state', async () => {
-    await storePatientAuthSession('patient-access-token', 'enrollment-token-value')
+    await storePatientAuthSession(patientAccessToken, 'enrollment-token-value')
     mocks.post.mockResolvedValue({
       data: {
         device_id: 'device-1',

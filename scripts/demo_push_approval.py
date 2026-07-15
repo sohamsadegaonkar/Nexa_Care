@@ -179,9 +179,11 @@ if __name__ == "__main__":
     parser.add_argument("--url", default=os.getenv("NEXA_API_URL", "http://localhost:8000"), help="API Base URL")
     parser.add_argument("--card-uid", default=os.getenv("DEMO_CARD_UID", "04:A2:B4:EA:51:22"), help="NFC Card UID")
     parser.add_argument("--user", default=os.getenv("DEMO_USER", "test.doctor@nexa-care.local"), help="Provider Email")
-    parser.add_argument("--password", default=os.getenv("DEMO_PASS", "test_hospital_api_key_123"), help="Provider Password")
     parser.add_argument("--test-denial", action="store_true", help="Simulate a denial path")
     
     args = parser.parse_args()
     
-    asyncio.run(run_demo(args.url, args.card_uid, args.user, args.password, args.test_denial))
+    password = os.getenv("DEMO_PASS")
+    if not password:
+        parser.error("DEMO_PASS must be set in the process environment")
+    asyncio.run(run_demo(args.url, args.card_uid, args.user, password, args.test_denial))

@@ -2,7 +2,7 @@ import '@tamagui/native/setup-zeego'
 import { registerRootComponent } from 'expo'
 import { ExpoRoot } from 'expo-router'
 import React from 'react'
-import { configurePatientAuthTokenProvider } from 'app/services/deviceKeys'
+import { configurePatientAuthTokenProvider } from 'app/services/patientAuthSession'
 
 // Restore the patient JWT provider after a native reload before protected
 // patient routes make their first request.

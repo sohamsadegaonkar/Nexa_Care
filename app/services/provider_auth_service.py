@@ -49,6 +49,7 @@ _PASSWORD_CONTEXT = CryptContext(
     schemes=["argon2", "pbkdf2_sha256", "bcrypt"] if _ARGON2_AVAILABLE else ["pbkdf2_sha256", "bcrypt"],
     deprecated=["pbkdf2_sha256", "bcrypt"] if _ARGON2_AVAILABLE else ["bcrypt"],
 )
+_DUMMY_PASSWORD_HASH = _PASSWORD_CONTEXT.hash("nexa-provider-auth-dummy-password")
 _PROVIDER_SESSION_PREFIX = "provider_session:"
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
 _MAX_FAILED_LOGIN_ATTEMPTS = 5
@@ -103,9 +104,22 @@ def hash_provider_password(plain_password: str) -> str:
 
 
 def verify_provider_password(plain_password: str, password_hash: str) -> bool:
-    """Constant-time password verification against a stored password hash."""
+    """Verify a provider password and fail closed for malformed hashes."""
 
-    return _PASSWORD_CONTEXT.verify(plain_password, password_hash)
+    try:
+        return _PASSWORD_CONTEXT.verify(plain_password, password_hash)
+    except (TypeError, ValueError):
+        return False
+
+
+def normalize_provider_login_identifier(login_identifier: str) -> str:
+    """Return the canonical case-insensitive provider login identifier."""
+
+    return login_identifier.strip().lower()
+
+
+async def _maybe_await(value: Any) -> Any:
+    return await value if hasattr(value, "__await__") else value
 
 
 async def _record_failed_login(db: AsyncSession, credential: ProviderCredential) -> None:
@@ -266,6 +280,38 @@ async def issue_provider_session_token(
     return token
 
 
+async def revoke_provider_auth_sessions(provider_id: uuid.UUID) -> int:
+    """Revoke all bearer and pending-MFA sessions for one provider.
+
+    Existing sessions predate a provider-indexed Redis set, so this uses
+    bounded SCAN operations. It fails closed if Redis cannot be inspected.
+    No token-bearing key is logged or returned.
+    """
+
+    redis = get_redis_client()
+    revoked = 0
+    for prefix in (_PROVIDER_SESSION_PREFIX, _MFA_PENDING_PREFIX):
+        cursor: int | str = 0
+        while True:
+            scan_result = await _maybe_await(
+                redis.scan(cursor=cursor, match=f"{prefix}*", count=100)
+            )
+            cursor, keys = scan_result
+            for key in keys:
+                raw = await _maybe_await(redis.get(key))
+                if isinstance(raw, bytes):
+                    raw = raw.decode("utf-8")
+                try:
+                    payload = json.loads(raw) if raw else {}
+                except (TypeError, json.JSONDecodeError):
+                    payload = {}
+                if str(payload.get("provider_id", "")) == str(provider_id):
+                    revoked += int(bool(await _maybe_await(redis.delete(key))))
+            if int(cursor) == 0:
+                break
+    return revoked
+
+
 async def resolve_provider_session_context(token: str) -> dict[str, Any] | None:
     """Load the full session context from a Redis session token."""
 
@@ -400,22 +446,17 @@ async def load_credential_by_login(
 ) -> ProviderCredential | None:
     """Fetch an active credential row with its provider eagerly loaded."""
 
+    normalized = normalize_provider_login_identifier(login_identifier)
     stmt = (
         select(ProviderCredential)
         .where(
-            ProviderCredential.login_identifier == login_identifier,
+            ProviderCredential.login_identifier == normalized,
             ProviderCredential.is_active.is_(True),
         )
         .options(selectinload(ProviderCredential.provider))
     )
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
-
-
-def _stored_password_hash(credential: ProviderCredential) -> str:
-    """Return the active stored provider password hash across schema versions."""
-
-    return credential.hashed_password or credential.password_hash
 
 
 async def load_provider_with_affiliations(
@@ -429,6 +470,7 @@ async def load_provider_with_affiliations(
         .where(
             ProviderIdentity.id == provider_id,
             ProviderIdentity.is_active.is_(True),
+            ProviderIdentity.status == "active",
         )
         .options(
             selectinload(ProviderIdentity.credential),
@@ -538,12 +580,15 @@ async def authenticate_provider_password(
 
     credential = await load_credential_by_login(db, login_identifier)
     if credential is None or credential.provider is None:
+        # Keep the unknown-account path close to a real password verification
+        # so the public generic 401 is not also an account-existence oracle.
+        verify_provider_password(plain_password, _DUMMY_PASSWORD_HASH)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
-    if not credential.provider.is_active:
+    if not credential.provider.is_active or credential.provider.status != "active":
         return ProviderAuthResult(None, ProviderAuthFailure.PROVIDER_INACTIVE)
     if _credential_is_locked(credential):
         return ProviderAuthResult(None, ProviderAuthFailure.ACCOUNT_LOCKED)
-    if not verify_provider_password(plain_password, _stored_password_hash(credential)):
+    if not verify_provider_password(plain_password, credential.password_hash):
         await _record_failed_login(db, credential)
         return ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS)
     if credential.mfa_enabled:

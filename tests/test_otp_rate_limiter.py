@@ -69,7 +69,7 @@ async def test_keys_have_required_dimensions_and_no_raw_identifiers() -> None:
     redis = AtomicFakeRedis()
     limiter = OtpRedisRateLimiter(redis_client=redis, hmac_secret=HMAC_SECRET)
     phone = "+918975073895"
-    ip = "192.168.29.249"
+    ip = "192.0.2.249"
     await limiter.check(action="send", ip=ip, normalized_phone=phone)
     await limiter.check(action="verify", ip=ip, normalized_phone=phone)
     assert any(key.startswith("otp:send:ip:") for key in redis.keys_seen)

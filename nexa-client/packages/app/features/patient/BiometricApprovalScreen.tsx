@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react'
 import {
   fetchChallenge,
   approveWithBiometric,
+  classifyConsentError,
   isChallengeExpired,
   type ConsentChallenge,
 } from '../../services/consentSigning'
+import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrollment'
 
 /**
  * Biometric approval screen — Face ID / Touch ID → sign → submit.
@@ -45,8 +47,9 @@ export default function BiometricApprovalScreen({
   const requestId = requestIdProp ?? params.requestId ?? ''
 
   const [challenge, setChallenge] = useState<ConsentChallenge | null>(null)
-  const [status, setStatus] = useState<'loading' | 'prompt' | 'authenticating' | 'signing' | 'submitting' | 'error' | 'expired'>('loading')
+  const [status, setStatus] = useState<'loading' | 'prompt' | 'setup-required' | 'authenticating' | 'signing' | 'submitting' | 'error' | 'expired'>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [setupRequiresLogin, setSetupRequiresLogin] = useState(false)
 
   // Fetch challenge on mount
   useEffect(() => {
@@ -67,11 +70,24 @@ export default function BiometricApprovalScreen({
           return
         }
         setChallenge(data)
-        setStatus('prompt')
-      } catch {
+        // Reconcile this exact installation before offering biometrics. A
+        // fresh OTP token can enroll it here; stale sessions show setup first.
+        await ensureCurrentDeviceEnrollment()
+        if (!cancelled) setStatus('prompt')
+      } catch (loadError) {
         if (!cancelled) {
-          setStatus('expired')
-          setError('This request has expired or is not available.')
+          const mapped = classifyConsentError(loadError)
+          if (mapped.kind === 'reauth' || mapped.kind === 'setup') {
+            setStatus('setup-required')
+            setError(mapped.message)
+            setSetupRequiresLogin(mapped.kind === 'reauth')
+          } else if (mapped.kind === 'expired') {
+            setStatus('expired')
+            setError(mapped.message)
+          } else {
+            setStatus('error')
+            setError(mapped.message)
+          }
         }
       }
     }
@@ -151,6 +167,28 @@ export default function BiometricApprovalScreen({
         <Button theme="blue" size="$4" onPress={() => router.replace('/patient/access-history')}>
           Go to Access History
         </Button>
+      </YStack>
+    )
+  }
+
+  if (status === 'setup-required') {
+    return (
+      <YStack f={1} bg="$background" p="$4" gap="$4" jc="center" ai="center">
+        <Text fontSize={56}>🔐</Text>
+        <H2 col="$color" ta="center">Secure This Device</H2>
+        <Paragraph col="$colorSubdued" ta="center" size="$4">
+          {error ?? 'Secure this device to approve consent requests.'}
+        </Paragraph>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.replace(
+            setupRequiresLogin ? '/patient/login' : '/patient/secure-device',
+          )}
+        >
+          {setupRequiresLogin ? 'Sign In and Secure Device' : 'Set Up or Retry Device'}
+        </Button>
+        <Button size="$4" chromeless onPress={handleCancel}>Go Back</Button>
       </YStack>
     )
   }

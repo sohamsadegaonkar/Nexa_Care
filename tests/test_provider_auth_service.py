@@ -24,6 +24,9 @@ from app.services.provider_auth_service import (
     complete_mfa_login,
     hash_client_ip,
     hash_user_agent,
+    hash_provider_password,
+    normalize_provider_login_identifier,
+    revoke_provider_auth_sessions,
     refresh_provider_session_token,
     resolve_provider_session_context,
 )
@@ -39,6 +42,7 @@ def make_provider_rows() -> tuple[ProviderIdentity, HospitalRegistry, ProviderHo
         medical_registration_number="AUTH-1",
         specialty="Internal Medicine",
         contact_email="auth@example.com",
+        status="active",
         is_active=True,
     )
     provider.id = uuid.uuid4()
@@ -115,8 +119,25 @@ class FakeRedis:
         # Return the post-incr count and the expire result.
         return [self._store.get(self._pipeline_key, 0), True]
 
+    def scan(self, cursor=0, match=None, count=None):
+        prefix = str(match or "").removesuffix("*")
+        return 0, [key for key in self._store if key.startswith(prefix)]
+
 
 class TestProviderPasswordAuthentication(unittest.TestCase):
+    def test_password_hash_round_trip(self) -> None:
+        password_hash = hash_provider_password("Strong-Test-Password-42!")
+        from app.services.provider_auth_service import verify_provider_password
+
+        self.assertTrue(verify_provider_password("Strong-Test-Password-42!", password_hash))
+        self.assertFalse(verify_provider_password("wrong", password_hash))
+
+    def test_login_identifier_normalization(self) -> None:
+        self.assertEqual(
+            normalize_provider_login_identifier("  Doctor@Example.COM  "),
+            "doctor@example.com",
+        )
+
     @patch("app.services.provider_auth_service.verify_provider_password")
     @patch("app.services.provider_auth_service.load_credential_by_login")
     def test_invalid_password_increments_failed_attempts_and_commits(
@@ -187,6 +208,72 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         self.assertEqual(credential.failed_login_attempts, 0)
         self.assertIsNone(credential.locked_until)
         db.commit.assert_awaited_once()
+
+    @patch("app.services.provider_auth_service.verify_provider_password")
+    @patch("app.services.provider_auth_service.load_credential_by_login")
+    def test_canonical_password_hash_is_authoritative(self, mock_load, mock_verify) -> None:
+        provider, _, _ = make_provider_rows()
+        credential = make_credential(provider)
+        credential.password_hash = "canonical-hash"
+        credential.hashed_password = "legacy-hash"
+        mock_load.return_value = credential
+        mock_verify.return_value = False
+
+        result = run(authenticate_provider_password(AsyncMock(), provider.contact_email, "bad", None))
+
+        self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
+        mock_verify.assert_called_once_with("bad", "canonical-hash")
+
+    @patch("app.services.provider_auth_service.load_credential_by_login")
+    def test_disabled_provider_status_is_rejected(self, mock_load) -> None:
+        provider, _, _ = make_provider_rows()
+        provider.status = "suspended"
+        mock_load.return_value = make_credential(provider)
+
+        result = run(authenticate_provider_password(AsyncMock(), provider.contact_email, "good", None))
+
+        self.assertEqual(result.failure, ProviderAuthFailure.PROVIDER_INACTIVE)
+
+    @patch("app.services.provider_auth_service.verify_provider_password")
+    @patch("app.services.provider_auth_service.load_credential_by_login")
+    def test_unknown_provider_runs_dummy_verification(self, mock_load, mock_verify) -> None:
+        mock_load.return_value = None
+        result = run(authenticate_provider_password(AsyncMock(), "missing@example.com", "guess", None))
+
+        self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
+        mock_verify.assert_called_once()
+
+    @patch("app.services.provider_auth_service.load_credential_by_login")
+    def test_active_lockout_is_rejected(self, mock_load) -> None:
+        provider, _, _ = make_provider_rows()
+        credential = make_credential(provider)
+        credential.locked_until = datetime.now(timezone.utc) + timedelta(minutes=5)
+        mock_load.return_value = credential
+
+        result = run(authenticate_provider_password(AsyncMock(), provider.contact_email, "good", None))
+
+        self.assertEqual(result.failure, ProviderAuthFailure.ACCOUNT_LOCKED)
+
+
+class TestProviderSessionRevocation(unittest.TestCase):
+    @patch("app.services.provider_auth_service.get_redis_client")
+    def test_revokes_bearer_and_pending_mfa_for_only_target_provider(self, mock_redis) -> None:
+        target = uuid.uuid4()
+        other = uuid.uuid4()
+        fake = FakeRedis()
+        fake._store = {
+            "provider_session:target": json.dumps({"provider_id": str(target)}),
+            "provider_session:other": json.dumps({"provider_id": str(other)}),
+            "mfa_pending:target": json.dumps({"provider_id": str(target)}),
+        }
+        mock_redis.return_value = fake
+
+        revoked = run(revoke_provider_auth_sessions(target))
+
+        self.assertEqual(revoked, 2)
+        self.assertNotIn("provider_session:target", fake._store)
+        self.assertNotIn("mfa_pending:target", fake._store)
+        self.assertIn("provider_session:other", fake._store)
 
 
 class TestProviderSessionBinding(unittest.TestCase):

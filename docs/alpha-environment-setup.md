@@ -98,7 +98,7 @@ Do not run the local demo-device enrollment script as evidence of physical enrol
 The shared client reads `NEXT_PUBLIC_API_URL`. Before starting/building Expo, set it to the computer's LAN address—not `localhost`:
 
 ```powershell
-$env:NEXT_PUBLIC_API_URL='http://192.168.x.x:8000'
+$env:NEXT_PUBLIC_API_URL='http://<LOCAL_LAN_IP>:8000'
 ipconfig
 Set-Location nexa-client
 yarn workspace expo start --dev-client

@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,10 +24,12 @@ from app.core.dependencies import get_current_provider, get_db_session, get_prov
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import get_redis_client
 from app.models.patient_device_keys import PatientDeviceKey
+from app.models.push_token import PatientPushToken
 from app.models.provider_context import ProviderContext
 from app.models.consent_grant import ConsentGrantLog
 from app.models.assurance import AssuranceLevel
 from app.services.signed_approval_verifier import SignedApprovalVerifier
+from app.services.push_notification_service import PushNotificationService
 # EXPLICITLY ALIAS THE IMPORT SO MOCK PATCHING MATCHES THE ATTRIBUTE NAME
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import (
@@ -40,6 +42,7 @@ from app.observability.audit_ledger import append_audit_log_or_503
 
 logger = logging.getLogger("nexa_logger")
 router = APIRouter(prefix="/api/v2/consent", tags=["consent"])
+push_notification_service = PushNotificationService()
 ROUTINE_CONSENT_TTL_SECONDS = 60 * 60
 BREAK_GLASS_TTL_SECONDS = 15 * 60
 
@@ -282,12 +285,49 @@ class ConsentChallengeResponsePayload(BaseModel):
     status: str
     expires_in_seconds: int
     challenge_nonce: str | None = None
+    notification_dispatch: Literal["queued", "unavailable"]
+    notification_queued: bool
+    delivery_status: Literal["queued", "unavailable"]
 
 
 class ConsentStatusResponsePayload(BaseModel):
     request_id: str
     status: str
     responded_at: str | None = None
+    doctor_status: str | None = None
+    delivery_status: str | None = None
+    delivery_error: str | None = None
+
+
+async def _deliver_consent_notification(
+    *,
+    request_id: str,
+    patient_id: str,
+    provider_name: str,
+    purpose: str,
+    expo_push_token: str,
+) -> None:
+    """Send the Expo notification and persist delivery outcome in Redis."""
+    result = await push_notification_service.send_approval_request(
+        patient_id=patient_id,
+        request_id=request_id,
+        provider_name=provider_name,
+        purpose=purpose,
+        expo_push_token=expo_push_token,
+    )
+    redis = get_redis_client()
+    key = f"consent_request:{request_id}"
+    raw = redis.get(key)
+    if not raw:
+        return
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    data = json.loads(raw)
+    data["delivery_status"] = "sent" if result.success else "failed"
+    data["delivery_error"] = None if result.success else (result.error or "Push delivery failed")[:512]
+    data["delivery_completed_at"] = datetime.now(timezone.utc).isoformat()
+    ttl = redis.ttl(key)
+    redis.set(key, json.dumps(data), ex=ttl if isinstance(ttl, int) and ttl > 0 else 120)
 
 
 class SignedApprovalRequestPayload(BaseModel):
@@ -308,6 +348,7 @@ class SignedApprovalResponsePayload(BaseModel):
 @router.post("/request", status_code=status.HTTP_201_CREATED, response_model=ConsentChallengeResponsePayload)
 async def create_consent_request(
     payload: ConsentChallengeRequestPayload,
+    background_tasks: BackgroundTasks,
     provider: ProviderContext = Depends(get_current_provider),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -376,6 +417,22 @@ async def create_consent_request(
         "status": "pending",
     }
 
+    token_result = await db.execute(
+        select(PatientPushToken).where(
+            PatientPushToken.patient_id == pid_uuid,
+            PatientPushToken.is_active.is_(True),
+        ).order_by(PatientPushToken.updated_at.desc()).limit(1)
+    )
+    push_token = token_result.scalar_one_or_none()
+    if push_token is not None and not isinstance(
+        getattr(push_token, "expo_push_token", None), str
+    ):
+        logger.error("invalid_active_push_token_record")
+        push_token = None
+    delivery_status = "queued" if push_token else "unavailable"
+    challenge_payload["delivery_status"] = delivery_status
+    challenge_payload["delivery_error"] = None if push_token else "No active push token"
+
     redis = get_redis_client()
     redis.set(f"consent_request:{request_id}", json.dumps(challenge_payload), ex=challenge_ttl_seconds)
 
@@ -387,11 +444,24 @@ async def create_consent_request(
         metadata={"patient_id": payload.patient_id, "purpose": payload.purpose},
     )
 
+    if push_token:
+        background_tasks.add_task(
+            _deliver_consent_notification,
+            request_id=request_id,
+            patient_id=payload.patient_id,
+            provider_name=provider.provider.display_name,
+            purpose=payload.purpose,
+            expo_push_token=push_token.expo_push_token,
+        )
+
     return ConsentChallengeResponsePayload(
         request_id=request_id,
         status="pending",
         expires_in_seconds=challenge_ttl_seconds,
         challenge_nonce=challenge_nonce,
+        notification_dispatch=delivery_status,
+        notification_queued=push_token is not None,
+        delivery_status=delivery_status,
     )
 
 
@@ -482,6 +552,7 @@ async def approve_signed_consent(
         scope=str(data.get("scope", "")),
         purpose=str(data.get("purpose", "")),
         access_duration=int(data.get("access_duration", 900)),
+        device_id=payload.device_id,
     )
     if not res_verify.verified:
         if res_verify.error == "Challenge expired":
@@ -586,6 +657,14 @@ async def get_consent_request_status(
         request_id=request_id,
         status=data.get("status", "pending"),
         responded_at=data.get("responded_at"),
+        doctor_status=(
+            "delivery_failed"
+            if data.get("status", "pending") == "pending"
+            and data.get("delivery_status") in {"failed", "unavailable"}
+            else data.get("status", "pending")
+        ),
+        delivery_status=data.get("delivery_status"),
+        delivery_error=data.get("delivery_error"),
     )
 
 

@@ -62,6 +62,37 @@ To see debug output to verify the compiler, add `// debug` as a comment to the t
 
 - Expo local dev: `yarn native`
 
+## Expo API environments
+
+The mobile app requires an explicit `EXPO_PUBLIC_API_URL`; it never falls back
+to a workstation or emulator address. For local physical-device development,
+create the ignored `apps/expo/.env` file:
+
+```dotenv
+EXPO_PUBLIC_API_URL=http://<LOCAL_LAN_IP>:8000
+EXPO_PUBLIC_APP_ENV=development
+EXPO_PUBLIC_ALLOW_HTTP=true
+```
+
+The phone and backend host must be on reachable networks, and FastAPI should be
+started with `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`.
+Cleartext HTTP is allowed only when the development environment explicitly sets
+`EXPO_PUBLIC_ALLOW_HTTP=true`.
+
+Preview and production builds obtain `EXPO_PUBLIC_API_URL` from the matching
+EAS environment. Configure each with an HTTPS deployment URL; do not put a
+personal LAN address in `eas.json`:
+
+```powershell
+corepack yarn dlx eas-cli env:create --environment preview --name EXPO_PUBLIC_API_URL --value https://api-alpha.example.com --visibility plaintext
+corepack yarn dlx eas-cli env:create --environment production --name EXPO_PUBLIC_API_URL --value https://api.example.com --visibility plaintext
+```
+
+Build profiles set `EXPO_PUBLIC_APP_ENV` themselves. Preview is a standalone
+internal APK and does not depend on Metro. Production and preview reject HTTP;
+production additionally rejects local/private hosts. Changing any build-time
+URL or Android cleartext policy requires a new native build.
+
 ## UI Kit
 
 Note we're following the [design systems guide](https://tamagui.dev/docs/guides/design-systems) and creating our own package for components.

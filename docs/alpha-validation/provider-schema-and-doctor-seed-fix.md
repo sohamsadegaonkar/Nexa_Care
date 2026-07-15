@@ -1,14 +1,17 @@
 # Nexa Care Provider Schema and Doctor Seed Fix
 
-## 1. Executive verdict
+## 1. Executive verdict (updated 2026-07-15)
 
-- Root cause: Provider/NFC models existed, but their legacy SQL definitions were never represented in the Alembic chain, leaving five runtime tables absent.
-- Corrective migration: `20260714_provider_schema`
-- Final Alembic head: `20260714_provider_schema`
-- Doctor seed: Passed.
-- Seeder idempotency: Passed for patient and doctor seeders on two consecutive runs.
-- Test status: 82 passed, 0 failed.
-- Remaining blockers: physical-device enrollment and the subsequent biometric/full-consent loop.
+- Original schema root cause: provider/NFC models existed without Alembic coverage.
+- Provider-login follow-up: the canonical schema and seeder used `password_hash`, while authentication preferred the transitional `hashed_password` column whenever populated. The live alpha legacy column was empty, so this ambiguity did not cause the observed 401, but it was unsafe and has been removed.
+- Observed 401 root cause: the live canonical hash matched the ignored local environment password; the account and affiliation were active. Four failed attempts and obsolete fixed-password documentation indicate incorrect login input was used. A safe pre-rotation HTTP check returned 200.
+- Canonical password field: `provider_credential.password_hash` only.
+- Corrective password migration: `20260717_provider_pwd_canonical`.
+- Final Alembic head: `20260717_provider_pwd_canonical`.
+- Normal doctor seed: two live runs reused all rows and reported `password=unchanged`.
+- Explicit password rotation: completed for only `demo.doctor@nexacare.in`; failed attempts and lockout were cleared, prior sessions were revoked, and a security audit event was written.
+- Real post-rotation login: HTTP 200 with token/provider/hospital fields present and MFA not enabled.
+- Focused provider/auth/migration tests: 69 passed. Broader selected authentication suite: 86 passed.
 
 ## 2. Observed failure
 
@@ -65,7 +68,7 @@ Each table is guarded with SQLAlchemy inspection, allowing an existing database 
 - Duplicate checks: exactly one demo hospital, provider, credential, affiliation, and NFC record.
 - Credentials handling: provider password presence was checked as a boolean only; no password or hash was printed.
 
-## 8. Test results
+## 8. Original provider-schema test results
 
 | Test/check | Passed | Failed | Notes |
 |---|---:|---:|---|
@@ -92,9 +95,11 @@ Pytest total: **82 passed, 0 failed**. The preflight physical-device status is a
 - `docs/alpha-validation/provider-schema-and-doctor-seed-fix.md`: this report.
 - Earlier uncommitted Phase 1/2 migration, trusted-host, documentation, and test changes remain in the working tree and were preserved.
 
-## 10. Remaining blockers
+## 10. Current readiness
 
-Provider schema blockers: none. Doctor seed blockers: none. Expected physical workflow blocker: no active physical device is enrolled, so biometric approval and the complete consent loop remain unexecuted.
+Provider schema blockers: none. Doctor seed blockers: none. Provider login is
+ready to create the real consent request. This repair did not automatically
+trigger a consent request.
 
 ## 11. Exact next commands
 
@@ -119,3 +124,24 @@ APPROVE FOR BACKEND STARTUP
 
 - Commit performed: No
 - Push performed: No
+
+## 14. Provider credential canonicalization details
+
+- `password_hash` is the sole runtime/model/seeder/reset field.
+- Migration upgrade resolves canonical-only, legacy-only, and equal values;
+  rejects missing or conflicting values; normalizes login identifiers; creates
+  case-insensitive uniqueness; and removes `hashed_password`.
+- Migration downgrade restores the legacy column from the canonical value so
+  older code does not receive an empty hash.
+- Unknown accounts perform a dummy password verification before returning the
+  same generic 401 used for incorrect passwords.
+- Login trims and lowercases identifiers. Both `is_active` and provider
+  `status == "active"` are enforced.
+- The normal seed command never rotates an existing password. Reset requires
+  both `--reset-password` and `--confirm-demo-provider-reset`; optional account
+  reactivation requires separate explicit flags.
+- Rotation clears password failures/lockout, updates `password_changed_at`,
+  revokes provider and pending-MFA sessions, and appends a canonical audit event.
+- Post-rotation verification found one canonical credential, no legacy column,
+  zero failed attempts, no lockout, one audit event, no pending MFA session, and
+  one bearer session created by the successful validation login.

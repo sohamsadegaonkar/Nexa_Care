@@ -351,6 +351,26 @@ class TestPushNotificationsService:
             "Must have extractRequestIdFromNotification function"
         )
 
+    def test_requests_permission_and_project_scoped_expo_token(self) -> None:
+        code = _read(PUSH_NOTIFICATIONS_PATH)
+        assert "requestPermissionsAsync" in code
+        assert "getExpoPushTokenAsync" in code
+        assert "projectId" in code
+
+    def test_handles_foreground_tap_and_cold_start_notifications(self) -> None:
+        code = _read(PUSH_NOTIFICATIONS_PATH)
+        assert "addNotificationReceivedListener" in code
+        assert "addNotificationResponseReceivedListener" in code
+        assert "getLastNotificationResponseAsync" in code
+        assert "clearLastNotificationResponseAsync" in code
+
+    def test_expo_app_registers_notifications_plugin(self) -> None:
+        app_json = (
+            Path(__file__).resolve().parents[1]
+            / "nexa-client/apps/expo/app.json"
+        ).read_text(encoding="utf-8")
+        assert '"expo-notifications"' in app_json
+
     def test_no_hardcoded_patient_id(self) -> None:
         code = _read(PUSH_NOTIFICATIONS_PATH)
         code_no_comments = _strip_comments(code)

@@ -1,3 +1,5 @@
+import { RuntimeConfigError, resolveConfiguredApiUrl } from './runtimeConfig'
+
 /**
  * Canonical Shared API Client for Nexa Care Alpha Demo
  * All frontend features MUST import and use this client.
@@ -9,12 +11,14 @@ let authTokenProvider: AuthTokenProvider = () => null
 export function setAuthTokenProvider(provider: AuthTokenProvider): void { authTokenProvider = provider }
 export async function getAuthToken(): Promise<string | null> { const token = await authTokenProvider(); return typeof token === 'string' && token.trim() ? token.trim() : null }
 
-// Expo only exposes EXPO_PUBLIC_* variables to native bundles. Keep the Next
-// variable as the web fallback so this shared client works on both platforms.
-// Never hardcode localhost, LAN IPs, or deployment URLs here.
-export const API_BASE_URL = (
-  process.env.EXPO_PUBLIC_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? ''
-).replace(/\/$/, '')
+// Preserve the public export used by existing callers without allowing an
+// invalid or missing value to become an implicit local endpoint.
+export let API_BASE_URL = ''
+try {
+  API_BASE_URL = resolveConfiguredApiUrl()
+} catch (error) {
+  if (!(error instanceof RuntimeConfigError) || error.code !== 'MISSING_API_BASE_URL') throw error
+}
 
 // ── Types Matching docs/DATA-MODELS.md & docs/API-CONTRACTS.md ──
 
@@ -259,6 +263,53 @@ export class ApiError extends Error {
   }
 }
 
+const DEFAULT_TIMEOUT_MS = 15_000
+
+function backendMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== 'object') return fallback
+  const record = payload as Record<string, unknown>
+  for (const key of ['detail', 'message', 'error']) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (Array.isArray(value) && value.length) {
+      const messages = value.map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).msg === 'string') {
+          return (item as Record<string, unknown>).msg as string
+        }
+        return null
+      }).filter(Boolean)
+      if (messages.length) return messages.join('; ')
+    }
+  }
+  if (Array.isArray(record.errors) && record.errors.length) {
+    return backendMessage({ detail: record.errors }, fallback)
+  }
+  return fallback
+}
+
+function statusCode(status: number): string {
+  if (status === 400) return 'BAD_REQUEST'
+  if (status === 401) return 'UNAUTHORIZED'
+  if (status === 403) return 'FORBIDDEN'
+  if (status === 404) return 'NOT_FOUND'
+  if (status === 409) return 'CONFLICT'
+  if (status === 422) return 'VALIDATION_ERROR'
+  if (status === 429) return 'RATE_LIMITED'
+  if (status >= 500) return 'SERVER_ERROR'
+  return 'API_ERROR'
+}
+
+function diagnostic(method: string, path: string, fields: Record<string, unknown>): void {
+  if (process.env.NODE_ENV !== 'production') {
+    const expectedAuthFailure = fields.status === 401
+      || fields.code === 'AUTH_REQUIRED'
+      || fields.code === 'REAUTH_REQUIRED'
+    const log = expectedAuthFailure ? console.warn : console.error
+    log('API_REQUEST_ERROR', { method, path, ...fields })
+  }
+}
+
 export type ReAuthHandler = () => void
 export type ErrorToastHandler = (message: string, retryable?: boolean) => void
 
@@ -275,17 +326,23 @@ async function request<T>(
   options: RequestInit = {},
   customHeaders: Record<string, string> = {},
   noAuth = false,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
   if (!API_BASE_URL) {
-    throw new ApiError(
-      'API base URL is not configured. Set EXPO_PUBLIC_API_URL for Expo or NEXT_PUBLIC_API_URL for web.',
-      0,
-      'MISSING_API_BASE_URL',
-      false,
-    )
+    try {
+      API_BASE_URL = resolveConfiguredApiUrl()
+    } catch (error) {
+      if (error instanceof RuntimeConfigError) {
+        throw new ApiError(error.message, 0, error.code, false)
+      }
+      throw error
+    }
   }
 
   const token = noAuth ? null : await getAuthToken()
+  if (!noAuth && !token) {
+    throw new ApiError('Authentication is required before making this request.', 0, 'AUTH_REQUIRED', false)
+  }
   const headers: Record<string, string> = {
     ...customHeaders,
   }
@@ -301,38 +358,65 @@ async function request<T>(
 
   const url = `${API_BASE_URL}${path}`
   let response: Response
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const callerSignal = options.signal
+  const cancelFromCaller = () => controller.abort()
+  callerSignal?.addEventListener('abort', cancelFromCaller, { once: true })
 
   try {
     response = await fetch(url, {
       ...options,
       headers,
+      signal: controller.signal,
     })
-  } catch (err: any) {
+  } catch (error: unknown) {
+    const timedOut = controller.signal.aborted && !callerSignal?.aborted
+    const code = timedOut ? 'REQUEST_TIMEOUT' : callerSignal?.aborted ? 'REQUEST_CANCELLED' : 'NETWORK_ERROR'
+    const message = timedOut
+      ? 'The request timed out. Please try again.'
+      : callerSignal?.aborted
+        ? 'The request was cancelled.'
+        : 'Unable to reach Nexa Care. Check the configured server and network connection.'
+    diagnostic(options.method ?? 'GET', path, {
+      code,
+      cause: error instanceof Error ? error.name : 'UnknownError',
+    })
     if (onErrorToast) {
-      onErrorToast('Network connection failed. Please check your internet connection.', true)
+      onErrorToast(message, !callerSignal?.aborted)
     }
-    throw new ApiError(err?.message || 'Network error', 0, 'NETWORK_ERROR', true)
+    throw new ApiError(message, 0, code, !callerSignal?.aborted)
+  } finally {
+    clearTimeout(timeout)
+    callerSignal?.removeEventListener('abort', cancelFromCaller)
   }
 
   if (!response.ok) {
     let errorMsg = `HTTP Error ${response.status}`
-    let errorCode = 'API_ERROR'
+    let errorCode = statusCode(response.status)
 
     try {
       const data = await response.json()
-      errorMsg = typeof data.detail === 'string' ? data.detail : data.message || errorMsg
-      errorCode = data.error_code || errorCode
+      errorMsg = backendMessage(data, errorMsg)
+      if (typeof data?.error_code === 'string') errorCode = data.error_code
     } catch {
       // ignore JSON parse error on non-JSON response
     }
 
-    if (response.status === 401) {
+    diagnostic(options.method ?? 'GET', path, { status: response.status, code: errorCode })
+
+    if (response.status === 401 && !noAuth) {
       if (onReAuthRequired) onReAuthRequired()
-      throw new ApiError('Authentication required or session expired', 401, 'REAUTH_REQUIRED', false)
+      throw new ApiError(errorMsg || 'Authentication required or session expired', 401, 'REAUTH_REQUIRED', false)
     }
 
     if (response.status === 403) {
-      throw new ApiError(errorMsg || 'Consent required or access denied', 403, 'CONSENT_REQUIRED', false)
+      throw new ApiError(
+        errorMsg || 'Consent required or access denied',
+        403,
+        noAuth ? errorCode : 'CONSENT_REQUIRED',
+        false,
+      )
     }
 
     if (response.status >= 500) {
@@ -347,7 +431,12 @@ async function request<T>(
     return {} as T
   }
 
-  return response.json()
+  try {
+    return await response.json()
+  } catch {
+    diagnostic(options.method ?? 'GET', path, { status: response.status, code: 'MALFORMED_RESPONSE' })
+    throw new ApiError('The server returned an unreadable response.', response.status, 'MALFORMED_RESPONSE', true)
+  }
 }
 
 export const NexaApiClient = {
@@ -554,10 +643,14 @@ export const NexaApiClient = {
 }
 
 
-export interface ApiRequestConfig { headers?: Record<string, unknown>; noAuth?: boolean }
+export interface ApiRequestConfig { headers?: Record<string, unknown>; noAuth?: boolean; timeoutMs?: number; signal?: AbortSignal }
 export interface ApiResponse<T> { data: T }
 async function transport<T>(path: string, method: string, body?: unknown, config: ApiRequestConfig = {}): Promise<ApiResponse<T>> {
-  const data = await request<T>(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, config.headers as Record<string, string> | undefined, config.noAuth)
+  const data = await request<T>(path, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(config.signal ? { signal: config.signal } : {}),
+  }, config.headers as Record<string, string> | undefined, config.noAuth, config.timeoutMs)
   return { data }
 }
 export const apiClient = {

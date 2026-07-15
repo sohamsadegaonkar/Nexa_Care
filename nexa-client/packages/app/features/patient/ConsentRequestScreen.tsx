@@ -1,12 +1,17 @@
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { YStack, H2, Paragraph, Button, Text, ScrollView, XStack, Separator, Spinner } from 'tamagui'
 import { useState, useEffect, useCallback } from 'react'
-import { fetchChallenge, isChallengeExpired, type ConsentChallenge } from '../../services/consentSigning'
+import {
+  classifyConsentError,
+  fetchChallenge,
+  isChallengeExpired,
+  type ConsentChallenge,
+} from '../../services/consentSigning'
 import { denyWithSignature } from '../../services/consentSigning'
 
 /**
  * Consent request review screen.
- * Deep-link target: nexacare://patient/consent/:requestId
+ * Deep-link target: nexacare://patient/consent-request?requestId=:requestId
  *
  * Fetches the full challenge from the backend, displays provider
  * details, purpose, scope, and a countdown timer.  Two actions:
@@ -45,10 +50,16 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
         if (isChallengeExpired(data)) {
           setExpired(true)
         }
-      } catch {
+      } catch (loadError) {
         if (!cancelled) {
-          setError('This request may have expired or is not available.')
-          setExpired(true)
+          const mapped = classifyConsentError(loadError)
+          setError(mapped.message)
+          if (mapped.kind === 'reauth') {
+            setExpired(false)
+            router.replace('/patient/login')
+          } else {
+            setExpired(mapped.kind === 'expired')
+          }
         }
       } finally {
         if (!cancelled) setLoading(false)
@@ -57,7 +68,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
     load()
     return () => { cancelled = true }
-  }, [initialChallenge, requestId])
+  }, [initialChallenge, requestId, router])
 
   // Countdown timer
   const updateCountdown = useCallback(() => {
@@ -124,7 +135,9 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
     return (
       <YStack f={1} bg="$background" jc="center" ai="center" gap="$3" p="$4">
         <Text fontSize={44}>⏰</Text>
-        <H2 col="$color" ta="center">Request Expired</H2>
+        <H2 col="$color" ta="center">
+          {expired ? 'Request Expired' : 'Request Unavailable'}
+        </H2>
         <Paragraph col="$colorSubdued" ta="center" size="$4">
           {error ?? 'This consent request has expired. No action is needed.'}
         </Paragraph>
