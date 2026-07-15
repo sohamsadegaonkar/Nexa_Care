@@ -74,6 +74,7 @@ class ProviderAuthFailure(str, enum.Enum):
     INVALID_CREDENTIALS = "invalid_credentials"
     ACCOUNT_LOCKED = "account_locked"
     MFA_REQUIRED = "mfa_required"
+    MFA_SESSION_EXPIRED = "mfa_session_expired"
     MFA_INVALID_CODE = "mfa_invalid_code"
     MFA_NOT_CONFIGURED = "mfa_not_configured"
     PROVIDER_INACTIVE = "provider_inactive"
@@ -721,7 +722,7 @@ async def complete_mfa_login(
     await delete_mfa_pending_token(mfa_token)
 
     if provider_id is None:
-        return ProviderAuthResult(None, ProviderAuthFailure.MFA_INVALID_CODE)
+        return ProviderAuthResult(None, ProviderAuthFailure.MFA_SESSION_EXPIRED)
 
     if claimed_provider_id is not None and claimed_provider_id != provider_id:
         return ProviderAuthResult(None, ProviderAuthFailure.SESSION_BINDING_MISMATCH)

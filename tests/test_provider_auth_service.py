@@ -360,6 +360,16 @@ class TestProviderSessionRefresh(unittest.TestCase):
 
 
 class TestMfaCompositeLockout(unittest.TestCase):
+    @patch("app.services.provider_auth_service.delete_mfa_pending_token", new_callable=AsyncMock)
+    @patch("app.services.provider_auth_service.resolve_mfa_pending_token", new_callable=AsyncMock)
+    def test_missing_pending_token_is_reported_as_expired(self, mock_resolve, mock_delete):
+        mock_resolve.return_value = None
+
+        result = run(complete_mfa_login(AsyncMock(), "expired-token", "000000", None))
+
+        self.assertEqual(result.failure, ProviderAuthFailure.MFA_SESSION_EXPIRED)
+        mock_delete.assert_awaited_once_with("expired-token")
+
     @patch("app.services.provider_auth_service.get_redis_client")
     @patch("app.services.provider_auth_service.load_provider_with_affiliations")
     @patch("app.services.provider_auth_service.decrypt_mfa_secret")

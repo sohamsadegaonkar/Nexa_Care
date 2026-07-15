@@ -263,6 +263,36 @@ export class ApiError extends Error {
   }
 }
 
+export interface ProviderLoginRequest {
+  login_identifier: string
+  password: string
+  hospital_id?: string
+}
+
+export interface ProviderLoginSuccessResponse {
+  access_token: string
+  token_type: string
+  expires_at: string
+  provider_uid: string
+  hospital_id: string
+}
+
+export interface ProviderMfaRequiredResponse {
+  detail: string
+  mfa_token: string
+}
+
+export type ProviderLoginResponse =
+  | ProviderLoginSuccessResponse
+  | ProviderMfaRequiredResponse
+
+export interface ProviderMfaVerifyRequest {
+  mfa_token: string
+  totp_code: string
+  provider_id?: string
+  hospital_id?: string
+}
+
 const DEFAULT_TIMEOUT_MS = 15_000
 
 function backendMessage(payload: unknown, fallback: string): string {
@@ -490,8 +520,22 @@ export const NexaApiClient = {
     return request(`/api/v2/patient/devices/${deviceId}/revoke`, { method: 'POST' })
   },
 
-  providerLogin(payload: unknown): Promise<unknown> {
-    return request('/api/v2/auth/login', { method: 'POST', body: JSON.stringify(payload) }, {}, true)
+  providerLogin(payload: ProviderLoginRequest): Promise<ProviderLoginResponse> {
+    return request<ProviderLoginResponse>(
+      '/api/v2/auth/login',
+      { method: 'POST', body: JSON.stringify(payload) },
+      {},
+      true,
+    )
+  },
+
+  providerMfaVerify(payload: ProviderMfaVerifyRequest): Promise<ProviderLoginSuccessResponse> {
+    return request<ProviderLoginSuccessResponse>(
+      '/api/v2/auth/mfa/verify',
+      { method: 'POST', body: JSON.stringify(payload) },
+      {},
+      true,
+    )
   },
 
   getConsentStatus(requestId: string, hospitalId: string): Promise<ConsentStatusResponse> {

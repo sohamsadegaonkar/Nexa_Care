@@ -298,8 +298,10 @@ def _status_for_failure(failure: ProviderAuthFailure) -> int:
 
 
 def _detail_for_failure(failure: ProviderAuthFailure) -> str:
+    if failure is ProviderAuthFailure.MFA_SESSION_EXPIRED:
+        return "MFA session expired. Sign in again."
     if failure is ProviderAuthFailure.MFA_INVALID_CODE:
-        return "Invalid or expired MFA code."
+        return "Invalid authenticator code."
     if failure is ProviderAuthFailure.MFA_NOT_CONFIGURED:
         return (
             "This provider account has multi-factor authentication enabled, but "

@@ -166,4 +166,35 @@ describe('shared API transport', () => {
     expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer first-session')
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer current-session')
   })
+
+  it('sends provider password and MFA requests through the typed unauthenticated endpoints', async () => {
+    const responses = [
+      { detail: 'Multi-factor authentication required.', mfa_token: 'pending-token' },
+      {
+        access_token: 'provider-token', token_type: 'bearer',
+        expires_at: '2099-01-01T00:00:00Z', provider_uid: 'provider-1',
+        hospital_id: 'hospital-1',
+      },
+    ]
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(
+      JSON.stringify(responses.shift()),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient } = await loadClient()
+
+    await NexaApiClient.providerLogin({
+      login_identifier: 'doctor@example.test',
+      password: 'runtime-only-password',
+    })
+    await NexaApiClient.providerMfaVerify({
+      mfa_token: 'pending-token',
+      totp_code: '123456',
+    })
+
+    expect(fetchMock.mock.calls[0][0]).toBe('https://native.example.test/api/v2/auth/login')
+    expect(fetchMock.mock.calls[1][0]).toBe('https://native.example.test/api/v2/auth/mfa/verify')
+    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined()
+    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBeUndefined()
+  })
 })
