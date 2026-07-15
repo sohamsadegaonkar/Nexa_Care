@@ -41,6 +41,15 @@ export interface ProviderSession {
   hospital: HospitalInfo
 }
 
+export interface ProviderAccessGrant {
+  requestId: string
+  patientId: string
+  consentToken: string
+  purpose: string
+  scope: 'clinical' | 'full'
+  expiresAt: string
+}
+
 export type ProviderAuthStatus =
   | 'hydrating'
   | 'unauthenticated'
@@ -61,6 +70,7 @@ export interface ProviderAuthState {
   mfaDetail: string | null
   loginError: string | null
   loggingIn: boolean
+  accessGrant: ProviderAccessGrant | null
 }
 
 export interface ProviderAuthActions {
@@ -68,6 +78,8 @@ export interface ProviderAuthActions {
   verifyMfa: (totpCode: string) => Promise<void>
   cancelMfa: () => void
   logout: () => void
+  setAccessGrant: (grant: ProviderAccessGrant) => void
+  clearAccessGrant: () => void
 }
 
 export type ProviderAuthContextType = ProviderAuthState & ProviderAuthActions
@@ -139,6 +151,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   const [mfaDetail, setMfaDetail] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
+  const [accessGrant, setAccessGrantState] = useState<ProviderAccessGrant | null>(null)
   const accessTokenRef = useRef<string | null>(null)
   const pendingMfaTokenRef = useRef<string | null>(null)
   const pendingEmailRef = useRef('')
@@ -311,9 +324,18 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     setAuthTokenProvider(() => null)
     window.sessionStorage.removeItem(PROVIDER_SESSION_STORAGE_KEY)
     setSession(null)
+    setAccessGrantState(null)
     setMfaDetail(null)
     setLoginError(null)
     setStatus('unauthenticated')
+  }, [])
+
+  const setAccessGrant = useCallback((grant: ProviderAccessGrant) => {
+    setAccessGrantState(grant)
+  }, [])
+
+  const clearAccessGrant = useCallback(() => {
+    setAccessGrantState(null)
   }, [])
 
   const state: ProviderAuthState = {
@@ -328,11 +350,12 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     mfaDetail,
     loginError,
     loggingIn,
+    accessGrant,
   }
 
   return (
     <ProviderAuthContext.Provider
-      value={{ ...state, login, verifyMfa, cancelMfa, logout }}
+      value={{ ...state, login, verifyMfa, cancelMfa, logout, setAccessGrant, clearAccessGrant }}
     >
       {children}
     </ProviderAuthContext.Provider>

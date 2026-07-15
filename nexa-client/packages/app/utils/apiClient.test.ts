@@ -66,6 +66,8 @@ describe('shared API transport', () => {
     [422, { detail: [{ msg: 'Enter a valid Indian mobile number.' }] }, 'VALIDATION_ERROR'],
     [429, { detail: 'Too many OTP requests. Please try again later.' }, 'RATE_LIMITED'],
   ])('preserves HTTP %s and backend detail', async (status, payload, code) => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue(
@@ -84,6 +86,60 @@ describe('shared API transport', () => {
       code,
       message: expect.stringMatching(/valid Indian|Too many OTP/),
     })
+    expect(warn).toHaveBeenCalledWith('API_REQUEST_ERROR', expect.objectContaining({
+      method: 'POST', path: '/api/v2/auth/otp/send', status, code,
+      retryable: status === 429,
+    }))
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('attaches bearer authentication and the hospital UUID to consent requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      request_id: 'request-1', challenge_nonce: 'nonce', expires_in_seconds: 300, status: 'pending',
+    }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-session-token')
+
+    await NexaApiClient.requestConsent({
+      patient_id: 'patient-1', provider_id: 'provider-1', purpose: 'treatment',
+      scope: 'clinical', access_duration_seconds: 900,
+    }, 'hospital-1')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://native.example.test/api/v2/consent/request')
+    expect(init.headers.Authorization).toBe('Bearer provider-session-token')
+    expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
+  })
+
+  it('attaches bearer authentication and the hospital UUID to consent status polling', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      request_id: 'request-1', status: 'pending', responded_at: null,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-session-token')
+
+    await NexaApiClient.getConsentStatus('request-1', 'hospital-1')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe('https://native.example.test/api/v2/consent/status/request-1')
+    expect(init.headers.Authorization).toBe('Bearer provider-session-token')
+    expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
+  })
+
+  it('rejects missing consent-status hospital context before fetch', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-session-token')
+
+    await expect(NexaApiClient.getConsentStatus('request-1', '  ')).rejects.toMatchObject({
+      status: 0,
+      code: 'PROVIDER_CONTEXT_REQUIRED',
+      isRetryable: false,
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('classifies a true transport failure without exposing the request body', async () => {

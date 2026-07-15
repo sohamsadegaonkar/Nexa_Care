@@ -5,6 +5,7 @@ const setupFile = fileURLToPath(new URL('./test/setup.ts', import.meta.url))
 
 export default defineConfig({
   resolve: {
+    extensions: ['.web.tsx', '.web.ts', '.web.js', '.tsx', '.ts', '.js', '.json'],
     alias: [
       { find: /^next\/script$/, replacement: 'next/script.js' },
       { find: /^next\/navigation$/, replacement: 'next/navigation.js' },

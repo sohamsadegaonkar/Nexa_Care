@@ -14,6 +14,7 @@
  *   401 → stop polling, redirect to login (session expired)
  *   403 → stop polling, show authorization error (not your request)
  *   404 → stop polling, show request unavailable
+ *   422 → stop polling, show validation/configuration error
  *   429 → retry with server backoff
  *   5xx → retry with bounded backoff, show reconnecting state
  *   Network → retry, show reconnecting state
@@ -36,7 +37,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
 
-type ConsentState = 'pending' | 'approved' | 'denied' | 'expired' | 'cancelled' | 'delivery_failed' | 'error' | 'unauthorized' | 'not_found' | 'forbidden'
+type ConsentState = 'pending' | 'approved' | 'denied' | 'expired' | 'timeout' | 'cancelled' | 'delivery_failed' | 'error' | 'unauthorized' | 'not_found' | 'forbidden'
 
 // ── Adaptive polling intervals ──────────────────────────────────────────────
 const POLL_FAST_MS = 2000     // First 20 seconds
@@ -50,7 +51,8 @@ export function WaitingForApprovalScreen() {
   const searchParams = useSearchParams()
   const requestId = searchParams.get('request_id') ?? ''
   const patientId = searchParams.get('patient_id') ?? ''
-  const { isAuthenticated } = useProviderAuth()
+  const { isAuthenticated, session, setAccessGrant } = useProviderAuth()
+  const hospitalId = session?.hospital.hospital_id ?? ''
 
   const [consentState, setConsentState] = useState<ConsentState>('pending')
   const [elapsed, setElapsed] = useState(0)
@@ -60,19 +62,11 @@ export function WaitingForApprovalScreen() {
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const elapsedRef = useRef(0)
+  const pollingActiveRef = useRef(false)
+  const pollInFlightRef = useRef(false)
+  const claimInFlightRef = useRef(false)
 
   // ── Session guard ─────────────────────────────────────────────────────
-  if (!isAuthenticated) {
-    return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <Lock size={64} color="$red10" />
-        <H4 textAlign="center" color="$color12">Session Required</H4>
-        <Paragraph textAlign="center" color="$color11">You must be logged in to view consent status.</Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/login')}>Go to Login</Button>
-      </YStack>
-    )
-  }
-
   // ── Compute adaptive poll interval ────────────────────────────────────
 
   const getPollInterval = useCallback(() => {
@@ -84,15 +78,30 @@ export function WaitingForApprovalScreen() {
   // ── Stop polling on terminal state ────────────────────────────────────
 
   const stopPolling = useCallback(() => {
+    pollingActiveRef.current = false
     if (intervalRef.current !== null) {
       clearTimeout(intervalRef.current)
       intervalRef.current = null
     }
   }, [])
 
+  const stopElapsedTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      clearInterval(timerRef.current)
+      timerRef.current = null
+    }
+  }, [])
+
+  const stopAllTimers = useCallback(() => {
+    stopPolling()
+    stopElapsedTimer()
+  }, [stopElapsedTimer, stopPolling])
+
   // ── Schedule next poll with adaptive backoff ──────────────────────────
 
   const scheduleNextPoll = useCallback((pollFn: () => Promise<void>) => {
+    if (!pollingActiveRef.current) return
+    if (intervalRef.current !== null) clearTimeout(intervalRef.current)
     const delay = getPollInterval()
     intervalRef.current = setTimeout(async () => {
       await pollFn()
@@ -102,22 +111,31 @@ export function WaitingForApprovalScreen() {
   // ── Poll consent request status ───────────────────────────────────────
 
   const pollStatus = useCallback(async () => {
+    if (!isAuthenticated) return
     if (!requestId) return
+    if (!hospitalId) {
+      stopAllTimers()
+      setConsentState('unauthorized')
+      setError('Provider hospital context is unavailable. Sign in again.')
+      return
+    }
+    if (!pollingActiveRef.current || pollInFlightRef.current) return
+    pollInFlightRef.current = true
     try {
-      const data = await NexaApiClient.getConsentStatus(requestId, '') as any
-      const newStatus = data?.doctor_status ?? data?.status ?? 'pending'
-      const nextDeliveryStatus = data?.delivery_status ?? 'queued'
+      const data = await NexaApiClient.getConsentStatus(requestId, hospitalId)
+      const newStatus = data.doctor_status ?? data.status
+      const nextDeliveryStatus = data.delivery_status ?? 'queued'
       setDeliveryStatus(nextDeliveryStatus)
       setConsentState(newStatus as ConsentState)
       if (newStatus === 'delivery_failed') {
-        setError(data?.delivery_error || 'Could not deliver notification. Ask the patient to open the app or retry.')
+        setError(data.delivery_error || 'Could not deliver notification. Ask the patient to open the app or retry.')
       } else if (nextDeliveryStatus === 'sent') {
         setError(null)
       }
 
       // Stop polling on any terminal state
       if (newStatus === 'approved' || newStatus === 'denied' || newStatus === 'expired' || newStatus === 'timeout' || newStatus === 'cancelled') {
-        stopPolling()
+        stopAllTimers()
         return
       }
 
@@ -129,7 +147,7 @@ export function WaitingForApprovalScreen() {
 
         // 401 — session expired, redirect to login
         if (status === 401) {
-          stopPolling()
+          stopAllTimers()
           setConsentState('unauthorized')
           setError('Session expired. Please log in again.')
           return
@@ -137,7 +155,7 @@ export function WaitingForApprovalScreen() {
 
         // 403 — not authorized to poll this request
         if (status === 403) {
-          stopPolling()
+          stopAllTimers()
           setConsentState('forbidden')
           setError('You are not authorized to view this request.')
           return
@@ -145,46 +163,63 @@ export function WaitingForApprovalScreen() {
 
         // 404 — request not found / already expired on server
         if (status === 404) {
-          stopPolling()
+          stopAllTimers()
           setConsentState('not_found')
           setError('Consent request not found or has expired.')
           return
         }
 
-        // 429 — rate limited, retry with backoff
-        if (status === 429) {
+        // 422 is a permanent request-contract/configuration failure.
+        if (status === 422) {
+          stopAllTimers()
+          setConsentState('error')
+          setError('Consent status validation failed. Sign in again or create a new request.')
+          return
+        }
+
+        if (status === 429 && err.isRetryable) {
           setError('Rate limited. Retrying with backoff...')
           scheduleNextPoll(pollStatus)
           return
         }
 
-        // 5xx — server error, retry with backoff
-        if (status >= 500) {
-          setError('Server error. Retrying...')
+        // Retry only failures explicitly classified as transient by ApiError.
+        if (err.isRetryable) {
+          setError(status >= 500 ? 'Server error. Retrying...' : 'Network issue. Retrying...')
           scheduleNextPoll(pollStatus)
           return
         }
+
+        stopAllTimers()
+        setConsentState('error')
+        setError(err.message || 'Unable to check consent status. Please try again later.')
+        return
       }
 
-      // Network error or other transient — retry
-      setError('Network issue. Retrying...')
-      scheduleNextPoll(pollStatus)
+      // Unknown runtime failures are not assumed to be safe to retry.
+      stopAllTimers()
+      setConsentState('error')
+      setError('Unable to check consent status. Please try again later.')
+    } finally {
+      pollInFlightRef.current = false
     }
-  }, [requestId, stopPolling, scheduleNextPoll])
+  }, [hospitalId, isAuthenticated, requestId, scheduleNextPoll, stopAllTimers])
 
   // ── Start polling ────────────────────────────────────────────────────
 
   useEffect(() => {
-    if (!requestId) return
+    if (!isAuthenticated || !requestId) return
+    pollingActiveRef.current = true
     pollStatus()
     return () => {
       stopPolling()
     }
-  }, [requestId, pollStatus, stopPolling])
+  }, [isAuthenticated, requestId, pollStatus, stopPolling])
 
   // ── Elapsed timer ────────────────────────────────────────────────────
 
   useEffect(() => {
+    if (!isAuthenticated) return
     timerRef.current = setInterval(() => {
       setElapsed((e) => {
         const next = e + 1
@@ -193,23 +228,37 @@ export function WaitingForApprovalScreen() {
       })
     }, 1000)
     return () => {
-      if (timerRef.current !== null) {
-        clearInterval(timerRef.current)
-        timerRef.current = null
-      }
+      stopElapsedTimer()
     }
-  }, [])
+  }, [isAuthenticated, stopElapsedTimer])
 
   // ── Auto-proceed on approval ──────────────────────────────────────────
 
   useEffect(() => {
-    if (consentState === 'approved') {
-      const timeout = setTimeout(() => {
-        router.push(`/doctor/patient-record?request_id=${encodeURIComponent(requestId)}`)
-      }, 1500)
-      return () => clearTimeout(timeout)
-    }
-  }, [consentState, requestId, router])
+    if (consentState !== 'approved' || !hospitalId || claimInFlightRef.current) return
+    claimInFlightRef.current = true
+    let active = true
+    NexaApiClient.claimConsentAccess(requestId, hospitalId)
+      .then((claim) => {
+        if (!active) return
+        setAccessGrant({
+          requestId,
+          patientId: claim.patient_id,
+          consentToken: claim.consent_token,
+          purpose: claim.purpose,
+          scope: claim.scope,
+          expiresAt: claim.expires_at,
+        })
+        router.push(`/doctor/patient-record?patient_id=${encodeURIComponent(claim.patient_id)}`)
+      })
+      .catch((claimError: unknown) => {
+        if (!active) return
+        claimInFlightRef.current = false
+        setConsentState('error')
+        setError(claimError instanceof Error ? claimError.message : 'Unable to claim approved access.')
+      })
+    return () => { active = false }
+  }, [consentState, hospitalId, requestId, router, setAccessGrant])
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -225,11 +274,11 @@ export function WaitingForApprovalScreen() {
     try {
       // Real server-side cancellation — not just navigation
       await NexaApiClient.cancelConsentRequest(requestId)
-      stopPolling()
+      stopAllTimers()
       setConsentState('cancelled')
     } catch {
       // If cancel fails, still navigate away — the request will expire on its own
-      stopPolling()
+      stopAllTimers()
       router.push('/doctor/dashboard')
     } finally {
       setCancelling(false)
@@ -237,12 +286,40 @@ export function WaitingForApprovalScreen() {
   }
 
   const handleRetry = () => {
+    stopAllTimers()
     // Navigate to request-consent with preserved patient_id context.
     // This creates a BRAND NEW request — never reuses the expired request_id.
     const target = patientId
       ? `/doctor/request-consent?patient_id=${encodeURIComponent(patientId)}`
       : '/doctor/dashboard'
     router.push(target)
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
+        <Lock size={64} color="$red10" />
+        <H4 textAlign="center" color="$color12">Session Required</H4>
+        <Paragraph textAlign="center" color="$color11">You must be logged in to view consent status.</Paragraph>
+        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/login')}>Go to Login</Button>
+      </YStack>
+    )
+  }
+
+  if (consentState === 'error') {
+    return (
+      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
+        <ShieldAlert size={64} color="$red10" />
+        <H4 textAlign="center" color="$red10">Status Check Failed</H4>
+        <Paragraph textAlign="center" color="$color11" maxWidth={420}>
+          {error || 'Unable to check consent status. Please try again later.'}
+        </Paragraph>
+        <XStack gap="$3">
+          <Button theme="blue" size="$4" onPress={handleRetry}>New Request</Button>
+          <Button size="$4" chromeless onPress={() => router.push('/doctor/login')}>Return to Login</Button>
+        </XStack>
+      </YStack>
+    )
   }
 
   // ── Render: Approved ──────────────────────────────────────────────────

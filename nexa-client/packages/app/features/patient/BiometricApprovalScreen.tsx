@@ -9,6 +9,7 @@ import {
   type ConsentChallenge,
 } from '../../services/consentSigning'
 import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrollment'
+import { ApiError } from '../../utils/apiClient'
 
 /**
  * Biometric approval screen — Face ID / Touch ID → sign → submit.
@@ -47,7 +48,7 @@ export default function BiometricApprovalScreen({
   const requestId = requestIdProp ?? params.requestId ?? ''
 
   const [challenge, setChallenge] = useState<ConsentChallenge | null>(null)
-  const [status, setStatus] = useState<'loading' | 'prompt' | 'setup-required' | 'authenticating' | 'signing' | 'submitting' | 'error' | 'expired'>('loading')
+  const [status, setStatus] = useState<'loading' | 'prompt' | 'setup-required' | 'authenticating' | 'signing' | 'submitting' | 'checking' | 'error' | 'expired'>('loading')
   const [error, setError] = useState<string | null>(null)
   const [setupRequiresLogin, setSetupRequiresLogin] = useState(false)
 
@@ -101,21 +102,15 @@ export default function BiometricApprovalScreen({
     setStatus('authenticating')
     setError(null)
 
-    try {
-      // approveWithBiometric gates with biometric → signs → submits
-      setStatus('authenticating')
-      const result = await approveWithBiometric(challenge)
-
-      // Navigate to result screen on success
+    const showApproved = () => {
       const receipt: ConsentReceipt = {
-        grantId: result.request_id,
+        grantId: challenge.request_id,
         providerName: challenge.provider_name,
         scope: typeof challenge.scope === 'string'
           ? challenge.scope.split(',').map((s) => s.trim())
           : challenge.scope,
         expiresAt: challenge.expires_at,
       }
-
       onApproved?.(receipt)
       router.replace({
         pathname: '/patient/approval-result',
@@ -127,7 +122,30 @@ export default function BiometricApprovalScreen({
           expiresAt: challenge.expires_at,
         },
       })
+    }
+
+    try {
+      // approveWithBiometric gates with biometric → signs → submits
+      setStatus('authenticating')
+      await approveWithBiometric(challenge)
+      showApproved()
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'REQUEST_TIMEOUT') {
+        setStatus('checking')
+        try {
+          const reconciled = await fetchChallenge(challenge.request_id)
+          if (reconciled.status === 'approved') {
+            showApproved()
+            return
+          }
+        } catch {
+          // Preserve an uncertain outcome; a retry is safe because the server
+          // treats the exact same signed decision as idempotent.
+        }
+        setStatus('error')
+        setError('Approval outcome is still uncertain. Retry to reconcile safely.')
+        return
+      }
       const message = err instanceof Error ? err.message : 'Approval failed'
       if (message.includes('cancelled') || message.includes('cancel')) {
         // User cancelled biometric — go back to prompt
@@ -167,6 +185,16 @@ export default function BiometricApprovalScreen({
         <Button theme="blue" size="$4" onPress={() => router.replace('/patient/access-history')}>
           Go to Access History
         </Button>
+      </YStack>
+    )
+  }
+
+  if (status === 'checking') {
+    return (
+      <YStack f={1} bg="$background" jc="center" ai="center" gap="$3">
+        <Spinner size="large" color="$blue10" />
+        <H2 col="$color" ta="center">Checking approval status</H2>
+        <Paragraph col="$colorSubdued" ta="center">Confirming whether the signed approval reached Nexa Care…</Paragraph>
       </YStack>
     )
   }

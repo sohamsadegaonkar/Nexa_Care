@@ -262,6 +262,9 @@ def _patch_stack(fake_redis, fake_sync_redis):
         patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis)
     )
     stack.enter_context(
+        patch("app.services.approved_access_capability.get_redis_client", return_value=fake_sync_redis)
+    )
+    stack.enter_context(
         patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis)
     )
     stack.enter_context(
@@ -424,19 +427,28 @@ class TestConsentFlowIntegration:
             # ── Step 5: Verify consent grant was issued ─────────────────
             updated_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             updated_data = json.loads(updated_raw)
-            consent_token = updated_data.get("consent_token")
-            assert consent_token is not None, "Consent token not issued after approval"
+            assert "consent_token" not in updated_data
+            _reset_mock_db(mock_db)
+            mock_db.execute.return_value = _db_result(scalar_one_or_none=device_row)
+            claim_resp = client.post(
+                f"/api/v2/consent/{request_id}/claim-access",
+                headers={"X-Hospital-Id": str(provider.hospital_id)},
+            )
+            assert claim_resp.status_code == 200, claim_resp.text
+            assert claim_resp.headers["cache-control"] == "no-store"
+            claim = claim_resp.json()
+            assert claim["patient_id"] == patient_id
+            consent_token = claim["consent_token"]
+            assert consent_token not in str(fake_sync_redis._a.data.keys())
 
-            # Validate the token through the consent engine (async)
-            from app.services.consent_engine import validate as validate_consent_capability
-            import asyncio
-
-            capability = asyncio.run(validate_consent_capability(
+            from app.services.approved_access_capability import validate
+            capability = validate(
                 token=consent_token,
                 patient_id=patient_id,
-                clinician_id=provider_id,
-                purpose="routine_checkup",
-            ))
+                provider_id=provider_id,
+                hospital_id=str(provider.hospital_id),
+                requested_category="clinical_summary",
+            )
             assert capability is not None, "Consent token validation failed"
             assert capability.patient_id == patient_id
             assert capability.clinician_id == provider_id
@@ -696,4 +708,5 @@ class TestConsentFlowIntegration:
                       "decision": "approved", "challenge_nonce": challenge_nonce,
                       "signature": real_sig, "device_id": device_id},
             )
-            assert replay.status_code == 409
+            assert replay.status_code == 200
+            assert replay.json() == first.json()

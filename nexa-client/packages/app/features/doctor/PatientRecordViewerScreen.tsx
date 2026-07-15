@@ -105,6 +105,8 @@ type ViewerState = 'loading' | 'active' | 'expired' | 'error'
 // ── Scope → Tab mapping ─────────────────────────────────────────────────────
 
 const SCOPE_TO_TABS: Record<string, string[]> = {
+  clinical: ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'timeline'],
+  full: ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'documents', 'timeline', 'access'],
   patient_summary: ['summary'],
   vitals: ['vitals'],
   medications: ['prescriptions'],
@@ -173,22 +175,34 @@ function maskToken(token: string): string {
 export function PatientRecordViewerScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const requestId = searchParams.get('request_id') ?? ''
   const patientId = searchParams.get('patient_id') ?? ''
 
-  const { providerId, isAuthenticated } = useProviderAuth()
+  const { providerId, isAuthenticated, session, accessGrant, clearAccessGrant } = useProviderAuth()
+  const hospitalId = session?.hospital.hospital_id ?? ''
+  const requestId = accessGrant?.requestId ?? ''
 
   const [summary, setSummary] = useState<PatientSummary | null>(null)
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
-  const [consentValidation, setConsentValidation] = useState<ConsentValidation | null>(null)
+  const consentValidation: ConsentValidation | null = useMemo(() => accessGrant ? ({
+    valid: true,
+    expires_at: accessGrant.expiresAt,
+    scope: [accessGrant.scope],
+    purpose: accessGrant.purpose,
+  }) : null, [accessGrant])
   const [viewerState, setViewerState] = useState<ViewerState>('loading')
   const [error, setError] = useState<string | null>(null)
   const [secondsRemaining, setSecondsRemaining] = useState<number | null>(null)
   const [activeTab, setActiveTab] = useState<string>('summary')
-  const [consentToken, setConsentToken] = useState<string | null>(null)
 
   const expiryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
-  const validationTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const unmountClearRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (unmountClearRef.current) clearTimeout(unmountClearRef.current)
+    return () => {
+      unmountClearRef.current = setTimeout(clearAccessGrant, 0)
+    }
+  }, [clearAccessGrant])
 
   // ── Compute available tabs from consent scope ─────────────────────────
 
@@ -211,12 +225,16 @@ export function PatientRecordViewerScreen() {
   // ── Fetch patient record ──────────────────────────────────────────────
 
   const fetchRecord = useCallback(async () => {
-    if (!requestId && !patientId) { setError('No request ID or patient ID provided.'); setViewerState('error'); return }
+    if (!patientId || !accessGrant || accessGrant.patientId !== patientId || !hospitalId) {
+      setError('Approved access is no longer available. Return to consent history and securely reclaim access.')
+      setViewerState('error')
+      return
+    }
 
     try {
-      const targetPatientId = patientId || requestId.replace('breakglass_', '')
-      const token = consentToken || requestId
-      const data = await NexaApiClient.getPatientSummary(targetPatientId, token, 'clinical_view') as any
+      const data = await NexaApiClient.getPatientSummary(
+        patientId, accessGrant.consentToken, hospitalId, 'clinical_summary',
+      ) as any
       const mapped: PatientSummary = {
         patient_id: data.patient_id,
         pii: { patient_name: data.pii?.patient_name ?? 'Unknown', phone: data.pii?.phone ?? '' },
@@ -239,19 +257,32 @@ export function PatientRecordViewerScreen() {
 
       if (scopeAllowsTimeline) {
         try {
-          const tlData = await NexaApiClient.getPatientTimeline(targetPatientId, token) as any
+          const tlData = await NexaApiClient.getPatientTimeline(
+            patientId, accessGrant.consentToken, hospitalId,
+          ) as any
           setTimeline(tlData?.events ?? [])
         } catch { /* non-fatal */ }
       }
 
       setViewerState('active')
     } catch {
+      clearAccessGrant()
       setError('Failed to load patient record. Consent may have expired.')
       setViewerState('error')
     }
-  }, [requestId, patientId, consentToken, consentValidation?.scope])
+  }, [accessGrant, clearAccessGrant, hospitalId, patientId, consentValidation?.scope])
 
   useEffect(() => { fetchRecord() }, [fetchRecord])
+
+  useEffect(() => {
+    if (!accessGrant) return
+    const remaining = Math.max(0, Math.floor((Date.parse(accessGrant.expiresAt) - Date.now()) / 1000))
+    setSecondsRemaining(remaining)
+    if (remaining <= 0) {
+      clearAccessGrant()
+      setViewerState('expired')
+    }
+  }, [accessGrant, clearAccessGrant])
 
   // ── Consent expiry countdown ──────────────────────────────────────────
 
@@ -259,33 +290,14 @@ export function PatientRecordViewerScreen() {
     if (viewerState !== 'active' || secondsRemaining === null) return
     expiryTimerRef.current = setInterval(() => {
       setSecondsRemaining((prev) => {
-        if (prev === null || prev <= 1) { setViewerState('expired'); return 0 }
+        if (prev === null || prev <= 1) { clearAccessGrant(); setViewerState('expired'); return 0 }
         return prev - 1
       })
     }, 1000)
     return () => { if (expiryTimerRef.current) { clearInterval(expiryTimerRef.current); expiryTimerRef.current = null } }
-  }, [viewerState, secondsRemaining !== null])
+  }, [clearAccessGrant, viewerState, secondsRemaining !== null])
 
   // ── Periodic consent revalidation (every 10 seconds) ──────────────────
-
-  useEffect(() => {
-    if (viewerState !== 'active') return
-    const revalidate = async () => {
-      try {
-        const data = await NexaApiClient.validateConsentToken(requestId) as ConsentValidation
-        if (!data.valid) { setViewerState('expired'); setSecondsRemaining(0) }
-        else if (data.expires_at) {
-          const remaining = Math.max(0, Math.floor((new Date(data.expires_at).getTime() - Date.now()) / 1000))
-          setSecondsRemaining(remaining)
-          if (remaining <= 0) setViewerState('expired')
-        }
-      } catch {
-        setViewerState('expired'); setSecondsRemaining(0)
-      }
-    }
-    validationTimerRef.current = setInterval(revalidate, 10000) as unknown as ReturnType<typeof setInterval>
-    return () => { if (validationTimerRef.current) { clearInterval(validationTimerRef.current); validationTimerRef.current = null } }
-  }, [viewerState, requestId])
 
   // ── Format helpers ────────────────────────────────────────────────────
 

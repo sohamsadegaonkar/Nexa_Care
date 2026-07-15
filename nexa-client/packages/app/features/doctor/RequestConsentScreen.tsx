@@ -20,11 +20,12 @@
 
 'use client'
 
-import { Card, Text, YStack, Button, Input, XStack, Spinner, Paragraph, ScrollView, Select } from '@my/ui'
-import { useState } from 'react'
+import { Card, Text, YStack, Button, Input, XStack, Spinner, Paragraph, ScrollView } from '@my/ui'
+import { useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { NexaApiClient } from '../../utils/apiClient'
+import { ApiError, NexaApiClient } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
+import { ConsentSelect } from './components/ConsentSelect'
 
 // ── Controlled purpose codes ────────────────────────────────────────────────
 type AccessPurpose = 'treatment' | 'emergency_care' | 'diagnostic_review' | 'follow_up' | 'referral'
@@ -38,30 +39,26 @@ const PURPOSE_OPTIONS: { value: AccessPurpose; label: string; description: strin
 ]
 
 // ── Controlled scope categories ──────────────────────────────────────────────
-type ConsentScope = 'patient_summary' | 'vitals' | 'medications' | 'allergies' | 'lab_results' | 'clinical_record'
+type ConsentScope = 'clinical' | 'full'
 
 const SCOPE_OPTIONS: { value: ConsentScope; label: string; description: string }[] = [
-  { value: 'patient_summary', label: 'Patient Summary', description: 'Basic demographics and overview' },
-  { value: 'vitals', label: 'Vitals', description: 'Blood pressure, heart rate, SpO2, temperature' },
-  { value: 'medications', label: 'Medications', description: 'Active and past prescriptions' },
-  { value: 'allergies', label: 'Allergies', description: 'Known allergies and adverse reactions' },
-  { value: 'lab_results', label: 'Lab Results', description: 'Laboratory test results' },
-  { value: 'clinical_record', label: 'Clinical Record', description: 'Full clinical record access' },
+  { value: 'clinical', label: 'Clinical', description: 'Clinical information required for this care workflow' },
+  { value: 'full', label: 'Full Record', description: 'Complete patient record access' },
 ]
 
 // ── Duration presets (server clamps to [5 min, 60 min]) ─────────────────────
 const DURATION_PRESETS = [
-  { seconds: 300, label: '5 minutes' },
-  { seconds: 900, label: '15 minutes' },
-  { seconds: 1800, label: '30 minutes' },
-  { seconds: 3600, label: '60 minutes' },
-]
+  { value: 300, label: '5 minutes' },
+  { value: 900, label: '15 minutes' },
+  { value: 1800, label: '30 minutes' },
+  { value: 3600, label: '60 minutes' },
+] as const
 
 export function RequestConsentScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const patientId = searchParams.get('patient_id') ?? ''
-  const { providerId, hospitalName, isAuthenticated } = useProviderAuth()
+  const { providerId, hospitalName, isAuthenticated, session } = useProviderAuth()
 
   // ── Session guard ─────────────────────────────────────────────────────
   if (!isAuthenticated) {
@@ -77,13 +74,18 @@ export function RequestConsentScreen() {
 
   const [purpose, setPurpose] = useState<AccessPurpose>('treatment')
   const [purposeNote, setPurposeNote] = useState('')
-  const [requestedScope, setRequestedScope] = useState<ConsentScope>('clinical_record')
+  const [requestedScope, setRequestedScope] = useState<ConsentScope>('clinical')
   const [accessDuration, setAccessDuration] = useState(900)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const submissionInFlight = useRef(false)
 
   const handleSubmit = async () => {
     if (!patientId) { setError('No patient selected.'); return }
+    const hospitalId = session?.hospital.hospital_id
+    if (!hospitalId) { setError('Provider hospital context is unavailable. Sign in again.'); return }
+    if (submissionInFlight.current) return
+    submissionInFlight.current = true
     setSubmitting(true)
     setError(null)
     try {
@@ -94,11 +96,14 @@ export function RequestConsentScreen() {
         scope: requestedScope,
         access_duration_seconds: accessDuration,
         ...(purposeNote.trim() ? { purpose_note: purposeNote.trim() } : {}),
-      }, '') as any
+      }, hospitalId)
       router.push(`/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}&patient_id=${encodeURIComponent(patientId)}`)
-    } catch {
-      setError('Failed to create consent request. Please try again.')
+    } catch (caught: unknown) {
+      setError(caught instanceof ApiError
+        ? `Consent request failed: ${caught.message}`
+        : 'Failed to create consent request. Please try again.')
     } finally {
+      submissionInFlight.current = false
       setSubmitting(false)
     }
   }
@@ -134,17 +139,14 @@ export function RequestConsentScreen() {
 
         {/* Purpose (controlled selector) */}
         <YStack gap="$2">
-          <Paragraph color="$color11" fontSize={15}>Purpose</Paragraph>
-          <Select value={purpose} onValueChange={(v) => setPurpose(v as AccessPurpose)}>
-            <Select.Trigger size="$4" iconAfter={<Select.Chevron />} />
-            <Select.Content>
-              {PURPOSE_OPTIONS.map((opt) => (
-                <Select.Item key={opt.value} value={opt.value}>
-                  <Select.ItemText>{opt.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select>
+          <ConsentSelect
+            id="consent-purpose"
+            label="Purpose"
+            value={purpose}
+            options={PURPOSE_OPTIONS}
+            onValueChange={setPurpose}
+            disabled={submitting}
+          />
           <Paragraph color="$color10" fontSize={13}>
             {PURPOSE_OPTIONS.find((o) => o.value === purpose)?.description}
           </Paragraph>
@@ -158,17 +160,14 @@ export function RequestConsentScreen() {
 
         {/* Requested scope (controlled selector) */}
         <YStack gap="$2">
-          <Paragraph color="$color11" fontSize={15}>Requested Scope</Paragraph>
-          <Select value={requestedScope} onValueChange={(v) => setRequestedScope(v as ConsentScope)}>
-            <Select.Trigger size="$4" iconAfter={<Select.Chevron />} />
-            <Select.Content>
-              {SCOPE_OPTIONS.map((opt) => (
-                <Select.Item key={opt.value} value={opt.value}>
-                  <Select.ItemText>{opt.label}</Select.ItemText>
-                </Select.Item>
-              ))}
-            </Select.Content>
-          </Select>
+          <ConsentSelect
+            id="consent-scope"
+            label="Requested Scope"
+            value={requestedScope}
+            options={SCOPE_OPTIONS}
+            onValueChange={setRequestedScope}
+            disabled={submitting}
+          />
           <Paragraph color="$color10" fontSize={13}>
             {SCOPE_OPTIONS.find((o) => o.value === requestedScope)?.description}
           </Paragraph>
@@ -176,20 +175,14 @@ export function RequestConsentScreen() {
 
         {/* Access duration (preset selector) */}
         <YStack gap="$2">
-          <Paragraph color="$color11" fontSize={15}>Access Duration</Paragraph>
-          <XStack gap="$2" flexWrap="wrap">
-            {DURATION_PRESETS.map((preset) => (
-              <Button
-                key={preset.seconds}
-                size="$3"
-                theme={accessDuration === preset.seconds ? 'blue' : undefined}
-                chromeless={accessDuration !== preset.seconds}
-                onPress={() => setAccessDuration(preset.seconds)}
-              >
-                {preset.label}
-              </Button>
-            ))}
-          </XStack>
+          <ConsentSelect
+            id="consent-duration"
+            label="Access Duration"
+            value={accessDuration}
+            options={DURATION_PRESETS}
+            onValueChange={setAccessDuration}
+            disabled={submitting}
+          />
           <Paragraph color="$color10" fontSize={13}>
             Selected: {formatDuration(accessDuration)}. Server enforces minimum 5 min, maximum 60 min.
           </Paragraph>

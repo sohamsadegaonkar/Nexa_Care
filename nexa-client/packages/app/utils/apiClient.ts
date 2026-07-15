@@ -78,8 +78,10 @@ export interface EnrolledDevicesListResponse {
 export interface ConsentChallengeRequest {
   patient_id: string
   provider_id: string
-  purpose: 'routine_checkup' | 'specialist_consult' | 'emergency' | 'ai_ingestion'
+  purpose: 'treatment' | 'emergency_care' | 'diagnostic_review' | 'follow_up' | 'referral'
   scope: 'clinical' | 'full'
+  access_duration_seconds: number
+  purpose_note?: string
 }
 
 export interface ConsentChallengeResponse {
@@ -131,7 +133,6 @@ export interface ConsentStatusResponse {
   delivery_error?: string | null
   delivery_attempted_at?: string | null
   delivery_completed_at?: string | null
-  consent_token?: string
   scope?: 'clinical' | 'full'
   resolved_at?: string
   responded_at?: string | null
@@ -263,6 +264,14 @@ export class ApiError extends Error {
   }
 }
 
+export interface ConsentAccessClaimResponse {
+  patient_id: string
+  consent_token: string
+  purpose: string
+  scope: 'clinical' | 'full'
+  expires_at: string
+}
+
 export interface ProviderLoginRequest {
   login_identifier: string
   password: string
@@ -332,10 +341,12 @@ function statusCode(status: number): string {
 
 function diagnostic(method: string, path: string, fields: Record<string, unknown>): void {
   if (process.env.NODE_ENV !== 'production') {
-    const expectedAuthFailure = fields.status === 401
+    const status = typeof fields.status === 'number' ? fields.status : null
+    const handledClientFailure = status !== null && status >= 400 && status < 500
+    const expectedAuthFailure = status === 401
       || fields.code === 'AUTH_REQUIRED'
       || fields.code === 'REAUTH_REQUIRED'
-    const log = expectedAuthFailure ? console.warn : console.error
+    const log = handledClientFailure || expectedAuthFailure ? console.warn : console.error
     log('API_REQUEST_ERROR', { method, path, ...fields })
   }
 }
@@ -410,6 +421,7 @@ async function request<T>(
         : 'Unable to reach Nexa Care. Check the configured server and network connection.'
     diagnostic(options.method ?? 'GET', path, {
       code,
+      retryable: !callerSignal?.aborted,
       cause: error instanceof Error ? error.name : 'UnknownError',
     })
     if (onErrorToast) {
@@ -433,7 +445,11 @@ async function request<T>(
       // ignore JSON parse error on non-JSON response
     }
 
-    diagnostic(options.method ?? 'GET', path, { status: response.status, code: errorCode })
+    diagnostic(options.method ?? 'GET', path, {
+      status: response.status,
+      code: errorCode,
+      retryable: response.status === 429 || response.status >= 500,
+    })
 
     if (response.status === 401 && !noAuth) {
       if (onReAuthRequired) onReAuthRequired()
@@ -454,7 +470,7 @@ async function request<T>(
       throw new ApiError(errorMsg, response.status, errorCode, true)
     }
 
-    throw new ApiError(errorMsg, response.status, errorCode, false)
+    throw new ApiError(errorMsg, response.status, errorCode, response.status === 429)
   }
 
   if (response.status === 204) {
@@ -464,7 +480,11 @@ async function request<T>(
   try {
     return await response.json()
   } catch {
-    diagnostic(options.method ?? 'GET', path, { status: response.status, code: 'MALFORMED_RESPONSE' })
+    diagnostic(options.method ?? 'GET', path, {
+      status: response.status,
+      code: 'MALFORMED_RESPONSE',
+      retryable: true,
+    })
     throw new ApiError('The server returned an unreadable response.', response.status, 'MALFORMED_RESPONSE', true)
   }
 }
@@ -539,24 +559,42 @@ export const NexaApiClient = {
   },
 
   getConsentStatus(requestId: string, hospitalId: string): Promise<ConsentStatusResponse> {
+    const normalizedHospitalId = hospitalId.trim()
+    if (!normalizedHospitalId) {
+      return Promise.reject(new ApiError(
+        'Provider hospital context is unavailable. Sign in again.',
+        0,
+        'PROVIDER_CONTEXT_REQUIRED',
+        false,
+      ))
+    }
     return request<ConsentStatusResponse>(`/api/v2/consent/status/${requestId}`, {
       method: 'GET',
     }, {
-      'X-Hospital-Id': hospitalId,
+      'X-Hospital-Id': normalizedHospitalId,
     })
   },
 
+  claimConsentAccess(requestId: string, hospitalId: string): Promise<ConsentAccessClaimResponse> {
+    return request<ConsentAccessClaimResponse>(
+      `/api/v2/consent/${encodeURIComponent(requestId)}/claim-access`,
+      { method: 'POST' },
+      { 'X-Hospital-Id': hospitalId },
+    )
+  },
+
   // Patient Records
-  getPatientSummary(patientId: string, consentToken: string, purpose = 'clinical_summary'): Promise<PatientSummaryResponse> {
+  getPatientSummary(patientId: string, consentToken: string, hospitalId: string, purpose = 'clinical_summary'): Promise<PatientSummaryResponse> {
     return request<PatientSummaryResponse>(`/api/v2/patient/${patientId}/summary`, {
       method: 'GET',
     }, {
       'X-Consent-Token': consentToken,
       'X-Consent-Purpose': purpose,
+      'X-Hospital-Id': hospitalId,
     })
   },
 
-  getPatientTimeline(patientId: string, consentToken: string, limit = 20, cursor?: string): Promise<PatientTimelineResponse> {
+  getPatientTimeline(patientId: string, consentToken: string, hospitalId: string, limit = 20, cursor?: string): Promise<PatientTimelineResponse> {
     const params = new URLSearchParams({ limit: String(limit) })
     if (cursor) params.append('cursor', cursor)
     return request<PatientTimelineResponse>(`/api/v2/patient/${patientId}/timeline?${params.toString()}`, {
@@ -564,6 +602,7 @@ export const NexaApiClient = {
     }, {
       'X-Consent-Token': consentToken,
       'X-Consent-Purpose': 'timeline_view',
+      'X-Hospital-Id': hospitalId,
     })
   },
 
