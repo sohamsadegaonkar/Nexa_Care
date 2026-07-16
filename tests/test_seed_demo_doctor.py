@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.provider import (
-    HospitalRegistry,
     ProviderCredential,
     ProviderHospitalAffiliation,
     ProviderIdentity,

@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 """Seed the canonical Nexa Care alpha patient and clinical demo records.
 
 The authoritative ``patients`` row contains only the canonical identifier and
@@ -12,7 +13,6 @@ seeder fills missing demo records without duplicating existing records.
 from __future__ import annotations
 
 import asyncio
-import os
 import sys
 import uuid
 from datetime import datetime, timedelta, timezone
