@@ -515,7 +515,7 @@ def test_generic_lab_unknown_reference_not_fake_normal():
 
 def test_medical_validator_source_has_no_fake_generic_lab_range():
     """Guard against reintroducing the old fake generic lab normal range."""
-    source = Path("app/ai/medical_validator.py").read_text()
+    source = Path("app/ai/medical_validator.py").read_text(encoding="utf-8")
     assert "unknown reference range requires review" in source
     assert '"min": 0.0' not in source
     assert '{"min": 0.0, "max": 100.0' not in source

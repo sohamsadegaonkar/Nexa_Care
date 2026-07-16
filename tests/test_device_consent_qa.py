@@ -467,6 +467,7 @@ class TestConsentStatusPolling:
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
             "provider_id": provider_id,
+            "hospital_id": str(ctx.hospital_id),
             "status": "pending",
         }
         fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
@@ -512,6 +513,7 @@ class TestConsentStatusPolling:
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
             "provider_id": provider_id,
+            "hospital_id": str(ctx.hospital_id),
             "status": "approved",
             "responded_at": now_iso,
         }

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import asyncio
 import hashlib
@@ -57,7 +57,7 @@ async def test_same_phone_across_different_ips_is_limited() -> None:
     limiter = OtpRedisRateLimiter(
         redis_client=redis, hmac_secret=HMAC_SECRET, send_ip_limit=100, send_phone_limit=2
     )
-    phone = "+918975073895"
+    phone = "+918000000001"
     await limiter.check(action="send", ip="10.0.0.1", normalized_phone=phone)
     await limiter.check(action="send", ip="10.0.0.2", normalized_phone=phone)
     with pytest.raises(OtpRateLimitExceeded):
@@ -68,7 +68,7 @@ async def test_same_phone_across_different_ips_is_limited() -> None:
 async def test_keys_have_required_dimensions_and_no_raw_identifiers() -> None:
     redis = AtomicFakeRedis()
     limiter = OtpRedisRateLimiter(redis_client=redis, hmac_secret=HMAC_SECRET)
-    phone = "+918975073895"
+    phone = "+918000000001"
     ip = "192.0.2.249"
     await limiter.check(action="send", ip=ip, normalized_phone=phone)
     await limiter.check(action="verify", ip=ip, normalized_phone=phone)
@@ -84,8 +84,8 @@ async def test_keys_have_required_dimensions_and_no_raw_identifiers() -> None:
 def test_hmac_secret_changes_identifier() -> None:
     first = OtpRedisRateLimiter(hmac_secret=HMAC_SECRET)
     second = OtpRedisRateLimiter(hmac_secret="another-independent-secret-with-32-plus-bytes")
-    assert first.redis_key("send", "phone", "+918975073895") != second.redis_key(
-        "send", "phone", "+918975073895"
+    assert first.redis_key("send", "phone", "+918000000001") != second.redis_key(
+        "send", "phone", "+918000000001"
     )
 
 
@@ -99,11 +99,11 @@ async def test_expiry_resets_limit() -> None:
         send_phone_limit=1,
         window_seconds=10,
     )
-    await limiter.check(action="send", ip="10.0.0.1", normalized_phone="+918975073895")
+    await limiter.check(action="send", ip="10.0.0.1", normalized_phone="+918000000001")
     with pytest.raises(OtpRateLimitExceeded):
-        await limiter.check(action="send", ip="10.0.0.1", normalized_phone="+918975073895")
+        await limiter.check(action="send", ip="10.0.0.1", normalized_phone="+918000000001")
     redis.advance(10)
-    await limiter.check(action="send", ip="10.0.0.1", normalized_phone="+918975073895")
+    await limiter.check(action="send", ip="10.0.0.1", normalized_phone="+918000000001")
 
 
 @pytest.mark.asyncio
@@ -137,5 +137,5 @@ async def test_redis_failure_is_fail_closed() -> None:
     limiter = OtpRedisRateLimiter(redis_client=BrokenRedis(), hmac_secret=HMAC_SECRET)
     with pytest.raises(OtpRateLimitBackendUnavailable):
         await limiter.check(
-            action="send", ip="10.0.0.1", normalized_phone="+918975073895"
+            action="send", ip="10.0.0.1", normalized_phone="+918000000001"
         )

@@ -27,8 +27,7 @@
                                                       "foregroundImage":  "./assets/adaptive-icon.png",
                                                       "backgroundColor":  "#FFFFFF"
                                                   },
-                                 "package":  "ai.nexacare.patient",
-                                 "googleServicesFile":  "./google-services.json"
+                                 "package":  "ai.nexacare.patient"
                              },
                  "web":  {
                              "favicon":  "./assets/favicon.png"
@@ -57,9 +56,7 @@
                                "router":  {
                                               "root":  "./app"
                                           },
-                               "eas":  {
-                                           "projectId":  "3e9612c9-2661-4deb-8012-e78bd3500534"
-                                       }
+                               "eas":  {}
                            }
              }
 }

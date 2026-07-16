@@ -32,7 +32,7 @@ if ($ValidateOnly -and $CopyToDotEnv) {
 }
 
 $branch = (git branch --show-current).Trim()
-if ($branch -ne 'alpha-loop-testing') { Write-Error "Expected branch alpha-loop-testing; current branch is $branch." }
+Write-Host "Preparing ignored alpha environment files on branch: $branch"
 if (git status --short) { Write-Warning 'The working tree is dirty. Existing changes will not be modified except requested environment files.' }
 
 foreach ($file in @('.env', '.env.alpha')) {

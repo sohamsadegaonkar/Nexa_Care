@@ -42,7 +42,7 @@ describe('ProviderRouteGuard', () => {
       expires_at: '2099-01-01T00:00:00Z',
       provider: {
         provider_id: 'provider-1', display_name: '', medical_registration_number: null,
-        specialty: null, contact_email: 'demo.doctor@nexacare.in', role: 'clinician',
+        specialty: null, contact_email: 'provider@example.test', role: 'clinician',
       },
       hospital: { hospital_id: 'hospital-1', facility_code: '', display_name: '' },
     }))

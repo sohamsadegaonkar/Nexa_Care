@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Smoke test for Nexa Care, meant to run against a live staging instance.
+"""Smoke test for Nexa Care alpha/development/test environments.
 
 Usage:
-    BASE_URL=https://staging.example.com \\
+    ENV=test \\
+    BASE_URL=https://test-api.example.com \\
     PROVIDER_EMAIL=test.doctor@nexa-care.local \\
     PROVIDER_PASSWORD=<STRONG_IGNORED_TEST_PASSWORD> \\
     python3 scripts/smoke_test.py
@@ -42,17 +43,19 @@ import os
 import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.demo_environment import require_demo_environment  # noqa: E402
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
 
 # Matches scripts/seed_test_data.py's TEST_PROVIDER_EMAIL / TEST_PROVIDER_PASSWORD.
 PROVIDER_EMAIL = os.environ.get("PROVIDER_EMAIL", "test.doctor@nexa-care.local")
-PROVIDER_PASSWORD = os.environ.get("PROVIDER_PASSWORD")
-if not PROVIDER_PASSWORD:
-    raise RuntimeError("PROVIDER_PASSWORD must be set for the smoke test")
-
-_basic_value = base64.b64encode(f"{PROVIDER_EMAIL}:{PROVIDER_PASSWORD}".encode("utf-8")).decode("ascii")
-PROVIDER_HEADER = {"Authorization": f"Basic {_basic_value}"}
+PROVIDER_HEADER: dict[str, str] = {}
 
 # Obviously-fake placeholder data — never run this against real patient records.
 SAMPLE_PATIENT = {
@@ -106,6 +109,15 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 
 def main() -> int:
+    require_demo_environment("smoke_test")
+    provider_password = os.environ.get("PROVIDER_PASSWORD")
+    if not provider_password:
+        raise RuntimeError("PROVIDER_PASSWORD must be set for the smoke test")
+    basic_value = base64.b64encode(
+        f"{PROVIDER_EMAIL}:{provider_password}".encode("utf-8")
+    ).decode("ascii")
+    PROVIDER_HEADER["Authorization"] = f"Basic {basic_value}"
+
     print(f"Running smoke test against {BASE_URL}\n")
 
     # 1. Health check

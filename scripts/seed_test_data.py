@@ -37,6 +37,7 @@ from app.models.provider import (  # noqa: E402
     ProviderIdentity,
 )
 from app.services.provider_auth_service import hash_provider_password  # noqa: E402
+from scripts.demo_environment import require_demo_environment  # noqa: E402
 
 CARD_UID = "04:A2:B4:EA:51:22"
 PATIENT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"nexa-care-test-patient:{CARD_UID}")
@@ -167,6 +168,9 @@ async def seed_provider(session) -> tuple[uuid.UUID, uuid.UUID]:
 
 async def main() -> int:
     """Run the seed transaction."""
+
+    if require_demo_environment("seed_test_data") != "test":
+        raise RuntimeError("seed_test_data requires ENV=test")
 
     session_factory = get_session_factory()
     async with session_factory() as session:

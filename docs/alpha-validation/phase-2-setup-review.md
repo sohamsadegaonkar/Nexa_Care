@@ -1,4 +1,10 @@
-# Nexa Care Phase 2 Setup Review
+﻿# Nexa Care Phase 2 Setup Review
+
+> Historical alpha validation evidence; not production onboarding guidance.
+
+> Merge-cleanup note: `scripts/enroll_demo_device.py` was later removed because
+> a workstation-generated exportable key is not evidence of physical-device
+> enrollment. Use the authenticated mobile enrollment flow instead.
 
 ## 1. Executive verdict
 
@@ -240,7 +246,7 @@ No consent business rule, authentication design, cryptographic protocol, migrati
 Run these from a trusted PowerShell session. Enter secrets only by editing ignored files or through a secret manager; do not paste them into shared logs.
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care
+Set-Location C:\path\to\Nexa_Care
 .\venv\Scripts\Activate.ps1
 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_alpha_environment.ps1 -ValidateOnly
@@ -263,7 +269,7 @@ Invoke-RestMethod http://127.0.0.1:8000/health
 In a separate terminal, replace the example with the workstation's current private-LAN address without committing it:
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care\nexa-client
+Set-Location C:\path\to\Nexa_Care\nexa-client
 $env:NEXT_PUBLIC_API_URL='http://<LOCAL_LAN_IP>:8000'
 yarn workspace expo start --dev-client
 ```

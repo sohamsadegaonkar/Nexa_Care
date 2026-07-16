@@ -1,5 +1,7 @@
 # Alpha Loop-Test Environment
 
+> Historical alpha validation evidence; not production configuration.
+
 Do not enter secrets or real patient information. Leave results blank or mark `NOT RUN` until evidence exists.
 
 ## Build

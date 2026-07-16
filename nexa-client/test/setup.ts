@@ -1,6 +1,7 @@
 import { afterEach, vi } from 'vitest'
 import React from 'react'
 import { cleanup } from '@testing-library/react'
+import '@testing-library/jest-dom/vitest'
 
 // Vitest globals are disabled, so Testing Library cannot auto-register cleanup.
 afterEach(() => {

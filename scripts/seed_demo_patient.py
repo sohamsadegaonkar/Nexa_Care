@@ -36,6 +36,7 @@ from app.models.patient_records import (
     TimelineEvent,
     Vitals,
 )
+from scripts.demo_environment import require_demo_environment
 
 DEMO_PATIENT_ID = "123e4567-e89b-12d3-a456-426614174001"
 DEMO_PATIENT_UUID = uuid.UUID(DEMO_PATIENT_ID)
@@ -307,9 +308,7 @@ async def seed_aarav_sharma(session: AsyncSession) -> str:
 
 
 async def _run() -> int:
-    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
-    if env in {"prod", "production"}:
-        raise RuntimeError(f"Refusing to seed demo patient in production environment ('{env}').")
+    require_demo_environment("seed_demo_patient")
 
     session_factory = get_session_factory()
     try:

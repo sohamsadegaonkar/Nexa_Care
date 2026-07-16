@@ -50,6 +50,7 @@ from app.services.provider_auth_service import (  # noqa: E402
     normalize_provider_login_identifier,
     revoke_provider_auth_sessions,
 )
+from scripts.demo_environment import require_demo_environment  # noqa: E402
 
 # ── Demo credentials ─────────────────────────────────────────────────────────
 
@@ -307,9 +308,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 async def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    env = os.getenv("ENV", os.getenv("ENVIRONMENT", "development")).lower().strip()
-    if env in {"prod", "production"}:
-        raise RuntimeError(f"Refusing to seed demo doctor in production environment ('{env}').")
+    require_demo_environment("seed_demo_doctor")
 
     session_factory = get_session_factory()
     async with session_factory() as session:

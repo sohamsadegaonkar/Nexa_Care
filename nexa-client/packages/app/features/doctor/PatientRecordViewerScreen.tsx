@@ -301,6 +301,14 @@ export function PatientRecordViewerScreen() {
 
   // ── Format helpers ────────────────────────────────────────────────────
 
+  useEffect(() => {
+    if (viewerState !== 'active' || !accessGrant) return
+    const revalidationTimer = setInterval(() => {
+      void fetchRecord()
+    }, 10000)
+    return () => clearInterval(revalidationTimer)
+  }, [accessGrant, fetchRecord, viewerState])
+
   const formatCountdown = (seconds: number) => {
     const m = Math.floor(seconds / 60)
     const s = seconds % 60

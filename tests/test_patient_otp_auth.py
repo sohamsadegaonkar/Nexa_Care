@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from types import SimpleNamespace
@@ -52,9 +52,9 @@ class FakeRedis:
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        ("8975073895", "+918975073895"),
-        ("91 89750 73895", "+918975073895"),
-        ("+91-89750-73895", "+918975073895"),
+        ("8000000001", "+918000000001"),
+        ("91 80000 00001", "+918000000001"),
+        ("+91-80000-00001", "+918000000001"),
     ],
 )
 def test_indian_phone_normalization(raw: str, expected: str) -> None:
@@ -118,14 +118,14 @@ def test_otp_send_is_generic_and_disables_user_creation() -> None:
     with patch("app.api.v2.auth_routes._otp_rate_limiter.check", new=check), patch(
         "app.api.v2.auth_routes.get_supabase_client", return_value=supabase
     ):
-        response = client.post("/api/v2/auth/otp/send", json={"phone": "8975073895"})
+        response = client.post("/api/v2/auth/otp/send", json={"phone": "8000000001"})
     assert response.status_code == 200
     assert response.json() == {"message": "If this phone is registered, an OTP will be sent."}
     auth.sign_in_with_otp.assert_called_once_with(
-        {"phone": "+918975073895", "options": {"should_create_user": False}}
+        {"phone": "+918000000001", "options": {"should_create_user": False}}
     )
     assert check.await_args.kwargs["action"] == "send"
-    assert check.await_args.kwargs["normalized_phone"] == "+918975073895"
+    assert check.await_args.kwargs["normalized_phone"] == "+918000000001"
 
 
 def test_otp_send_rate_limit() -> None:
@@ -133,7 +133,7 @@ def test_otp_send_rate_limit() -> None:
         "app.api.v2.auth_routes._otp_rate_limiter.check",
         new=AsyncMock(side_effect=OtpRateLimitExceeded("limited")),
     ):
-        response = client.post("/api/v2/auth/otp/send", json={"phone": "8975073895"})
+        response = client.post("/api/v2/auth/otp/send", json={"phone": "8000000001"})
     assert response.status_code == 429
 
 
@@ -142,7 +142,7 @@ def test_otp_redis_failure_is_fail_closed_at_route() -> None:
         "app.api.v2.auth_routes._otp_rate_limiter.check",
         new=AsyncMock(side_effect=OtpRateLimitBackendUnavailable("down")),
     ):
-        response = client.post("/api/v2/auth/otp/send", json={"phone": "8975073895"})
+        response = client.post("/api/v2/auth/otp/send", json={"phone": "8000000001"})
     assert response.status_code == 503
 
 
@@ -152,7 +152,7 @@ def test_otp_send_unknown_phone_remains_generic() -> None:
     auth = MagicMock()
     auth.sign_in_with_otp.side_effect = error
     with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
-        response = client.post("/api/v2/auth/otp/send", json={"phone": "8975073895"})
+        response = client.post("/api/v2/auth/otp/send", json={"phone": "8000000001"})
     assert response.status_code == 200
     assert "registered" in response.json()["message"]
 
@@ -166,7 +166,7 @@ def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
     app.dependency_overrides[get_db_session] = lambda: db
     auth = MagicMock()
     auth.verify_otp.return_value = SimpleNamespace(
-        user=SimpleNamespace(phone="+918975073895", id="supabase-user-1"),
+        user=SimpleNamespace(phone="+918000000001", id="supabase-user-1"),
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
@@ -175,7 +175,7 @@ def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
              patch("app.api.v2.auth_routes.issue_device_enrollment_token", new=AsyncMock(return_value="enroll-token")):
             response = client.post(
                 "/api/v2/auth/otp/verify",
-                json={"phone": "8975073895", "otp": "123456"},
+                json={"phone": "8000000001", "otp": "123456"},
             )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
@@ -198,7 +198,7 @@ def test_invalid_or_expired_otp(status_code: int) -> None:
     with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
         response = client.post(
             "/api/v2/auth/otp/verify",
-            json={"phone": "8975073895", "otp": "123456"},
+            json={"phone": "8000000001", "otp": "123456"},
         )
     assert response.status_code == 401
     assert "provider details" not in response.text
@@ -210,14 +210,14 @@ def test_matching_phone_without_identity_mapping_is_rejected() -> None:
     app.dependency_overrides[get_db_session] = lambda: db
     auth = MagicMock()
     auth.verify_otp.return_value = SimpleNamespace(
-        user=SimpleNamespace(phone="+918975073895", id="supabase-user-1"),
+        user=SimpleNamespace(phone="+918000000001", id="supabase-user-1"),
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
         with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
             response = client.post(
                 "/api/v2/auth/otp/verify",
-                json={"phone": "8975073895", "otp": "123456"},
+                json={"phone": "8000000001", "otp": "123456"},
             )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
@@ -231,14 +231,14 @@ def test_revoked_identity_mapping_is_rejected() -> None:
     app.dependency_overrides[get_db_session] = lambda: db
     auth = MagicMock()
     auth.verify_otp.return_value = SimpleNamespace(
-        user=SimpleNamespace(phone="+918975073895", id="revoked-subject"),
+        user=SimpleNamespace(phone="+918000000001", id="revoked-subject"),
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
         with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
             response = client.post(
                 "/api/v2/auth/otp/verify",
-                json={"phone": "8975073895", "otp": "123456"},
+                json={"phone": "8000000001", "otp": "123456"},
             )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
@@ -253,14 +253,14 @@ def test_deleted_or_missing_mapped_patient_is_rejected() -> None:
     app.dependency_overrides[get_db_session] = lambda: db
     auth = MagicMock()
     auth.verify_otp.return_value = SimpleNamespace(
-        user=SimpleNamespace(phone="+918975073895", id="supabase-user-1"),
+        user=SimpleNamespace(phone="+918000000001", id="supabase-user-1"),
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
         with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
             response = client.post(
                 "/api/v2/auth/otp/verify",
-                json={"phone": "8975073895", "otp": "123456"},
+                json={"phone": "8000000001", "otp": "123456"},
             )
     finally:
         app.dependency_overrides.pop(get_db_session, None)

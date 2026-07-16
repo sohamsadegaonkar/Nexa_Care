@@ -1,5 +1,9 @@
 # Doctor App Demo Setup Guide
 
+> Demo/alpha only. This is not production onboarding. Use synthetic patients
+> only, set `ENV=alpha` or `ENV=development` explicitly, and keep credentials in
+> ignored environment files.
+
 **Last updated:** 2026-07-10
 
 This guide walks you through running the Nexa Care Doctor Web App against a
@@ -36,7 +40,7 @@ export NEXT_PUBLIC_API_URL="http://localhost:8000"
 ## 2. Seed the Demo Doctor
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care
+Set-Location C:\path\to\Nexa_Care
 $password = .\venv\Scripts\python.exe -c "import secrets; print('Aa1!' + secrets.token_urlsafe(32))"
 # Copy $password into the ignored .env as DEMO_PROVIDER_PASSWORD, then:
 Remove-Variable password
@@ -162,26 +166,18 @@ The waiting screen shows:
 - **Elapsed timer**
 - **Cancel Request** button (real server-side cancellation)
 
-The patient must approve on their mobile app. For demo purposes, you can:
+The patient must approve on their mobile app.
 
-**Option A: Use the consent approval script**
-
-```bash
-python scripts/demo_push_approval.py --request-id <REQUEST_ID>
-```
-
-**Option B: Call the approval endpoint directly**
+Approval must be completed in the authenticated physical-device app. Synthetic
+workstation keys and direct unsigned approval calls are not enrollment or
+consent evidence. The challenge may be inspected without resolving it:
 
 ```bash
 # Get the challenge details
 curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
   http://localhost:8000/api/v2/consent/challenge/<REQUEST_ID>
 
-# Approve (requires device signing in production)
-curl -X POST http://localhost:8000/api/v2/consent/approve-signed \
-  -H "Authorization: Bearer <PATIENT_TOKEN>" \
-  -H "Content-Type: application/json" \
-  -d '{"request_id":"<REQUEST_ID>","patient_id":"<PATIENT_ID>","decision":"approved","challenge_nonce":"<NONCE>","signature":"<SIG>","device_id":"<DEVICE_ID>"}'
+# Approval is submitted only by the mobile app after biometric-gated signing.
 ```
 
 Once approved, the waiting screen shows ✅ "Access Approved" and auto-redirects.
@@ -197,7 +193,7 @@ After approval, you see the Patient Record Viewer with:
 
 **Access Status tab** shows:
 - Authorization: Active (green badge)
-- Authorization Reference: masked token (e.g., `nexa:co••••3f2a`)
+- Authorization Reference: non-secret consent request reference
 - Scope, Purpose, Provider, Time Remaining
 
 When consent expires, the viewer **locks immediately** with 🔒 and

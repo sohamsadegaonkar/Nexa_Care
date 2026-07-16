@@ -152,10 +152,10 @@ async def test_seed_run_prints_created_then_already_exists(monkeypatch, capsys):
     monkeypatch.setattr(seeder, "get_async_engine", lambda: Engine())
 
     assert await seeder._run() == 0
-    assert capsys.readouterr().out == f"status=created patient_id={seeder.DEMO_PATIENT_ID}\n"
+    assert capsys.readouterr().out.endswith(f"status=created patient_id={seeder.DEMO_PATIENT_ID}\n")
 
     assert await seeder._run() == 0
-    assert capsys.readouterr().out == f"status=already-exists patient_id={seeder.DEMO_PATIENT_ID}\n"
+    assert capsys.readouterr().out.endswith(f"status=already-exists patient_id={seeder.DEMO_PATIENT_ID}\n")
 
 
 @pytest.mark.asyncio

@@ -35,7 +35,8 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
     loginError,
     loggingIn,
   } = useProviderAuth()
-  const [email, setEmail] = useState('demo.doctor@nexacare.in')
+  const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
+  const [email, setEmail] = useState(demoMode ? 'demo.doctor@nexacare.in' : '')
   const [password, setPassword] = useState('')
   const [totpCode, setTotpCode] = useState('')
   const [localError, setLocalError] = useState<string | null>(null)
@@ -136,7 +137,7 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
               {loggingIn ? <Spinner color="$blue10" size="small" /> : 'Verify'}
             </Button>
             <Button size="$3" chromeless onPress={backToLogin}>
-              Back to Provider Login
+              Back to Sign In
             </Button>
           </YStack>
         </YStack>
@@ -150,6 +151,9 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
         <YStack alignItems="center" gap="$2">
           <H1 color="$color12" fontSize={36}>Nexa Care</H1>
           <Paragraph color="$color10" fontSize={18}>Provider Login</Paragraph>
+          {demoMode ? (
+            <Text color="$orange10" fontSize={13} fontWeight="700">Demo mode — credentials are supplied separately</Text>
+          ) : null}
         </YStack>
         <YStack gap="$3">
           <YStack gap="$1">

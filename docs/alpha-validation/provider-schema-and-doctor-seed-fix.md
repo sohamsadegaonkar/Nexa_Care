@@ -1,4 +1,6 @@
-# Nexa Care Provider Schema and Doctor Seed Fix
+﻿# Nexa Care Provider Schema and Doctor Seed Fix
+
+> Historical alpha validation evidence; demo seeding is not production onboarding.
 
 ## 1. Executive verdict (updated 2026-07-15)
 
@@ -31,10 +33,10 @@ Seed dependency order is hospital, provider identity, credential/affiliation, NF
 
 ## 4. Schema gaps discovered
 
-- High — all five provider/NFC tables were absent. Runtime impact: doctor seed and provider authentication could not begin. Correction: guarded Alembic table creation.
-- High — provider foreign-key graph was absent. Correction: hospital and provider targets are created before affiliation/credential references.
-- Medium — model indexes, uniqueness, NFC status check, and inherited timestamps had no Alembic representation. Correction: exact modeled objects were included.
-- Medium — doctor clinical seed SQL reused an untyped bind across varchar comparison/insertion and passed untyped lists to JSONB. Runtime impact: asyncpg ambiguity/encoding failures after schema repair. Correction: explicit `String(64)` and `JSONB` bind types; seed content and business behavior are unchanged.
+- High â€” all five provider/NFC tables were absent. Runtime impact: doctor seed and provider authentication could not begin. Correction: guarded Alembic table creation.
+- High â€” provider foreign-key graph was absent. Correction: hospital and provider targets are created before affiliation/credential references.
+- Medium â€” model indexes, uniqueness, NFC status check, and inherited timestamps had no Alembic representation. Correction: exact modeled objects were included.
+- Medium â€” doctor clinical seed SQL reused an untyped bind across varchar comparison/insertion and passed untyped lists to JSONB. Runtime impact: asyncpg ambiguity/encoding failures after schema repair. Correction: explicit `String(64)` and `JSONB` bind types; seed content and business behavior are unchanged.
 
 ## 5. Corrective migration
 
@@ -104,7 +106,7 @@ trigger a consent request.
 ## 11. Exact next commands
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care
+Set-Location C:\path\to\Nexa_Care
 .\venv\Scripts\Activate.ps1
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```

@@ -463,9 +463,9 @@ class TestNextJsRoutes:
         assert path.exists(), f"Doctor layout missing: {path}"
 
     def test_layout_imports_provider_auth(self) -> None:
-        code = _read(NEXT_ROUTES_DIR / "layout.tsx")
+        code = _read(NEXT_ROUTES_DIR.parent / "layout.tsx")
         assert "ProviderAuthProvider" in code, (
-            "Layout must wrap routes with ProviderAuthProvider"
+            "Root layout must wrap doctor routes with ProviderAuthProvider"
         )
 
     @pytest.mark.parametrize("route", ROUTES, ids=ROUTES)
@@ -562,11 +562,12 @@ class TestLoginFlow:
         assert "6" in code, "TOTP code must require at least 6 digits"
 
     def test_login_screen_calls_verify_mfa(self) -> None:
-        """MFA step must call verifyMfa() with mfaToken and totpCode."""
+        """MFA step passes the TOTP; context retains the opaque MFA token."""
         code = _read_screen("DoctorLoginScreen")
+        context_code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         assert "verifyMfa" in code, "Must call verifyMfa() from context"
-        assert "mfaToken" in code or "mfa_token" in code, (
-            "Must pass mfaToken to verifyMfa()"
+        assert "pendingMfaTokenRef" in context_code and "mfa_token" in context_code, (
+            "ProviderAuthContext must retain and submit the opaque MFA token"
         )
 
     def test_login_screen_has_back_to_sign_in(self) -> None:
@@ -629,12 +630,16 @@ class TestProviderAuthMfaFlow:
     def test_login_calls_auth_login_endpoint(self) -> None:
         """login() must call POST /api/v2/auth/login."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "/api/v2/auth/login" in code, "Must call /api/v2/auth/login"
+        api_code = _read(API_CLIENT_PATH)
+        assert "NexaApiClient.providerLogin" in code
+        assert "/api/v2/auth/login" in api_code, "Must call /api/v2/auth/login"
 
     def test_verify_mfa_calls_mfa_verify_endpoint(self) -> None:
         """verifyMfa() must call POST /api/v2/auth/mfa/verify."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "/api/v2/auth/mfa/verify" in code, (
+        api_code = _read(API_CLIENT_PATH)
+        assert "NexaApiClient.providerMfaVerify" in code
+        assert "/api/v2/auth/mfa/verify" in api_code, (
             "Must call /api/v2/auth/mfa/verify"
         )
 

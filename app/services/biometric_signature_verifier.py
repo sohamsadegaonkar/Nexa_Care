@@ -129,7 +129,12 @@ class BiometricSignatureVerifier:
         return SignatureVerificationResult(verified=False, patient_id=patient_id, error=reason)
 
     async def _pad_time(self, start_time: float):
-        elapsed = time.monotonic() - start_time
-        remaining = _MIN_VERIFY_DURATION_SECONDS - elapsed
-        if remaining > 0:
+        # Windows and some event loops may resume asyncio.sleep slightly early.
+        # Recheck the monotonic deadline so the side-channel floor is a true
+        # minimum rather than a best-effort delay.
+        deadline = start_time + _MIN_VERIFY_DURATION_SECONDS
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
             await asyncio.sleep(remaining)

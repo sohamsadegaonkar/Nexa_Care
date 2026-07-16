@@ -247,7 +247,12 @@ def test_request_consent_queues_push_for_active_token(mock_provider_auth):
 def test_consent_status_returns_pending(mock_provider_auth):
     """Test 5: consent status polling returns pending when active challenge exists in Redis."""
     req_id = str(uuid.uuid4())
-    stored_json = f'{{"request_id": "{req_id}", "status": "pending", "provider_id": "{mock_provider_auth.actor_uid}"}}'
+    stored_json = json.dumps({
+        "request_id": req_id,
+        "status": "pending",
+        "provider_id": mock_provider_auth.actor_uid,
+        "hospital_id": str(mock_provider_auth.hospital_id),
+    })
     with patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func:
         mock_redis = MagicMock()
         mock_redis.get.return_value = stored_json
@@ -266,6 +271,7 @@ def test_consent_status_reports_unavailable_delivery_to_provider(mock_provider_a
         "request_id": req_id,
         "status": "pending",
         "provider_id": str(mock_provider_auth.actor_uid),
+        "hospital_id": str(mock_provider_auth.hospital_id),
         "delivery_status": "unavailable",
         "delivery_error": "No active push token",
     })

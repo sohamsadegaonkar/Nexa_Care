@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import json
@@ -74,14 +74,14 @@ def test_modern_secret_key_uses_admin_http_endpoint_without_sdk_jwt_validation()
             return httpx.Response(200, json={"users": []})
         assert request.url.path == "/auth/v1/admin/users"
         assert json.loads(request.content) == {
-            "phone": "+918975073895",
+            "phone": "+918000000001",
             "phone_confirm": True,
         }
         return httpx.Response(201, json={"id": "user-1"})
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         status, user_id = create_or_get_phone_user(
-            "8975073895",
+            "8000000001",
             url="https://project.supabase.co",
             key="sb_secret_example",
             client=client,
@@ -95,12 +95,12 @@ def test_existing_phone_user_is_idempotent() -> None:
         assert request.method == "GET"
         return httpx.Response(
             200,
-            json={"users": [{"id": "existing-user", "phone": "+918975073895"}]},
+            json={"users": [{"id": "existing-user", "phone": "+918000000001"}]},
         )
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         result = create_or_get_phone_user(
-            "+918975073895",
+            "+918000000001",
             url="https://project.supabase.co",
             key="sb_secret_example",
             client=client,
@@ -115,7 +115,7 @@ def test_admin_error_body_is_redacted() -> None:
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
         with pytest.raises(ProvisioningError) as exc_info:
             create_or_get_phone_user(
-                "+918975073895",
+                "+918000000001",
                 url="https://project.supabase.co",
                 key="sb_secret_example",
                 client=client,

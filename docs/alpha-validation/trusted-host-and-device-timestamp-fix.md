@@ -1,4 +1,6 @@
-# Nexa Care Trusted Host and Device Timestamp Fix
+﻿# Nexa Care Trusted Host and Device Timestamp Fix
+
+> Historical alpha validation evidence; use current environment documentation for deployment.
 
 ## 1. Executive verdict
 
@@ -109,7 +111,7 @@ No application business logic or production trusted-host default changed. No LAN
 ## 11. Exact next commands
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care
+Set-Location C:\path\to\Nexa_Care
 .\venv\Scripts\Activate.ps1
 python scripts\seed_demo_patient.py
 python scripts\seed_demo_doctor.py
@@ -119,7 +121,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 In another terminal, after physical-device enrollment:
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care
+Set-Location C:\path\to\Nexa_Care
 .\venv\Scripts\Activate.ps1
 $env:PYTHONUTF8='1'
 python scripts\consent_preflight.py

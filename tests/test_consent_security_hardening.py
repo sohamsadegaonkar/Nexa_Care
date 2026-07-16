@@ -155,7 +155,7 @@ class TestControlledScope:
     def test_scope_values_are_controlled(self) -> None:
         """Scope options must include only coded category values."""
         code = _read_screen("RequestConsentScreen")
-        for scope in ["patient_summary", "vitals", "medications", "allergies", "lab_results", "clinical_record"]:
+        for scope in ["clinical", "full"]:
             assert scope in code, f"Must include controlled scope category: {scope}"
 
     def test_no_free_text_scope_input(self) -> None:

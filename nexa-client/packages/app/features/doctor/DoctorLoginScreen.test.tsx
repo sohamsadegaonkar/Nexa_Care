@@ -36,6 +36,9 @@ function renderLogin(showEntryOptions = true) {
 
 async function submitCredentials() {
   await screen.findByText('Provider Login')
+  fireEvent.change(screen.getByPlaceholderText('doctor@hospital.com'), {
+    target: { value: 'provider@example.test' },
+  })
   fireEvent.change(screen.getByPlaceholderText('Enter password'), {
     target: { value: 'entered-at-runtime' },
   })
@@ -44,6 +47,7 @@ async function submitCredentials() {
 
 describe('provider login state machine', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs()
     vi.restoreAllMocks()
     replace.mockReset()
     push.mockReset()
@@ -57,8 +61,17 @@ describe('provider login state machine', () => {
     expect(await screen.findByText('Provider Login')).toBeTruthy()
     expect(screen.getByText('Email or Login Identifier')).toBeTruthy()
     expect(screen.getByText('Password')).toBeTruthy()
+    expect(screen.getByPlaceholderText('doctor@hospital.com')).toHaveValue('')
     expect(screen.queryByText('MFA Token')).toBeNull()
     expect(screen.queryByText('Authenticator Code')).toBeNull()
+  })
+
+  it('prefills only the identifier when explicit demo mode is enabled', async () => {
+    vi.stubEnv('NEXT_PUBLIC_DEMO_MODE', 'true')
+    renderLogin()
+    expect(await screen.findByText(/Demo mode/)).toBeTruthy()
+    expect(screen.getByPlaceholderText('doctor@hospital.com')).toHaveValue('demo.doctor@nexacare.in')
+    expect(screen.getByPlaceholderText('Enter password')).toHaveValue('')
   })
 
   it('establishes a session and opens the dashboard after direct login', async () => {
@@ -68,7 +81,7 @@ describe('provider login state machine', () => {
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/doctor/dashboard'))
     expect(login).toHaveBeenCalledWith({
-      login_identifier: 'demo.doctor@nexacare.in',
+      login_identifier: 'provider@example.test',
       password: 'entered-at-runtime',
     })
     expect(window.sessionStorage.getItem(PROVIDER_SESSION_STORAGE_KEY)).not.toContain(
@@ -165,6 +178,9 @@ describe('provider login state machine', () => {
     const login = vi.spyOn(NexaApiClient, 'providerLogin').mockReturnValue(pending)
     renderLogin()
     await screen.findByText('Provider Login')
+    fireEvent.change(screen.getByPlaceholderText('doctor@hospital.com'), {
+      target: { value: 'provider@example.test' },
+    })
     fireEvent.change(screen.getByPlaceholderText('Enter password'), {
       target: { value: 'entered-at-runtime' },
     })
@@ -205,7 +221,7 @@ describe('provider login state machine', () => {
       ...directLogin,
       provider: {
         provider_id: 'provider-1', display_name: '', medical_registration_number: null,
-        specialty: null, contact_email: 'demo.doctor@nexacare.in', role: 'clinician',
+        specialty: null, contact_email: 'provider@example.test', role: 'clinician',
       },
       hospital: { hospital_id: 'hospital-1', facility_code: '', display_name: '' },
     }))

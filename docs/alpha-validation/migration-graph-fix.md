@@ -1,5 +1,7 @@
 # Nexa Care Migration Graph Fix
 
+> Historical alpha validation evidence; current migration state must be read from Alembic.
+
 ## 1. Executive verdict
 
 - Result: APPROVE WITH REQUIRED FOLLOW-UP

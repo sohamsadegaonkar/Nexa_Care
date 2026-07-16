@@ -115,12 +115,13 @@ def test_valid_signed_approval_issues_grant_and_doctor_sees_approved(mock_scoped
             assert data["request_id"] == req_id
             assert "consent_token" not in data, "Patient received doctor consent token!"
 
-            # Verify Redis set was updated with approved state and token for polling doctor
+            # Approval state is pollable, but the raw capability is minted only
+            # through the provider-authenticated claim-access exchange.
             assert mock_redis.set.call_count == 3
             consent_req_call = [call for call in mock_redis.set.call_args_list if call[0][0] == f"consent_request:{req_id}"][0]
             saved_json = json.loads(consent_req_call[0][1])
             assert saved_json["status"] == "approved"
-            assert saved_json["consent_token"] == "minted-token-xyz"
+            assert "consent_token" not in saved_json
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 

@@ -1,11 +1,14 @@
-# Alpha Environment Setup
+﻿# Alpha Environment Setup
+
+> Historical alpha runbook retained as validation evidence. Demo scripts are
+> not production onboarding and refuse preview, staging, and production.
 
 This runbook prepares Phase 2 infrastructure testing. It does not prove the physical-device consent loop. Never use real patient information.
 
 ## Workstation and branch
 
 ```powershell
-Set-Location C:\Users\DELL\Nexa_Care
+Set-Location C:\path\to\Nexa_Care
 .\venv\Scripts\Activate.ps1
 git branch --show-current
 git rev-parse HEAD
@@ -91,14 +94,15 @@ python scripts/seed_demo_doctor.py
 python scripts/consent_preflight.py
 ```
 
-Do not run the local demo-device enrollment script as evidence of physical enrollment; it creates an exportable key file on the workstation.
+No workstation demo-device enrollment script is retained. Physical enrollment
+must occur through the authenticated Expo application.
 
 ## Mobile LAN configuration
 
-The shared client reads `NEXT_PUBLIC_API_URL`. Before starting/building Expo, set it to the computer's LAN address—not `localhost`:
+The shared client reads `EXPO_PUBLIC_API_URL`. Before starting/building Expo, set it to the computer's LAN addressâ€”not `localhost`:
 
 ```powershell
-$env:NEXT_PUBLIC_API_URL='http://<LOCAL_LAN_IP>:8000'
+$env:EXPO_PUBLIC_API_URL='http://<LOCAL_LAN_IP>:8000'
 ipconfig
 Set-Location nexa-client
 yarn workspace expo start --dev-client
@@ -137,6 +141,6 @@ Alpha limitation: SecureStore protects an exportable JS-generated key; this is n
 | PostgreSQL DNS/TLS/auth failure | Recheck provider host, SSL requirements, allow-list, and credentials |
 | Redis TLS/auth failure | Use the provider's `rediss://` URL and confirm token rotation/status |
 | Phone cannot connect | Use the PC LAN IP, bind Uvicorn to `0.0.0.0`, and check Private-profile firewall rules |
-| Mobile URL is empty | Set `NEXT_PUBLIC_API_URL` before starting or rebuilding Expo |
+| Mobile URL is empty | Set `EXPO_PUBLIC_API_URL` before starting or rebuilding Expo |
 | Enrollment fails | Confirm patient authentication, database migration, device limit, and P-256 DER payload |
 | Biometrics unavailable | Enroll device biometrics and use a development build with native modules |

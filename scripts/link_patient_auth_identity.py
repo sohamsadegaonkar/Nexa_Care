@@ -23,6 +23,7 @@ from app.core.database import get_async_engine, get_session_factory  # noqa: E40
 from app.models.patient import Patient  # noqa: E402
 from app.models.patient_auth_identity import PatientAuthIdentity  # noqa: E402
 from app.observability.audit_ledger import append_audit_log  # noqa: E402
+from scripts.demo_environment import require_demo_environment  # noqa: E402
 
 
 class ProvisioningConflict(RuntimeError):
@@ -123,6 +124,7 @@ def main() -> int:
     parser.add_argument("--patient-id", required=True, type=UUID)
     parser.add_argument("--supabase-user-id", required=True)
     args = parser.parse_args()
+    require_demo_environment("link_patient_auth_identity")
     return asyncio.run(_run(args.patient_id, args.supabase_user_id))
 
 

@@ -91,6 +91,8 @@ function buildSession(
   hospitalId: string,
   email: string,
 ): ProviderSession {
+  // The role is a presentation hint, not a signed authorization claim.
+  // Backend provider/hospital dependencies remain authoritative for access.
   return {
     access_token: accessToken,
     expires_at: expiresAt,
@@ -152,6 +154,8 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
   const [accessGrant, setAccessGrantState] = useState<ProviderAccessGrant | null>(null)
+  // Provider session hydration uses sessionStorage. The short-lived patient
+  // record capability stays in memory only and is never persisted there.
   const accessTokenRef = useRef<string | null>(null)
   const pendingMfaTokenRef = useRef<string | null>(null)
   const pendingEmailRef = useRef('')

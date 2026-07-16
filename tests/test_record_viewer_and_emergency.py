@@ -872,6 +872,8 @@ class TestZeroPlaceholders:
     def test_no_hardcoded_provider_id_in_screens(self) -> None:
         """No screen may contain a hardcoded provider_id string value."""
         for f in DOCTOR_DIR.glob("*.tsx"):
+            if f.name.endswith(".test.tsx"):
+                continue
             code = f.read_text(encoding="utf-8")
             # Look for provider_id = 'some-value' patterns (not from context)
             # Allowed: provider_id: providerId, provider_id: providerUid, .provider_id

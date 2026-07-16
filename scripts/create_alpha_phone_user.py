@@ -24,6 +24,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.services.patient_auth_service import normalize_indian_phone  # noqa: E402
+from scripts.demo_environment import require_demo_environment  # noqa: E402
 
 
 class ProvisioningError(RuntimeError):
@@ -183,6 +184,7 @@ def main() -> int:
     parser.add_argument("phone", help="Indian phone in E.164 or 10-digit format")
     args = parser.parse_args()
     try:
+        require_demo_environment("create_alpha_phone_user")
         url, key = _load_config()
         with httpx.Client(timeout=15.0) as client:
             status, user_id = create_or_get_phone_user(

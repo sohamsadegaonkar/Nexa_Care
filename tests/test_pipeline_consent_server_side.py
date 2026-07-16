@@ -125,6 +125,9 @@ def _consent_context(capability):
         patch("app.core.consent_gate.validate_consent_capability",
               new_callable=AsyncMock, return_value=capability)
     )
+    stack.enter_context(
+        patch("app.core.consent_gate.validate_approved_access", return_value=None)
+    )
     for mod in ("app.core.consent_gate", "app.api.v2.pipeline_routes",
                 "app.observability.audit_ledger"):
         stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
@@ -223,6 +226,9 @@ class TestJobStatusServerDerivedPatientId:
             stack.enter_context(
                 patch("app.core.consent_gate.validate_consent_capability",
                       new_callable=AsyncMock, return_value=None)
+            )
+            stack.enter_context(
+                patch("app.core.consent_gate.validate_approved_access", return_value=None)
             )
             for mod in ("app.core.consent_gate", "app.api.v2.pipeline_routes",
                         "app.observability.audit_ledger"):
@@ -484,6 +490,7 @@ class TestValidateConsentForPatient:
         async def _run():
             with patch("app.core.consent_gate.validate_consent_capability",
                         new_callable=AsyncMock, return_value=None), \
+                 patch("app.core.consent_gate.validate_approved_access", return_value=None), \
                  patch("app.core.consent_gate.append_audit_log_or_503", return_value=None):
                 return await validate_consent_for_patient(
                     patient_id=str(uuid.uuid4()),
