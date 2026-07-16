@@ -31,12 +31,22 @@ import * as Crypto from 'expo-crypto'
 import * as LocalAuthentication from 'expo-local-authentication'
 import { p256 } from '@noble/curves/p256'
 import { Platform } from 'react-native'
-import { apiClient } from '../utils/apiClient'
+import { apiClient, getAuthToken } from '../utils/apiClient'
+import { DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY } from './patientAuthSession'
+
+export {
+  DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY,
+  PATIENT_ACCESS_TOKEN_STORAGE_KEY,
+  configurePatientAuthTokenProvider,
+  storePatientAuthSession,
+} from './patientAuthSession'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 export const DEVICE_PRIVATE_KEY_STORAGE_KEY = 'nexa_device_private_key_v1'
 export const DEVICE_ID_STORAGE_KEY = 'nexa_device_id_v1'
+
+export type DeviceEnrollmentStage = 'generating' | 'enrolling'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -49,6 +59,8 @@ export interface EnrollDeviceParams {
   device_public_key: string
   device_label: string
   platform: string
+  device_enrollment_token: string
+  expo_push_token?: string
 }
 
 export interface EnrollDeviceResponse {
@@ -64,6 +76,7 @@ export interface DeviceInfo {
   platform: string
   status: string
   enrolled_at: string
+  public_key_fingerprint: string
 }
 
 export interface DevicesListResponse {
@@ -93,6 +106,35 @@ function base64ToBytes(b64: string): Uint8Array {
     return bytes
   }
   return new Uint8Array(Buffer.from(b64, 'base64'))
+}
+
+/** SHA-256 fingerprint of the raw DER bytes, matching the backend response. */
+export async function fingerprintDevicePublicKey(publicKeyDerBase64: string): Promise<string> {
+  const digest = new Uint8Array(
+    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, base64ToBytes(publicKeyDerBase64)),
+  )
+  return Array.from(digest, (value) => value.toString(16).padStart(2, '0')).join('')
+}
+
+async function requireSecureStore(): Promise<void> {
+  try {
+    if (!(await SecureStore.isAvailableAsync())) {
+      throw new Error('Secure storage is unavailable on this device.')
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(
+      `Secure storage is unavailable (${detail}). Install a development build that includes expo-secure-store.`,
+    )
+  }
+}
+
+async function generatePrivateKey(): Promise<Uint8Array> {
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const candidate = await Crypto.getRandomBytesAsync(32)
+    if (p256.utils.isValidPrivateKey(candidate)) return candidate
+  }
+  throw new Error('Unable to generate a valid P-256 private key using the device secure random source.')
 }
 
 /**
@@ -141,17 +183,23 @@ export function getDeviceLabel(): string {
  * Not yet: hardware-backed non-exportable signing key with biometric-gated key usage.
  */
 export async function generateDeviceKeypair(): Promise<DeviceKeyResult> {
+  await requireSecureStore()
+
   // Check if a key already exists in secure storage
   const existing = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
 
   if (existing) {
     const privateKey = base64ToBytes(existing)
+    if (!p256.utils.isValidPrivateKey(privateKey)) {
+      throw new Error('The stored device key is invalid. Clear the app data and sign in again.')
+    }
     const publicKey = p256.getPublicKey(privateKey, false) // uncompressed
     return { publicKeyDerBase64: bytesToBase64(wrapEcPublicKeyAsDer(publicKey)) }
   }
 
-  // Generate new P-256 keypair using @noble/curves (audited library)
-  const privateKey = p256.utils.randomPrivateKey()
+  // Expo Crypto supplies native secure randomness; this avoids relying on
+  // crypto.getRandomValues, which is not guaranteed in React Native Hermes.
+  const privateKey = await generatePrivateKey()
   await SecureStore.setItemAsync(
     DEVICE_PRIVATE_KEY_STORAGE_KEY,
     bytesToBase64(privateKey),
@@ -203,14 +251,32 @@ export async function getDevices(): Promise<DevicesListResponse> {
  */
 export async function generateAndEnrollDevice(
   deviceLabel?: string,
+  onStage?: (stage: DeviceEnrollmentStage) => void,
 ): Promise<EnrollDeviceResponse> {
+  await requireSecureStore()
+  const enrollmentToken = await SecureStore.getItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
+  if (!enrollmentToken) {
+    throw new Error('Device enrollment authorization is missing or expired. Sign in again.')
+  }
+  if (!(await getAuthToken())) {
+    throw new Error('Patient session is missing or expired. Sign in again.')
+  }
+
+  onStage?.('generating')
   const { publicKeyDerBase64 } = await generateDeviceKeypair()
+  onStage?.('enrolling')
   const enrollment = await enrollDevice({
     device_public_key: publicKeyDerBase64,
     device_label: deviceLabel ?? getDeviceLabel(),
     platform: Platform.OS === 'ios' ? 'ios' : 'android',
+    device_enrollment_token: enrollmentToken,
   })
   await setDeviceId(enrollment.device_id)
+  try {
+    await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
+  } catch {
+    console.warn('DEVICE_ENROLLMENT_TOKEN_CLEANUP_ERROR')
+  }
   return enrollment
 }
 
@@ -221,8 +287,21 @@ export async function generateAndEnrollDevice(
  * device (the key could be orphaned if the backend was reset).
  */
 export async function hasDeviceKey(): Promise<boolean> {
+  return (await getStoredDevicePublicKey()) !== null
+}
+
+/** Return public installation metadata only when the matching private key is usable. */
+export async function getStoredDevicePublicKey(): Promise<DeviceKeyResult | null> {
+  await requireSecureStore()
   const existing = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
-  return !!existing
+  if (!existing) return null
+  const privateKey = base64ToBytes(existing)
+  if (!p256.utils.isValidPrivateKey(privateKey)) {
+    await deleteDeviceKey()
+    return null
+  }
+  const publicKey = p256.getPublicKey(privateKey, false)
+  return { publicKeyDerBase64: bytesToBase64(wrapEcPublicKeyAsDer(publicKey)) }
 }
 
 /**

@@ -351,7 +351,7 @@ def test_seam_3_push_to_app_flow(admin_headers, admin_context):
     request_id = data["request_id"]
 
     # Verify canonical push payload contract expected by Workstream 6 (Patient App)
-    expected_deep_link = f"nexacare://push-approval/{request_id}"
+    expected_deep_link = f"nexacare://patient/consent-request?requestId={request_id}"
     push_notification_payload = {
         "request_id": request_id,
         "patient_id": patient_id,

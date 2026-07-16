@@ -56,6 +56,8 @@ from app.main import app
 # route was intentionally added/removed, then update this set with a note
 # like this one so the next drift has a breadcrumb instead of a guess.
 EXPECTED_ROUTES = {
+    ("POST", "/api/v2/auth/otp/send"),
+    ("POST", "/api/v2/auth/otp/verify"),
     ("POST", "/api/v1/handshake"),
     ("POST", "/api/v1/enroll-biometric"),
     ("GET", "/api/v1/record"),
@@ -106,6 +108,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/patient/devices/{device_id}/revoke"),
     ("POST", "/api/v2/consent/request"),
     ("POST", "/api/v2/consent/approve-signed"),
+    ("POST", "/api/v2/consent/{request_id}/claim-access"),
     ("GET", "/api/v2/consent/status/{request_id}"),
     ("POST", "/api/v2/consent/request/{request_id}/cancel"),  # Day 14: real server-side cancellation
     ("GET", "/api/v2/consent/challenge/{request_id}"),

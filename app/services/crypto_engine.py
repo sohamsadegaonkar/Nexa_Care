@@ -19,7 +19,7 @@ PII-IN-LEDGER FIX (this revision) — every append_audit_log() call in this
           biometric *device* identifier and personal data under India's
           DPDP Act 2023 -- migration 0003 dropped it from
           biometric_registry for exactly that reason. Writing it into
-          system_audit instead is worse, not better: that table is
+          the application audit ledger instead is worse, not better: it is
           hash-chained (migration 0001) and rows can never be deleted
           without breaking tamper-evidence for everything chained after
           them, so there was no remediation path short of breaking the
@@ -29,7 +29,7 @@ PII-IN-LEDGER FIX (this revision) — every append_audit_log() call in this
           one-way SHA-256-derived reference that lets ops correlate
           repeated failures from the same device without ever persisting
           the raw identifier anywhere -- not in Redis (session_state no
-          longer includes nfc_uid either) and not in system_audit.
+          longer includes nfc_uid either) and not in the audit ledger.
 
 AUDIT-FAILURE-HANDLING FIX (this revision) — BIOMETRIC_HANDSHAKE_SUCCESS
           previously used the fire-and-forget append_audit_log(), whose

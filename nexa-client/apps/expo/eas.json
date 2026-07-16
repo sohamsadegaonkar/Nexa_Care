@@ -1,19 +1,32 @@
-{
+﻿{
   "build": {
     "development": {
+      "developmentClient": true,
       "distribution": "internal",
+      "environment": "development",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "development"
+      },
       "android": {
         "buildType": "apk"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "environment": "preview",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "preview",
+        "EXPO_PUBLIC_ALLOW_HTTP": "false"
       },
-      "ios": {
-        "simulator": true,
-        "image": "latest"
+      "android": {
+        "buildType": "apk"
       }
     },
     "production": {
-      "distribution": "store",
-      "android": {
-        "buildType": "app-bundle"
+      "environment": "production",
+      "env": {
+        "EXPO_PUBLIC_APP_ENV": "production",
+        "EXPO_PUBLIC_ALLOW_HTTP": "false"
       }
     }
   }

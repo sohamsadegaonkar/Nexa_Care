@@ -11,9 +11,13 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv() # This forces Python to read your .env file!
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# Resolve the repository .env independently of the process working directory.
+# Real deployment environment variables retain precedence over the local file.
+load_dotenv(PROJECT_ROOT / ".env", override=False)
 
 
 class ConfigError(RuntimeError):
@@ -36,6 +40,11 @@ class SupabaseConfig:
 @dataclass(frozen=True)
 class RedisConfig:
     url: str
+
+
+@dataclass(frozen=True)
+class OtpRateLimitConfig:
+    hmac_secret: str
 
 
 @dataclass(frozen=True)
@@ -76,6 +85,15 @@ def get_redis_config() -> RedisConfig:
     """
 
     return RedisConfig(url=_require_env("UPSTASH_REDIS_URL"))
+
+
+def get_otp_rate_limit_config() -> OtpRateLimitConfig:
+    """Load the independent secret used to pseudonymize OTP limiter keys."""
+
+    secret = _require_env("OTP_RATE_LIMIT_HMAC_SECRET")
+    if len(secret.encode("utf-8")) < 32:
+        raise ConfigError("OTP_RATE_LIMIT_HMAC_SECRET must be at least 32 bytes")
+    return OtpRateLimitConfig(hmac_secret=secret)
 
 
 def get_handshake_config() -> HandshakeConfig:

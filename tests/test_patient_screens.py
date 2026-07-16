@@ -21,6 +21,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES_DIR = ROOT / "nexa-client" / "packages" / "app" / "features" / "patient"
 API_CLIENT_PATH = ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClient.ts"
+OTP_SERVICE_PATH = ROOT / "nexa-client" / "packages" / "app" / "services" / "patientOtp.ts"
 
 SCREENS = [
     "PatientLoginScreen",
@@ -45,6 +46,11 @@ def _read_screen(name: str) -> str:
 def _read_api_client() -> str:
     assert API_CLIENT_PATH.exists(), f"apiClient file missing: {API_CLIENT_PATH}"
     return API_CLIENT_PATH.read_text(encoding="utf-8")
+
+
+def _read_otp_service() -> str:
+    assert OTP_SERVICE_PATH.exists(), f"patientOtp service missing: {OTP_SERVICE_PATH}"
+    return OTP_SERVICE_PATH.read_text(encoding="utf-8")
 
 
 def _strip_comments(code: str) -> str:
@@ -84,7 +90,6 @@ class TestApiClientEnforcement:
         # Screens that make API calls must import apiClient directly
         # or delegate to a service that uses it
         api_using_screens = {
-            "PatientLoginScreen",
             "ApprovalResultScreen",
             "AccessHistoryScreen",
             "PatientTimelineScreen",
@@ -95,6 +100,7 @@ class TestApiClientEnforcement:
             "DeviceEnrolledScreen",
             "ConsentRequestScreen",
             "BiometricApprovalScreen",
+            "PatientLoginScreen",
         }
         if screen in api_using_screens:
             assert "apiClient" in code, (
@@ -105,6 +111,8 @@ class TestApiClientEnforcement:
             assert (
                 "deviceKeys" in code
                 or "consentSigning" in code
+                or "patientOtp" in code
+                or "currentDeviceEnrollment" in code
                 or "apiClient" in code
             ), (
                 f"{screen} must import from a service that uses apiClient"
@@ -262,30 +270,37 @@ class TestPatientLoginScreen:
         assert "Verify" in code, "Must have Verify button"
 
     def test_calls_otp_api_via_apiclient(self) -> None:
-        code = _read_screen("PatientLoginScreen")
-        assert "/api/v2/auth/otp/send" in code, "Must call OTP send endpoint"
-        assert "/api/v2/auth/otp/verify" in code, "Must call OTP verify endpoint"
+        screen = _read_screen("PatientLoginScreen")
+        service = _read_otp_service()
+        assert "patientOtp" in screen, "Screen must delegate to the patient OTP service"
+        assert "apiClient" in service, "OTP service must use the shared API client"
+        assert "/api/v2/auth/otp/send" in service, "Must call OTP send endpoint"
+        assert "/api/v2/auth/otp/verify" in service, "Must call OTP verify endpoint"
 
     def test_checks_enrollment_state_after_login(self) -> None:
         code = _read_screen("PatientLoginScreen")
-        assert "/api/v2/devices/status" in code, "Must check device enrollment state"
+        assert "ensureCurrentDeviceEnrollment" in code
+        assert "devices.some" not in code, "Any active patient device must not satisfy this installation"
+        assert "/api/v2/devices/status" not in code, "Must not call the nonexistent device status route"
 
-    def test_checks_pending_consent_after_login(self) -> None:
+    def test_uses_final_token_contract_and_real_routes(self) -> None:
         code = _read_screen("PatientLoginScreen")
-        assert "/api/v2/consent/requests/pending" in code, (
-            "Must check for pending consent requests"
-        )
+        assert "data.access_token" in code
+        assert "storePatientAuthSession" in code
+        assert "device_enrollment_token" in code
+        assert "/api/v2/consent/requests/pending" not in code
+        assert "/patient/access-history" in code
 
 
 class TestSecureDeviceScreen:
     def test_uses_device_enrollment_service(self) -> None:
-        """Screen delegates enrollment to the deviceKeys service."""
+        """Screen delegates to installation-specific enrollment reconciliation."""
         code = _read_screen("SecureDeviceScreen")
-        assert "deviceKeys" in code, (
-            "Must import from deviceKeys service"
+        assert "currentDeviceEnrollment" in code, (
+            "Must import current-device enrollment service"
         )
-        assert "generateAndEnrollDevice" in code, (
-            "Must use generateAndEnrollDevice for enrollment flow"
+        assert "ensureCurrentDeviceEnrollment" in code, (
+            "Must reconcile and enroll the exact installation"
         )
 
     def test_generates_keypair(self) -> None:
@@ -537,6 +552,35 @@ class TestPatientTimelineScreen:
         code = _read_screen("PatientTimelineScreen")
         assert "badges/SourceBadge" in code, "Must import SourceBadge"
         assert "badges/RiskBadge" in code, "Must import RiskBadge"
+
+    def test_api_strings_cannot_render_as_raw_native_children(self) -> None:
+        code = _read_screen("PatientTimelineScreen")
+        assert "{error &&" not in code
+        assert "{riskLevel &&" not in code
+        assert "{event.source_display &&" not in code
+        assert "event.source_display.length > 0 ?" in code
+
+
+def test_access_history_api_values_cannot_render_as_raw_native_children() -> None:
+    code = _read_screen("AccessHistoryScreen")
+    assert "{error &&" not in code
+    assert "{entry.data_categories &&" not in code
+    assert "Array.isArray(entry.data_categories)" in code
+
+
+@pytest.mark.parametrize(
+    "screen_name",
+    [
+        "PatientLoginScreen",
+        "SecureDeviceScreen",
+        "ConsentRequestScreen",
+        "BiometricApprovalScreen",
+    ],
+)
+def test_patient_error_messages_use_explicit_jsx_branches(screen_name: str) -> None:
+    code = _read_screen(screen_name)
+    assert "{error &&" not in code
+    assert "{error !== null ?" in code
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

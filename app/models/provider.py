@@ -159,7 +159,6 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     __tablename__ = "provider_credential"
 
     provider_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
-    hashed_password: Mapped[str | None] = mapped_column(Text, nullable=True)
     mfa_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     provider_id: Mapped[uuid.UUID] = mapped_column(
@@ -169,6 +168,8 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         unique=True,
     )
     login_identifier: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    # Canonical password hash. The legacy ``hashed_password`` column was
+    # removed by 20260717_provider_pwd_canonical and must never be read.
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     mfa_secret_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)

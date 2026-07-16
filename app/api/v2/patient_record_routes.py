@@ -20,7 +20,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.consent_gate import require_consent, require_self_patient_access
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider, require_role
-from app.core.supabase import get_supabase_client
 from app.models.patient_records import (
     Allergy,
     DocumentReference,
@@ -30,7 +29,7 @@ from app.models.patient_records import (
     Vitals,
 )
 from app.models.provider_context import ProviderContext
-from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.audit_ledger import append_audit_log_or_503, read_audit_events
 
 logger = logging.getLogger("nexa_logger")
 
@@ -140,16 +139,7 @@ async def get_my_access_history(
 ):
     """Patient views audit ledger history of who accessed their data."""
     try:
-        supabase = get_supabase_client()
-        res = (
-            supabase.table("system_audit")
-            .select("*")
-            .eq("target_resource_id", str(patient_id))
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        rows = getattr(res, "data", None) or []
+        rows = await read_audit_events(str(patient_id), limit=limit)
     except Exception as exc:
         logger.warning(f"Failed to read access history: {exc}")
         rows = []
@@ -425,23 +415,14 @@ async def get_patient_audit_trail(
 ):
     """Admin & Auditor Console view: returns complete, unfiltered audit ledger trail for a patient."""
     try:
-        supabase = get_supabase_client()
-        res = (
-            supabase.table("system_audit")
-            .select("*")
-            .eq("target_resource_id", str(id))
-            .order("created_at", desc=True)
-            .limit(limit)
-            .execute()
-        )
-        rows = getattr(res, "data", None) or []
+        rows = await read_audit_events(str(id), limit=limit)
     except Exception as exc:
         logger.warning(f"Failed to read admin audit trail: {exc}")
         rows = []
 
     trail = [
         {
-            "audit_id": str(r.get("record_hash") or uuid.uuid4()),
+            "audit_id": str(r.get("audit_id") or r.get("record_hash") or uuid.uuid4()),
             "actor_uid": r.get("actor_uid", "UNKNOWN"),
             "event_type": r.get("event_type", "UNKNOWN"),
             "timestamp": r.get("created_at") or datetime.now(timezone.utc).isoformat(),

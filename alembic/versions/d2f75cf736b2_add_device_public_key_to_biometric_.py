@@ -19,7 +19,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('biometric_registry', sa.Column('device_public_key', sa.Text(), nullable=True))
+    columns = {column['name'] for column in sa.inspect(op.get_bind()).get_columns('biometric_registry')}
+    if 'device_public_key' not in columns:
+        op.add_column('biometric_registry', sa.Column('device_public_key', sa.Text(), nullable=True))
 
 
 def downgrade() -> None:

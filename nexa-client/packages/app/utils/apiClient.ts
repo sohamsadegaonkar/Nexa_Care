@@ -1,3 +1,5 @@
+import { RuntimeConfigError, resolveConfiguredApiUrl } from './runtimeConfig'
+
 /**
  * Canonical Shared API Client for Nexa Care Alpha Demo
  * All frontend features MUST import and use this client.
@@ -9,8 +11,14 @@ let authTokenProvider: AuthTokenProvider = () => null
 export function setAuthTokenProvider(provider: AuthTokenProvider): void { authTokenProvider = provider }
 export async function getAuthToken(): Promise<string | null> { const token = await authTokenProvider(); return typeof token === 'string' && token.trim() ? token.trim() : null }
 
-// Must read from environment variable; never hardcode localhost/IPs or URLs
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? ''
+// Preserve the public export used by existing callers without allowing an
+// invalid or missing value to become an implicit local endpoint.
+export let API_BASE_URL = ''
+try {
+  API_BASE_URL = resolveConfiguredApiUrl()
+} catch (error) {
+  if (!(error instanceof RuntimeConfigError) || error.code !== 'MISSING_API_BASE_URL') throw error
+}
 
 // ── Types Matching docs/DATA-MODELS.md & docs/API-CONTRACTS.md ──
 
@@ -70,8 +78,10 @@ export interface EnrolledDevicesListResponse {
 export interface ConsentChallengeRequest {
   patient_id: string
   provider_id: string
-  purpose: 'routine_checkup' | 'specialist_consult' | 'emergency' | 'ai_ingestion'
+  purpose: 'treatment' | 'emergency_care' | 'diagnostic_review' | 'follow_up' | 'referral'
   scope: 'clinical' | 'full'
+  access_duration_seconds: number
+  purpose_note?: string
 }
 
 export interface ConsentChallengeResponse {
@@ -123,7 +133,6 @@ export interface ConsentStatusResponse {
   delivery_error?: string | null
   delivery_attempted_at?: string | null
   delivery_completed_at?: string | null
-  consent_token?: string
   scope?: 'clinical' | 'full'
   resolved_at?: string
   responded_at?: string | null
@@ -255,6 +264,93 @@ export class ApiError extends Error {
   }
 }
 
+export interface ConsentAccessClaimResponse {
+  patient_id: string
+  consent_token: string
+  purpose: string
+  scope: 'clinical' | 'full'
+  expires_at: string
+}
+
+export interface ProviderLoginRequest {
+  login_identifier: string
+  password: string
+  hospital_id?: string
+}
+
+export interface ProviderLoginSuccessResponse {
+  access_token: string
+  token_type: string
+  expires_at: string
+  provider_uid: string
+  hospital_id: string
+}
+
+export interface ProviderMfaRequiredResponse {
+  detail: string
+  mfa_token: string
+}
+
+export type ProviderLoginResponse =
+  | ProviderLoginSuccessResponse
+  | ProviderMfaRequiredResponse
+
+export interface ProviderMfaVerifyRequest {
+  mfa_token: string
+  totp_code: string
+  provider_id?: string
+  hospital_id?: string
+}
+
+const DEFAULT_TIMEOUT_MS = 15_000
+
+function backendMessage(payload: unknown, fallback: string): string {
+  if (!payload || typeof payload !== 'object') return fallback
+  const record = payload as Record<string, unknown>
+  for (const key of ['detail', 'message', 'error']) {
+    const value = record[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+    if (Array.isArray(value) && value.length) {
+      const messages = value.map((item) => {
+        if (typeof item === 'string') return item
+        if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).msg === 'string') {
+          return (item as Record<string, unknown>).msg as string
+        }
+        return null
+      }).filter(Boolean)
+      if (messages.length) return messages.join('; ')
+    }
+  }
+  if (Array.isArray(record.errors) && record.errors.length) {
+    return backendMessage({ detail: record.errors }, fallback)
+  }
+  return fallback
+}
+
+function statusCode(status: number): string {
+  if (status === 400) return 'BAD_REQUEST'
+  if (status === 401) return 'UNAUTHORIZED'
+  if (status === 403) return 'FORBIDDEN'
+  if (status === 404) return 'NOT_FOUND'
+  if (status === 409) return 'CONFLICT'
+  if (status === 422) return 'VALIDATION_ERROR'
+  if (status === 429) return 'RATE_LIMITED'
+  if (status >= 500) return 'SERVER_ERROR'
+  return 'API_ERROR'
+}
+
+function diagnostic(method: string, path: string, fields: Record<string, unknown>): void {
+  if (process.env.NODE_ENV !== 'production') {
+    const status = typeof fields.status === 'number' ? fields.status : null
+    const handledClientFailure = status !== null && status >= 400 && status < 500
+    const expectedAuthFailure = status === 401
+      || fields.code === 'AUTH_REQUIRED'
+      || fields.code === 'REAUTH_REQUIRED'
+    const log = handledClientFailure || expectedAuthFailure ? console.warn : console.error
+    log('API_REQUEST_ERROR', { method, path, ...fields })
+  }
+}
+
 export type ReAuthHandler = () => void
 export type ErrorToastHandler = (message: string, retryable?: boolean) => void
 
@@ -271,8 +367,23 @@ async function request<T>(
   options: RequestInit = {},
   customHeaders: Record<string, string> = {},
   noAuth = false,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<T> {
+  if (!API_BASE_URL) {
+    try {
+      API_BASE_URL = resolveConfiguredApiUrl()
+    } catch (error) {
+      if (error instanceof RuntimeConfigError) {
+        throw new ApiError(error.message, 0, error.code, false)
+      }
+      throw error
+    }
+  }
+
   const token = noAuth ? null : await getAuthToken()
+  if (!noAuth && !token) {
+    throw new ApiError('Authentication is required before making this request.', 0, 'AUTH_REQUIRED', false)
+  }
   const headers: Record<string, string> = {
     ...customHeaders,
   }
@@ -288,38 +399,70 @@ async function request<T>(
 
   const url = `${API_BASE_URL}${path}`
   let response: Response
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  const callerSignal = options.signal
+  const cancelFromCaller = () => controller.abort()
+  callerSignal?.addEventListener('abort', cancelFromCaller, { once: true })
 
   try {
     response = await fetch(url, {
       ...options,
       headers,
+      signal: controller.signal,
     })
-  } catch (err: any) {
+  } catch (error: unknown) {
+    const timedOut = controller.signal.aborted && !callerSignal?.aborted
+    const code = timedOut ? 'REQUEST_TIMEOUT' : callerSignal?.aborted ? 'REQUEST_CANCELLED' : 'NETWORK_ERROR'
+    const message = timedOut
+      ? 'The request timed out. Please try again.'
+      : callerSignal?.aborted
+        ? 'The request was cancelled.'
+        : 'Unable to reach Nexa Care. Check the configured server and network connection.'
+    diagnostic(options.method ?? 'GET', path, {
+      code,
+      retryable: !callerSignal?.aborted,
+      cause: error instanceof Error ? error.name : 'UnknownError',
+    })
     if (onErrorToast) {
-      onErrorToast('Network connection failed. Please check your internet connection.', true)
+      onErrorToast(message, !callerSignal?.aborted)
     }
-    throw new ApiError(err?.message || 'Network error', 0, 'NETWORK_ERROR', true)
+    throw new ApiError(message, 0, code, !callerSignal?.aborted)
+  } finally {
+    clearTimeout(timeout)
+    callerSignal?.removeEventListener('abort', cancelFromCaller)
   }
 
   if (!response.ok) {
     let errorMsg = `HTTP Error ${response.status}`
-    let errorCode = 'API_ERROR'
+    let errorCode = statusCode(response.status)
 
     try {
       const data = await response.json()
-      errorMsg = typeof data.detail === 'string' ? data.detail : data.message || errorMsg
-      errorCode = data.error_code || errorCode
+      errorMsg = backendMessage(data, errorMsg)
+      if (typeof data?.error_code === 'string') errorCode = data.error_code
     } catch {
       // ignore JSON parse error on non-JSON response
     }
 
-    if (response.status === 401) {
+    diagnostic(options.method ?? 'GET', path, {
+      status: response.status,
+      code: errorCode,
+      retryable: response.status === 429 || response.status >= 500,
+    })
+
+    if (response.status === 401 && !noAuth) {
       if (onReAuthRequired) onReAuthRequired()
-      throw new ApiError('Authentication required or session expired', 401, 'REAUTH_REQUIRED', false)
+      throw new ApiError(errorMsg || 'Authentication required or session expired', 401, 'REAUTH_REQUIRED', false)
     }
 
     if (response.status === 403) {
-      throw new ApiError(errorMsg || 'Consent required or access denied', 403, 'CONSENT_REQUIRED', false)
+      throw new ApiError(
+        errorMsg || 'Consent required or access denied',
+        403,
+        noAuth ? errorCode : 'CONSENT_REQUIRED',
+        false,
+      )
     }
 
     if (response.status >= 500) {
@@ -327,14 +470,23 @@ async function request<T>(
       throw new ApiError(errorMsg, response.status, errorCode, true)
     }
 
-    throw new ApiError(errorMsg, response.status, errorCode, false)
+    throw new ApiError(errorMsg, response.status, errorCode, response.status === 429)
   }
 
   if (response.status === 204) {
     return {} as T
   }
 
-  return response.json()
+  try {
+    return await response.json()
+  } catch {
+    diagnostic(options.method ?? 'GET', path, {
+      status: response.status,
+      code: 'MALFORMED_RESPONSE',
+      retryable: true,
+    })
+    throw new ApiError('The server returned an unreadable response.', response.status, 'MALFORMED_RESPONSE', true)
+  }
 }
 
 export const NexaApiClient = {
@@ -388,29 +540,61 @@ export const NexaApiClient = {
     return request(`/api/v2/patient/devices/${deviceId}/revoke`, { method: 'POST' })
   },
 
-  providerLogin(payload: unknown): Promise<unknown> {
-    return request('/api/v2/auth/login', { method: 'POST', body: JSON.stringify(payload) }, {}, true)
+  providerLogin(payload: ProviderLoginRequest): Promise<ProviderLoginResponse> {
+    return request<ProviderLoginResponse>(
+      '/api/v2/auth/login',
+      { method: 'POST', body: JSON.stringify(payload) },
+      {},
+      true,
+    )
+  },
+
+  providerMfaVerify(payload: ProviderMfaVerifyRequest): Promise<ProviderLoginSuccessResponse> {
+    return request<ProviderLoginSuccessResponse>(
+      '/api/v2/auth/mfa/verify',
+      { method: 'POST', body: JSON.stringify(payload) },
+      {},
+      true,
+    )
   },
 
   getConsentStatus(requestId: string, hospitalId: string): Promise<ConsentStatusResponse> {
+    const normalizedHospitalId = hospitalId.trim()
+    if (!normalizedHospitalId) {
+      return Promise.reject(new ApiError(
+        'Provider hospital context is unavailable. Sign in again.',
+        0,
+        'PROVIDER_CONTEXT_REQUIRED',
+        false,
+      ))
+    }
     return request<ConsentStatusResponse>(`/api/v2/consent/status/${requestId}`, {
       method: 'GET',
     }, {
-      'X-Hospital-Id': hospitalId,
+      'X-Hospital-Id': normalizedHospitalId,
     })
   },
 
+  claimConsentAccess(requestId: string, hospitalId: string): Promise<ConsentAccessClaimResponse> {
+    return request<ConsentAccessClaimResponse>(
+      `/api/v2/consent/${encodeURIComponent(requestId)}/claim-access`,
+      { method: 'POST' },
+      { 'X-Hospital-Id': hospitalId },
+    )
+  },
+
   // Patient Records
-  getPatientSummary(patientId: string, consentToken: string, purpose = 'clinical_summary'): Promise<PatientSummaryResponse> {
+  getPatientSummary(patientId: string, consentToken: string, hospitalId: string, purpose = 'clinical_summary'): Promise<PatientSummaryResponse> {
     return request<PatientSummaryResponse>(`/api/v2/patient/${patientId}/summary`, {
       method: 'GET',
     }, {
       'X-Consent-Token': consentToken,
       'X-Consent-Purpose': purpose,
+      'X-Hospital-Id': hospitalId,
     })
   },
 
-  getPatientTimeline(patientId: string, consentToken: string, limit = 20, cursor?: string): Promise<PatientTimelineResponse> {
+  getPatientTimeline(patientId: string, consentToken: string, hospitalId: string, limit = 20, cursor?: string): Promise<PatientTimelineResponse> {
     const params = new URLSearchParams({ limit: String(limit) })
     if (cursor) params.append('cursor', cursor)
     return request<PatientTimelineResponse>(`/api/v2/patient/${patientId}/timeline?${params.toString()}`, {
@@ -418,6 +602,7 @@ export const NexaApiClient = {
     }, {
       'X-Consent-Token': consentToken,
       'X-Consent-Purpose': 'timeline_view',
+      'X-Hospital-Id': hospitalId,
     })
   },
 
@@ -541,10 +726,14 @@ export const NexaApiClient = {
 }
 
 
-export interface ApiRequestConfig { headers?: Record<string, unknown>; noAuth?: boolean }
+export interface ApiRequestConfig { headers?: Record<string, unknown>; noAuth?: boolean; timeoutMs?: number; signal?: AbortSignal }
 export interface ApiResponse<T> { data: T }
 async function transport<T>(path: string, method: string, body?: unknown, config: ApiRequestConfig = {}): Promise<ApiResponse<T>> {
-  const data = await request<T>(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, config.headers as Record<string, string> | undefined, config.noAuth)
+  const data = await request<T>(path, {
+    method,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(config.signal ? { signal: config.signal } : {}),
+  }, config.headers as Record<string, string> | undefined, config.noAuth, config.timeoutMs)
   return { data }
 }
 export const apiClient = {

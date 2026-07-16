@@ -40,11 +40,11 @@ class PushNotificationService:
         payload = {
             "to": expo_push_token,
             "title": "Consent Request",
-            "body": f"Dr. {provider_name} is requesting access to your records for {purpose}",
+            "body": "A verified provider requested access. Open Nexa Care to review.",
             "data": {
                 "type": "consent_approval",
                 "request_id": request_id,
-                "deep_link": f"nexacare://push-approval/{request_id}"
+                "deep_link": f"nexacare://patient/consent-request?requestId={request_id}"
             },
             "sound": "default",
             "priority": "high",
@@ -60,14 +60,19 @@ class PushNotificationService:
                 
                 if response.status_code == 200:
                     result_data = response.json()
-                    # Expo returns 200 even if individual messages fail
-                    # Data is a list of results
-                    data = result_data.get("data", [])
-                    if data and data[0].get("status") == "ok":
+                    # A single message returns one ticket object; batch sends
+                    # return a list. Expo can return HTTP 200 for ticket errors.
+                    raw_data = result_data.get("data")
+                    ticket = (
+                        raw_data[0]
+                        if isinstance(raw_data, list) and raw_data
+                        else raw_data if isinstance(raw_data, dict) else {}
+                    )
+                    if ticket.get("status") == "ok":
                         logger.info("push_notification_sent", extra={"patient_ref": patient_ref, "request_ref": request_ref})
-                        return PushDeliveryResult(success=True, message_id=data[0].get("id"))
+                        return PushDeliveryResult(success=True, message_id=ticket.get("id"))
                     else:
-                        error_msg = data[0].get("message") if data else "Unknown Expo error"
+                        error_msg = ticket.get("message") or ticket.get("details", {}).get("error") or "Unknown Expo error"
                         logger.error("push_notification_delivery_failed", extra={"patient_ref": patient_ref, "request_ref": request_ref, "error": error_msg})
                         return PushDeliveryResult(success=False, error=error_msg)
                 else:

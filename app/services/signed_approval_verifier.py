@@ -52,8 +52,9 @@ class SignedApprovalVerifier:
         scope: str | None = None,
         purpose: str | None = None,
         access_duration: int | None = None,
+        device_id: str | None = None,
     ) -> SignedApprovalResult:
-        """Verify ECDSA signature against all active enrolled public keys for the patient.
+        """Verify ECDSA signature against the submitted active device key.
 
         Enforces a minimum execution duration (_MIN_VERIFY_DURATION_SECONDS) to prevent timing attacks.
         """
@@ -98,6 +99,11 @@ class SignedApprovalVerifier:
             PatientDeviceKey.status == "active",
             PatientDeviceKey.revoked_at.is_(None),
         )
+        if device_id is not None:
+            try:
+                stmt = stmt.where(PatientDeviceKey.id == uuid.UUID(device_id))
+            except ValueError:
+                return await self._fail(start_time, patient_id, "Signature verification failed")
         res = await db.execute(stmt)
         keys = res.scalars().all()
 
@@ -114,6 +120,8 @@ class SignedApprovalVerifier:
         # 5. Verify against each active key
         matched_device_id = None
         for dev_key in keys:
+            if device_id is not None and str(dev_key.id) != device_id:
+                continue
             try:
                 pub_key = serialization.load_der_public_key(dev_key.device_public_key)
                 if not isinstance(pub_key, ec.EllipticCurvePublicKey):

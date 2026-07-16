@@ -5,7 +5,7 @@ set -euo pipefail
 export DATABASE_URL=${DATABASE_URL:-"postgresql+asyncpg://user:pass@localhost/db"}
 export REDIS_URL=${REDIS_URL:-"redis://localhost:6379/0"}
 export API_BASE_URL=${API_BASE_URL:-"http://localhost:8000"}
-export KEK_ROOT_SECRET=${KEK_ROOT_SECRET:-"test-secret-at-least-32-characters-long-!!"}
+: "${KEK_ROOT_SECRET:?Set KEK_ROOT_SECRET in the test environment}"
 
 echo "=== Running full integration suite ==="
 

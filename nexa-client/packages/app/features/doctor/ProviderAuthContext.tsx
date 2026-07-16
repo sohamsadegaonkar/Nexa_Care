@@ -1,50 +1,23 @@
-/**
- * Provider session context for the doctor web app.
- *
- * Holds the logged-in provider's session token and provider info.
- * ALL provider_id values come from this context — NEVER hardcoded.
- *
- * Login flow:
- *   1. POST /api/v2/auth/login → { access_token, provider_uid, hospital_id }
- *      OR { detail, mfa_token } if MFA is required
- *   2. If MFA required: POST /api/v2/auth/mfa/verify → { access_token, ... }
- *
- * RUNTIME VALIDATION: All backend responses are validated against Zod schemas
- * BEFORE the application trusts them. If the backend contract changes, the
- * frontend will fail with a clear SchemaValidationError rather than silently
- * corrupting state with unexpected data shapes.
- *
- * ALPHA: Token stored in memory only (not SecureStore/httpOnly cookie).
- * Not yet: automatic token refresh with queue, certificate pinning.
- *
- * Security notes:
- *   - Role on the dashboard comes from the session built from the backend
- *     response, NOT from client-controlled state. However, the backend does
- *     not currently return a role field in the login response — it is
- *     defaulted to 'clinician'. This MUST be replaced with a backend-issued
- *     role from a signed token before production.
- *   - MFA challenges are server-side Redis tokens (single-use, TTL-bounded).
- *     The frontend never generates or stores MFA challenge state.
- *   - Tokens do NOT survive page reload (in-memory only). This is an ALPHA
- *     limitation — production must use SecureStore or httpOnly cookies.
- *   - Logout clears the in-memory JWT and session state. It does NOT call
- *     POST /api/v2/auth/logout (server-side token invalidation) yet.
- *     Production MUST add server-side invalidation.
- */
-
 'use client'
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
-import { NexaApiClient, ApiError } from '../../utils/apiClient'
-import { setAuthTokenProvider } from '../../utils/apiClient'
 import {
-  validateLoginResponse,
-  validateOrThrow,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { ApiError, NexaApiClient, setAuthTokenProvider } from '../../utils/apiClient'
+import {
   ProviderMfaVerifySuccessSchema,
   SchemaValidationError,
+  validateLoginResponse,
+  validateOrThrow,
 } from '../../schemas/authNfcSchemas'
 
-// ── Public types ─────────────────────────────────────────────────────────────
+export const PROVIDER_SESSION_STORAGE_KEY = 'nexa_provider_session_v1'
 
 export interface ProviderIdentity {
   provider_id: string
@@ -63,57 +36,72 @@ export interface HospitalInfo {
 
 export interface ProviderSession {
   access_token: string
+  expires_at: string
   provider: ProviderIdentity
   hospital: HospitalInfo
 }
 
-/** Result of calling login() — caller must check type. */
-export type LoginResult =
-  | { type: 'authenticated'; session: ProviderSession }
-  | { type: 'mfa_required'; mfaToken: string; detail: string }
+export interface ProviderAccessGrant {
+  requestId: string
+  patientId: string
+  consentToken: string
+  purpose: string
+  scope: 'clinical' | 'full'
+  expiresAt: string
+}
+
+export type ProviderAuthStatus =
+  | 'hydrating'
+  | 'unauthenticated'
+  | 'mfa_required'
+  | 'authenticated'
+
+export type LoginResult = { type: 'authenticated' } | { type: 'mfa_required' }
 
 export interface ProviderAuthState {
+  status: ProviderAuthStatus
+  hydrated: boolean
   isAuthenticated: boolean
   session: ProviderSession | null
   providerId: string | null
   displayName: string | null
   hospitalName: string | null
   role: string | null
+  mfaDetail: string | null
   loginError: string | null
   loggingIn: boolean
+  accessGrant: ProviderAccessGrant | null
 }
 
 export interface ProviderAuthActions {
-  /** Start login. Returns LoginResult — either authenticated or mfa_required. */
   login: (email: string, password: string) => Promise<LoginResult>
-  /** Complete MFA verification. Stores session on success. */
-  verifyMfa: (mfaToken: string, totpCode: string) => Promise<void>
-  /** Log out. Clears session and JWT. */
+  verifyMfa: (totpCode: string) => Promise<void>
+  cancelMfa: () => void
   logout: () => void
+  setAccessGrant: (grant: ProviderAccessGrant) => void
+  clearAccessGrant: () => void
 }
 
 export type ProviderAuthContextType = ProviderAuthState & ProviderAuthActions
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
 function buildSession(
   accessToken: string,
+  expiresAt: string,
   providerUid: string,
   hospitalId: string,
   email: string,
 ): ProviderSession {
+  // The role is a presentation hint, not a signed authorization claim.
+  // Backend provider/hospital dependencies remain authoritative for access.
   return {
     access_token: accessToken,
+    expires_at: expiresAt,
     provider: {
       provider_id: providerUid,
       display_name: '',
       medical_registration_number: null,
       specialty: null,
       contact_email: email,
-      // ALPHA: Role is defaulted to 'clinician' because the backend login
-      // response does not yet include a role field. The role shown on the
-      // dashboard is NOT from a signed backend claim yet. Production MUST
-      // extract role from the verified JWT payload, not default it here.
       role: 'clinician',
     },
     hospital: {
@@ -124,157 +112,262 @@ function buildSession(
   }
 }
 
-// ── Context ──────────────────────────────────────────────────────────────────
+function isStoredSession(value: unknown): value is ProviderSession {
+  if (!value || typeof value !== 'object') return false
+  const record = value as Partial<ProviderSession>
+  return Boolean(
+    typeof record.access_token === 'string' &&
+      record.access_token &&
+      typeof record.expires_at === 'string' &&
+      Date.parse(record.expires_at) > Date.now() &&
+      record.provider &&
+      typeof record.provider.provider_id === 'string' &&
+      record.hospital &&
+      typeof record.hospital.hospital_id === 'string',
+  )
+}
+
+function configurationMessage(error: ApiError): string | null {
+  if (error.code === 'MISSING_API_BASE_URL' || error.code === 'INVALID_API_BASE_URL') {
+    return 'Provider login is unavailable because NEXT_PUBLIC_API_URL is not configured correctly.'
+  }
+  if (error.code === 'INSECURE_API_URL') return error.message
+  return null
+}
+
+function connectionMessage(error: ApiError): string | null {
+  if (error.code === 'NETWORK_ERROR') {
+    return 'Unable to reach Nexa Care. Check the configured server and your network connection.'
+  }
+  if (error.code === 'REQUEST_TIMEOUT') {
+    return 'The authentication request timed out. Check the server and try again.'
+  }
+  return null
+}
 
 const ProviderAuthContext = createContext<ProviderAuthContextType | null>(null)
 
-// ── Provider ─────────────────────────────────────────────────────────────────
-
 export function ProviderAuthProvider({ children }: { children: ReactNode }) {
+  const [status, setStatus] = useState<ProviderAuthStatus>('hydrating')
   const [session, setSession] = useState<ProviderSession | null>(null)
+  const [mfaDetail, setMfaDetail] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
+  const [accessGrant, setAccessGrantState] = useState<ProviderAccessGrant | null>(null)
+  // Provider session hydration uses sessionStorage. The short-lived patient
+  // record capability stays in memory only and is never persisted there.
+  const accessTokenRef = useRef<string | null>(null)
+  const pendingMfaTokenRef = useRef<string | null>(null)
+  const pendingEmailRef = useRef('')
+  const operationRef = useRef<Promise<unknown> | null>(null)
 
-  const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    setLoggingIn(true)
-    setLoginError(null)
+  useEffect(() => {
+    setAuthTokenProvider(() => accessTokenRef.current)
     try {
-      const data = await NexaApiClient.login({
-        login_identifier: email.trim(),
-        password,
-      })
-
-      // Validate backend response at runtime before trusting it
-      const validated = validateLoginResponse(data)
-
-      if (validated.type === 'mfa_required') {
-        return { type: 'mfa_required', mfaToken: validated.data.mfa_token, detail: validated.data.detail }
-      }
-
-      // Direct login success (no MFA) — data is now Zod-validated
-      const accessToken = validated.data.access_token
-      const tokenRef = { current: accessToken }
-      setAuthTokenProvider(() => tokenRef.current)
-
-      const newSession = buildSession(
-        accessToken,
-        validated.data.provider_uid,
-        String(validated.data.hospital_id),
-        email.trim(),
-      )
-      setSession(newSession)
-      return { type: 'authenticated', session: newSession }
-    } catch (err) {
-      if (err instanceof SchemaValidationError) {
-        setLoginError(
-          'Server returned an unexpected response. Please try again or contact support.',
-        )
+      const raw = window.sessionStorage.getItem(PROVIDER_SESSION_STORAGE_KEY)
+      const restored: unknown = raw ? JSON.parse(raw) : null
+      if (isStoredSession(restored)) {
+        accessTokenRef.current = restored.access_token
+        setSession(restored)
+        setStatus('authenticated')
       } else {
-        const message =
-          err instanceof ApiError
-            ? err.status === 401
-              ? 'Invalid email or password.'
-              : err.status === 429
-                ? 'Too many attempts. Please wait and try again.'
-                : err.message
-            : err instanceof Error
-              ? err.message
-              : 'Login failed. Please try again.'
-        setLoginError(message)
+        window.sessionStorage.removeItem(PROVIDER_SESSION_STORAGE_KEY)
+        setStatus('unauthenticated')
       }
-      throw err
-    } finally {
-      setLoggingIn(false)
+    } catch {
+      window.sessionStorage.removeItem(PROVIDER_SESSION_STORAGE_KEY)
+      setStatus('unauthenticated')
     }
   }, [])
 
-  const verifyMfa = useCallback(async (mfaToken: string, totpCode: string): Promise<void> => {
-    setLoggingIn(true)
+  const establishSession = useCallback((next: ProviderSession) => {
+    accessTokenRef.current = next.access_token
+    setAuthTokenProvider(() => accessTokenRef.current)
+    window.sessionStorage.setItem(PROVIDER_SESSION_STORAGE_KEY, JSON.stringify(next))
+    pendingMfaTokenRef.current = null
+    pendingEmailRef.current = ''
+    setMfaDetail(null)
+    setSession(next)
+    setStatus('authenticated')
     setLoginError(null)
-    try {
-      const data = await NexaApiClient.verifyMfa({
-        mfa_token: mfaToken,
-        totp_code: totpCode.trim(),
-      })
+  }, [])
 
-      // Validate MFA verify response at runtime
-      const validated = validateOrThrow(ProviderMfaVerifySuccessSchema, data, 'MFA verify response')
-
-      const accessToken = validated.access_token
-      const tokenRef = { current: accessToken }
-      setAuthTokenProvider(() => tokenRef.current)
-
-      const newSession = buildSession(
-        accessToken,
-        validated.provider_uid,
-        String(validated.hospital_id),
-        '',
-      )
-      setSession(newSession)
-    } catch (err) {
-      if (err instanceof SchemaValidationError) {
-        setLoginError(
-          'Server returned an unexpected MFA response. Please try again or contact support.',
-        )
-      } else {
-        const message =
-          err instanceof ApiError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'MFA verification failed. Please try again.'
-        setLoginError(message)
+  const login = useCallback((email: string, password: string): Promise<LoginResult> => {
+    if (operationRef.current) return operationRef.current as Promise<LoginResult>
+    const operation = (async (): Promise<LoginResult> => {
+      setLoggingIn(true)
+      setLoginError(null)
+      pendingMfaTokenRef.current = null
+      setMfaDetail(null)
+      try {
+        const normalizedEmail = email.trim()
+        const data = await NexaApiClient.providerLogin({
+          login_identifier: normalizedEmail,
+          password,
+        })
+        const validated = validateLoginResponse(data)
+        if (validated.type === 'mfa_required') {
+          pendingMfaTokenRef.current = validated.data.mfa_token
+          pendingEmailRef.current = normalizedEmail
+          setMfaDetail(validated.data.detail)
+          setStatus('mfa_required')
+          return { type: 'mfa_required' }
+        }
+        establishSession(buildSession(
+          validated.data.access_token,
+          validated.data.expires_at,
+          validated.data.provider_uid,
+          String(validated.data.hospital_id),
+          normalizedEmail,
+        ))
+        return { type: 'authenticated' }
+      } catch (error) {
+        if (error instanceof SchemaValidationError) {
+          setLoginError('Server returned an unexpected response. Please contact support.')
+        } else if (error instanceof ApiError) {
+          setLoginError(
+            configurationMessage(error) ??
+              connectionMessage(error) ??
+              (error.status === 401
+                ? 'Invalid email or password.'
+                : error.status === 429
+                  ? 'Too many attempts. Please wait and try again.'
+                  : error.message),
+          )
+        } else {
+          setLoginError('Provider login failed. Please try again.')
+        }
+        setStatus('unauthenticated')
+        throw error
+      } finally {
+        setLoggingIn(false)
       }
-      throw err
-    } finally {
-      setLoggingIn(false)
-    }
+    })().finally(() => {
+      operationRef.current = null
+    })
+    operationRef.current = operation
+    return operation
+  }, [establishSession])
+
+  const verifyMfa = useCallback((totpCode: string): Promise<void> => {
+    if (operationRef.current) return operationRef.current as Promise<void>
+    const operation = (async () => {
+      const mfaToken = pendingMfaTokenRef.current
+      if (!mfaToken) {
+        setStatus('unauthenticated')
+        setLoginError('MFA session expired. Sign in again.')
+        throw new Error('MFA session expired')
+      }
+      setLoggingIn(true)
+      setLoginError(null)
+      try {
+        const data = await NexaApiClient.providerMfaVerify({
+          mfa_token: mfaToken,
+          totp_code: totpCode.trim(),
+        })
+        const validated = validateOrThrow(
+          ProviderMfaVerifySuccessSchema,
+          data,
+          'MFA verify response',
+        )
+        establishSession(buildSession(
+          validated.access_token,
+          validated.expires_at,
+          validated.provider_uid,
+          String(validated.hospital_id),
+          pendingEmailRef.current,
+        ))
+      } catch (error) {
+        if (error instanceof ApiError) {
+          const expired = error.status === 401 && /session expired/i.test(error.message)
+          if (expired) {
+            pendingMfaTokenRef.current = null
+            pendingEmailRef.current = ''
+            setMfaDetail(null)
+            setStatus('unauthenticated')
+            setLoginError('MFA session expired. Sign in again.')
+          } else {
+            setLoginError(
+              configurationMessage(error) ??
+                connectionMessage(error) ??
+                (error.status === 401
+                  ? 'Invalid authenticator code.'
+                  : error.status === 429
+                    ? 'Too many attempts. Please wait and try again.'
+                    : error.message),
+            )
+          }
+        } else if (error instanceof SchemaValidationError) {
+          setLoginError('Server returned an unexpected MFA response. Please contact support.')
+        } else {
+          setLoginError('MFA verification failed. Please try again.')
+        }
+        throw error
+      } finally {
+        setLoggingIn(false)
+      }
+    })().finally(() => {
+      operationRef.current = null
+    })
+    operationRef.current = operation
+    return operation
+  }, [establishSession])
+
+  const cancelMfa = useCallback(() => {
+    pendingMfaTokenRef.current = null
+    pendingEmailRef.current = ''
+    setMfaDetail(null)
+    setLoginError(null)
+    setStatus('unauthenticated')
   }, [])
 
   const logout = useCallback(() => {
+    accessTokenRef.current = null
+    pendingMfaTokenRef.current = null
+    pendingEmailRef.current = ''
     setAuthTokenProvider(() => null)
+    window.sessionStorage.removeItem(PROVIDER_SESSION_STORAGE_KEY)
     setSession(null)
+    setAccessGrantState(null)
+    setMfaDetail(null)
     setLoginError(null)
-    // ALPHA: Does not call POST /api/v2/auth/logout for server-side
-    // token invalidation. Production MUST add this call.
+    setStatus('unauthenticated')
+  }, [])
+
+  const setAccessGrant = useCallback((grant: ProviderAccessGrant) => {
+    setAccessGrantState(grant)
+  }, [])
+
+  const clearAccessGrant = useCallback(() => {
+    setAccessGrantState(null)
   }, [])
 
   const state: ProviderAuthState = {
-    isAuthenticated: session !== null,
+    status,
+    hydrated: status !== 'hydrating',
+    isAuthenticated: status === 'authenticated' && session !== null,
     session,
-    providerId: session?.provider?.provider_id ?? null,
-    displayName: session?.provider?.display_name ?? null,
-    hospitalName: session?.hospital?.display_name ?? null,
-    role: session?.provider?.role ?? null,
+    providerId: session?.provider.provider_id ?? null,
+    displayName: session?.provider.display_name ?? null,
+    hospitalName: session?.hospital.display_name ?? null,
+    role: session?.provider.role ?? null,
+    mfaDetail,
     loginError,
     loggingIn,
+    accessGrant,
   }
 
-  const actions: ProviderAuthActions = { login, verifyMfa, logout }
-
   return (
-    <ProviderAuthContext.Provider value={{ ...state, ...actions }}>
+    <ProviderAuthContext.Provider
+      value={{ ...state, login, verifyMfa, cancelMfa, logout, setAccessGrant, clearAccessGrant }}
+    >
       {children}
     </ProviderAuthContext.Provider>
   )
 }
 
-// ── Hook ─────────────────────────────────────────────────────────────────────
-
-/**
- * Access the provider auth context.
- *
- * MUST be used inside a <ProviderAuthProvider>.
- * Returns the full auth state + login/verifyMfa/logout actions.
- *
- * Use `providerId` from this hook — NEVER hardcode a provider_id.
- */
 export function useProviderAuth(): ProviderAuthContextType {
-  const ctx = useContext(ProviderAuthContext)
-  if (!ctx) {
-    throw new Error(
-      'useProviderAuth must be used inside a <ProviderAuthProvider>',
-    )
-  }
-  return ctx
+  const context = useContext(ProviderAuthContext)
+  if (!context) throw new Error('useProviderAuth must be used inside ProviderAuthProvider')
+  return context
 }

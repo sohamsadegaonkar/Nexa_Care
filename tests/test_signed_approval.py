@@ -115,12 +115,13 @@ def test_valid_signed_approval_issues_grant_and_doctor_sees_approved(mock_scoped
             assert data["request_id"] == req_id
             assert "consent_token" not in data, "Patient received doctor consent token!"
 
-            # Verify Redis set was updated with approved state and token for polling doctor
+            # Approval state is pollable, but the raw capability is minted only
+            # through the provider-authenticated claim-access exchange.
             assert mock_redis.set.call_count == 3
             consent_req_call = [call for call in mock_redis.set.call_args_list if call[0][0] == f"consent_request:{req_id}"][0]
             saved_json = json.loads(consent_req_call[0][1])
             assert saved_json["status"] == "approved"
-            assert saved_json["consent_token"] == "minted-token-xyz"
+            assert "consent_token" not in saved_json
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 
@@ -166,6 +167,74 @@ def test_forged_signature_rejected(mock_scoped_pat, keypair_and_device):
             res = client.post("/api/v2/consent/approve-signed", headers={"Authorization": "Bearer pat-tok"}, json=payload)
             assert res.status_code == 401
             assert "Signature verification failed" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+
+def test_signature_from_another_active_device_cannot_claim_submitted_device_id(
+    mock_scoped_pat, keypair_and_device
+):
+    """The submitted device_id and the key that verifies must be identical."""
+    other_private_key, _, other_device = keypair_and_device
+    submitted_device_id = str(uuid.uuid4())
+    submitted_device = MagicMock(spec=PatientDeviceKey)
+    submitted_device.id = uuid.UUID(submitted_device_id)
+    submitted_device.device_public_key = ec.generate_private_key(
+        ec.SECP256R1()
+    ).public_key().public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    submitted_device.status = "active"
+    submitted_device.revoked_at = None
+    req_id = str(uuid.uuid4())
+    nonce = "nonce-device-binding"
+    challenge_data = {
+        "request_id": req_id,
+        "patient_id": mock_scoped_pat,
+        "provider_id": "provider-1",
+        "purpose": "routine_checkup",
+        "scope": "clinical",
+        "access_duration": 900,
+        "challenge_nonce": nonce,
+        "expires_at": "2099-07-07T16:05:00Z",
+        "status": "pending",
+    }
+    signature = sign_payload(
+        other_private_key, req_id, mock_scoped_pat, "provider-1", nonce,
+        "approved", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z",
+    )
+    mock_db = AsyncMock()
+    route_result = MagicMock()
+    route_result.scalar_one_or_none.return_value = submitted_device
+    verifier_result = MagicMock()
+    verifier_result.scalars.return_value.all.return_value = [other_device]
+    mock_db.execute.side_effect = [route_result, verifier_result]
+
+    from app.core.database import get_db_session
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    try:
+        with patch("app.api.v2.consent_routes.get_redis_client") as redis_factory, \
+             patch("app.services.signed_approval_verifier.append_audit_log_or_503", new_callable=AsyncMock):
+            redis = MagicMock()
+            redis.get.side_effect = lambda key: (
+                None if key.startswith("biometric_nonce:") else json.dumps(challenge_data)
+            )
+            redis_factory.return_value = redis
+            response = client.post(
+                "/api/v2/consent/approve-signed",
+                headers={"Authorization": "Bearer patient-token"},
+                json={
+                    "request_id": req_id,
+                    "patient_id": mock_scoped_pat,
+                    "decision": "approved",
+                    "challenge_nonce": nonce,
+                    "signature": signature,
+                    "device_id": submitted_device_id,
+                },
+            )
+            assert response.status_code == 401
+            assert response.json()["detail"] == "Signature verification failed"
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 

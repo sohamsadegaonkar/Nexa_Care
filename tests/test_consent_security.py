@@ -164,7 +164,8 @@ def test_abuse_revoked_device_signature(mock_scoped_pat, keypair_and_device):
 def test_abuse_cross_doctor_token_reuse(admin_headers):
     """Test 3: Cross-doctor token reuse -> 403."""
     # Token issued to doc-A, but doc-B (current provider) attempts to use it
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=None):
+    with patch("app.core.consent_gate.validate_consent_capability", return_value=None), \
+         patch("app.core.consent_gate.validate_approved_access", return_value=None):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
             headers={**admin_headers, "X-Consent-Token": "tok-for-doc-a", "X-Consent-Purpose": "clinical_summary"},
@@ -174,7 +175,8 @@ def test_abuse_cross_doctor_token_reuse(admin_headers):
 
 def test_abuse_wrong_purpose_access(admin_headers):
     """Test 4: Wrong-purpose access -> 403."""
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=None):
+    with patch("app.core.consent_gate.validate_consent_capability", return_value=None), \
+         patch("app.core.consent_gate.validate_approved_access", return_value=None):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
             headers={**admin_headers, "X-Consent-Token": "tok-for-research", "X-Consent-Purpose": "clinical_summary"},
@@ -184,7 +186,8 @@ def test_abuse_wrong_purpose_access(admin_headers):
 
 def test_abuse_expired_grant_access(admin_headers):
     """Test 5: Expired grant access -> 403."""
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=None):
+    with patch("app.core.consent_gate.validate_consent_capability", return_value=None), \
+         patch("app.core.consent_gate.validate_approved_access", return_value=None):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
             headers={**admin_headers, "X-Consent-Token": "expired-tok", "X-Consent-Purpose": "clinical_summary"},

@@ -62,13 +62,13 @@ def _patch_stack(fake_redis, fake_sync_redis):
     stack = ExitStack()
     stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
     stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
+    stack.enter_context(patch("app.core.consent_gate.validate_approved_access", return_value=None))
     stack.enter_context(patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis))
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
     mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
     mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
     stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
-    stack.enter_context(patch("app.observability.audit_ledger.get_supabase_client", return_value=mock_supabase))
     for mod in (
         "app.observability.audit_ledger",
         "app.core.consent_gate",

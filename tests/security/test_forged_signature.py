@@ -18,7 +18,7 @@ import json
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
@@ -136,6 +136,8 @@ def _make_provider_context() -> ProviderContext:
 
 def _patch_stack(fake_redis, fake_sync_redis):
     stack = ExitStack()
+    stack.enter_context(patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")))
+    stack.enter_context(patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)))
     stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
     stack.enter_context(patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis))
     stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
@@ -145,7 +147,6 @@ def _patch_stack(fake_redis, fake_sync_redis):
     mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
     mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
     stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
-    stack.enter_context(patch("app.observability.audit_ledger.get_supabase_client", return_value=mock_supabase))
     stack.enter_context(patch("app.services.biometric_signature_verifier.get_supabase_client", return_value=mock_supabase))
     for mod in (
         "app.observability.audit_ledger",
@@ -236,7 +237,7 @@ def test_forged_signature_wrong_keypair(
         ])
         enroll_resp = client.post(
             "/api/v2/patient/devices/enroll",
-            json={"device_public_key": enrolled_b64, "device_label": "Sec Device", "platform": "ios"},
+            json={"device_public_key": enrolled_b64, "device_label": "Sec Device", "platform": "ios", "device_enrollment_token": "e" * 43},
         )
         assert enroll_resp.status_code == 201
 
@@ -404,7 +405,7 @@ def test_forged_signature_unenrolled_key_direct(
         ])
         enroll_resp = client.post(
             "/api/v2/patient/devices/enroll",
-            json={"device_public_key": enrolled_b64, "device_label": "Enrolled Device", "platform": "ios"},
+            json={"device_public_key": enrolled_b64, "device_label": "Enrolled Device", "platform": "ios", "device_enrollment_token": "e" * 43},
         )
         assert enroll_resp.status_code == 201
 

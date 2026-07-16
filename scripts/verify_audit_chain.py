@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit Ledger Integrity Verifier for Nexa Care.
 
-This script scans the 'system_audit' table and verifies the hash chain.
+This script scans the canonical ``public.audit_ledger`` table and verifies the hash chain.
 Each record's hash must be SHA-256(payload + previous_hash).
 The 'previous_hash' of record N must match the 'record_hash' of record N-1.
 """
@@ -26,7 +26,6 @@ from app.core.config import get_database_config
 # Colors for output
 GREEN = "\033[92m"
 RED = "\033[91m"
-YELLOW = "\033[93m"
 BOLD = "\033[1m"
 RESET = "\033[0m"
 
@@ -49,48 +48,56 @@ async def verify_audit_chain():
     tampered_payloads = []
     duplicate_previous_hashes = []
     
-    previous_record_hash = "GENESIS"
-    seen_previous_hashes = set()
-
     try:
         async with engine.connect() as conn:
-            # We order by id to follow the append sequence
-            stmt = text("SELECT id, payload, previous_hash, record_hash FROM system_audit ORDER BY id ASC")
+            stmt = text(
+                "SELECT audit_id, details, previous_hash, record_hash "
+                "FROM public.audit_ledger"
+            )
             result = await conn.execute(stmt)
-            
-            for row in result:
-                total_entries += 1
-                row_id = row[0]
-                payload = row[1]
-                stored_prev_hash = row[2]
-                stored_record_hash = row[3]
-                
-                # 1. Verify previous_hash link
-                if stored_prev_hash != previous_record_hash:
-                    broken_links.append({
-                        "id": row_id,
-                        "expected_prev": previous_record_hash,
-                        "actual_prev": stored_prev_hash
-                    })
-                
-                # 2. Verify record_hash calculation
-                computed_record_hash = calculate_hash(payload, stored_prev_hash)
-                if computed_record_hash != stored_record_hash:
+            rows = [dict(row) for row in result.mappings().all()]
+            total_entries = len(rows)
+
+            successors = {}
+            for row in rows:
+                previous_hash = row["previous_hash"]
+                if previous_hash in successors:
+                    duplicate_previous_hashes.append(
+                        {"id": row["audit_id"], "hash": previous_hash}
+                    )
+                else:
+                    successors[previous_hash] = row
+
+                computed_record_hash = calculate_hash(row["details"], previous_hash)
+                if computed_record_hash != row["record_hash"]:
                     tampered_payloads.append({
-                        "id": row_id,
+                        "id": row["audit_id"],
                         "expected_hash": computed_record_hash,
-                        "actual_hash": stored_record_hash
+                        "actual_hash": row["record_hash"]
                     })
-                
-                # 3. Check for duplicates (forks)
-                if stored_prev_hash in seen_previous_hashes and stored_prev_hash != "GENESIS":
-                    duplicate_previous_hashes.append({
-                        "id": row_id,
-                        "hash": stored_prev_hash
-                    })
-                seen_previous_hashes.add(stored_prev_hash)
-                
-                previous_record_hash = stored_record_hash
+
+            visited = set()
+            expected_previous = "GENESIS"
+            while expected_previous in successors:
+                row = successors[expected_previous]
+                row_id = row["audit_id"]
+                if row_id in visited:
+                    broken_links.append(
+                        {"id": row_id, "expected_prev": "unvisited", "actual_prev": expected_previous}
+                    )
+                    break
+                visited.add(row_id)
+                expected_previous = row["record_hash"]
+
+            for row in rows:
+                if row["audit_id"] not in visited:
+                    broken_links.append(
+                        {
+                            "id": row["audit_id"],
+                            "expected_prev": "reachable from GENESIS",
+                            "actual_prev": row["previous_hash"],
+                        }
+                    )
 
         # Report Results
         print("\n" + "=" * 50)
@@ -115,8 +122,8 @@ async def verify_audit_chain():
                       f"does not match computed hash '{t['expected_hash'][:8]}...'")
 
         if duplicate_previous_hashes:
-            # Not necessarily an integrity failure if hashes match, but indicates a chain fork (race condition)
-            print(f"\n{YELLOW}{BOLD}[WARN] Chain Forks Detected: {len(duplicate_previous_hashes)}{RESET}")
+            integrity_pass = False
+            print(f"\n{RED}{BOLD}[FAIL] Chain Forks Detected: {len(duplicate_previous_hashes)}{RESET}")
             for d in duplicate_previous_hashes:
                 print(f"  Row ID {d['id']}: Multiple rows pointing to previous_hash '{d['hash'][:8]}...'")
 

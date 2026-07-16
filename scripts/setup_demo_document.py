@@ -36,6 +36,7 @@ from app.models.pipeline import (
     ReviewQueueItem,
 )
 from app.services.pipeline_orchestrator import process_extraction_job
+from scripts.demo_environment import require_demo_environment
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger(__name__)
@@ -119,11 +120,11 @@ async def setup_demo_document(session: AsyncSession, reset: bool = False) -> dic
 
 
 async def main() -> None:
-    env = os.getenv("ENVIRONMENT", "development").lower().strip()
-    if env in {"prod", "production"}:
-        raise RuntimeError(f"Refusing to execute demo document setup in production environment ('{env}').")
+    require_demo_environment("setup_demo_document")
 
     reset_flag = "--reset" in sys.argv
+    if reset_flag and "--confirm-reset" not in sys.argv:
+        raise RuntimeError("--reset requires --confirm-reset")
     logger.info("==========================================================================")
     logger.info(" 🔬 NEXA CARE CANONICAL DEMO DOCUMENT & REVIEW QUEUE SEEDER")
     logger.info("==========================================================================")

@@ -4,9 +4,12 @@ import { useState, useEffect } from 'react'
 import {
   fetchChallenge,
   approveWithBiometric,
+  classifyConsentError,
   isChallengeExpired,
   type ConsentChallenge,
 } from '../../services/consentSigning'
+import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrollment'
+import { ApiError } from '../../utils/apiClient'
 
 /**
  * Biometric approval screen — Face ID / Touch ID → sign → submit.
@@ -45,8 +48,9 @@ export default function BiometricApprovalScreen({
   const requestId = requestIdProp ?? params.requestId ?? ''
 
   const [challenge, setChallenge] = useState<ConsentChallenge | null>(null)
-  const [status, setStatus] = useState<'loading' | 'prompt' | 'authenticating' | 'signing' | 'submitting' | 'error' | 'expired'>('loading')
+  const [status, setStatus] = useState<'loading' | 'prompt' | 'setup-required' | 'authenticating' | 'signing' | 'submitting' | 'checking' | 'error' | 'expired'>('loading')
   const [error, setError] = useState<string | null>(null)
+  const [setupRequiresLogin, setSetupRequiresLogin] = useState(false)
 
   // Fetch challenge on mount
   useEffect(() => {
@@ -67,11 +71,24 @@ export default function BiometricApprovalScreen({
           return
         }
         setChallenge(data)
-        setStatus('prompt')
-      } catch {
+        // Reconcile this exact installation before offering biometrics. A
+        // fresh OTP token can enroll it here; stale sessions show setup first.
+        await ensureCurrentDeviceEnrollment()
+        if (!cancelled) setStatus('prompt')
+      } catch (loadError) {
         if (!cancelled) {
-          setStatus('expired')
-          setError('This request has expired or is not available.')
+          const mapped = classifyConsentError(loadError)
+          if (mapped.kind === 'reauth' || mapped.kind === 'setup') {
+            setStatus('setup-required')
+            setError(mapped.message)
+            setSetupRequiresLogin(mapped.kind === 'reauth')
+          } else if (mapped.kind === 'expired') {
+            setStatus('expired')
+            setError(mapped.message)
+          } else {
+            setStatus('error')
+            setError(mapped.message)
+          }
         }
       }
     }
@@ -85,21 +102,15 @@ export default function BiometricApprovalScreen({
     setStatus('authenticating')
     setError(null)
 
-    try {
-      // approveWithBiometric gates with biometric → signs → submits
-      setStatus('authenticating')
-      const result = await approveWithBiometric(challenge)
-
-      // Navigate to result screen on success
+    const showApproved = () => {
       const receipt: ConsentReceipt = {
-        grantId: result.request_id,
+        grantId: challenge.request_id,
         providerName: challenge.provider_name,
         scope: typeof challenge.scope === 'string'
           ? challenge.scope.split(',').map((s) => s.trim())
           : challenge.scope,
         expiresAt: challenge.expires_at,
       }
-
       onApproved?.(receipt)
       router.replace({
         pathname: '/patient/approval-result',
@@ -111,7 +122,30 @@ export default function BiometricApprovalScreen({
           expiresAt: challenge.expires_at,
         },
       })
+    }
+
+    try {
+      // approveWithBiometric gates with biometric → signs → submits
+      setStatus('authenticating')
+      await approveWithBiometric(challenge)
+      showApproved()
     } catch (err) {
+      if (err instanceof ApiError && err.code === 'REQUEST_TIMEOUT') {
+        setStatus('checking')
+        try {
+          const reconciled = await fetchChallenge(challenge.request_id)
+          if (reconciled.status === 'approved') {
+            showApproved()
+            return
+          }
+        } catch {
+          // Preserve an uncertain outcome; a retry is safe because the server
+          // treats the exact same signed decision as idempotent.
+        }
+        setStatus('error')
+        setError('Approval outcome is still uncertain. Retry to reconcile safely.')
+        return
+      }
       const message = err instanceof Error ? err.message : 'Approval failed'
       if (message.includes('cancelled') || message.includes('cancel')) {
         // User cancelled biometric — go back to prompt
@@ -155,6 +189,38 @@ export default function BiometricApprovalScreen({
     )
   }
 
+  if (status === 'checking') {
+    return (
+      <YStack f={1} bg="$background" jc="center" ai="center" gap="$3">
+        <Spinner size="large" color="$blue10" />
+        <H2 col="$color" ta="center">Checking approval status</H2>
+        <Paragraph col="$colorSubdued" ta="center">Confirming whether the signed approval reached Nexa Care…</Paragraph>
+      </YStack>
+    )
+  }
+
+  if (status === 'setup-required') {
+    return (
+      <YStack f={1} bg="$background" p="$4" gap="$4" jc="center" ai="center">
+        <Text fontSize={56}>🔐</Text>
+        <H2 col="$color" ta="center">Secure This Device</H2>
+        <Paragraph col="$colorSubdued" ta="center" size="$4">
+          {error ?? 'Secure this device to approve consent requests.'}
+        </Paragraph>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.replace(
+            setupRequiresLogin ? '/patient/login' : '/patient/secure-device',
+          )}
+        >
+          {setupRequiresLogin ? 'Sign In and Secure Device' : 'Set Up or Retry Device'}
+        </Button>
+        <Button size="$4" chromeless onPress={handleCancel}>Go Back</Button>
+      </YStack>
+    )
+  }
+
   // ── Render: Prompt ───────────────────────────────────────────────────
   if (status === 'prompt') {
     return (
@@ -170,9 +236,9 @@ export default function BiometricApprovalScreen({
           in platform secure storage. Not yet: hardware-backed non-exportable
           signing key with biometric-gated key usage.
         </Paragraph>
-        {error && (
+        {error !== null ? (
           <Text col="$red10" ta="center" size="$3">{error}</Text>
-        )}
+        ) : null}
         <YStack gap="$3" w="100%" mt="$4">
           <Button theme="blue" size="$4" onPress={handleBiometricAuth}>
             Authenticate

@@ -24,7 +24,7 @@
 'use client'
 
 import { Card, Text, YStack, Button, Input, XStack, Spinner, Paragraph, ScrollView, Select } from '@my/ui'
-import { AlertTriangle, ShieldAlert } from '@tamagui/lucide-icons'
+import { AlertTriangle, ChevronDown, ShieldAlert } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { NexaApiClient } from '../../utils/apiClient'
@@ -213,13 +213,17 @@ export function EmergencyAccessScreen() {
           <YStack gap="$2">
             <Paragraph color="$color11">Reason Code</Paragraph>
             <Select value={reasonCode} onValueChange={(v) => setReasonCode(v as BreakGlassReason)}>
-              <Select.Trigger size="$4" iconAfter={<Select.Chevron />} />
+              <Select.Trigger size="$4" iconAfter={ChevronDown}>
+                <Select.Value placeholder="Select reason" />
+              </Select.Trigger>
               <Select.Content>
-                {REASON_OPTIONS.map((opt) => (
-                  <Select.Item key={opt.value} value={opt.value}>
-                    <Select.ItemText>{opt.label}</Select.ItemText>
-                  </Select.Item>
-                ))}
+                <Select.Viewport>
+                  {REASON_OPTIONS.map((opt, index) => (
+                    <Select.Item key={opt.value} index={index} value={opt.value}>
+                      <Select.ItemText>{opt.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Viewport>
               </Select.Content>
             </Select>
             <Paragraph color="$color10" fontSize={13}>{REASON_OPTIONS.find((o) => o.value === reasonCode)?.description}</Paragraph>

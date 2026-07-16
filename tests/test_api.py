@@ -347,7 +347,7 @@ class TestNexaCareLifecycle(unittest.TestCase):
         cls._patches = [
             patch("app.core.supabase.get_supabase_client", return_value=cls.fake_supabase),
             patch("app.api.routes.get_supabase_client", return_value=cls.fake_supabase),
-            patch("app.observability.audit_ledger.get_supabase_client", return_value=cls.fake_supabase),
+            patch("app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})),
             patch("app.services.biometric_registry.get_supabase_client", return_value=cls.fake_supabase),
             patch("app.core.redis.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.auth_service.get_redis_client", return_value=cls.fake_redis),

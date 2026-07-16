@@ -1,8 +1,18 @@
 import { useRouter } from 'expo-router'
 import { YStack, H2, Paragraph, Input, Button, Spinner, Text } from 'tamagui'
-import { useState } from 'react'
-import { apiClient } from '../../utils/apiClient'
-import { setAuthTokenProvider } from '../../utils/apiClient'
+import { useRef, useState } from 'react'
+import {
+  CurrentDeviceError,
+  ensureCurrentDeviceEnrollment,
+} from '../../services/currentDeviceEnrollment'
+import { storePatientAuthSession } from '../../services/patientAuthSession'
+import { getRegisteredPushTokenForCurrentSession } from '../../services/pushNotifications'
+import {
+  patientAuthError,
+  requestPatientOtp,
+  tryBeginPatientOtpSubmission,
+  verifyPatientOtp,
+} from '../../services/patientOtp'
 
 /**
  * ALPHA: Device signing flow scaffolded.
@@ -22,56 +32,46 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
   const [step, setStep] = useState<'phone' | 'otp'>('phone')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const submissionInFlight = useRef(false)
 
   const handleSendOtp = async () => {
+    if (!tryBeginPatientOtpSubmission(submissionInFlight)) return
     setLoading(true)
     setError(null)
     try {
-      await apiClient.post('/api/v2/auth/otp/send', { phone }, { noAuth: true })
+      const normalizedPhone = await requestPatientOtp(phone)
+      setPhone(normalizedPhone)
       setStep('otp')
-    } catch {
-      setError('Failed to send OTP. Please try again.')
+    } catch (requestError) {
+      setError(patientAuthError(requestError, 'Failed to send OTP. Please try again.'))
     } finally {
+      submissionInFlight.current = false
       setLoading(false)
     }
   }
 
   const handleVerifyOtp = async () => {
+    if (!tryBeginPatientOtpSubmission(submissionInFlight)) return
     setLoading(true)
     setError(null)
     try {
-      const { data } = await apiClient.post<{ jwt: string }>(
-        '/api/v2/auth/otp/verify',
-        { phone, otp },
-        { noAuth: true },
-      )
-      // ALPHA: Store JWT via auth token provider.
-      // Production: migrate to expo-secure-store / iOS Keychain.
-      const jwt = data.jwt
-      setAuthTokenProvider(() => jwt)
+      const data = await verifyPatientOtp(phone, otp)
+      await storePatientAuthSession(data.access_token, data.device_enrollment_token)
 
-      // Check enrollment state — no hardcoded patient_id
-      const { data: deviceData } = await apiClient.get<{ enrolled: boolean }>(
-        '/api/v2/devices/status',
+      // Enrollment is installation-specific: another active patient device
+      // must never stand in for this installation's local key + device_id.
+      await ensureCurrentDeviceEnrollment({
+        expoPushToken: getRegisteredPushTokenForCurrentSession(),
+      })
+      router.replace('/patient/access-history')
+    } catch (requestError) {
+      setError(
+        requestError instanceof CurrentDeviceError
+          ? requestError.message
+          : patientAuthError(requestError, 'Unable to verify OTP. Please try again.'),
       )
-      if (deviceData?.enrolled) {
-        const { data: pendingData } = await apiClient.get<{ request_id?: string }>(
-          '/api/v2/consent/requests/pending',
-        )
-        if (pendingData?.request_id) {
-          router.replace({
-            pathname: '/patient/consent-request',
-            params: { requestId: pendingData.request_id },
-          })
-        } else {
-          router.replace('/patient/access-history')
-        }
-      } else {
-        router.replace('/patient/secure-device')
-      }
-    } catch {
-      setError('Invalid OTP. Please try again.')
     } finally {
+      submissionInFlight.current = false
       setLoading(false)
     }
   }
@@ -131,11 +131,11 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
         </YStack>
       )}
 
-      {error && (
+      {error !== null ? (
         <Text col="$red10" ta="center" size="$3">
           {error}
         </Text>
-      )}
+      ) : null}
     </YStack>
   )
 }

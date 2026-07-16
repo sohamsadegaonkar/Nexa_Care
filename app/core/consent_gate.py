@@ -28,6 +28,11 @@ from app.services.consent_engine import (
     ConsentEngineUnavailable,
     validate as validate_consent_capability,
 )
+from app.services.approved_access_capability import (
+    ApprovedAccessCapability,
+    ApprovedAccessStoreUnavailable,
+    validate as validate_approved_access,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -42,7 +47,7 @@ async def validate_consent_for_patient(
     purpose: str,
     provider: ProviderContext,
     x_consent_token: str | None,
-) -> ConsentCapability:
+) -> ConsentCapability | ApprovedAccessCapability:
     """Validate consent for an explicitly provided patient_id.
 
     ALPHA: Use this when patient_id is derived server-side from a DB entity
@@ -72,6 +77,7 @@ async def validate_consent_for_patient(
             detail="Active consent token required for patient data access.",
         )
 
+    hospital_id = str(provider.hospital_id)
     try:
         capability = await validate_consent_capability(
             token=x_consent_token,
@@ -79,13 +85,21 @@ async def validate_consent_for_patient(
             clinician_id=actor_uid,
             purpose=purpose,
         )
-    except ConsentEngineUnavailable as exc:
+        if capability is None:
+            capability = validate_approved_access(
+                token=x_consent_token,
+                patient_id=str(patient_id),
+                provider_id=actor_uid,
+                hospital_id=hospital_id,
+                requested_category=purpose,
+            )
+    except (ConsentEngineUnavailable, ApprovedAccessStoreUnavailable) as exc:
         await append_audit_log_or_503(
             actor_uid=actor_uid,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=target_id,
             status="CONSENT_ENGINE_UNAVAILABLE",
-            metadata={"purpose": purpose, "error": str(exc)},
+            metadata={"purpose": purpose, "hospital_id": hospital_id},
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -98,19 +112,31 @@ async def validate_consent_for_patient(
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=target_id,
             status="FORBIDDEN_INVALID_OR_EXPIRED",
-            metadata={"purpose": purpose},
+            metadata={"purpose": purpose, "hospital_id": hospital_id},
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Active consent token required or expired.",
         )
 
+    approved_request_id = getattr(capability, "request_id", None)
+    approved_purpose = getattr(capability, "purpose", purpose)
+    audit_metadata = {
+        "patient_id": target_id,
+        "provider_id": actor_uid,
+        "hospital_id": hospital_id,
+        "purpose": approved_purpose,
+        "data_categories": [purpose],
+        "scope": capability.scope,
+        "consent_request_id": approved_request_id,
+        "is_break_glass": capability.is_break_glass,
+    }
     await append_audit_log_or_503(
         actor_uid=actor_uid,
         event_type="CONSENT_GATED_DECRYPT_STARTED",
         target_id=target_id,
         status="SUCCESS",
-        metadata={"purpose": purpose, "scope": capability.scope},
+        metadata=audit_metadata,
     )
 
     await append_audit_log_or_503(
@@ -118,7 +144,7 @@ async def validate_consent_for_patient(
         event_type="PATIENT_RECORD_READ_SUCCESS",
         target_id=target_id,
         status="SUCCESS",
-        metadata={"purpose": purpose, "scope": capability.scope},
+        metadata={**audit_metadata, "outcome": "SUCCESS"},
     )
 
     return capability

@@ -12,6 +12,7 @@ import os
 import asyncio
 import base64
 import binascii
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks, WebSocket, WebSocketDisconnect
@@ -104,7 +105,11 @@ class PushRespondPayload(BaseModel):
     nonce: str = Field(..., min_length=1)
 
 class PushTokenRegistration(BaseModel):
-    expo_push_token: str = Field(..., pattern=r"^ExponentPushToken\[.*\]$")
+    expo_push_token: str = Field(
+        ...,
+        pattern=r"^(?:ExponentPushToken|ExpoPushToken)\[[^\]]+\]$",
+        max_length=255,
+    )
     platform: Literal["ios", "android"]
 
 class DeviceKeyRegistration(BaseModel):
@@ -151,28 +156,39 @@ async def register_push_token(
 ):
     """Register an Expo push token for the authenticated patient."""
     
-    # Upsert pattern
-    stmt = select(PatientPushToken).where(
-        PatientPushToken.patient_id == patient_id,
-        PatientPushToken.expo_push_token == payload.expo_push_token
+    # Lock every record for this device token so a token can be active for
+    # only the patient who most recently authenticated on the device.
+    stmt = (
+        select(PatientPushToken)
+        .where(PatientPushToken.expo_push_token == payload.expo_push_token)
+        .with_for_update()
     )
     result = await db.execute(stmt)
-    token_record = result.scalar_one_or_none()
-    
-    if not token_record:
+    token_records = result.scalars().all()
+    token_record = next(
+        (record for record in token_records if str(record.patient_id) == str(patient_id)),
+        None,
+    )
+
+    for record in token_records:
+        if record is not token_record:
+            record.is_active = False
+
+    now = datetime.now(timezone.utc)
+    if token_record is None:
         token_record = PatientPushToken(
             patient_id=patient_id,
             expo_push_token=payload.expo_push_token,
             platform=payload.platform,
-            is_active=True
+            is_active=True,
         )
         db.add(token_record)
     else:
         token_record.is_active = True
         token_record.platform = payload.platform
-        
+        token_record.updated_at = now
+
     await db.commit()
-    return
 
 @router.post("/register-device-key", status_code=status.HTTP_204_NO_CONTENT, deprecated=True)
 async def register_device_key(

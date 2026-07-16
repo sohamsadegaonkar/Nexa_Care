@@ -9,6 +9,11 @@ __pycache__/
 
 # Environments
 .env
+.env.*.backup
+.env.backup-*
+*.local
+alpha-test-credentials.local.txt
+environment-validation*.tmp
 .venv/
 venv/
 ENV/
@@ -17,9 +22,14 @@ env/
 # IDE
 .vscode/
 .idea/
+.claude/*.local.md
 
 # OS
 .DS_Store
 
 # Secure local demo keys
 .demo_device_*
+google-services*.json
+!google-services.example.json
+
+.env.alpha

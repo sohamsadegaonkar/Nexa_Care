@@ -1,14 +1,12 @@
-import { Platform } from 'react-native'
-
-// workaround for EXPO_OS not being inlined by babel-preset-expo
-// see: https://github.com/expo/expo/issues/33440
-if (typeof process !== 'undefined' && process.env && !process.env.EXPO_OS) {
-  process.env.EXPO_OS = Platform.OS
-}
-
+import '@tamagui/native/setup-zeego'
 import { registerRootComponent } from 'expo'
 import { ExpoRoot } from 'expo-router'
 import React from 'react'
+import { configurePatientAuthTokenProvider } from 'app/services/patientAuthSession'
+
+// Restore the patient JWT provider after a native reload before protected
+// patient routes make their first request.
+configurePatientAuthTokenProvider()
 
 // Must be exported or Fast Refresh won't update the context
 export function App() {

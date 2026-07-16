@@ -12,6 +12,8 @@ Verifies:
 from __future__ import annotations
 
 import base64
+import hashlib
+import json
 import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -60,8 +62,10 @@ def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
         "device_public_key": sample_p256_der_b64,
         "device_label": "iPhone 15 Pro Max",
         "platform": "ios",
+        "device_enrollment_token": "e" * 43,
     }
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     mock_res_count = MagicMock()
     mock_res_count.scalar.return_value = 0
     mock_res_exist = MagicMock()
@@ -71,7 +75,9 @@ def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
     from app.core.database import get_db_session
     app.dependency_overrides[get_db_session] = lambda: mock_db
     try:
-        with patch("app.api.v2.device_routes.append_audit_log_or_503", new_callable=AsyncMock):
+        with patch("app.api.v2.device_routes.append_audit_log_or_503", new_callable=AsyncMock), \
+             patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")), \
+             patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)):
             res = client.post(
                 "/api/v2/patient/devices/enroll",
                 headers={"Authorization": "Bearer pat-tok"},
@@ -94,6 +100,7 @@ def test_list_devices(mock_scoped_session):
     mock_dev.device_label = "iPhone 14"
     mock_dev.platform = "ios"
     mock_dev.status = "active"
+    mock_dev.device_public_key = b"public-device-key"
     from datetime import datetime, timezone
     mock_dev.enrolled_at = datetime.now(timezone.utc)
 
@@ -116,6 +123,7 @@ def test_list_devices(mock_scoped_session):
             assert "platform" in dev
             assert "status" in dev
             assert "enrolled_at" in dev
+            assert dev["public_key_fingerprint"] == hashlib.sha256(b"public-device-key").hexdigest()
             assert "device_public_key" not in dev
     finally:
         app.dependency_overrides.pop(get_db_session, None)
@@ -161,9 +169,11 @@ def test_request_consent_creates_pending(mock_provider_auth):
     mock_dev.status = "active"
 
     mock_db = AsyncMock()
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = mock_dev
-    mock_db.execute.return_value = mock_result
+    device_result = MagicMock()
+    device_result.scalar_one_or_none.return_value = mock_dev
+    token_result = MagicMock()
+    token_result.scalar_one_or_none.return_value = None
+    mock_db.execute.side_effect = [device_result, token_result]
 
     from app.core.database import get_db_session
     app.dependency_overrides[get_db_session] = lambda: mock_db
@@ -183,7 +193,53 @@ def test_request_consent_creates_pending(mock_provider_auth):
             assert data["status"] == "pending"
             assert data["request_id"]
             assert data["expires_in_seconds"] == 120
+            assert data["notification_dispatch"] == "unavailable"
+            assert data["notification_queued"] is False
+            assert data["delivery_status"] == "unavailable"
             mock_redis.set.assert_called_once()
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+
+def test_request_consent_queues_push_for_active_token(mock_provider_auth):
+    """The canonical consent endpoint must dispatch through the active patient token."""
+    payload = {
+        "patient_id": "123e4567-e89b-12d3-a456-426614174001",
+        "purpose": "routine_checkup",
+        "scope": "clinical",
+        "access_duration_seconds": 300,
+    }
+    mock_dev = MagicMock(spec=PatientDeviceKey)
+    mock_dev.status = "active"
+    mock_token = MagicMock()
+    mock_token.expo_push_token = "ExpoPushToken[physical-device]"
+
+    device_result = MagicMock()
+    device_result.scalar_one_or_none.return_value = mock_dev
+    token_result = MagicMock()
+    token_result.scalar_one_or_none.return_value = mock_token
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [device_result, token_result]
+
+    from app.core.database import get_db_session
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    try:
+        with patch("app.api.v2.consent_routes.get_redis_client") as redis_factory, \
+             patch("app.api.v2.consent_routes.append_audit_log_or_503", new_callable=AsyncMock), \
+             patch("app.api.v2.consent_routes._deliver_consent_notification", new_callable=AsyncMock) as deliver:
+            redis_factory.return_value = MagicMock()
+            response = client.post(
+                "/api/v2/consent/request",
+                headers={"Authorization": "Bearer doc-tok"},
+                json=payload,
+            )
+
+        assert response.status_code == 201, response.text
+        assert response.json()["notification_dispatch"] == "queued"
+        assert response.json()["notification_queued"] is True
+        assert response.json()["delivery_status"] == "queued"
+        deliver.assert_awaited_once()
+        assert deliver.await_args.kwargs["expo_push_token"] == "ExpoPushToken[physical-device]"
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 
@@ -191,7 +247,12 @@ def test_request_consent_creates_pending(mock_provider_auth):
 def test_consent_status_returns_pending(mock_provider_auth):
     """Test 5: consent status polling returns pending when active challenge exists in Redis."""
     req_id = str(uuid.uuid4())
-    stored_json = f'{{"request_id": "{req_id}", "status": "pending", "provider_id": "{mock_provider_auth.actor_uid}"}}'
+    stored_json = json.dumps({
+        "request_id": req_id,
+        "status": "pending",
+        "provider_id": mock_provider_auth.actor_uid,
+        "hospital_id": str(mock_provider_auth.hospital_id),
+    })
     with patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func:
         mock_redis = MagicMock()
         mock_redis.get.return_value = stored_json
@@ -202,6 +263,32 @@ def test_consent_status_returns_pending(mock_provider_auth):
         data = res.json()
         assert data["request_id"] == req_id
         assert data["status"] == "pending"
+
+
+def test_consent_status_reports_unavailable_delivery_to_provider(mock_provider_auth):
+    req_id = str(uuid.uuid4())
+    stored_json = json.dumps({
+        "request_id": req_id,
+        "status": "pending",
+        "provider_id": str(mock_provider_auth.actor_uid),
+        "hospital_id": str(mock_provider_auth.hospital_id),
+        "delivery_status": "unavailable",
+        "delivery_error": "No active push token",
+    })
+    with patch("app.api.v2.consent_routes.get_redis_client") as redis_factory:
+        redis = MagicMock()
+        redis.get.return_value = stored_json
+        redis_factory.return_value = redis
+
+        response = client.get(
+            f"/api/v2/consent/status/{req_id}",
+            headers={"Authorization": "Bearer doc-tok"},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["doctor_status"] == "delivery_failed"
+    assert response.json()["delivery_status"] == "unavailable"
+    assert response.json()["delivery_error"] == "No active push token"
 
 
 def test_consent_status_returns_expired_after_ttl(mock_provider_auth):

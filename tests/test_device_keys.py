@@ -73,6 +73,23 @@ class TestDeviceKeysService:
         assert "setItemAsync" in code, "Must store private key via SecureStore.setItemAsync"
         assert "getItemAsync" in code, "Must read private key via SecureStore.getItemAsync"
 
+    def test_uses_expo_crypto_for_secure_randomness(self) -> None:
+        code = _read(DEVICE_KEYS_PATH)
+        assert "Crypto.getRandomBytesAsync(32)" in code
+        assert "randomPrivateKey()" not in code
+
+    def test_preflights_native_storage_and_auth_tokens(self) -> None:
+        code = _read(DEVICE_KEYS_PATH)
+        assert "SecureStore.isAvailableAsync" in code
+        assert "DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY" in code
+        assert "getAuthToken()" in code
+
+    def test_patient_access_token_is_persisted_in_secure_store(self) -> None:
+        code = _read(DEVICE_KEYS_PATH)
+        assert "PATIENT_ACCESS_TOKEN_STORAGE_KEY" in code
+        assert "storePatientAuthSession" in code
+        assert "configurePatientAuthTokenProvider" in code
+
     def test_no_plain_async_storage(self) -> None:
         code = _read(DEVICE_KEYS_PATH)
         code_no_comments = _strip_comments(code)
@@ -223,18 +240,18 @@ class TestDeviceKeysService:
 
 
 class TestSecureDeviceScreenIntegration:
-    """Validate SecureDeviceScreen uses the deviceKeys service correctly."""
+    """Validate SecureDeviceScreen uses current-installation reconciliation."""
 
     def test_imports_device_keys_service(self) -> None:
         code = _read(SECURE_DEVICE_PATH)
-        assert "deviceKeys" in code, (
-            "Must import from deviceKeys service"
+        assert "currentDeviceEnrollment" in code, (
+            "Must import the current-device enrollment service"
         )
 
     def test_uses_generate_and_enroll(self) -> None:
         code = _read(SECURE_DEVICE_PATH)
-        assert "generateAndEnrollDevice" in code, (
-            "Must use generateAndEnrollDevice for the enrollment flow"
+        assert "ensureCurrentDeviceEnrollment" in code, (
+            "Must reconcile the exact local installation before enrollment"
         )
 
     def test_no_local_keypair_function(self) -> None:
@@ -510,15 +527,19 @@ class TestEnrollmentFlow:
         assert "enrollment failed" in code.lower() or "try again" in code.lower(), (
             "Must show user-friendly error message"
         )
+        assert "DEVICE_ENROLLMENT_ERROR" in code
+        assert "err instanceof Error" in code
 
     def test_screen_resets_step_on_error(self) -> None:
         """After an error, the step should reset to 'ready'."""
         code = _read(SECURE_DEVICE_PATH)
         # In the catch block, step should be reset
-        catch_match = re.search(r"catch.*?{(.*?)}", code, re.DOTALL)
-        if catch_match:
-            catch_body = catch_match.group(1)
-            assert "ready" in catch_body, "Must reset step to ready on error"
+        catch_start = code.find("catch (err: unknown)")
+        finally_start = code.find("finally", catch_start)
+        assert catch_start >= 0 and finally_start > catch_start
+        assert "setStep('ready')" in code[catch_start:finally_start], (
+            "Must reset step to ready on error"
+        )
 
     def test_keypair_reuse_on_existing_key(self) -> None:
         """generateDeviceKeypair should reuse existing key, not regenerate."""

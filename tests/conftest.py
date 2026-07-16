@@ -18,6 +18,7 @@ if "document_processor" not in sys.modules:
 os.environ.setdefault("KEK_ROOT_SECRET", "test-kek-root-secret-32-bytes-minimum")
 os.environ.setdefault("NEXA_PEPPER_KEY", "test-pepper-key")
 os.environ.setdefault("ENVIRONMENT", "test")
+os.environ["TRUSTED_HOSTS"] = "localhost,127.0.0.1,testserver"
 
 from app.main import app
 
@@ -274,7 +275,6 @@ def override_deps(request, mock_db, mock_redis):
          patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis),
          patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None),
          patch("app.core.supabase.get_supabase_client", return_value=mock_supabase),
-         patch("app.observability.audit_ledger.get_supabase_client", return_value=mock_supabase),
          patch("app.services.consent_engine.get_consent_redis_client", return_value=mock_redis),
          patch("app.services.biometric_signature_verifier.get_supabase_client", return_value=mock_supabase),
          patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None),

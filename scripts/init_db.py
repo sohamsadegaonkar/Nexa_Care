@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
 # Explicit model imports are required for Base.metadata registration.
 import app.models.document_review  # noqa: E402,F401
 import app.models.nfc_card_registry  # noqa: E402,F401
+import app.models.patient_auth_identity  # noqa: E402,F401
 import app.models.provider  # noqa: E402,F401
 import app.models.shards  # noqa: E402,F401
 from app.core.database import get_async_engine  # noqa: E402
@@ -37,7 +38,6 @@ async def _apply_additive_provider_phase_a_schema(conn) -> None:
         "ALTER TABLE provider_identity ADD COLUMN IF NOT EXISTS role VARCHAR(64) NOT NULL DEFAULT 'provider'",
         "ALTER TABLE provider_identity ADD COLUMN IF NOT EXISTS status VARCHAR(32) NOT NULL DEFAULT 'active'",
         "ALTER TABLE provider_credential ADD COLUMN IF NOT EXISTS provider_uid VARCHAR(64)",
-        "ALTER TABLE provider_credential ADD COLUMN IF NOT EXISTS hashed_password TEXT",
         "ALTER TABLE provider_credential ADD COLUMN IF NOT EXISTS mfa_secret TEXT",
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_provider_identity_provider_uid ON provider_identity(provider_uid)",
         "CREATE INDEX IF NOT EXISTS ix_provider_identity_hospital_id ON provider_identity(hospital_id)",

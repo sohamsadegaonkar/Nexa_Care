@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,10 +24,18 @@ from app.core.dependencies import get_current_provider, get_db_session, get_prov
 from app.core.rate_limiter import RateLimiter
 from app.core.redis import get_redis_client
 from app.models.patient_device_keys import PatientDeviceKey
+from app.models.push_token import PatientPushToken
 from app.models.provider_context import ProviderContext
 from app.models.consent_grant import ConsentGrantLog
 from app.models.assurance import AssuranceLevel
 from app.services.signed_approval_verifier import SignedApprovalVerifier
+from app.services.push_notification_service import PushNotificationService
+from app.services.approved_access_capability import (
+    ApprovedAccessClaimInProgress,
+    ApprovedAccessStoreUnavailable,
+    invalidate_request,
+    issue_from_approved_request,
+)
 # EXPLICITLY ALIAS THE IMPORT SO MOCK PATCHING MATCHES THE ATTRIBUTE NAME
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import (
@@ -40,6 +48,7 @@ from app.observability.audit_ledger import append_audit_log_or_503
 
 logger = logging.getLogger("nexa_logger")
 router = APIRouter(prefix="/api/v2/consent", tags=["consent"])
+push_notification_service = PushNotificationService()
 ROUTINE_CONSENT_TTL_SECONDS = 60 * 60
 BREAK_GLASS_TTL_SECONDS = 15 * 60
 
@@ -282,12 +291,57 @@ class ConsentChallengeResponsePayload(BaseModel):
     status: str
     expires_in_seconds: int
     challenge_nonce: str | None = None
+    notification_dispatch: Literal["queued", "unavailable"]
+    notification_queued: bool
+    delivery_status: Literal["queued", "unavailable"]
+
+
+class ConsentAccessClaimResponse(BaseModel):
+    patient_id: str
+    consent_token: str
+    purpose: str
+    scope: str
+    expires_at: str
 
 
 class ConsentStatusResponsePayload(BaseModel):
     request_id: str
     status: str
     responded_at: str | None = None
+    doctor_status: str | None = None
+    delivery_status: str | None = None
+    delivery_error: str | None = None
+
+
+async def _deliver_consent_notification(
+    *,
+    request_id: str,
+    patient_id: str,
+    provider_name: str,
+    purpose: str,
+    expo_push_token: str,
+) -> None:
+    """Send the Expo notification and persist delivery outcome in Redis."""
+    result = await push_notification_service.send_approval_request(
+        patient_id=patient_id,
+        request_id=request_id,
+        provider_name=provider_name,
+        purpose=purpose,
+        expo_push_token=expo_push_token,
+    )
+    redis = get_redis_client()
+    key = f"consent_request:{request_id}"
+    raw = redis.get(key)
+    if not raw:
+        return
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    data = json.loads(raw)
+    data["delivery_status"] = "sent" if result.success else "failed"
+    data["delivery_error"] = None if result.success else (result.error or "Push delivery failed")[:512]
+    data["delivery_completed_at"] = datetime.now(timezone.utc).isoformat()
+    ttl = redis.ttl(key)
+    redis.set(key, json.dumps(data), ex=ttl if isinstance(ttl, int) and ttl > 0 else 120)
 
 
 class SignedApprovalRequestPayload(BaseModel):
@@ -308,6 +362,7 @@ class SignedApprovalResponsePayload(BaseModel):
 @router.post("/request", status_code=status.HTTP_201_CREATED, response_model=ConsentChallengeResponsePayload)
 async def create_consent_request(
     payload: ConsentChallengeRequestPayload,
+    background_tasks: BackgroundTasks,
     provider: ProviderContext = Depends(get_current_provider),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -365,6 +420,7 @@ async def create_consent_request(
         "request_id": request_id,
         "patient_id": payload.patient_id,
         "provider_id": provider.actor_uid,  # Server-derived — NEVER from request body
+        "hospital_id": str(provider.hospital_id),
         "provider_name": "Provider",
         "hospital_name": "Hospital",
         "purpose": payload.purpose,
@@ -375,6 +431,22 @@ async def create_consent_request(
         "expires_at": expires_at.isoformat(),
         "status": "pending",
     }
+
+    token_result = await db.execute(
+        select(PatientPushToken).where(
+            PatientPushToken.patient_id == pid_uuid,
+            PatientPushToken.is_active.is_(True),
+        ).order_by(PatientPushToken.updated_at.desc()).limit(1)
+    )
+    push_token = token_result.scalar_one_or_none()
+    if push_token is not None and not isinstance(
+        getattr(push_token, "expo_push_token", None), str
+    ):
+        logger.error("invalid_active_push_token_record")
+        push_token = None
+    delivery_status = "queued" if push_token else "unavailable"
+    challenge_payload["delivery_status"] = delivery_status
+    challenge_payload["delivery_error"] = None if push_token else "No active push token"
 
     redis = get_redis_client()
     redis.set(f"consent_request:{request_id}", json.dumps(challenge_payload), ex=challenge_ttl_seconds)
@@ -387,11 +459,24 @@ async def create_consent_request(
         metadata={"patient_id": payload.patient_id, "purpose": payload.purpose},
     )
 
+    if push_token:
+        background_tasks.add_task(
+            _deliver_consent_notification,
+            request_id=request_id,
+            patient_id=payload.patient_id,
+            provider_name=provider.provider.display_name,
+            purpose=payload.purpose,
+            expo_push_token=push_token.expo_push_token,
+        )
+
     return ConsentChallengeResponsePayload(
         request_id=request_id,
         status="pending",
         expires_in_seconds=challenge_ttl_seconds,
         challenge_nonce=challenge_nonce,
+        notification_dispatch=delivery_status,
+        notification_queued=push_token is not None,
+        delivery_status=delivery_status,
     )
 
 
@@ -424,6 +509,19 @@ async def approve_signed_consent(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Authenticated patient does not match challenge target",
+        )
+
+    approval_fingerprint = hashlib.sha256(
+        "|".join((payload.request_id, payload.patient_id, payload.decision,
+                  payload.challenge_nonce, payload.device_id, payload.signature)).encode("utf-8")
+    ).hexdigest()
+    if data.get("status") == payload.decision and secrets.compare_digest(
+        str(data.get("approval_fingerprint", "")), approval_fingerprint
+    ):
+        return SignedApprovalResponsePayload(
+            request_id=payload.request_id,
+            status=payload.decision,
+            responded_at=str(data.get("responded_at")),
         )
 
     if redis.get(f"biometric_nonce:{payload.challenge_nonce}:used") or data.get("status") != "pending":
@@ -482,6 +580,7 @@ async def approve_signed_consent(
         scope=str(data.get("scope", "")),
         purpose=str(data.get("purpose", "")),
         access_duration=int(data.get("access_duration", 900)),
+        device_id=payload.device_id,
     )
     if not res_verify.verified:
         if res_verify.error == "Challenge expired":
@@ -504,17 +603,6 @@ async def approve_signed_consent(
         }
         redis.set(f"assurance_evidence:{payload.request_id}", json.dumps(evidence_data), ex=120)
 
-        token = await consent_engine.issue(
-            db=db,
-            patient_id=patient_id,
-            clinician_id=str(data.get("provider_id")),
-            purpose=str(data.get("purpose", "routine_checkup")),
-            scope=[data["scope"]] if isinstance(data.get("scope"), str) else (data.get("scope") or ["clinical"]),
-            assurance_level=AssuranceLevel.PUSH_BIOMETRIC,
-            assurance_evidence={"request_id": payload.request_id, "device_id": payload.device_id, "signature": payload.signature},
-            ttl_seconds=int(data.get("access_duration", 900)),
-        )
-
         await append_audit_log_or_503(
             actor_uid=patient_id,
             event_type="CONSENT_APPROVED_SIGNED",
@@ -525,7 +613,11 @@ async def approve_signed_consent(
 
         data["status"] = "approved"
         data["responded_at"] = now.isoformat()
-        data["consent_token"] = token
+        data["access_expires_at"] = (
+            now + timedelta(seconds=int(data.get("access_duration", 900)))
+        ).isoformat()
+        data["approved_device_id"] = str(device.id)
+        data["approval_fingerprint"] = approval_fingerprint
         redis.set(f"biometric_nonce:{payload.challenge_nonce}:used", "1", ex=300)
         redis.set(f"consent_request:{payload.request_id}", json.dumps(data), ex=int(data.get("access_duration", 900)))
 
@@ -537,6 +629,8 @@ async def approve_signed_consent(
 
     data["status"] = "denied"
     data["responded_at"] = now.isoformat()
+    data["approved_device_id"] = str(device.id)
+    data["approval_fingerprint"] = approval_fingerprint
     redis.set(f"biometric_nonce:{payload.challenge_nonce}:used", "1", ex=300)
     redis.set(f"consent_request:{payload.request_id}", json.dumps(data), ex=300)
 
@@ -581,11 +675,109 @@ async def get_consent_request_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Only requesting provider may poll status",
         )
+    if str(data.get("hospital_id")) != str(provider.hospital_id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Consent request belongs to a different hospital context",
+        )
 
     return ConsentStatusResponsePayload(
         request_id=request_id,
         status=data.get("status", "pending"),
         responded_at=data.get("responded_at"),
+        doctor_status=(
+            "delivery_failed"
+            if data.get("status", "pending") == "pending"
+            and data.get("delivery_status") in {"failed", "unavailable"}
+            else data.get("status", "pending")
+        ),
+        delivery_status=data.get("delivery_status"),
+        delivery_error=data.get("delivery_error"),
+    )
+
+
+@router.post(
+    "/{request_id}/claim-access",
+    status_code=status.HTTP_200_OK,
+    response_model=ConsentAccessClaimResponse,
+)
+async def claim_approved_access(
+    request_id: str,
+    response: Response,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Exchange an approved request for a provider-bound record capability."""
+    response.headers["Cache-Control"] = "no-store"
+    redis = get_redis_client()
+    raw = redis.get(f"consent_request:{request_id}")
+    if not raw:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Consent request not found")
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
+    data = json.loads(raw)
+
+    if data.get("status") != "approved":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Consent request is not approved")
+    if str(data.get("provider_id")) != provider.actor_uid:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only requesting provider may claim access")
+    if str(data.get("hospital_id")) != str(provider.hospital_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consent request belongs to another hospital")
+
+    try:
+        access_expires_at = datetime.fromisoformat(str(data.get("access_expires_at")))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approved access window is invalid")
+    if access_expires_at.tzinfo is None:
+        access_expires_at = access_expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) >= access_expires_at:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approved access window has expired")
+
+    try:
+        device_uuid = uuid.UUID(str(data.get("approved_device_id")))
+        patient_uuid = uuid.UUID(str(data.get("patient_id")))
+    except ValueError:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approved device binding is invalid")
+    result = await db.execute(select(PatientDeviceKey).where(
+        PatientDeviceKey.id == device_uuid,
+        PatientDeviceKey.patient_id == patient_uuid,
+        PatientDeviceKey.status == "active",
+        PatientDeviceKey.revoked_at.is_(None),
+    ))
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approving device is no longer active")
+
+    try:
+        token, capability = issue_from_approved_request(request_data=data)
+        await append_audit_log_or_503(
+            actor_uid=provider.actor_uid,
+            event_type="CONSENT_ACCESS_CLAIMED",
+            target_id=request_id,
+            status="SUCCESS",
+            metadata={
+                "patient_id": capability.patient_id,
+                "provider_id": provider.actor_uid,
+                "hospital_id": str(provider.hospital_id),
+                "purpose": capability.purpose,
+                "scope": capability.scope,
+            },
+        )
+    except ApprovedAccessClaimInProgress as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ApprovedAccessStoreUnavailable as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+    except Exception:
+        try:
+            invalidate_request(request_id)
+        finally:
+            raise
+
+    return ConsentAccessClaimResponse(
+        patient_id=capability.patient_id,
+        consent_token=token,
+        purpose=capability.purpose,
+        scope=capability.scope[0],
+        expires_at=capability.expires_at,
     )
 
 
@@ -697,12 +889,6 @@ async def get_challenge_for_patient(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Authenticated patient does not match challenge target",
-        )
-
-    if data.get("status") != "pending":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Request already resolved: {data.get('status')}",
         )
 
     return ConsentChallengeForPatientPayload(

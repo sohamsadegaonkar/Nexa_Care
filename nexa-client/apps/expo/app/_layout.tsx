@@ -1,9 +1,21 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useColorScheme } from 'react-native'
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native'
 import { useFonts } from 'expo-font'
-import { SplashScreen, Stack } from 'expo-router'
+import { SplashScreen, Stack, useRouter } from 'expo-router'
 import { Provider } from 'app/provider'
+import {
+  installConsentNotificationListeners,
+  registerForPushNotifications,
+} from 'app/services/pushNotifications'
+import {
+  hydratePatientAuthSession,
+  usePatientAuthSession,
+} from 'app/services/patientAuthSession'
+import {
+  CurrentDeviceError,
+  ensureCurrentDeviceEnrollment,
+} from 'app/services/currentDeviceEnrollment'
 
 export const unstable_settings = {
   // Ensure that reloading on `/user` keeps a back button present.
@@ -35,6 +47,40 @@ export default function App() {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme()
+  const router = useRouter()
+  const patientAuth = usePatientAuthSession()
+  const navigateToConsent = useCallback((requestId: string) => {
+    router.push({
+      pathname: '/patient/consent-request',
+      params: { requestId },
+    })
+  }, [router])
+
+  useEffect(() => {
+    void hydratePatientAuthSession()
+  }, [])
+
+  useEffect(() => installConsentNotificationListeners(navigateToConsent), [navigateToConsent])
+
+  useEffect(() => {
+    if (!patientAuth.hydrated || patientAuth.status !== 'authenticated') return undefined
+    const controller = new AbortController()
+    void ensureCurrentDeviceEnrollment()
+      .then(() => registerForPushNotifications({ signal: controller.signal }))
+      .catch((error) => {
+      if (controller.signal.aborted || process.env.NODE_ENV === 'production') return
+      console.warn('PATIENT_DEVICE_SETUP_OR_PUSH_FAILED', {
+        code: error instanceof CurrentDeviceError ? error.code : 'UNKNOWN',
+        authState: patientAuth.status,
+        hydrated: patientAuth.hydrated,
+      })
+      })
+    return () => controller.abort()
+  }, [patientAuth.hydrated, patientAuth.sessionKey, patientAuth.status])
+
+  useEffect(() => {
+    if (patientAuth.status === 'expired') router.replace('/patient/login')
+  }, [patientAuth.status, router])
 
   return (
     <Provider>

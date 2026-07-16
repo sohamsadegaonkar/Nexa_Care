@@ -57,7 +57,6 @@ def client(fake_async_redis, mock_provider):
 
     with patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_async_redis), \
          patch("app.core.supabase.get_supabase_client", return_value=m_supabase), \
-         patch("app.observability.audit_ledger.get_supabase_client", return_value=m_supabase), \
          patch("app.observability.audit_ledger.append_audit_log", return_value=True), \
          patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None), \
          patch("app.api.routes.append_audit_log_or_503", return_value=None):

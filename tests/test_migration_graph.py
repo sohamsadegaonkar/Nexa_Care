@@ -1,0 +1,57 @@
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+
+ROOT = Path(__file__).resolve().parents[1]
+CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
+CORE_REVISION = "20260705_nexa_v1"
+EXPECTED_HEAD = "20260717_provider_pwd_canonical"
+
+
+def _scripts() -> ScriptDirectory:
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "alembic"))
+    return ScriptDirectory.from_config(config)
+
+
+def test_cleanup_depends_on_core_schema() -> None:
+    cleanup = _scripts().get_revision(CLEANUP_REVISION)
+    assert cleanup is not None
+    assert cleanup.dependencies == CORE_REVISION
+
+
+def test_migration_chain_has_expected_single_head() -> None:
+    assert _scripts().get_heads() == [EXPECTED_HEAD]
+
+
+def test_cleanup_sql_guards_absent_tables() -> None:
+    source = (ROOT / "alembic" / "versions" / "20260704_drop_raw_pii_from_vault.py").read_text()
+    assert "to_regclass('public.nexa_vault') IS NOT NULL" in source
+    assert "to_regclass('public.nexa_clinical') IS NOT NULL" in source
+    assert "information_schema.columns" in source
+    assert "ADD COLUMN raw_pii JSONB" in source
+
+
+def test_no_root_revision_references_cross_root_tables() -> None:
+    scripts = _scripts()
+    for revision in scripts.walk_revisions(base="base", head="heads"):
+        if revision.down_revision is None and revision.revision == CLEANUP_REVISION:
+            assert revision.dependencies == CORE_REVISION
+
+
+def test_device_timestamp_correction_descends_from_previous_head() -> None:
+    correction = _scripts().get_revision("20260713_device_key_timestamps")
+    assert correction is not None
+    assert correction.down_revision == "20260712_tombstone_integrity"
+
+
+def test_device_timestamp_correction_is_guarded_and_non_destructive() -> None:
+    source = (ROOT / "alembic" / "versions" / "20260713_add_patient_device_key_timestamps.py").read_text()
+    assert 'get_columns("patient_device_keys")' in source
+    assert 'if "created_at" not in columns' in source
+    assert 'if "updated_at" not in columns' in source
+    assert 'sa.DateTime(timezone=True)' in source
+    assert 'server_default=sa.func.now()' in source
+    assert "op.drop_column" not in source

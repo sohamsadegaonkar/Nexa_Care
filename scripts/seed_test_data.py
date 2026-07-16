@@ -13,16 +13,19 @@ registry. Run with DATABASE_URL pointed at the target Supabase/Postgres DB.
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 import uuid
 from pathlib import Path
 
+from dotenv import load_dotenv
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+load_dotenv(ROOT / ".env", override=True)
 
 from app.core.database import get_session_factory  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402
@@ -33,16 +36,13 @@ from app.models.provider import (  # noqa: E402
     ProviderHospitalAffiliation,
     ProviderIdentity,
 )
-from app.services.provider_auth_service import (  # noqa: E402
-    hash_provider_password,
-    issue_provider_session_token,
-)
+from app.services.provider_auth_service import hash_provider_password  # noqa: E402
+from scripts.demo_environment import require_demo_environment  # noqa: E402
 
 CARD_UID = "04:A2:B4:EA:51:22"
 PATIENT_ID = uuid.uuid5(uuid.NAMESPACE_DNS, f"nexa-care-test-patient:{CARD_UID}")
 
 TEST_PROVIDER_EMAIL = "test.doctor@nexa-care.local"
-TEST_PROVIDER_PASSWORD = "test_hospital_api_key_123"
 TEST_HOSPITAL_CODE = "NEXA-TEST-HOSPITAL"
 
 
@@ -130,10 +130,15 @@ async def seed_provider(session) -> tuple[uuid.UUID, uuid.UUID]:
         )
     )
     if credential is None:
+        password = os.getenv("TEST_PROVIDER_PASSWORD", "")
+        if len(password) < 14:
+            raise RuntimeError(
+                "TEST_PROVIDER_PASSWORD must be configured with at least 14 characters"
+            )
         credential = ProviderCredential(
             provider_id=provider.id,
             login_identifier=TEST_PROVIDER_EMAIL,
-            password_hash=hash_provider_password(TEST_PROVIDER_PASSWORD),
+            password_hash=hash_provider_password(password),
             mfa_enabled=False,
             is_active=True,
         )
@@ -164,7 +169,9 @@ async def seed_provider(session) -> tuple[uuid.UUID, uuid.UUID]:
 async def main() -> int:
     """Run the seed transaction."""
 
-    provider_token: str | None = None
+    if require_demo_environment("seed_test_data") != "test":
+        raise RuntimeError("seed_test_data requires ENV=test")
+
     session_factory = get_session_factory()
     async with session_factory() as session:
         try:
@@ -176,30 +183,19 @@ async def main() -> int:
             await session.rollback()
             raise
 
-    try:
-        provider_token = await issue_provider_session_token(provider_id)
-    except Exception as exc:
-        print(f"WARNING: Provider bearer token was not issued: {type(exc).__name__}: {exc}")
-
     print("\n" + "=" * 72)
     print("NEXA CARE TEST DATA SEEDED")
     print("=" * 72)
     print(f"Patient ID:      {PATIENT_ID}")
     print(f"NFC UID:         {CARD_UID}")
     print(f"Provider Email:  {TEST_PROVIDER_EMAIL}")
-    print(f"Provider Pass:   {TEST_PROVIDER_PASSWORD}")
     print(f"Provider ID:     {provider_id}")
     print(f"Hospital ID:     {hospital_id}")
-    if provider_token:
-        print(f"Bearer Token:    {provider_token}")
     print("=" * 72)
     print("Simulator emergency tap UID:")
     print(CARD_UID)
     print("Simulator routine checkup Patient ID:")
     print(PATIENT_ID)
-    if provider_token:
-        print("Simulator CLINIC_API_KEY / bearer token:")
-        print(provider_token)
     print("=" * 72 + "\n")
     return 0
 

@@ -19,17 +19,17 @@ import { useState, useEffect } from 'react'
 
 export function DoctorDashboardScreen() {
   const router = useRouter()
-  const { isAuthenticated, displayName, hospitalName, providerId, role, logout } = useProviderAuth()
+  const { hydrated, isAuthenticated, displayName, hospitalName, providerId, role, logout } = useProviderAuth()
   const [pendingCount, setPendingCount] = useState<number>(0)
   const [pendingLoading, setPendingLoading] = useState(true)
   const [pendingError, setPendingError] = useState<string | null>(null)
 
   // ── Session guard — redirect to login if not authenticated ────────────
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (hydrated && !isAuthenticated) {
       router.replace('/doctor/login')
     }
-  }, [isAuthenticated, router])
+  }, [hydrated, isAuthenticated, router])
 
   // ── Fetch pending consent request count ───────────────────────────────
   useEffect(() => {
@@ -63,7 +63,7 @@ export function DoctorDashboardScreen() {
 
   // ── Unauthenticated — render nothing while redirecting ────────────────
 
-  if (!isAuthenticated) {
+  if (!hydrated || !isAuthenticated) {
     return (
       <YStack flex={1} bg="$background" justifyContent="center" alignItems="center">
         <Spinner size="large" color="$blue10" />

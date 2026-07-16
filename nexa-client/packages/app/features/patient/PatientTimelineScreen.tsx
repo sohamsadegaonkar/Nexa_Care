@@ -119,7 +119,7 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
         )}
 
         {/* Error state */}
-        {error && (
+        {error !== null ? (
           <YStack ai="center" py="$8" gap="$2">
             <Text fontSize={36}>⚠️</Text>
             <Paragraph col="$red10" size="$4" ta="center">{error}</Paragraph>
@@ -127,10 +127,10 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
               Retry
             </Button>
           </YStack>
-        )}
+        ) : null}
 
         {/* Empty state */}
-        {!loading && !error && timeline.length === 0 && (
+        {!loading && error === null && timeline.length === 0 ? (
           <YStack ai="center" py="$8" gap="$2">
             <Text fontSize={48}>📊</Text>
             <Paragraph col="$colorSubdued" size="$4" ta="center">
@@ -140,7 +140,7 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
               When your provider uploads documents, your timeline will populate here.
             </Paragraph>
           </YStack>
-        )}
+        ) : null}
 
         {/* Grouped timeline events */}
         {Object.entries(grouped).map(([dateKey, events]) => (
@@ -176,9 +176,9 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
                         <Text col="$red10" size="$2" fontWeight="600">ABNORMAL</Text>
                       </YStack>
                     )}
-                    {riskLevel && (
+                    {riskLevel ? (
                       <RiskBadge level={riskLevel} />
-                    )}
+                    ) : null}
                   </XStack>
 
                   {/* Summary / description */}
@@ -193,11 +193,11 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
                   </XStack>
 
                   {/* Source display text from backend */}
-                  {event.source_display && (
+                  {typeof event.source_display === 'string' && event.source_display.length > 0 ? (
                     <Paragraph col="$colorSubdued" size="$2" o={0.5}>
                       {event.source_display}
                     </Paragraph>
-                  )}
+                  ) : null}
                 </YStack>
               )
             })}

@@ -36,6 +36,7 @@ from app.core.security import hash_client_ip
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
+from app.services.patient_auth_service import decode_patient_access_token
 from app.services.consent_engine import ConsentEngineUnavailable, validate as validate_consent_capability
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
@@ -55,6 +56,10 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
             status="MISSING_TOKEN",
         )
         raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    patient_claims = decode_patient_access_token(authorization)
+    if patient_claims:
+        return str(patient_claims["patient_id"])
 
     session_context = await validate_session_context(authorization)
     if not session_context:

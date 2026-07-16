@@ -61,10 +61,14 @@ class TestExtractedMedicalDocument(unittest.TestCase):
 
 class TestMedicalDocumentExtractor(unittest.TestCase):
     def test_initialization_does_not_load_local_ml(self) -> None:
-        extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
+        with patch.dict(
+            "os.environ",
+            {"DOCUMENT_AI_API_KEY": "", "DOCUMENT_AI_API_URL": ""},
+        ):
+            extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
 
-        self.assertIsNone(extractor.api_key)
-        self.assertIsNone(extractor.api_url)
+        self.assertFalse(extractor.api_key)
+        self.assertFalse(extractor.api_url)
 
     @patch("app.ai.extractor.asyncio.sleep", new_callable=AsyncMock)
     def test_missing_api_key_returns_mock_after_delay(self, mock_sleep) -> None:
@@ -72,7 +76,11 @@ class TestMedicalDocumentExtractor(unittest.TestCase):
             tmp.write(b"fake medical document")
             path = tmp.name
 
-        extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
+        with patch.dict(
+            "os.environ",
+            {"DOCUMENT_AI_API_KEY": "", "DOCUMENT_AI_API_URL": ""},
+        ):
+            extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
         try:
             document = run(extractor.extract_data(path))
         finally:

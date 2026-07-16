@@ -24,6 +24,7 @@ interface ConsentRecord {
 export function ConsentHistoryScreen() {
   const [history, setHistory] = useState<ConsentRecord[]>([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const [filter, setFilter] = useState<'all' | 'routine' | 'break-glass'>('all')
 
   useEffect(() => {
@@ -31,8 +32,9 @@ export function ConsentHistoryScreen() {
       try {
         const data = await NexaApiClient.getConsentHistory()
         setHistory(data)
-      } catch (e) {
-        console.error('Failed to fetch consent history', e)
+      } catch {
+        console.error('CONSENT_HISTORY_REQUEST_FAILED')
+        setError('Consent history could not be loaded. Please try again.')
       } finally {
         setLoading(false)
       }
@@ -48,6 +50,15 @@ export function ConsentHistoryScreen() {
     return (
       <YStack flex={1} items="center" justify="center" bg="$background">
         <Text color="$color11">Loading consent history...</Text>
+      </YStack>
+    )
+  }
+
+  if (error) {
+    return (
+      <YStack flex={1} items="center" justify="center" bg="$background" gap="$3">
+        <Text color="$red10">{error}</Text>
+        <Button onPress={() => window.location.reload()}>Try Again</Button>
       </YStack>
     )
   }

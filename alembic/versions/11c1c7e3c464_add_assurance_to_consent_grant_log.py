@@ -19,8 +19,11 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.add_column('consent_grant_log', sa.Column('assurance_level', sa.String(length=32), nullable=True))
-    op.add_column('consent_grant_log', sa.Column('assurance_verified_at', sa.DateTime(timezone=True), nullable=True))
+    columns = {column['name'] for column in sa.inspect(op.get_bind()).get_columns('consent_grant_log')}
+    if 'assurance_level' not in columns:
+        op.add_column('consent_grant_log', sa.Column('assurance_level', sa.String(length=32), nullable=True))
+    if 'assurance_verified_at' not in columns:
+        op.add_column('consent_grant_log', sa.Column('assurance_verified_at', sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:

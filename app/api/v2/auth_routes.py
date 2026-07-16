@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -15,12 +16,21 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy import select
+from starlette.concurrency import run_in_threadpool
 
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider
-from app.core.rate_limiter import RateLimiter, client_ip_key
+from app.core.rate_limiter import (
+    OtpRateLimitBackendUnavailable,
+    OtpRateLimitExceeded,
+    OtpRedisRateLimiter,
+    RateLimiter,
+    client_ip_key,
+)
 from app.core.security import encrypt_mfa_secret
 from app.models.provider import ProviderCredential
+from app.models.patient import Patient
+from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.provider_auth_service import (
@@ -36,6 +46,12 @@ from app.services.provider_auth_service import (
 )
 
 from app.core.redis import get_redis_client
+from app.core.supabase import get_supabase_client
+from app.services.patient_auth_service import (
+    issue_device_enrollment_token,
+    issue_patient_access_token,
+    normalize_indian_phone,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -52,10 +68,132 @@ async def _maybe_await(value):
         return await value
     return value
 
-# Per-IP rate limiters. Single-worker MVP; replace with a Redis-backed
-# limiter for multi-worker production.
+# Provider login limiters preserve their existing shared Redis behavior.
 _login_rate_limiter = RateLimiter(max_requests=5, window_seconds=60, key_func=client_ip_key)
 _mfa_verify_rate_limiter = RateLimiter(max_requests=5, window_seconds=60, key_func=client_ip_key)
+_otp_rate_limiter = OtpRedisRateLimiter()
+
+
+class PatientOtpSendRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    phone: str = Field(..., min_length=10, max_length=32)
+
+
+class PatientOtpVerifyRequest(PatientOtpSendRequest):
+    otp: str = Field(..., pattern=r"^\d{6}$")
+
+
+class PatientOtpSendResponse(BaseModel):
+    message: str
+
+
+class PatientOtpVerifyResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+    patient_id: str
+    device_enrollment_token: str
+
+
+def _normalized_phone_or_422(phone: str) -> str:
+    try:
+        return normalize_indian_phone(phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _enforce_otp_limits(request: Request, phone: str) -> None:
+    ip = _client_ip_from_request(request) or "unknown"
+    action = request.url.path.rsplit("/", 1)[-1]
+    try:
+        await _otp_rate_limiter.check(action=action, ip=ip, normalized_phone=phone)
+    except OtpRateLimitExceeded:
+        raise HTTPException(status_code=429, detail="Too many OTP requests. Please try again later.")
+    except OtpRateLimitBackendUnavailable:
+        raise HTTPException(status_code=503, detail="OTP service is temporarily unavailable.")
+
+
+@router.post("/otp/send", response_model=PatientOtpSendResponse)
+async def patient_otp_send(payload: PatientOtpSendRequest, request: Request) -> PatientOtpSendResponse:
+    phone = _normalized_phone_or_422(payload.phone)
+    await _enforce_otp_limits(request, phone)
+    try:
+        await run_in_threadpool(
+            get_supabase_client().auth.sign_in_with_otp,
+            {"phone": phone, "options": {"should_create_user": False}},
+        )
+    except Exception as exc:
+        # Preserve account non-enumeration. Supabase returns an error for an
+        # unknown phone when user creation is disabled; callers receive the
+        # same response as an existing patient.
+        code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+        if code not in {400, 401, 403, 422}:
+            raise HTTPException(status_code=503, detail="SMS service is unavailable.") from None
+    return PatientOtpSendResponse(message="If this phone is registered, an OTP will be sent.")
+
+
+@router.post("/otp/verify", response_model=PatientOtpVerifyResponse)
+async def patient_otp_verify(
+    payload: PatientOtpVerifyRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> PatientOtpVerifyResponse:
+    phone = _normalized_phone_or_422(payload.phone)
+    await _enforce_otp_limits(request, phone)
+    try:
+        result = await run_in_threadpool(
+            get_supabase_client().auth.verify_otp,
+            {"phone": phone, "token": payload.otp, "type": "sms"},
+        )
+    except Exception as exc:
+        code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+        if code in {400, 401, 403}:
+            raise HTTPException(status_code=401, detail="Invalid or expired OTP.") from None
+        raise HTTPException(status_code=503, detail="SMS verification service is unavailable.") from None
+
+    user = getattr(result, "user", None)
+    verified_phone = getattr(user, "phone", None)
+    supabase_user_id = getattr(user, "id", None)
+    session = getattr(result, "session", None)
+    supabase_access_token = getattr(session, "access_token", None)
+    if not user or not verified_phone or not supabase_user_id or not supabase_access_token:
+        raise HTTPException(status_code=401, detail="Invalid or expired OTP.")
+    try:
+        authoritative_phone = normalize_indian_phone(str(verified_phone))
+    except ValueError:
+        raise HTTPException(status_code=401, detail="Invalid or expired OTP.") from None
+    if authoritative_phone != phone:
+        raise HTTPException(status_code=401, detail="Invalid or expired OTP.")
+
+    identity = await db.scalar(
+        select(PatientAuthIdentity).where(
+            PatientAuthIdentity.provider == "supabase",
+            PatientAuthIdentity.provider_subject == str(supabase_user_id),
+            PatientAuthIdentity.revoked_at.is_(None),
+        )
+    )
+    if identity is None:
+        raise HTTPException(status_code=403, detail="No patient account is linked to this verified identity.")
+
+    patient = await db.scalar(
+        select(Patient).where(
+            Patient.patient_uuid == identity.patient_id,
+            Patient.is_deleted.is_(False),
+        )
+    )
+    if patient is None:
+        raise HTTPException(status_code=403, detail="No active patient account is linked to this verified identity.")
+
+    patient_id = str(patient.patient_uuid)
+    access_token, expires_at = issue_patient_access_token(patient_id, str(supabase_user_id))
+    auth_session_id = hashlib.sha256(str(supabase_access_token).encode()).hexdigest()
+    enrollment_token = await issue_device_enrollment_token(patient_id, auth_session_id)
+    return PatientOtpVerifyResponse(
+        access_token=access_token,
+        expires_at=expires_at,
+        patient_id=patient_id,
+        device_enrollment_token=enrollment_token,
+    )
 
 
 def _client_ip_from_request(request: Request) -> str:
@@ -160,8 +298,10 @@ def _status_for_failure(failure: ProviderAuthFailure) -> int:
 
 
 def _detail_for_failure(failure: ProviderAuthFailure) -> str:
+    if failure is ProviderAuthFailure.MFA_SESSION_EXPIRED:
+        return "MFA session expired. Sign in again."
     if failure is ProviderAuthFailure.MFA_INVALID_CODE:
-        return "Invalid or expired MFA code."
+        return "Invalid authenticator code."
     if failure is ProviderAuthFailure.MFA_NOT_CONFIGURED:
         return (
             "This provider account has multi-factor authentication enabled, but "
