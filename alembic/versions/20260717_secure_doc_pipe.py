@@ -1,6 +1,6 @@
 """secure patient-bound document pipeline metadata
 
-Revision ID: 20260717_secure_document_pipeline
+Revision ID: 20260717_secure_doc_pipe
 Revises: 20260717_provider_pwd_canonical
 Create Date: 2026-07-17
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "20260717_secure_document_pipeline"
+revision = "20260717_secure_doc_pipe"
 down_revision = "20260717_provider_pwd_canonical"
 branch_labels = None
 depends_on = None

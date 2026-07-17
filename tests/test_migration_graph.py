@@ -26,6 +26,15 @@ def test_migration_chain_has_expected_single_head() -> None:
     assert _scripts().get_heads() == [EXPECTED_HEAD]
 
 
+def test_migration_revision_ids_fit_alembic_version_column() -> None:
+    too_long = [
+        revision.revision
+        for revision in _scripts().walk_revisions(base="base", head="heads")
+        if len(revision.revision) > 32
+    ]
+    assert not too_long
+
+
 def test_cleanup_sql_guards_absent_tables() -> None:
     source = (ROOT / "alembic" / "versions" / "20260704_drop_raw_pii_from_vault.py").read_text()
     assert "to_regclass('public.nexa_vault') IS NOT NULL" in source

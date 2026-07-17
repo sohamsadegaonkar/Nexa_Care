@@ -32,7 +32,7 @@ Local extraction, storage, and envelope encryption are rejected in production-li
 
 1. Back up Postgres and verify restore procedures before deployment.
 2. Install dependencies, including `boto3`.
-3. Run `alembic upgrade 20260717_secure_document_pipeline` during a write-maintenance window.
+3. Run `alembic upgrade 20260717_secure_doc_pipe` during a write-maintenance window.
 4. Run `scripts/quarantine_fabricated_pipeline_rows.py` without flags and review the dry-run report.
 5. Configure remote extraction, S3, AWS KMS, Redis, proxy CIDRs, and browser origins.
 6. Start one instance and verify `/health`, extraction failure behavior, cookie login, CSRF rejection, and KMS decrypt using synthetic records before scaling.

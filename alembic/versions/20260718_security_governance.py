@@ -1,14 +1,14 @@
 """audit integrity metadata and plaintext patient PII write barrier
 
 Revision ID: 20260718_security_governance
-Revises: 20260717_secure_document_pipeline
+Revises: 20260717_secure_doc_pipe
 """
 
 from alembic import op
 import sqlalchemy as sa
 
 revision = "20260718_security_governance"
-down_revision = "20260717_secure_document_pipeline"
+down_revision = "20260717_secure_doc_pipe"
 branch_labels = None
 depends_on = None
 
