@@ -97,6 +97,7 @@ async def test_full_round_trip(mock_db, mock_redis, kms_provider):
     """Test 1: Full round-trip registration, encryption, consent, and decryption."""
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
+    hospital_id = "123e4567-e89b-12d3-a456-426614174001"
     
     # 1. Register patient (creates DEK)
     # We need to mock the DB response for DEK storage
@@ -151,6 +152,7 @@ async def test_full_round_trip(mock_db, mock_redis, kms_provider):
             purpose=ConsentPurpose.TREATMENT,
             scope=["pii.patient_name", "clinical.diagnoses"],
             db=mock_db,
+            hospital_id=hospital_id,
             assurance_level=AssuranceLevel.STANDARD,
             assurance_evidence={"method": "otp"}
         )
@@ -165,6 +167,7 @@ async def test_full_round_trip(mock_db, mock_redis, kms_provider):
                 purpose="TREATMENT",
                 requested_scope="*",
                 provider_id=provider_id,
+                hospital_id=hospital_id,
                 db=mock_db,
                 redis=mock_redis,
                 kms=kms_provider,
@@ -193,6 +196,7 @@ async def test_no_consent_no_decrypt(mock_db, mock_redis, kms_provider):
                 purpose="TREATMENT",
                 requested_scope="*",
                 provider_id=provider_id,
+                hospital_id="123e4567-e89b-12d3-a456-426614174001",
                 db=mock_db,
                 redis=mock_redis,
                 kms=mock_kms
@@ -219,6 +223,7 @@ async def test_expired_consent_no_decrypt(mock_db, mock_redis, kms_provider):
                 purpose="TREATMENT",
                 requested_scope="*",
                 provider_id=provider_id,
+                hospital_id="123e4567-e89b-12d3-a456-426614174001",
                 db=mock_db,
                 redis=mock_redis,
                 kms=mock_kms
@@ -231,6 +236,7 @@ async def test_wrong_scope(mock_db, mock_redis, kms_provider):
     """Test 4: Consent grants clinical.* but request asks for pii.patient_name -> 403."""
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
+    hospital_id = "123e4567-e89b-12d3-a456-426614174001"
     
     with patch("app.services.consent_engine.get_consent_redis_client", return_value=mock_redis), \
          patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock()), \
@@ -242,6 +248,7 @@ async def test_wrong_scope(mock_db, mock_redis, kms_provider):
             purpose=ConsentPurpose.TREATMENT,
             scope=["clinical.*"],
             db=mock_db,
+            hospital_id=hospital_id,
         )
 
         with pytest.raises(HTTPException) as exc:
@@ -251,6 +258,7 @@ async def test_wrong_scope(mock_db, mock_redis, kms_provider):
                 purpose="TREATMENT",
                 requested_scope="pii.patient_name",
                 provider_id=provider_id,
+                hospital_id=hospital_id,
                 db=mock_db,
                 redis=mock_redis,
                 kms=kms_provider,
@@ -263,6 +271,7 @@ async def test_erased_patient(mock_db, mock_redis, kms_provider):
     """Test 5: Erased patient -> PatientDataErased error, consent consumed."""
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
+    hospital_id = "123e4567-e89b-12d3-a456-426614174001"
 
     # 1. Setup DEK then encrypt something
     await kms_provider.generate_dek(patient_id, mock_db)
@@ -316,6 +325,7 @@ async def test_erased_patient(mock_db, mock_redis, kms_provider):
             purpose=ConsentPurpose.TREATMENT,
             scope=["pii.*"],
             db=mock_db,
+            hospital_id=hospital_id,
         )
 
         # 3. Call decrypt
@@ -329,6 +339,7 @@ async def test_erased_patient(mock_db, mock_redis, kms_provider):
                     purpose="TREATMENT",
                     requested_scope="*",
                     provider_id=provider_id,
+                    hospital_id=hospital_id,
                     db=mock_db,
                     redis=mock_redis,
                     kms=kms_provider
@@ -343,6 +354,7 @@ async def test_dek_rotation(mock_db, mock_redis, kms_provider):
     """Test 6: DEK rotation -> data encrypted with v1 still readable."""
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
+    hospital_id = "123e4567-e89b-12d3-a456-426614174001"
 
     # 1. Generate DEK v1 and encrypt data
     await kms_provider.generate_dek(patient_id, mock_db)
@@ -382,6 +394,7 @@ async def test_dek_rotation(mock_db, mock_redis, kms_provider):
             purpose=ConsentPurpose.TREATMENT,
             scope=["pii.*"],
             db=mock_db,
+            hospital_id=hospital_id,
         )
 
         # 4. Mock DB to return v1 DEK when requested by decrypt_field
@@ -415,6 +428,7 @@ async def test_dek_rotation(mock_db, mock_redis, kms_provider):
                 purpose="TREATMENT",
                 requested_scope="*",
                 provider_id=provider_id,
+                hospital_id=hospital_id,
                 db=mock_db,
                 redis=mock_redis,
                 kms=kms_provider,
@@ -428,6 +442,7 @@ async def test_break_glass_path(mock_db, mock_redis, kms_provider):
     """Test 7: Break-glass consent -> full scope access including PII."""
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
+    hospital_id = "123e4567-e89b-12d3-a456-426614174001"
 
     # Setup DEK and encrypted data
     await kms_provider.generate_dek(patient_id, mock_db)
@@ -468,8 +483,8 @@ async def test_break_glass_path(mock_db, mock_redis, kms_provider):
             clinician_id=provider_id,
             reason_code="LIFE_THREATENING_EMERGENCY",
             db=mock_db,
-            hospital_id=str(uuid.uuid4()),
-                scope=["EMERGENCY", "clinical.allergies"],
+            hospital_id=hospital_id,
+            scope=["EMERGENCY", "clinical.allergies"],
             reason_code_version="v1",
             session_binding="session-binding",
             mfa_verified_at=datetime.now(timezone.utc),
@@ -485,6 +500,7 @@ async def test_break_glass_path(mock_db, mock_redis, kms_provider):
                 purpose="EMERGENCY",
                 requested_scope="clinical.allergies",
                 provider_id=provider_id,
+                hospital_id=hospital_id,
                 db=mock_db,
                 redis=mock_redis,
                 kms=kms_provider,
@@ -500,6 +516,7 @@ async def test_performance_target(mock_db, mock_redis, kms_provider):
     """Performance test: Full flow < 200ms with cached DEK."""
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
+    hospital_id = "123e4567-e89b-12d3-a456-426614174001"
 
     # Setup DEK and cache it
     await kms_provider.generate_dek(patient_id, mock_db)
@@ -541,6 +558,7 @@ async def test_performance_target(mock_db, mock_redis, kms_provider):
             purpose=ConsentPurpose.TREATMENT,
             scope=["pii.*"],
             db=mock_db,
+            hospital_id=hospital_id,
         )
 
         start_time = time.perf_counter()
@@ -551,6 +569,7 @@ async def test_performance_target(mock_db, mock_redis, kms_provider):
             purpose="TREATMENT",
             requested_scope="*",
             provider_id=provider_id,
+            hospital_id=hospital_id,
             db=mock_db,
             redis=mock_redis,
             kms=kms_provider

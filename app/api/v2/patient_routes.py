@@ -166,6 +166,7 @@ async def reconstruct_patient_record(
         purpose=normalized_purpose,
         requested_scope="*",  # Fetch all authorized fields in one atomic pass
         provider_id=clinician_id,
+        hospital_id=str(provider.hospital_id),
         db=db,
         redis=get_consent_redis_client(),
         kms=kms,

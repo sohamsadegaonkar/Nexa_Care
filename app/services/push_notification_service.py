@@ -85,7 +85,7 @@ class PushNotificationService:
                 exc,
                 subsystem="push_notification",
                 operation="send_approval_request",
-                correlation_id=request_ref,
+                fields={"correlation_id": request_ref},
             )
             return PushDeliveryResult(success=False, error="PUSH_PROVIDER_UNAVAILABLE")
 
@@ -121,6 +121,6 @@ class PushNotificationService:
                 exc,
                 subsystem="push_notification",
                 operation="send_emergency_access_notice",
-                correlation_id=event_ref,
+                fields={"correlation_id": event_ref},
             )
             return PushDeliveryResult(success=False, error="PUSH_PROVIDER_UNAVAILABLE")

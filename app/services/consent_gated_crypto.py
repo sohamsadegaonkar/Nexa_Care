@@ -52,6 +52,7 @@ async def consent_gated_decrypt(
     purpose: str,
     requested_scope: str,
     provider_id: str,
+    hospital_id: str,
     db: AsyncSession,
     redis: Redis,
     kms: EncryptionProvider,
@@ -69,6 +70,7 @@ async def consent_gated_decrypt(
         patient_id=patient_id,
         clinician_id=provider_id,
         purpose=purpose,
+        hospital_id=hospital_id,
         session_binding=session_binding,
     )
 

@@ -185,4 +185,5 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
         "audit:CONSENT_GATED_DECRYPT_COMPLETED",
     ]
     assert mock_validate.await_count == 1
+    assert mock_validate.await_args.kwargs["hospital_id"] == str(provider.hospital_id)
     assert mock_consume.await_count == 1

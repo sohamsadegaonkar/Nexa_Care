@@ -82,6 +82,7 @@ async def test_consent_gated_decrypt_happy_path(mock_kms, mock_redis, mock_db):
             purpose="treatment",
             requested_scope="*",
             provider_id=provider_id,
+            hospital_id="hospital-1",
             db=mock_db,
             redis=mock_redis,
             kms=mock_kms
@@ -104,6 +105,7 @@ async def test_consent_gated_decrypt_invalid_token(mock_kms, mock_redis, mock_db
                 purpose="t",
                 requested_scope="*",
                 provider_id="d",
+                hospital_id="hospital-1",
                 db=mock_db,
                 redis=mock_redis,
                 kms=mock_kms
@@ -130,6 +132,7 @@ async def test_consent_gated_decrypt_scope_mismatch(mock_kms, mock_redis, mock_d
                 purpose="t",
                 requested_scope="pii.name",
                 provider_id="d",
+                hospital_id="hospital-1",
                 db=mock_db,
                 redis=mock_redis,
                 kms=mock_kms
@@ -173,6 +176,7 @@ async def test_consent_gated_decrypt_decrypt_failure_consumes_token(mock_kms, mo
                 purpose="t",
                 requested_scope="pii.*",
                 provider_id=provider_id,
+                hospital_id="hospital-1",
                 db=mock_db,
                 redis=mock_redis,
                 kms=mock_kms
@@ -207,9 +211,46 @@ async def test_consent_gated_decrypt_audit_failure_aborts(mock_kms, mock_redis, 
                 purpose="t",
                 requested_scope="pii.*",
                 provider_id="d",
+                hospital_id="hospital-1",
                 db=mock_db,
                 redis=mock_redis,
                 kms=mock_kms
             )
         assert exc.value.status_code == 503
         assert not mock_kms.decrypt_field.called
+
+
+@pytest.mark.asyncio
+async def test_consent_gated_decrypt_passes_hospital_binding(mock_kms, mock_redis, mock_db):
+    capability = ConsentCapability(
+        patient_id="patient-1",
+        clinician_id="doctor-1",
+        purpose="treatment",
+        scope=["pii.*"],
+        is_break_glass=False,
+        reason_code=None,
+        issued_at="2026-07-02T00:00:00+00:00",
+    )
+
+    with patch("app.services.consent_engine.validate", new_callable=AsyncMock, return_value=capability) as mock_validate:
+        with pytest.raises(HTTPException):
+            await consent_gated_decrypt(
+                patient_id="patient-1",
+                consent_token="token-1",
+                purpose="treatment",
+                requested_scope="clinical.diagnoses",
+                provider_id="doctor-1",
+                hospital_id="123e4567-e89b-12d3-a456-426614174001",
+                db=mock_db,
+                redis=mock_redis,
+                kms=mock_kms,
+            )
+
+    mock_validate.assert_awaited_once_with(
+        token="token-1",
+        patient_id="patient-1",
+        clinician_id="doctor-1",
+        purpose="treatment",
+        hospital_id="123e4567-e89b-12d3-a456-426614174001",
+        session_binding=None,
+    )

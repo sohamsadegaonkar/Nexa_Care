@@ -101,3 +101,53 @@ def test_push_notification_service_does_not_log_raw_patient_id():
     assert "to {patient_id}" not in source
     assert "for {patient_id}" not in source
     assert "patient_ref" in source
+
+
+@pytest.mark.asyncio
+async def test_push_websocket_exception_logs_without_secondary_type_error(mock_db):
+    from app.api.v2 import assurance_routes
+
+    class FakePubSub:
+        async def subscribe(self, channel):
+            return None
+
+        async def get_message(self, **kwargs):
+            raise RuntimeError("redis stream failed")
+
+        async def unsubscribe(self, channel):
+            return None
+
+    class FakeRedis:
+        def pubsub(self):
+            return FakePubSub()
+
+        async def config_get(self, key):
+            return {"notify-keyspace-events": "Kg"}
+
+    class FakeWebSocket:
+        def __init__(self):
+            self.closed = False
+
+        async def accept(self):
+            return None
+
+        async def send_json(self, payload):
+            return None
+
+        async def close(self, code=None):
+            self.closed = True
+
+    websocket = FakeWebSocket()
+
+    with patch.object(assurance_routes, "PUSH_STATUS_TRANSPORT", "websocket"), \
+         patch("app.api.v2.assurance_routes.resolve_provider_session_context", new_callable=AsyncMock, return_value={"sub": "doctor-1"}), \
+         patch("app.services.consent_engine.get_consent_redis_client", return_value=FakeRedis()), \
+         patch.object(assurance_routes.service, "get_push_status", new_callable=AsyncMock, return_value={"status": "pending"}):
+        await assurance_routes.push_status_websocket(
+            websocket,
+            request_id="request-1",
+            token="provider-token",
+            db=mock_db,
+        )
+
+    assert websocket.closed is True

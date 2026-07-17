@@ -433,7 +433,7 @@ async def push_status_websocket(
     except Exception as exc:
         log_safe_exception(
             logger, exc, subsystem="websocket", operation="push_status_stream",
-            correlation_id=request_id,
+            fields={"correlation_id": request_id},
         )
     finally:
         await pubsub.unsubscribe(channel)
