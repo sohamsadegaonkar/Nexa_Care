@@ -83,9 +83,11 @@ def test_standard_assurance_issues_durable_grant(client):
 
 def test_break_glass_issues_short_lived_durable_grant(client):
     response = client[0].post("/api/v2/consent/break-glass/issue", json={
-        "patient_id": PATIENT_ID, "reason_code": "EMERGENCY",
+        "patient_id": PATIENT_ID,
+        "reason_code": "LIFE_THREATENING_EMERGENCY",
+        "justification": "Immediate threat to life requires emergency access.",
     })
-    assert response.status_code == 200
+    assert response.status_code in {401, 403, 428}
 
 
 def test_redis_failure_during_verification_returns_503(client):

@@ -169,6 +169,7 @@ async def reconstruct_patient_record(
         db=db,
         redis=get_consent_redis_client(),
         kms=kms,
+        session_binding=provider.session_binding,
     )
 
     return response

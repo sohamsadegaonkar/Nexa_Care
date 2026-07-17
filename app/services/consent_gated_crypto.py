@@ -55,6 +55,7 @@ async def consent_gated_decrypt(
     db: AsyncSession,
     redis: Redis,
     kms: EncryptionProvider,
+    session_binding: str | None = None,
 ) -> dict:
     """Atomically validate/consume a consent token and decrypt requested fields.
 
@@ -68,6 +69,7 @@ async def consent_gated_decrypt(
         patient_id=patient_id,
         clinician_id=provider_id,
         purpose=purpose,
+        session_binding=session_binding,
     )
 
     if capability is None:

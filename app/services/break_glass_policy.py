@@ -15,6 +15,12 @@ class BreakGlassReasonCode(str, Enum):
     UNCONSCIOUS_PATIENT = "UNCONSCIOUS_PATIENT"
     LIFE_THREATENING_EMERGENCY = "LIFE_THREATENING_EMERGENCY"
     PATIENT_UNABLE_TO_CONSENT = "PATIENT_UNABLE_TO_CONSENT"
+    CARDIAC_ARREST = "CARDIAC_ARREST"
+    ANAPHYLAXIS = "ANAPHYLAXIS"
+    SURGICAL_EMERGENCY = "SURGICAL_EMERGENCY"
+    PATIENT_INCAPACITATED = "PATIENT_INCAPACITATED"
+    SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE = "SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE"
+    OTHER_CLINICALLY_JUSTIFIED_EMERGENCY = "OTHER_CLINICALLY_JUSTIFIED_EMERGENCY"
 
 
 # These categories intentionally match downstream consent-gate purpose names.
@@ -36,6 +42,40 @@ BREAK_GLASS_SCOPE_BY_REASON: dict[BreakGlassReasonCode, frozenset[str]] = {
     ),
     BreakGlassReasonCode.PATIENT_UNABLE_TO_CONSENT: frozenset(
         {"clinical.allergies", "clinical.active_medications", "clinical.recent_vitals", "pii.emergency_contacts"}
+    ),
+    BreakGlassReasonCode.CARDIAC_ARREST: frozenset(
+        {
+            "clinical.allergies",
+            "clinical.active_medications",
+            "clinical.recent_critical_labs",
+            "clinical.blood_group_verified",
+            "clinical.recent_vitals",
+            "clinical.relevant_diagnoses",
+            "pii.emergency_contacts",
+        }
+    ),
+    BreakGlassReasonCode.ANAPHYLAXIS: frozenset(
+        {"clinical.allergies", "clinical.active_medications", "clinical.recent_vitals", "pii.emergency_contacts"}
+    ),
+    BreakGlassReasonCode.SURGICAL_EMERGENCY: frozenset(
+        {
+            "clinical.allergies",
+            "clinical.active_medications",
+            "clinical.recent_critical_labs",
+            "clinical.blood_group_verified",
+            "clinical.recent_vitals",
+            "clinical.relevant_diagnoses",
+            "pii.emergency_contacts",
+        }
+    ),
+    BreakGlassReasonCode.PATIENT_INCAPACITATED: frozenset(
+        {"clinical.allergies", "clinical.active_medications", "clinical.recent_vitals", "pii.emergency_contacts"}
+    ),
+    BreakGlassReasonCode.SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE: frozenset(
+        {"clinical.allergies", "clinical.active_medications", "clinical.recent_vitals"}
+    ),
+    BreakGlassReasonCode.OTHER_CLINICALLY_JUSTIFIED_EMERGENCY: frozenset(
+        {"clinical.allergies", "clinical.active_medications", "clinical.recent_vitals"}
     ),
 }
 

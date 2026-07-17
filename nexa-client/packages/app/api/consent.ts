@@ -113,11 +113,23 @@ export type BreakGlassReasonCode =
   | 'UNCONSCIOUS_PATIENT'
   | 'LIFE_THREATENING_EMERGENCY'
   | 'PATIENT_UNABLE_TO_CONSENT'
+  | 'CARDIAC_ARREST'
+  | 'ANAPHYLAXIS'
+  | 'SURGICAL_EMERGENCY'
+  | 'PATIENT_INCAPACITATED'
+  | 'SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE'
+  | 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY'
 
 export const BREAK_GLASS_REASON_OPTIONS: ReadonlyArray<{ value: BreakGlassReasonCode; label: string }> = [
   { value: 'UNCONSCIOUS_PATIENT', label: 'Unconscious patient' },
   { value: 'LIFE_THREATENING_EMERGENCY', label: 'Life-threatening emergency' },
   { value: 'PATIENT_UNABLE_TO_CONSENT', label: 'Patient unable to consent' },
+  { value: 'CARDIAC_ARREST', label: 'Cardiac arrest' },
+  { value: 'ANAPHYLAXIS', label: 'Anaphylaxis' },
+  { value: 'SURGICAL_EMERGENCY', label: 'Surgical emergency' },
+  { value: 'PATIENT_INCAPACITATED', label: 'Patient incapacitated' },
+  { value: 'SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE', label: 'Consent service unavailable' },
+  { value: 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY', label: 'Other clinically justified emergency' },
 ]
 
 export interface BreakGlassConsentIssueResponse {

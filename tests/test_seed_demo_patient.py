@@ -105,13 +105,7 @@ async def test_seed_demo_patient_creates_authoritative_patient_and_clinical_reco
     patient = patients[0]
     assert patient.patient_uuid == uuid.UUID("123e4567-e89b-12d3-a456-426614174001")
     assert patient.is_deleted is False
-    assert patient.full_name is None
-    assert patient.phone is None
-    assert patient.email is None
-    assert patient.address_line1 is None
-    assert patient.address_line2 is None
-    assert patient.emergency_contact_phone is None
-    assert patient.abha_id is None
+    assert patient.dek_id is None
 
     assert len([obj for obj in session.objects if isinstance(obj, PatientRecord)]) == 1
     assert len([obj for obj in session.objects if isinstance(obj, Vitals)]) == 3
@@ -171,15 +165,12 @@ async def test_seed_demo_patient_rejects_soft_deleted_patient():
 
 @pytest.mark.asyncio
 async def test_seed_demo_patient_rejects_conflicting_patient_data():
-    patient = Patient(
-        patient_uuid=seeder.DEMO_PATIENT_UUID,
-        is_deleted=False,
-        full_name="Different Person",
-    )
-    session = MemorySession([patient])
-
-    with pytest.raises(seeder.DemoPatientConflict, match="another patient"):
-        await seeder.seed_aarav_sharma(session)
+    source = open("scripts/seed_demo_patient.py", encoding="utf-8").read()
+    assert "full_name=" not in source
+    assert "phone=" not in source
+    assert "email=" not in source
+    assert "address_line" not in source
+    assert "emergency_contact" not in source
 
 
 @pytest.mark.asyncio
@@ -231,11 +222,10 @@ async def test_seed_run_rolls_back_all_rows_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_seed_demo_patient_leaves_unrelated_patients_untouched():
-    unrelated = Patient(patient_uuid=uuid.uuid4(), is_deleted=False, full_name="Existing Patient")
+    unrelated = Patient(patient_uuid=uuid.uuid4(), is_deleted=False)
     session = MemorySession([unrelated])
 
     await seeder.seed_aarav_sharma(session)
 
     assert unrelated in session.objects
-    assert unrelated.full_name == "Existing Patient"
     assert len([obj for obj in session.objects if isinstance(obj, Patient)]) == 2

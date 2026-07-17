@@ -10,6 +10,33 @@ from app.services.policy_service import PolicyService
 
 
 @pytest.mark.asyncio
+async def test_get_policy_awaits_mocked_policy_value() -> None:
+    db = AsyncMock()
+    patient_id = uuid.uuid4()
+    policy = AsyncMock()
+    policy.consent_assurance_policy = AsyncMock(return_value="push_approved")()
+    db.get.return_value = policy
+
+    result = await PolicyService(db).get_policy(patient_id)
+
+    assert result == "push_approved"
+    db.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_policy_defaults_when_policy_value_is_blank() -> None:
+    db = AsyncMock()
+    patient_id = uuid.uuid4()
+    policy = AsyncMock()
+    policy.consent_assurance_policy = " "
+    db.get.return_value = policy
+
+    result = await PolicyService(db).get_policy(patient_id)
+
+    assert result == "standard"
+
+
+@pytest.mark.asyncio
 async def test_set_policy_uses_atomic_upsert() -> None:
     db = AsyncMock()
     patient_id = uuid.uuid4()

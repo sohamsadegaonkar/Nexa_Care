@@ -9,7 +9,26 @@ import { BREAK_GLASS_REASON_OPTIONS, type BreakGlassReasonCode } from '../../api
 import { useProviderAuth } from './ProviderAuthContext'
 
 const MIN_JUSTIFICATION_LENGTH = 20
+const OTHER_JUSTIFICATION_LENGTH = 80
 const MAX_JUSTIFICATION_LENGTH = 500
+const REASON_OPTIONS = BREAK_GLASS_REASON_OPTIONS
+
+function maskToken(value: string): string {
+  return value.length <= 12 ? '***' : `${value.slice(0, 6)}...${value.slice(-4)}`
+}
+
+function validateJustification(reasonCode: BreakGlassReasonCode, value: string): string | null {
+  const clean = value.trim()
+  const minimumLength =
+    reasonCode === 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY' ? OTHER_JUSTIFICATION_LENGTH : MIN_JUSTIFICATION_LENGTH
+  if (clean.length < minimumLength) {
+    return `A ${minimumLength}-character clinical justification is required.`
+  }
+  if (clean.length > MAX_JUSTIFICATION_LENGTH) {
+    return `Clinical justification must not exceed ${MAX_JUSTIFICATION_LENGTH} characters.`
+  }
+  return null
+}
 
 export function EmergencyAccessScreen() {
   const router = useRouter()
@@ -18,6 +37,7 @@ export function EmergencyAccessScreen() {
   const [reasonCode, setReasonCode] = useState<BreakGlassReasonCode>('LIFE_THREATENING_EMERGENCY')
   const [justification, setJustification] = useState('')
   const [mfaCode, setMfaCode] = useState('')
+  const [authorizationRef, setAuthorizationRef] = useState<string | null>(null)
   const [needsStepUp, setNeedsStepUp] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,12 +54,13 @@ export function EmergencyAccessScreen() {
   const issueEmergencyAccess = async () => {
     const cleanPatientId = patientId.trim()
     const cleanJustification = justification.trim()
-    if (!cleanPatientId || cleanJustification.length < MIN_JUSTIFICATION_LENGTH) {
-      setError(`Patient ID and a ${MIN_JUSTIFICATION_LENGTH}-character clinical justification are required.`)
+    if (!cleanPatientId) {
+      setError('Patient ID is required.')
       return
     }
-    if (cleanJustification.length > MAX_JUSTIFICATION_LENGTH) {
-      setError(`Clinical justification must not exceed ${MAX_JUSTIFICATION_LENGTH} characters.`)
+    const validationError = validateJustification(reasonCode, cleanJustification)
+    if (validationError) {
+      setError(validationError)
       return
     }
     setSubmitting(true)
@@ -58,6 +79,7 @@ export function EmergencyAccessScreen() {
         scope: 'clinical',
         expiresAt: result.expires_at,
       })
+      setAuthorizationRef(result.authorization_ref)
       setJustification('')
       setMfaCode('')
       router.push(`/doctor/patient-record?patient_id=${encodeURIComponent(cleanPatientId)}`)
@@ -104,13 +126,20 @@ export function EmergencyAccessScreen() {
           <Text fontSize={26} fontWeight="900" color="$red10">Emergency access</Text>
         </XStack>
         <Card bg="$red2" borderWidth={1} borderColor="$red8" p="$4">
-          <Paragraph color="$red10">Limited, 15-minute access. Recent MFA, patient notification, and governance review are enforced by the server.</Paragraph>
+          <Paragraph color="$red10">
+            Limited, 15-minute access. This access is permanently recorded in the audit ledger, rate limited to 3 per hour, and may trigger patient notification and compliance review.
+          </Paragraph>
         </Card>
+        {authorizationRef && (
+          <Card bg="$green2" borderWidth={1} borderColor="$green8" p="$4">
+            <Paragraph color="$green10">Authorization reference: {maskToken(authorizationRef)}</Paragraph>
+          </Card>
+        )}
         <Input value={patientId} onChangeText={setPatientId} placeholder="Canonical patient UUID" />
         <Select value={reasonCode} onValueChange={(value) => setReasonCode(value as BreakGlassReasonCode)}>
           <Select.Trigger iconAfter={ChevronDown}><Select.Value /></Select.Trigger>
           <Select.Content><Select.Viewport>
-            {BREAK_GLASS_REASON_OPTIONS.map((option, index) => (
+            {REASON_OPTIONS.map((option, index) => (
               <Select.Item key={option.value} index={index} value={option.value}>
                 <Select.ItemText>{option.label}</Select.ItemText>
               </Select.Item>
@@ -133,7 +162,7 @@ export function EmergencyAccessScreen() {
         )}
         {error && <Text color="$red10">{error}</Text>}
         {!needsStepUp && (
-          <Button theme="red" onPress={issueEmergencyAccess} disabled={submitting}>
+          <Button theme="red" onPress={issueEmergencyAccess} disabled={submitting || !justification.trim()}>
             {submitting ? <Spinner /> : 'Issue minimum-necessary emergency access'}
           </Button>
         )}

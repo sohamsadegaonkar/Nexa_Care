@@ -523,7 +523,12 @@ async def view_record_clinical(
     }
 
 
-@router.get("/view-record/pii", tags=["consent"])
+@router.get(
+    "/view-record/pii",
+    tags=["consent"],
+    status_code=status.HTTP_410_GONE,
+    responses={status.HTTP_410_GONE: {"description": "Legacy PII endpoint retired"}},
+)
 async def view_record_pii(
 ) -> dict:
     """Compatibility tombstone for the retired static-Fernet PII path."""

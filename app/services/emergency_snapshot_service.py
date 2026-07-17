@@ -201,7 +201,14 @@ async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> 
     try:
         structured_snapshot = await _fetch_structured_snapshot(patient_id, db_session)
     except SQLAlchemyError as exc:
-        log_safe_exception(logger, exc, subsystem="database", operation="emergency_snapshot")
+        log_safe_exception(
+            logger,
+            logging.ERROR,
+            "emergency_snapshot_retrieval_failed",
+            exc,
+            subsystem="database",
+            operation="emergency_snapshot",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Emergency snapshot retrieval is temporarily unavailable.",

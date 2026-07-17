@@ -156,7 +156,7 @@ async def test_erased_patient_fails_verification(env_setup, mock_db, kms):
         
         result = await verifier.verify_signature(patient_id, "r", "c2ln", "nonce", mock_redis, mock_db)
         assert result.verified is False
-        assert "erased" in result.error
+        assert result.error == "PATIENT_DATA_ERASED"
 
 @pytest.mark.asyncio
 async def test_timing_budget_maintained(env_setup, mock_db, kms):

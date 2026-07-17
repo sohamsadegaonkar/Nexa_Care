@@ -441,7 +441,7 @@ class TestNexaCareLifecycle(unittest.TestCase):
     # ── Lane B: full patient lifecycle ──────────────────────────────────
 
     @patch.dict(os.environ, {"KEK_ROOT_SECRET": "test-kek-root-secret"})
-    @patch("app.api.routes.decrypt_pii_field", return_value=None)
+    @patch("app.api.routes.decrypt_pii_field", return_value=None, create=True)
     @patch("app.services.sharding.get_encryption_provider")
     @patch("app.api.routes.get_encryption_provider")
     def test_full_patient_lifecycle(self, mock_get_route_kms, mock_get_sharding_kms, mock_decrypt_pii):
@@ -528,16 +528,18 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertNotIn("patient_name", clinical_view_data)
         self.assertNotIn("phone", clinical_view_data)
 
-        # 7. A clinical-only consent token must not authorize the PII
-        # endpoint. Under-scoped and invalid tokens intentionally share
-        # the same response shape.
+        # 7. The legacy PII endpoint is now a compatibility tombstone.
+        # It never decrypts or returns static-Fernet PII, regardless of scope.
         under_scoped_pii_response = self.client.get(
             "/view-record/pii", headers={"X-Consent-Token": consent_token}
         )
-        self.assertEqual(under_scoped_pii_response.status_code, 403)
+        self.assertEqual(under_scoped_pii_response.status_code, 410)
+        self.assertEqual(
+            under_scoped_pii_response.json()["detail"]["error_code"],
+            "LEGACY_PII_ENDPOINT_RETIRED",
+        )
 
-        # 8. A full-scope token can view the PII shard, but PII fields
-        # still come back redacted (F-10), and clinical fields are absent.
+        # 8. Full-scope legacy consent cannot revive the retired static-Fernet path.
         full_consent_response = self.client.post(
             "/request-consent",
             json={"duration_seconds": 300, "scope": "full"},
@@ -549,12 +551,11 @@ class TestNexaCareLifecycle(unittest.TestCase):
         pii_view_response = self.client.get(
             "/view-record/pii", headers={"X-Consent-Token": full_consent_token}
         )
-        self.assertEqual(pii_view_response.status_code, 200, pii_view_response.text)
-        pii_view_data = pii_view_response.json()
-        self.assertEqual(pii_view_data["masked_internal_id"], masked_id)
-        self.assertEqual(pii_view_data["patient_name"], "[REDACTED]")
-        self.assertEqual(pii_view_data["phone"], "[REDACTED]")
-        self.assertNotIn("diagnoses", pii_view_data)
+        self.assertEqual(pii_view_response.status_code, 410, pii_view_response.text)
+        self.assertEqual(
+            pii_view_response.json()["detail"]["error_code"],
+            "LEGACY_PII_ENDPOINT_RETIRED",
+        )
 
     # ── Negative cases for the patient lane ─────────────────────────────
 

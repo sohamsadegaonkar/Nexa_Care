@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import inspect
 from uuid import UUID
 
 from sqlalchemy.dialects.postgresql import insert
@@ -14,7 +15,11 @@ class PolicyService:
     async def get_policy(self, patient_uuid: UUID) -> str:
         policy = await self.db.get(PatientPolicy, patient_uuid)
         if policy:
-            return policy.consent_assurance_policy
+            value = getattr(policy, "consent_assurance_policy", None)
+            if inspect.isawaitable(value):
+                value = await value
+            if isinstance(value, str) and value.strip():
+                return value
         return "standard"
 
     async def set_policy(self, patient_uuid: UUID, policy: str) -> str:

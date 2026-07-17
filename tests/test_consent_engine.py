@@ -204,6 +204,7 @@ class TestValidate(unittest.TestCase):
             "patient_id": "p", "clinician_id": "c", "purpose": "routine",
             "scope": ["clinical"], "is_break_glass": False, "reason_code": None,
             "issued_at": "2026-07-03T00:00:00+00:00",
+            "expires_at": "2026-07-03T01:00:00+00:00",
         })
         mock_get_client.return_value = redis_client
 
@@ -219,6 +220,7 @@ class TestValidate(unittest.TestCase):
             "patient_id": "p", "clinician_id": "someone-else", "purpose": "routine",
             "scope": ["clinical"], "is_break_glass": False, "reason_code": None,
             "issued_at": "2026-07-03T00:00:00+00:00",
+            "expires_at": "2026-07-03T01:00:00+00:00",
         })
         mock_get_client.return_value = redis_client
 
@@ -250,6 +252,7 @@ class TestValidate(unittest.TestCase):
             "patient_id": "p", "clinician_id": "c", "purpose": "emergency",
             "scope": ["clinical"], "is_break_glass": True, "reason_code": None,
             "issued_at": "2026-07-03T00:00:00+00:00",
+            "expires_at": "2026-07-03T00:15:00+00:00",
         })
         mock_get_client.return_value = redis_client
 
@@ -265,6 +268,7 @@ class TestConsume(unittest.TestCase):
             "patient_id": "p", "clinician_id": "c", "purpose": "routine",
             "scope": ["clinical"], "is_break_glass": False, "reason_code": None,
             "issued_at": "2026-07-03T00:00:00+00:00",
+            "expires_at": "2026-07-03T01:00:00+00:00",
         })
         mock_get_client.return_value = redis_client
 
@@ -288,6 +292,7 @@ class TestConsume(unittest.TestCase):
             "patient_id": "someone-else", "clinician_id": "c", "purpose": "routine",
             "scope": ["clinical"], "is_break_glass": False, "reason_code": None,
             "issued_at": "2026-07-03T00:00:00+00:00",
+            "expires_at": "2026-07-03T01:00:00+00:00",
         })
         mock_get_client.return_value = redis_client
         db = FakeConsentDB()

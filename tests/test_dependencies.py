@@ -215,7 +215,10 @@ class TestGetProviderContext(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNotNone(result.session_binding)
         mock_audit.assert_not_called()
 
     @patch("app.core.dependencies.authenticate_provider_password")
@@ -236,7 +239,10 @@ class TestGetProviderContext(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNone(result.session_binding)
         mock_auth.assert_awaited_once_with(
             db,
             basic.username,
@@ -268,7 +274,10 @@ class TestGetProviderContext(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNotNone(result.session_binding)
         mock_logger.warning.assert_called_once()
         self.assertIn("SESSION_IP_ROTATION_DETECTED", str(mock_logger.warning.call_args))
 

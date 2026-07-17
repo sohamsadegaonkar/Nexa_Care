@@ -139,9 +139,9 @@ def safe_exception_metadata(
 
 def log_safe_exception(
     logger: logging.Logger,
-    level: int,
-    event: str,
-    exc: BaseException,
+    level: int | BaseException,
+    event: str | None = None,
+    exc: BaseException | None = None,
     *,
     subsystem: str,
     operation: str,
@@ -149,15 +149,25 @@ def log_safe_exception(
 ) -> dict[str, Any]:
     """Emit one sanitized JSON log record and return its metadata."""
 
+    if isinstance(level, BaseException):
+        exc = level
+        log_level = logging.ERROR
+        log_event = event or f"{operation}_failed"
+    else:
+        log_level = level
+        if exc is None:
+            raise TypeError("exc is required when level is provided")
+        log_event = event or f"{operation}_failed"
+
     metadata = safe_exception_metadata(exc, subsystem=subsystem, operation=operation)
-    payload: dict[str, Any] = {"event": event[:96], **metadata}
+    payload: dict[str, Any] = {"event": log_event[:96], **metadata}
     if fields:
         payload["context"] = {
             str(key)[:64]: value
             for key, value in fields.items()
             if isinstance(value, (str, int, bool)) or value is None
         }
-    logger.log(level, json.dumps(payload, sort_keys=True, separators=(",", ":")))
+    logger.log(log_level, json.dumps(payload, sort_keys=True, separators=(",", ":")))
     return metadata
 
 

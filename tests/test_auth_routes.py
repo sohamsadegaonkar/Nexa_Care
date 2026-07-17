@@ -95,6 +95,7 @@ class TestProviderLoginRoute(unittest.TestCase):
             context.provider.provider_id,
             user_agent="TestAgent/1.0",
             client_ip="10.0.0.1",
+            mfa_verified_at=None,
         )
         self.assertEqual(mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_SUCCEEDED")
 
@@ -127,7 +128,10 @@ class TestGetCurrentProvider(unittest.TestCase):
             db=AsyncMock(),
         ))
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNotNone(result.session_binding)
         mock_auth.assert_awaited_once()
         _, kwargs = mock_auth.await_args
         self.assertEqual(kwargs["user_agent"], "TestAgent/1.0")
@@ -203,7 +207,9 @@ class TestMfaFlow(unittest.TestCase):
             context.provider.provider_id,
             user_agent="TestAgent/1.0",
             client_ip="10.0.0.1",
+            mfa_verified_at=mock_issue.await_args.kwargs["mfa_verified_at"],
         )
+        self.assertIsNotNone(mock_issue.await_args.kwargs["mfa_verified_at"])
         mock_complete.assert_awaited_once()
         _, kwargs = mock_complete.await_args
         self.assertEqual(kwargs["client_ip"], "10.0.0.1")

@@ -243,6 +243,7 @@ def test_no_seed_output_statement_contains_password_or_hash():
 
 @pytest.mark.asyncio
 async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("ENV", "development")
     session = AsyncMock()
     session_factory = MagicMock(return_value=FakeSessionContext(session))
@@ -278,6 +279,7 @@ async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_main_reset_rolls_back_when_audit_fails(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("ENV", "development")
     session = AsyncMock()
     session_factory = MagicMock(return_value=FakeSessionContext(session))

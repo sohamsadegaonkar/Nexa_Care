@@ -216,7 +216,7 @@ async def test_send_approval_request_expo_error():
         )
         
         assert result.success is False
-        assert result.error == "Device not registered"
+        assert result.error == "PUSH_PROVIDER_REJECTED"
 
 @pytest.mark.asyncio
 async def test_send_approval_request_http_failure():

@@ -834,6 +834,7 @@ class TestConsentEngineValidation:
             "is_break_glass": False,
             "reason_code": None,
             "issued_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": "2025-01-01T01:00:00Z",
         })
 
         cap = _parse_payload(payload)
@@ -856,6 +857,7 @@ class TestConsentEngineValidation:
             "is_break_glass": True,
             "reason_code": "IMMEDIATE_THREAT_TO_LIFE",
             "issued_at": datetime.now(timezone.utc).isoformat(),
+            "expires_at": "2025-01-01T00:15:00Z",
         })
 
         cap = _parse_payload(payload)
@@ -878,6 +880,7 @@ class TestConsentEngineValidation:
             "patient_id": "p", "clinician_id": "c", "purpose": "E",
             "scope": ["clinical.*"], "is_break_glass": True, "reason_code": "",
             "issued_at": "2025-01-01T00:00:00Z",
+            "expires_at": "2025-01-01T00:15:00Z",
         })) is None
 
     def test_matches_logic(self):
@@ -924,6 +927,7 @@ class TestConsentEngineValidation:
             "patient_id": "p", "clinician_id": "c", "purpose": "T",
             "scope": [], "is_break_glass": False,
             "issued_at": "2025-01-01T00:00:00Z",
+            "expires_at": "2025-01-01T01:00:00Z",
         }))
         # Currently returns capability with empty scope — this is a known gap.
         # The issue() function rejects empty scope at issuance, so this should

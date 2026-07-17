@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch, MagicMock
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.consent_engine import (
@@ -75,14 +76,19 @@ async def test_issue_break_glass_happy_path():
             patient_id=patient_id,
             clinician_id=clinician_id,
             reason_code=reason_code,
-            db=db
+            db=db,
+            hospital_id="44444444-4444-4444-8444-444444444444",
+            scope=["clinical.allergies"],
+            reason_code_version="v1",
+            session_binding="session-binding",
+            mfa_verified_at=datetime.now(timezone.utc),
         )
         
         assert token == "emergency-token-456"
         assert mock_issue.called
         assert mock_issue.call_args.kwargs["is_break_glass"] is True
         assert mock_issue.call_args.kwargs["ttl_seconds"] == 900
-        assert mock_issue.call_args.kwargs["scope"] == ["clinical.*", "pii.*"]
+        assert mock_issue.call_args.kwargs["scope"] == ["clinical.allergies"]
         assert mock_issue.call_args.kwargs["assurance_level"] == AssuranceLevel.BREAK_GLASS
         assert mock_audit.await_count == 2
 
@@ -112,7 +118,12 @@ async def test_issue_break_glass_enforces_15_min_ttl():
             patient_id="p1",
             clinician_id="c1",
             reason_code="Emergency",
-            db=db
+            db=db,
+            hospital_id="44444444-4444-4444-8444-444444444444",
+            scope=["clinical.allergies"],
+            reason_code_version="v1",
+            session_binding="session-binding",
+            mfa_verified_at=datetime.now(timezone.utc),
         )
         assert mock_issue.call_args.kwargs["ttl_seconds"] == 900
 

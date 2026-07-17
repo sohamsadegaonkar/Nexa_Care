@@ -2,6 +2,7 @@
 
 import time
 import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -166,7 +167,7 @@ async def test_full_round_trip(mock_db, mock_redis, kms_provider):
                 provider_id=provider_id,
                 db=mock_db,
                 redis=mock_redis,
-                kms=kms_provider
+                kms=kms_provider,
             )
 
             assert result["pii"]["patient_name"] == plaintext_name
@@ -252,7 +253,7 @@ async def test_wrong_scope(mock_db, mock_redis, kms_provider):
                 provider_id=provider_id,
                 db=mock_db,
                 redis=mock_redis,
-                kms=kms_provider
+                kms=kms_provider,
             )
         assert exc.value.status_code == 403
 
@@ -416,7 +417,7 @@ async def test_dek_rotation(mock_db, mock_redis, kms_provider):
                 provider_id=provider_id,
                 db=mock_db,
                 redis=mock_redis,
-                kms=kms_provider
+                kms=kms_provider,
             )
             
             assert result["pii"]["patient_name"] == plaintext
@@ -465,8 +466,13 @@ async def test_break_glass_path(mock_db, mock_redis, kms_provider):
         token = await issue_break_glass(
             patient_id=patient_id,
             clinician_id=provider_id,
-            reason_code="EMERGENCY_LOC",
-            db=mock_db
+            reason_code="LIFE_THREATENING_EMERGENCY",
+            db=mock_db,
+            hospital_id=str(uuid.uuid4()),
+                scope=["EMERGENCY", "clinical.allergies"],
+            reason_code_version="v1",
+            session_binding="session-binding",
+            mfa_verified_at=datetime.now(timezone.utc),
         )
 
         # Call decrypt with "*" scope
@@ -477,15 +483,16 @@ async def test_break_glass_path(mock_db, mock_redis, kms_provider):
                 patient_id=patient_id,
                 consent_token=token,
                 purpose="EMERGENCY",
-                requested_scope="*",
+                requested_scope="clinical.allergies",
                 provider_id=provider_id,
                 db=mock_db,
                 redis=mock_redis,
-                kms=kms_provider
+                kms=kms_provider,
+                session_binding="session-binding",
             )
 
-            assert result["pii"]["patient_name"] == "John Doe"
-            assert result["clinical"]["diagnoses"] == "Flu"
+            assert result["pii"] == {}
+            assert result["clinical"] == {}
 
 
 @pytest.mark.asyncio

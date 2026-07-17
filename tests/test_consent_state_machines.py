@@ -81,6 +81,7 @@ def test_validate_and_consume_fail_closed_on_mismatch(mock_get_redis) -> None:
             "is_break_glass": False,
             "reason_code": None,
             "issued_at": "2026-07-02T00:00:00+00:00",
+            "expires_at": "2026-07-02T01:00:00+00:00",
         }
     )
     redis.get.return_value = payload

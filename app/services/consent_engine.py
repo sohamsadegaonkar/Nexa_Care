@@ -50,6 +50,7 @@ CONSENT_TOKEN_PREFIX = "nexa:consent:"
 DEFAULT_TTL_SECONDS = 60 * 60  # 1 hour, matches the old consent_service.py default
 BREAK_GLASS_TTL_SECONDS = 15 * 60  # matches the old break_glass.py default
 COMPLIANCE_QUEUE_KEY = "nexa:compliance_queue:break_glass"
+LEGACY_IN_MEMORY_CAPABILITY_EXPIRES_AT = "9999-12-31T23:59:59+00:00"
 
 
 class ConsentPurpose(str, Enum):
@@ -75,10 +76,10 @@ class ConsentCapability:
     is_break_glass: bool
     reason_code: str | None
     issued_at: str
-    expires_at: str
-    hospital_id: str | None
-    session_binding: str | None
-    reason_code_version: str | None
+    expires_at: str = LEGACY_IN_MEMORY_CAPABILITY_EXPIRES_AT
+    hospital_id: str | None = None
+    session_binding: str | None = None
+    reason_code_version: str | None = None
 
 
 @lru_cache(maxsize=1)

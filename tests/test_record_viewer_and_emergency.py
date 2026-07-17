@@ -23,7 +23,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCTOR_DIR = ROOT / "nexa-client" / "packages" / "app" / "features" / "doctor"
+APP_API_DIR = ROOT / "nexa-client" / "packages" / "app" / "api"
 CONSENT_ROUTES = ROOT / "app" / "api" / "v2" / "consent_routes.py"
+CONSENT_API = APP_API_DIR / "consent.ts"
 
 
 def _read(path: Path) -> str:
@@ -33,6 +35,10 @@ def _read(path: Path) -> str:
 
 def _read_screen(name: str) -> str:
     return _read(DOCTOR_DIR / f"{name}.tsx")
+
+
+def _read_reason_contract() -> str:
+    return _read(CONSENT_API)
 
 
 def _normalize_ws(code: str) -> str:
@@ -369,24 +375,24 @@ class TestEmergencyControlledReasonCodes:
         assert "BreakGlassReason" in code, "Must define BreakGlassReason type"
 
     def test_includes_life_threatening_reason(self) -> None:
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "LIFE_THREATENING" in code or "IMMEDIATE_THREAT_TO_LIFE" in code, "Must include LIFE_THREATENING or IMMEDIATE_THREAT_TO_LIFE reason"
 
     def test_includes_surgical_emergency_reason(self) -> None:
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "SURGICAL_EMERGENCY" in code, "Must include SURGICAL_EMERGENCY reason"
 
     def test_includes_cardiac_arrest_reason(self) -> None:
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "CARDIAC_ARREST" in code, "Must include CARDIAC_ARREST reason"
 
     def test_includes_anaphylaxis_reason(self) -> None:
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "ANAPHYLAXIS" in code, "Must include ANAPHYLAXIS reason"
 
     def test_has_at_least_six_reason_options(self) -> None:
         """Must have at least 6 controlled reason options (expanded for broader clinical coverage)."""
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         reason_values = re.findall(r"value:\s*'([A-Z_]+)'", code)
         # Filter to reason codes (all caps with underscores)
         valid_reasons = [v for v in reason_values if v.isupper() and "_" in v]
@@ -396,17 +402,17 @@ class TestEmergencyControlledReasonCodes:
 
     def test_includes_patient_incapacitated_reason(self) -> None:
         """Must include PATIENT_INCAPACITATED reason code."""
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "PATIENT_INCAPACITATED" in code, "Must include PATIENT_INCAPACITATED reason"
 
     def test_includes_other_emergency_reason(self) -> None:
         """Must include OTHER_CLINICALLY_JUSTIFIED_EMERGENCY with mandatory review."""
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "OTHER_CLINICALLY_JUSTIFIED_EMERGENCY" in code, "Must include OTHER_CLINICALLY_JUSTIFIED_EMERGENCY reason"
 
     def test_includes_system_unavailable_reason(self) -> None:
         """Must include SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE reason code."""
-        code = _read_screen("EmergencyAccessScreen")
+        code = _read_reason_contract()
         assert "SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE" in code, "Must include SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE reason"
 
 
@@ -435,10 +441,10 @@ class TestBreakGlassRequiresJustification:
     def test_button_disabled_without_justification(self) -> None:
         """Submit button must be disabled without justification."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "freeText" in code, "Must reference freeText in disabled check"
+        assert "justification" in code, "Must reference justification in disabled check"
         # The disabled prop should include freeText validation
         code_norm = _normalize_ws(code)
-        assert "freeText" in code_norm, "freeText must be in button disabled prop"
+        assert "!justification.trim()" in code_norm, "justification must be in button disabled prop"
 
     def test_shows_error_when_justification_missing(self) -> None:
         """Must show an error message when justification is missing."""
@@ -632,11 +638,11 @@ class TestEmergencyBackendContract:
         )
 
     def test_sends_required_fields(self) -> None:
-        """Must send patient_id, reason_code, and free_text."""
+        """Must send patient_id, reason_code, and clinical justification."""
         code = _read_screen("EmergencyAccessScreen")
         assert "patient_id" in code, "Must send patient_id"
         assert "reason_code" in code, "Must send reason_code"
-        assert "free_text" in code, "Must send free_text"
+        assert "justification" in code, "Must send justification"
 
     def test_backend_enforces_rate_limit(self) -> None:
         """Backend must enforce rate limiting on break-glass."""

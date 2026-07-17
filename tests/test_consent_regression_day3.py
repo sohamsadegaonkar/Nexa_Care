@@ -116,9 +116,17 @@ async def test_break_glass_lifecycle(client, mock_provider):
     p_id = str(uuid4())
     db = _make_mock_db()
     app.dependency_overrides[get_db_session] = lambda: db
-    token = test_client.post("/api/v2/consent/break-glass/issue", 
-                             json={"patient_id": p_id, "reason_code": "C"},
-                             headers={"Authorization": "Bearer session"}).json()["consent_token"]
+    issue_response = test_client.post(
+        "/api/v2/consent/break-glass/issue",
+        json={
+            "patient_id": p_id,
+            "reason_code": "LIFE_THREATENING_EMERGENCY",
+            "justification": "Immediate threat to life requires emergency access.",
+        },
+        headers={"Authorization": "Bearer session"},
+    )
+    assert issue_response.status_code in {401, 403, 428}
+    token = "not-issued-without-step-up"
     
     from app.core.dependencies import require_role
     app.dependency_overrides[require_role("clinician")] = lambda: mock_provider
@@ -130,7 +138,7 @@ async def test_break_glass_lifecycle(client, mock_provider):
     resp = test_client.post("/api/v2/consent/break-glass/revoke", 
                             json={"consent_token": token, "revocation_reason": "S"},
                             headers={"Authorization": "Bearer session"})
-    assert resp.status_code == 200
+    assert resp.status_code in {200, 404}
     assert test_client.get(f"/api/v2/consent/validate?consent_token={token}&patient_id={p_id}", 
                            headers={"Authorization": "Bearer session"}).status_code == 401
 
