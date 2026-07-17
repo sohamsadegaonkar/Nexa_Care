@@ -20,6 +20,7 @@ from typing import Any
 from fastapi import HTTPException, Request, status
 
 from app.core.config import get_redis_config
+from app.core.client_ip import resolve_client_ip
 
 logger = logging.getLogger("nexa_logger")
 
@@ -30,6 +31,23 @@ class OtpRateLimitBackendUnavailable(RuntimeError):
 
 class OtpRateLimitExceeded(RuntimeError):
     """Raised when one OTP throttle bucket exceeds its limit."""
+
+
+_ATOMIC_FIXED_WINDOW_SCRIPT = """
+local count = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 0 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+    ttl = tonumber(ARGV[1])
+end
+return {count, ttl}
+"""
+
+
+async def atomic_fixed_window(redis_client: Any, key: str, window_seconds: int) -> tuple[int, int]:
+    """Atomically increment a counter, guarantee a TTL, and return both."""
+    result = await redis_client.eval(_ATOMIC_FIXED_WINDOW_SCRIPT, 1, key, int(window_seconds))
+    return int(result[0]), int(result[1])
 
 
 class OtpRedisRateLimiter:
@@ -121,11 +139,8 @@ def _import_redis() -> Any:
 
 
 def client_ip_key(request: Request) -> str:
-    """Bucket by the request's client IP (or a forwarded header if present)."""
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else "unknown"
+    """Bucket by the canonical trusted-proxy-aware client address."""
+    return resolve_client_ip(request) or "unknown"
 
 
 class RateLimiter:
@@ -165,11 +180,7 @@ class RateLimiter:
                 cfg = get_redis_config()
                 redis_client = redis_async.from_url(cfg.url, decode_responses=True)
             key = self._key(identifier)
-            pipe = redis_client.pipeline()
-            pipe.incr(key)
-            pipe.expire(key, self.window_seconds, nx=True)
-            results = await pipe.execute()
-            count = int(results[0])
+            count, _ttl = await atomic_fixed_window(redis_client, key, self.window_seconds)
             if self._redis_client is None:
                 await redis_client.close()
             return count <= self.max_requests
@@ -266,9 +277,13 @@ class ConcurrentPushLimiter:
             if lock_acquired and redis is not None:
                 try:
                     await redis.delete(concurrent_key)
-                except Exception:
-                    pass
-            logger.warning("ConcurrentPushLimiter Redis failure: %s. Fail-open.", exc)
+                except Exception as cleanup_exc:
+                    logger.error("Concurrent push lock cleanup failed", extra={"error_type": type(cleanup_exc).__name__})
+            logger.error("Concurrent push limiter unavailable; failing closed", extra={"error_type": type(exc).__name__})
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Push rate-limit enforcement unavailable",
+            ) from exc
         finally:
             if redis is not None and self._redis_client is None:
                 await redis.close()
@@ -280,7 +295,10 @@ class ConcurrentPushLimiter:
             redis = await self._get_redis()
             await redis.delete(f"nexa:push_concurrent:{patient_id}")
         except Exception as exc:
-            logger.warning("ConcurrentPushLimiter release failure: %s", exc)
+            logger.warning(
+                "ConcurrentPushLimiter release failure",
+                extra={"error_type": type(exc).__name__},
+            )
         finally:
             if redis is not None and self._redis_client is None:
                 await redis.close()

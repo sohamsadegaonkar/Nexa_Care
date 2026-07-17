@@ -15,6 +15,7 @@ from redis.asyncio import Redis
 
 from app.core.supabase import get_supabase_client
 from app.services.crypto_kms import get_encryption_provider, EncryptedField, PatientDataErased
+from app.observability.safe_exceptions import log_safe_exception
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("nexa_logger")
@@ -84,15 +85,11 @@ class BiometricSignatureVerifier:
             except PatientDataErased:
                 # Requirement: fail with PatientDataErased if DEK was destroyed
                 raise
-            except Exception as e:
-                # Handle legacy plaintext or malformed data
-                logger.warning(f"Failed to decrypt device_public_key for {patient_id}, attempting legacy parse: {e}")
-                raw_key = row["device_public_key"]
-                if isinstance(raw_key, str):
-                    if raw_key.startswith("\\x"):
-                        raw_key = bytes.fromhex(raw_key[2:])
-                    else:
-                        raw_key = base64.b64decode(raw_key)
+            except Exception as exc:
+                log_safe_exception(
+                    logger, exc, subsystem="kms", operation="device_public_key_decrypt"
+                )
+                return await self._fail(start, patient_id, "DEVICE_KEY_DECRYPTION_FAILED")
 
             public_key = serialization.load_der_public_key(raw_key)
             
@@ -118,11 +115,13 @@ class BiometricSignatureVerifier:
             await self._pad_time(start)
             return SignatureVerificationResult(verified=True, patient_id=patient_id)
 
-        except PatientDataErased as e:
-            return await self._fail(start, patient_id, str(e))
+        except PatientDataErased:
+            return await self._fail(start, patient_id, "PATIENT_DATA_ERASED")
         except Exception as exc:
-            logger.error(f"Unexpected error during biometric verification for {patient_id}: {exc}")
-            return await self._fail(start, patient_id, str(exc))
+            log_safe_exception(
+                logger, exc, subsystem="cryptography", operation="biometric_signature_verify"
+            )
+            return await self._fail(start, patient_id, "BIOMETRIC_VERIFICATION_FAILED")
 
     async def _fail(self, start_time: float, patient_id: str, reason: str) -> SignatureVerificationResult:
         await self._pad_time(start_time)

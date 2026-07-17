@@ -22,6 +22,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from app.services.signed_approval_verifier import canonical_signed_approval_payload
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -55,9 +56,14 @@ def mock_scoped_pat():
     app.dependency_overrides.pop(get_scoped_session, None)
 
 
-def sign_payload(private_key, req_id, pat_id, prov_id, nonce, decision, scope, purpose, duration, expires_at) -> str:
-    signing_input = f"{req_id}|{pat_id}|{prov_id}|{nonce}|{decision}|{scope}|{purpose}|{duration}|{expires_at}"
-    sig = private_key.sign(signing_input.encode("utf-8"), ec.ECDSA(hashes.SHA256()))
+def sign_payload(private_key, req_id, pat_id, prov_id, nonce, decision, scope, purpose, duration, expires_at, device_id, issued_at="2026-07-07T16:00:00+00:00") -> str:
+    signing_input = canonical_signed_approval_payload(
+        request_id=req_id, patient_id=pat_id, provider_id=prov_id,
+        challenge_nonce=nonce, decision=decision, scope=scope, purpose=purpose,
+        access_duration=duration, issued_at=issued_at, expires_at=expires_at,
+        device_id=device_id,
+    )
+    sig = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
     return base64.b64encode(sig).decode("utf-8")
 
 
@@ -77,10 +83,11 @@ def test_valid_signed_approval_issues_grant_and_doctor_sees_approved(mock_scoped
         "access_duration": 900,
         "challenge_nonce": nonce,
         "expires_at": "2099-07-07T16:05:00Z",
+        "created_at": "2026-07-07T16:00:00+00:00",
         "status": "pending",
     }
 
-    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "approved", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z")
+    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "approved", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z", dev_id)
 
     mock_db = AsyncMock()
     mock_res = MagicMock()
@@ -117,9 +124,14 @@ def test_valid_signed_approval_issues_grant_and_doctor_sees_approved(mock_scoped
 
             # Approval state is pollable, but the raw capability is minted only
             # through the provider-authenticated claim-access exchange.
-            assert mock_redis.set.call_count == 3
-            consent_req_call = [call for call in mock_redis.set.call_args_list if call[0][0] == f"consent_request:{req_id}"][0]
-            saved_json = json.loads(consent_req_call[0][1])
+            # Evidence is written separately; request resolution and nonce
+            # consumption happen together in one Redis Lua transaction.
+            assert mock_redis.set.call_count == 1
+            mock_redis.eval.assert_called_once()
+            eval_args = mock_redis.eval.call_args.args
+            assert eval_args[2] == f"consent_request:{req_id}"
+            assert eval_args[3] == f"biometric_nonce:{nonce}:used"
+            saved_json = json.loads(eval_args[5])
             assert saved_json["status"] == "approved"
             assert "consent_token" not in saved_json
     finally:
@@ -139,6 +151,7 @@ def test_forged_signature_rejected(mock_scoped_pat, keypair_and_device):
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
         "expires_at": "2099-07-07T16:05:00Z",
+        "created_at": "2026-07-07T16:00:00+00:00",
         "status": "pending",
     }
 
@@ -198,11 +211,12 @@ def test_signature_from_another_active_device_cannot_claim_submitted_device_id(
         "access_duration": 900,
         "challenge_nonce": nonce,
         "expires_at": "2099-07-07T16:05:00Z",
+        "created_at": "2026-07-07T16:00:00+00:00",
         "status": "pending",
     }
     signature = sign_payload(
         other_private_key, req_id, mock_scoped_pat, "provider-1", nonce,
-        "approved", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z",
+        "approved", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z", submitted_device_id,
     )
     mock_db = AsyncMock()
     route_result = MagicMock()
@@ -251,6 +265,7 @@ def test_wrong_patient_key_rejected(mock_scoped_pat):
         "access_duration": 900,
         "challenge_nonce": "nonce-1",
         "expires_at": "2099-07-07T16:05:00Z",
+        "created_at": "2026-07-07T16:00:00+00:00",
         "status": "pending",
     }
 
@@ -391,10 +406,11 @@ def test_denial_with_valid_signature_works(mock_scoped_pat, keypair_and_device):
         "access_duration": 900,
         "challenge_nonce": nonce,
         "expires_at": "2099-07-07T16:05:00Z",
+        "created_at": "2026-07-07T16:00:00+00:00",
         "status": "pending",
     }
 
-    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z")
+    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z", dev_id)
 
     mock_db = AsyncMock()
     mock_res = MagicMock()
@@ -426,7 +442,8 @@ def test_denial_with_valid_signature_works(mock_scoped_pat, keypair_and_device):
             assert data["status"] == "denied"
             assert "consent_token" not in data
 
-            saved_json = json.loads(mock_redis.set.call_args[0][1])
+            mock_redis.eval.assert_called_once()
+            saved_json = json.loads(mock_redis.eval.call_args.args[5])
             assert saved_json["status"] == "denied"
     finally:
         app.dependency_overrides.pop(get_db_session, None)

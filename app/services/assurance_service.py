@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 from app.models.push_token import PushRequestLog
 
 logger = logging.getLogger("nexa_logger")
@@ -87,8 +88,8 @@ class AssuranceService:
             )
             db.add(log_entry)
             await db.commit()
-        except Exception as e:
-            logger.error(f"Failed to create push request log in Postgres: {e}")
+        except Exception as exc:
+            log_safe_exception(logger, exc, subsystem="database", operation="push_request_create")
             await db.rollback()
 
         # 2. Redis Live State
@@ -242,8 +243,8 @@ class AssuranceService:
             )
             await db.execute(stmt)
             await db.commit()
-        except Exception as e:
-            logger.error(f"Failed to update push request log in Postgres: {e}")
+        except Exception as exc:
+            log_safe_exception(logger, exc, subsystem="database", operation="push_request_update")
             await db.rollback()
 
         await append_audit_log_or_503(
@@ -324,8 +325,8 @@ class AssuranceService:
                         "patient_id": patient_id_str,
                         "delivery_status": "unknown",
                     }
-            except Exception as e:
-                logger.error(f"Error checking push timeout in Postgres: {e}")
+            except Exception as exc:
+                log_safe_exception(logger, exc, subsystem="database", operation="push_timeout_check")
             
             return {"request_id": request_id, "status": "timeout", "doctor_status": "timeout", "patient_id": None, "delivery_status": "unknown"}
 

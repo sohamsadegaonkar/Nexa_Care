@@ -140,32 +140,32 @@ function PageThumbnail({
 }) {
   return (
     <Card
-      bg={isActive ? '$backgroundFocus' : '$backgroundHover'}
+      backgroundColor={isActive ? '$backgroundFocus' : '$backgroundHover'}
       borderWidth={isActive ? 2 : 1}
       borderColor={isActive ? '$blue8' : hasNeedsReview ? '$orange8' : '$borderColor'}
-      br="$3"
-      p="$2"
-      ai="center"
+      borderRadius="$3"
+      padding="$2"
+      alignItems="center"
       gap="$1"
-      hoverStyle={{ bg: '$backgroundFocus' }}
-      pressStyle={{ bg: '$backgroundPress' }}
+      hoverStyle={{ backgroundColor: '$backgroundFocus' }}
+      pressStyle={{ backgroundColor: '$backgroundPress' }}
       onPress={onPress}
     >
       <YStack
-        w={36}
-        h={48}
-        bg="$background"
-        br="$2"
-        jc="center"
-        ai="center"
+        width={36}
+        height={48}
+        backgroundColor="$background"
+        borderRadius="$2"
+        justifyContent="center"
+        alignItems="center"
         borderWidth={1}
         borderColor="$borderColor"
       >
-        <Text col="$colorSubdued" size="$2" fontWeight="700">
+        <Text color="$color10" fontSize="$2" fontWeight="700">
           {pageNum}
         </Text>
       </YStack>
-      <Text col={hasNeedsReview ? '$orange10' : '$colorSubdued'} size="$1" fontWeight="600">
+      <Text color={hasNeedsReview ? '$orange10' : '$color10'} fontSize="$1" fontWeight="600">
         {fieldCount} field{fieldCount !== 1 ? 's' : ''}
       </Text>
     </Card>
@@ -222,11 +222,11 @@ export function DocumentPreview({
   }, [pageFields])
 
   return (
-    <YStack f={1} gap="$2">
+    <YStack flex={1} gap="$2">
       {/* ── Page thumbnails sidebar ─────────────────────────────────── */}
       {totalPages > 1 && (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <XStack gap="$2" pb="$2">
+          <XStack gap="$2" paddingBottom="$2">
             {pageThumbnails.map((t) => (
               <PageThumbnail
                 key={t.page}
@@ -243,9 +243,9 @@ export function DocumentPreview({
 
       {/* ── Document page canvas with bbox overlays ─────────────────── */}
       <YStack
-        f={1}
-        bg="$background"
-        br="$4"
+        flex={1}
+        backgroundColor="$background"
+        borderRadius="$4"
         borderWidth={1}
         borderColor="$borderColor"
         overflow="hidden"
@@ -299,14 +299,14 @@ export function DocumentPreview({
           position="absolute"
           bottom="$2"
           right="$2"
-          bg="$background"
-          br="$3"
-          px="$2"
-          py="$1"
+          backgroundColor="$background"
+          borderRadius="$3"
+          paddingHorizontal="$2"
+          paddingVertical="$1"
           borderWidth={1}
           borderColor="$borderColor"
         >
-          <Text col="$colorSubdued" size="$2">
+          <Text color="$color10" fontSize="$2">
             Page {currentPage} of {totalPages}
           </Text>
         </YStack>
@@ -316,14 +316,14 @@ export function DocumentPreview({
           position="absolute"
           top="$2"
           right="$2"
-          bg={pageHasNeedsReview ? '$orange4' : '$green4'}
-          br="$3"
-          px="$2"
-          py="$1"
+          backgroundColor={pageHasNeedsReview ? '$orange4' : '$green4'}
+          borderRadius="$3"
+          paddingHorizontal="$2"
+          paddingVertical="$1"
         >
           <Text
-            col={pageHasNeedsReview ? '$orange10' : '$green10'}
-            size="$2"
+            color={pageHasNeedsReview ? '$orange10' : '$green10'}
+            fontSize="$2"
             fontWeight="600"
           >
             {pageFields.length} field{pageFields.length !== 1 ? 's' : ''} on this page
@@ -333,19 +333,19 @@ export function DocumentPreview({
 
       {/* ── Legend ───────────────────────────────────────────────────── */}
       {legendItems.length > 0 && (
-        <XStack gap="$3" flexWrap="wrap" px="$1">
+        <XStack gap="$3" flexWrap="wrap" paddingHorizontal="$1">
           {legendItems.map((item) => (
-            <XStack key={item.status} ai="center" gap="$1">
+            <XStack key={item.status} alignItems="center" gap="$1">
               <YStack
-                w={12}
-                h={12}
-                br="$1"
+                width={12}
+                height={12}
+                borderRadius="$1"
                 borderWidth={1}
-                borderColor={item.color}
+                borderColor={item.color as any}
                 borderStyle={item.dash as any}
-                bg={item.color + '22'}
+                backgroundColor={(item.color + '22') as any}
               />
-              <Text col="$colorSubdued" size="$1" textTransform="uppercase">
+              <Text color="$color10" fontSize="$1" textTransform="uppercase">
                 {item.status}
               </Text>
             </XStack>
@@ -354,7 +354,7 @@ export function DocumentPreview({
       )}
 
       {/* ── Page navigation ─────────────────────────────────────────── */}
-      <XStack jc="center" ai="center" gap="$3">
+      <XStack justifyContent="center" alignItems="center" gap="$3">
         <Button
           size="$2"
           disabled={currentPage <= 1}
@@ -362,7 +362,7 @@ export function DocumentPreview({
         >
           ◀ Prev
         </Button>
-        <Text col="$colorSubdued" size="$3">
+        <Text color="$color10" fontSize="$3">
           Page {currentPage} / {totalPages}
         </Text>
         <Button

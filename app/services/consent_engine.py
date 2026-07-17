@@ -25,7 +25,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import secrets
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -41,6 +43,8 @@ from app.models.assurance import AssuranceLevel
 from app.models.consent_grant import ConsentGrantLog
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
 from app.services.assurance_verifier import AssuranceVerifier, RedisAssuranceVerifier
+
+logger = logging.getLogger("nexa_logger")
 
 CONSENT_TOKEN_PREFIX = "nexa:consent:"
 DEFAULT_TTL_SECONDS = 60 * 60  # 1 hour, matches the old consent_service.py default
@@ -71,6 +75,10 @@ class ConsentCapability:
     is_break_glass: bool
     reason_code: str | None
     issued_at: str
+    expires_at: str
+    hospital_id: str | None
+    session_binding: str | None
+    reason_code_version: str | None
 
 
 @lru_cache(maxsize=1)
@@ -115,8 +123,12 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
     issued_at = payload.get("issued_at")
     is_break_glass = payload.get("is_break_glass", False)
     reason_code = payload.get("reason_code")
+    expires_at = payload.get("expires_at")
+    hospital_id = payload.get("hospital_id")
+    session_binding = payload.get("session_binding")
+    reason_code_version = payload.get("reason_code_version")
 
-    required_strings = [patient_id, clinician_id, purpose, issued_at]
+    required_strings = [patient_id, clinician_id, purpose, issued_at, expires_at]
     if not all(isinstance(v, str) and v for v in required_strings):
         return None
     if not isinstance(scope, list) or not all(isinstance(s, str) and s.strip() for s in scope):
@@ -134,6 +146,10 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
         is_break_glass=is_break_glass,
         reason_code=reason_code.strip() if isinstance(reason_code, str) else None,
         issued_at=issued_at,
+        expires_at=expires_at,
+        hospital_id=hospital_id if isinstance(hospital_id, str) and hospital_id else None,
+        session_binding=session_binding if isinstance(session_binding, str) and session_binding else None,
+        reason_code_version=(reason_code_version if isinstance(reason_code_version, str) else None),
     )
 
 
@@ -142,6 +158,8 @@ def _matches(
     patient_id: str | None,
     clinician_id: str | None,
     purpose: str | None,
+    hospital_id: str | None = None,
+    session_binding: str | None = None,
 ) -> bool:
     """Match a capability against caller-supplied constraints.
 
@@ -153,7 +171,17 @@ def _matches(
         return False
     if clinician_id is not None and capability.clinician_id != clinician_id:
         return False
-    if purpose is not None and capability.purpose != purpose:
+    if purpose is not None:
+        if capability.is_break_glass:
+            if purpose not in capability.scope:
+                return False
+        elif capability.purpose != purpose and purpose not in capability.scope:
+            return False
+    if hospital_id is not None and capability.hospital_id != hospital_id:
+        return False
+    if session_binding is not None and capability.session_binding != session_binding:
+        return False
+    if capability.is_break_glass and capability.session_binding and session_binding is None:
         return False
     return True
 
@@ -167,9 +195,12 @@ async def issue(
     scope: list[str],
     assurance_level: AssuranceLevel,
     assurance_evidence: dict[str, Any],
+    hospital_id: str | None = None,
     ttl_seconds: int | None = None,
     is_break_glass: bool = False,
     reason_code: str | None = None,
+    reason_code_version: str | None = None,
+    session_binding: str | None = None,
     verifier: Optional[AssuranceVerifier] = None,
 ) -> str:
     """Issue a consent capability. Returns the raw bearer token.
@@ -241,6 +272,10 @@ async def issue(
         "is_break_glass": is_break_glass,
         "reason_code": clean_reason,
         "issued_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "hospital_id": hospital_id,
+        "session_binding": session_binding,
+        "reason_code_version": reason_code_version,
         "assurance_level": assurance_result.actual_level,
     }
 
@@ -251,6 +286,7 @@ async def issue(
             token_hash=_token_hash(token),
             patient_id=patient_id,
             clinician_id=clinician_id,
+            hospital_id=uuid.UUID(hospital_id) if hospital_id else None,
             purpose=purpose,
             scope=clean_scope,
             is_break_glass=is_break_glass,
@@ -289,8 +325,11 @@ async def issue(
             # logged via the SUCCESS audit metadata either way.
             try:
                 await redis_client.rpush(COMPLIANCE_QUEUE_KEY, json.dumps(notification, sort_keys=True))
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.error(
+                    "Break-glass compliance notification enqueue failed",
+                    extra={"error_type": type(exc).__name__},
+                )
     except Exception as exc:
         # The Postgres row already committed as "issued" -- rollback()
         # here would be a no-op against already-committed data. Instead,
@@ -315,7 +354,12 @@ async def issue(
         event_type="CONSENT_GRANT_SUCCESS",
         target_id=target_id,
         status="SUCCESS",
-        metadata={"purpose": purpose, "is_break_glass": is_break_glass, "expires_at": expires_at.isoformat()},
+        metadata={
+            "purpose": purpose,
+            "is_break_glass": is_break_glass,
+            "expires_at": expires_at.isoformat(),
+            "reason_code_version": reason_code_version,
+        },
     )
 
     return token
@@ -331,6 +375,7 @@ async def issue_routine(
     assurance_evidence: Optional[dict] = None,
     redis: Optional[redis_async.Redis] = None,
     ttl_seconds: int = 3600,
+    hospital_id: str | None = None,
 ) -> str:
     """Issue a routine consent capability.
 
@@ -360,6 +405,7 @@ async def issue_routine(
             scope=scope,
             assurance_level=assurance_level,
             assurance_evidence=evidence,
+            hospital_id=hospital_id,
             ttl_seconds=ttl_seconds,
             is_break_glass=False,
         )
@@ -369,7 +415,7 @@ async def issue_routine(
             event_type="ROUTINE_CONSENT_GRANT_FAILED",
             target_id=target_id,
             status="FAILED",
-            metadata={"error": str(exc)},
+            metadata={"error_code": "ROUTINE_CONSENT_ISSUANCE_FAILED"},
         )
         raise
 
@@ -388,14 +434,23 @@ async def issue_break_glass(
     reason_code: str,
     db: AsyncSession,
     redis: Optional[redis_async.Redis] = None,
+    hospital_id: str | None = None,
+    scope: list[str] | None = None,
+    reason_code_version: str | None = None,
+    session_binding: str | None = None,
+    mfa_verified_at: datetime | None = None,
 ) -> str:
     """Issue a break-glass emergency consent capability.
 
     Consolidation Method (Sprint 2): Enforces is_break_glass=True,
-    a fixed 15-minute TTL, and wide Clinical+PII scope.
+    a fixed 15-minute TTL, and server-approved minimum-necessary scope.
     """
     if not reason_code or not reason_code.strip():
         raise ValueError("Break-glass grants require a non-empty reason_code.")
+    if not hospital_id or not session_binding or not mfa_verified_at or not reason_code_version:
+        raise ValueError("Break-glass grants require tenant, session, policy, and MFA bindings.")
+    if not scope:
+        raise ValueError("Break-glass grants require an approved minimum-necessary scope.")
 
     target_id = f"{patient_id}:{clinician_id}:BREAK_GLASS"
     await append_audit_log_or_503(
@@ -403,7 +458,7 @@ async def issue_break_glass(
         event_type="BREAK_GLASS_GRANT_ATTEMPT",
         target_id=target_id,
         status="STARTED",
-        metadata={"reason_code": reason_code},
+        metadata={"reason_code": reason_code, "reason_code_version": reason_code_version},
     )
 
     try:
@@ -412,12 +467,15 @@ async def issue_break_glass(
             patient_id=patient_id,
             clinician_id=clinician_id,
             purpose="EMERGENCY",
-            scope=["clinical.*", "pii.*"],
+            scope=scope,
             assurance_level=AssuranceLevel.BREAK_GLASS,
-            assurance_evidence={},
+            assurance_evidence={"server_mfa_verified_at": mfa_verified_at.isoformat()},
+            hospital_id=hospital_id,
             ttl_seconds=900,  # Enforce 15-minute TTL
             is_break_glass=True,
             reason_code=reason_code,
+            reason_code_version=reason_code_version,
+            session_binding=session_binding,
         )
     except Exception as exc:
         await append_audit_log(
@@ -425,7 +483,7 @@ async def issue_break_glass(
             event_type="BREAK_GLASS_GRANT_FAILED",
             target_id=target_id,
             status="FAILED",
-            metadata={"error": str(exc)},
+            metadata={"error_code": "BREAK_GLASS_ISSUANCE_FAILED"},
         )
         raise
 
@@ -444,6 +502,8 @@ async def validate(
     patient_id: str | None = None,
     clinician_id: str | None = None,
     purpose: str | None = None,
+    hospital_id: str | None = None,
+    session_binding: str | None = None,
 ) -> ConsentCapability | None:
     """Validate a live capability without consuming it. Fails closed.
 
@@ -459,7 +519,9 @@ async def validate(
         raise ConsentEngineUnavailable("Consent store is unavailable.") from exc
 
     capability = _parse_payload(raw_value)
-    if capability is None or not _matches(capability, patient_id, clinician_id, purpose):
+    if capability is None or not _matches(
+        capability, patient_id, clinician_id, purpose, hospital_id, session_binding
+    ):
         return None
     return capability
 
@@ -535,8 +597,11 @@ async def revoke(*, db: AsyncSession, token: str, reason: str = "manual_revocati
     try:
         redis_client = get_consent_redis_client()
         await redis_client.delete(_token_key(token))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.error(
+            "Live break-glass capability revocation failed; durable revocation will continue",
+            extra={"error_type": type(exc).__name__},
+        )
 
     try:
         stmt = select(ConsentGrantLog).where(ConsentGrantLog.token_hash == token_hash)

@@ -4,6 +4,7 @@ Shared test setup.
 import os
 import sys
 import types
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +18,12 @@ if "document_processor" not in sys.modules:
 
 os.environ.setdefault("KEK_ROOT_SECRET", "test-kek-root-secret-32-bytes-minimum")
 os.environ.setdefault("NEXA_PEPPER_KEY", "test-pepper-key")
-os.environ.setdefault("ENVIRONMENT", "test")
+os.environ["ENVIRONMENT"] = "test"
+os.environ["ENV"] = "test"
+os.environ.setdefault("DOCUMENT_EXTRACTION_PROVIDER", "demo")
+os.environ.setdefault("DOCUMENT_STORAGE_PROVIDER", "local")
+os.environ.setdefault("DOCUMENT_STORAGE_LOCAL_ROOT", os.path.join(tempfile.gettempdir(), "nexa-care-tests"))
+os.environ.setdefault("DOCUMENT_STORAGE_ENCRYPTION_KEY", "dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHQ=")
 os.environ["TRUSTED_HOSTS"] = "localhost,127.0.0.1,testserver"
 
 from app.main import app
@@ -142,6 +148,40 @@ class FakeRedis:
         self.ttls[key] = time.time() + ttl
         return 1
 
+    async def ttl(self, key):
+        import time
+        return max(-1, int(self.ttls.get(key, time.time() - 1) - time.time()))
+
+    async def eval(self, script, numkeys, *args):
+        import json, time
+        keys = list(args[:numkeys])
+        argv = list(args[numkeys:])
+        if numkeys == 1 and "DEL" in script:  # compare-and-delete lock release
+            key = keys[0]
+            if self.data.get(key) == argv[0]:
+                await self.delete(key)
+                return 1
+            return 0
+        if numkeys == 1:  # atomic fixed-window limiter
+            key = keys[0]
+            count = int(self.data.get(key, 0)) + 1
+            self.data[key] = str(count)
+            if key not in self.ttls:
+                self.ttls[key] = time.time() + int(argv[0])
+            return [count, await self.ttl(key)]
+        request_key, nonce_key = keys
+        raw = self.data.get(request_key)
+        if not raw or nonce_key in self.data:
+            return 0
+        payload = json.loads(raw)
+        if payload.get("status") != "pending" or payload.get("challenge_nonce") != argv[0]:
+            return 0
+        self.data[nonce_key] = "1"
+        self.ttls[nonce_key] = time.time() + 300
+        self.data[request_key] = argv[1]
+        self.ttls[request_key] = time.time() + int(argv[2])
+        return 1
+
     def pipeline(self):
         return FakeRedisPipeline(self)
 
@@ -193,6 +233,29 @@ class FakeSyncRedis:
     def delete(self, key):
         self._a.data.pop(key, None)
         self._a.ttls.pop(key, None)
+        return 1
+
+    def ttl(self, key):
+        import time
+        return max(-1, int(self._a.ttls.get(key, time.time() - 1) - time.time()))
+
+    def eval(self, script, numkeys, *args):
+        import json, time
+        keys = list(args[:numkeys]); argv = list(args[numkeys:])
+        if numkeys == 1:
+            key = keys[0]; count = int(self._a.data.get(key, 0)) + 1
+            self._a.data[key] = str(count)
+            self._a.ttls.setdefault(key, time.time() + int(argv[0]))
+            return [count, self.ttl(key)]
+        request_key, nonce_key = keys
+        raw = self._a.data.get(request_key)
+        if not raw or nonce_key in self._a.data:
+            return 0
+        payload = json.loads(raw)
+        if payload.get("status") != "pending" or payload.get("challenge_nonce") != argv[0]:
+            return 0
+        self._a.data[nonce_key] = "1"; self._a.ttls[nonce_key] = time.time() + 300
+        self._a.data[request_key] = argv[1]; self._a.ttls[request_key] = time.time() + int(argv[2])
         return 1
 
     def pipeline(self):
@@ -269,7 +332,8 @@ def override_deps(request, mock_db, mock_redis):
     patches = [
          patch("app.core.redis.get_redis_client", return_value=sync_redis),
          patch("app.api.v2.merge_routes.get_redis_client", return_value=sync_redis),
-         patch("app.api.v2.auth_routes.get_redis_client", return_value=sync_redis),
+         patch("app.api.v2.auth_routes.get_async_redis_client", return_value=mock_redis),
+         patch("app.api.v2.auth_routes.enforce_provider_login_controls", new=AsyncMock(return_value=("test-login-hash", 1))),
          patch("app.api.v2.consent_routes.get_redis_client", return_value=sync_redis),
          patch("app.services.provider_auth_service.get_redis_client", return_value=sync_redis),
          patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis),

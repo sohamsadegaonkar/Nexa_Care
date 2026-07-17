@@ -29,6 +29,8 @@ from app.models.patient_records import (
     Vitals,
 )
 from app.models.provider_context import ProviderContext
+from app.models.shards import NexaVault
+from app.services.crypto_kms import EncryptedField, EncryptionError, get_encryption_provider
 from app.observability.audit_ledger import append_audit_log_or_503, read_audit_events
 
 logger = logging.getLogger("nexa_logger")
@@ -46,22 +48,22 @@ class AppendVitalsRequest(BaseModel):
     heart_rate: int | str
     temperature_celsius: float | str
     sp_o2_percentage: int | str
-    recorded_at: str
+    recorded_at: datetime
     source: str = "manual"
     confidence: float | None = None
     risk_level: str = "LOW_RISK"
-    source_document_id: str | None = None
+    source_document_id: uuid.UUID | None = None
 
 
 class AppendMedicationRequest(BaseModel):
     name: str
     strength: str
     frequency: str
-    prescribed_at: str
+    prescribed_at: datetime
     source: str = "manual"
     confidence: float | None = None
     risk_level: str = "MEDIUM_RISK"
-    source_document_id: str | None = None
+    source_document_id: uuid.UUID | None = None
 
 
 class AppendLabResultRequest(BaseModel):
@@ -70,11 +72,11 @@ class AppendLabResultRequest(BaseModel):
     unit: str
     reference_range: str
     is_abnormal: bool = False
-    recorded_at: str
+    recorded_at: datetime
     source: str = "manual"
     confidence: float | None = None
     risk_level: str = "MEDIUM_RISK"
-    source_document_id: str | None = None
+    source_document_id: uuid.UUID | None = None
 
 
 class AppendAllergyRequest(BaseModel):
@@ -83,20 +85,20 @@ class AppendAllergyRequest(BaseModel):
     source: str = "manual"
     confidence: float | None = None
     risk_level: str = "HIGH_RISK"
-    source_document_id: str | None = None
+    source_document_id: uuid.UUID | None = None
 
 
 class AppendDocumentRequest(BaseModel):
     document_type: str
     storage_ref: str
-    extraction_job_id: str | None = None
+    extraction_job_id: uuid.UUID | None = None
     source: str = "manual"
     confidence: float | None = None
     risk_level: str = "LOW_RISK"
-    source_document_id: str | None = None
+    source_document_id: uuid.UUID | None = None
 
 
-def _validate_provenance(source: str, confidence: float | None, risk_level: str, source_doc: str | None) -> None:
+def _validate_provenance(source: str, confidence: float | None, risk_level: str, source_doc: uuid.UUID | None) -> None:
     if source == "ai_extracted":
         if confidence is None or not (0.0 <= confidence <= 1.0) or not risk_level or not source_doc:
             raise HTTPException(
@@ -108,8 +110,44 @@ def _validate_provenance(source: str, confidence: float | None, risk_level: str,
 def _parse_uuid(id_str: str) -> uuid.UUID:
     try:
         return uuid.UUID(str(id_str))
-    except ValueError:
-        return uuid.uuid5(uuid.NAMESPACE_DNS, str(id_str))
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": "INVALID_PATIENT_ID", "message": "patient id must be a valid UUID"},
+        ) from exc
+
+
+async def _read_vault_identity(patient_id: uuid.UUID, db: AsyncSession) -> dict[str, str | None]:
+    """Read and decrypt canonical vault identity for exactly one patient."""
+
+    result = await db.execute(
+        select(NexaVault).where(NexaVault.masked_internal_id == str(patient_id)).limit(1)
+    )
+    row = result.scalar_one_or_none()
+    identity = {"patient_name": None, "phone": None, "aadhaar_abha_id": None}
+    if row is None:
+        return identity
+
+    kms = get_encryption_provider()
+    for field_name in identity:
+        value = getattr(row, field_name, None)
+        if value is None:
+            continue
+        try:
+            encrypted = EncryptedField.deserialize(value, field_name)
+            identity[field_name] = await kms.decrypt_field(str(patient_id), field_name, encrypted, db)
+        except EncryptionError:
+            # Vault identity is required to be encrypted. Never expose legacy
+            # plaintext or substitute a fabricated identity.
+            logger.error(
+                "Vault identity could not be decrypted",
+                extra={"event": "vault_identity_decrypt_failed", "patient_id": str(patient_id), "field": field_name},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error_code": "IDENTITY_UNAVAILABLE", "message": "patient identity is temporarily unavailable"},
+            )
+    return identity
 
 
 # ── Patient Self-View Endpoints ──────────────────────────────────────────────
@@ -141,8 +179,11 @@ async def get_my_access_history(
     try:
         rows = await read_audit_events(str(patient_id), limit=limit)
     except Exception as exc:
-        logger.warning(f"Failed to read access history: {exc}")
-        rows = []
+        logger.error("Patient access history store unavailable", extra={"error_type": type(exc).__name__})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "AUDIT_HISTORY_UNAVAILABLE"},
+        ) from exc
 
     history = []
     for r in rows:
@@ -154,10 +195,13 @@ async def get_my_access_history(
         event_type = str(r.get("event_type") or payload.get("event") or r.get("event") or "")
         # Filter for read / view / decrypt / break-glass access events
         if any(kw in event_type.upper() for kw in ("VIEW", "READ", "DECRYPT", "ACCESS", "BREAK_GLASS", "SUMMARY")):
-            actor_uid = str(r.get("actor_uid") or payload.get("actor_uid") or "doc-unknown")
-            doc_name = metadata.get("provider_name") or metadata.get("doctor_name") or (f"Dr. {actor_uid}" if not actor_uid.startswith("Dr.") else actor_uid)
-            hosp_name = metadata.get("hospital_name") or metadata.get("hospital") or "General Hospital"
-            accessed_by = f"{doc_name} ({hosp_name})"
+            actor_value = r.get("actor_uid") or payload.get("actor_uid")
+            actor_uid = str(actor_value) if actor_value is not None else None
+            doc_name = metadata.get("provider_name") or metadata.get("doctor_name")
+            hosp_name = metadata.get("hospital_name") or metadata.get("hospital")
+            accessed_by = doc_name or actor_uid
+            if accessed_by and hosp_name:
+                accessed_by = f"{accessed_by} ({hosp_name})"
 
             is_bg = bool(
                 "BREAK_GLASS" in event_type.upper()
@@ -165,14 +209,15 @@ async def get_my_access_history(
                 or str(metadata.get("purpose", "")).upper() == "EMERGENCY"
                 or "break_glass" in str(metadata.get("purpose", "")).lower()
             )
-            purpose = metadata.get("purpose") or r.get("purpose") or ("EMERGENCY (Break-Glass)" if is_bg else "Clinical Review")
-            accessed_at = str(r.get("created_at") or payload.get("timestamp") or datetime.now(timezone.utc).isoformat())
+            purpose = metadata.get("purpose") or r.get("purpose")
+            accessed_at_value = r.get("created_at") or payload.get("timestamp")
+            accessed_at = str(accessed_at_value) if accessed_at_value is not None else None
 
-            raw_scope = metadata.get("scope") or metadata.get("data_categories") or ["clinical", "pii"]
+            raw_scope = metadata.get("scope") or metadata.get("data_categories") or []
             data_categories = raw_scope if isinstance(raw_scope, list) else [str(raw_scope)]
 
             history.append({
-                "audit_id": str(r.get("record_hash") or uuid.uuid4()),
+                "audit_id": str(r.get("audit_id") or r.get("record_hash")) if (r.get("audit_id") or r.get("record_hash")) else None,
                 "accessed_by": accessed_by,
                 "doctor_name": doc_name,
                 "hospital_name": hosp_name,
@@ -219,26 +264,15 @@ async def get_patient_summary(
     res_l = await db.execute(stmt_l)
     lab_rows = res_l.scalars().all()
 
-    if vitals_rows:
-        vitals_list = [{"type": v.type, "value": v.value, "unit": v.unit, "recorded_at": v.recorded_at.isoformat()} for v in vitals_rows]
-    elif id == "pat-123":
-        vitals_list = [{"type": "BP", "value": "120/80", "unit": "mmHg"}, {"type": "HR", "value": "72", "unit": "bpm"}]
-    else:
-        vitals_list = []
-
-    if meds_rows:
-        meds_list = [{"name": m.name, "dosage": m.strength, "frequency": m.frequency} for m in meds_rows]
-    elif id == "pat-123":
-        meds_list = [{"name": "Lisinopril", "dosage": "10mg", "frequency": "Daily"}]
-    else:
-        meds_list = []
-
-    if alg_rows:
-        allergies_list = [f"{a.allergen} ({a.severity})" for a in alg_rows]
-    elif id == "pat-123":
-        allergies_list = ["Penicillin"]
-    else:
-        allergies_list = []
+    vitals_list = [
+        {"type": v.type, "value": v.value, "unit": v.unit, "recorded_at": v.recorded_at.isoformat()}
+        for v in vitals_rows
+    ]
+    meds_list = [
+        {"name": m.name, "dosage": m.strength, "frequency": m.frequency}
+        for m in meds_rows
+    ]
+    allergies_list = [f"{a.allergen} ({a.severity})" for a in alg_rows]
 
     labs_list = [
         {"test_name": lab.test_name, "value": lab.value, "unit": lab.unit, "reference_range": lab.reference_range, "is_abnormal": lab.is_abnormal, "recorded_at": lab.recorded_at.isoformat(), "source": lab.source}
@@ -249,22 +283,22 @@ async def get_patient_summary(
         s in capability.scope for s in ("full", "pii", "pii.*")
     )
 
-    is_aarav = (id == "123e4567-e89b-12d3-a456-426614174001")
-    pname = "Aarav Sharma" if is_aarav else ("Jane Doe" if has_full else "[REDACTED]")
-    conditions = ["Type 2 Diabetes"] if is_aarav else (["Hypertension"] if (vitals_rows or meds_rows or id == "pat-123") else [])
+    identity = await _read_vault_identity(pid_uuid, db) if has_full else {}
 
     return {
         "patient_id": id,
         "pii": {
-            "patient_name": pname if has_full else "[REDACTED]",
-            "phone": "+91 98765 43210" if (is_aarav and has_full) else ("+1234567890" if has_full else "[REDACTED]"),
-            "aadhaar_abha_id": "ABHA-1234-5678-9012" if (is_aarav and has_full) else ("ABHA-9999-8888" if has_full else "[REDACTED]"),
+            "patient_name": identity.get("patient_name") if has_full else "[REDACTED]",
+            "phone": identity.get("phone") if has_full else "[REDACTED]",
+            "aadhaar_abha_id": identity.get("aadhaar_abha_id") if has_full else "[REDACTED]",
         },
         "clinical_summary": {
-            "blood_group": "B+" if is_aarav else "O+",
+            "blood_group": None,
+            "blood_group_verification": "unknown",
+            "blood_group_provenance": None,
             "allergies": allergies_list,
-            "chronic_conditions": conditions,
-            "active_conditions": conditions,
+            "chronic_conditions": [],
+            "active_conditions": [],
             "active_medications": meds_list,
             "current_medications": meds_list,
             "latest_vitals": vitals_list,
@@ -289,28 +323,31 @@ def _enrich_timeline_provenance(
     source_page: int | None = None,
 ) -> dict[str, Any]:
     if raw_source == "ai_extracted" or "ai_" in str(raw_source).lower():
-        conf_val = float(confidence) if confidence is not None else 0.91
-        conf_pct = int(round(conf_val * 100))
-        risk_val = str(risk_level or "LOW_RISK")
-        rev_val = str(review_status or "Auto-approved").replace("_", " ").title()
-        doc_val = str(document_type or "Lab Report")
-        page_val = source_page or 1
-        source_detail = f"{doc_val}, Page {page_val}"
-        source_display = f"AI-extracted from document, {conf_pct}% confidence"
-        badges = [
-            f"AI Extracted ({conf_pct}%)",
-            f"Risk: {risk_val}",
-            f"Reviewed: {rev_val}",
-            f"Source: {source_detail}",
-        ]
+        conf_val = float(confidence) if confidence is not None else None
+        conf_pct = int(round(conf_val * 100)) if conf_val is not None else None
+        risk_val = str(risk_level) if risk_level else None
+        rev_val = str(review_status).replace("_", " ").title() if review_status else None
+        source_parts = [str(document_type)] if document_type else []
+        if source_page is not None:
+            source_parts.append(f"Page {source_page}")
+        source_detail = ", ".join(source_parts) or None
+        source_display = "AI-extracted from document"
+        if conf_pct is not None:
+            source_display += f", {conf_pct}% confidence"
+        badges = [badge for badge in [
+            f"AI Extracted ({conf_pct}%)" if conf_pct is not None else "AI Extracted",
+            f"Risk: {risk_val}" if risk_val else None,
+            f"Reviewed: {rev_val}" if rev_val else None,
+            f"Source: {source_detail}" if source_detail else None,
+        ] if badge is not None]
     else:
         conf_val = None
         risk_val = str(risk_level or "LOW_RISK") if risk_level else None
-        pname = provider_name or "Dr. Sarah Smith"
-        source_display = f"Manual entry by {pname}"
-        source_detail = f"Manual provider entry ({pname})"
+        pname = provider_name
+        source_display = f"Manual entry by {pname}" if pname else "Manual entry"
+        source_detail = f"Manual provider entry ({pname})" if pname else "Manual provider entry"
         rev_val = "N/A"
-        badges = ["Manual Entry", f"By: {pname}"]
+        badges = ["Manual Entry"] + ([f"By: {pname}"] if pname else [])
 
     return {
         "event_id": item_id,
@@ -338,31 +375,41 @@ async def _fetch_and_merge_timeline(id_str: str, db: AsyncSession, limit: int = 
     stmt_te = select(TimelineEvent).where(TimelineEvent.patient_id == pid_uuid).order_by(TimelineEvent.occurred_at.desc()).limit(limit)
     res_te = await db.execute(stmt_te)
     for te in res_te.scalars().all():
-        dt_str = te.occurred_at.isoformat() if te.occurred_at else datetime.now(timezone.utc).isoformat()
+        if te.occurred_at is None:
+            continue
+        dt_str = te.occurred_at.isoformat()
         events.append(_enrich_timeline_provenance(str(te.id), te.event_type, te.event_type, te.summary, dt_str, te.source))
 
     stmt_v = select(Vitals).where(Vitals.patient_id == pid_uuid).order_by(Vitals.recorded_at.desc()).limit(limit)
     res_v = await db.execute(stmt_v)
     for v in res_v.scalars().all():
-        dt_str = v.recorded_at.isoformat() if v.recorded_at else datetime.now(timezone.utc).isoformat()
+        if v.recorded_at is None:
+            continue
+        dt_str = v.recorded_at.isoformat()
         events.append(_enrich_timeline_provenance(str(v.id), "VITALS", f"Vitals Recorded ({v.type})", f"{v.type}: {v.value} {v.unit}", dt_str, v.source, v.confidence, v.risk_level))
 
     stmt_m = select(Medication).where(Medication.patient_id == pid_uuid).order_by(Medication.prescribed_at.desc()).limit(limit)
     res_m = await db.execute(stmt_m)
     for m in res_m.scalars().all():
-        dt_str = m.prescribed_at.isoformat() if m.prescribed_at else datetime.now(timezone.utc).isoformat()
+        if m.prescribed_at is None:
+            continue
+        dt_str = m.prescribed_at.isoformat()
         events.append(_enrich_timeline_provenance(str(m.id), "MEDICATION", f"Medication Prescribed ({m.name})", f"{m.name} {m.strength} ({m.frequency})", dt_str, m.source, m.confidence, m.risk_level))
 
     stmt_l = select(LabResult).where(LabResult.patient_id == pid_uuid).order_by(LabResult.recorded_at.desc()).limit(limit)
     res_l = await db.execute(stmt_l)
     for lab in res_l.scalars().all():
-        dt_str = lab.recorded_at.isoformat() if lab.recorded_at else datetime.now(timezone.utc).isoformat()
+        if lab.recorded_at is None:
+            continue
+        dt_str = lab.recorded_at.isoformat()
         events.append(_enrich_timeline_provenance(str(lab.id), "LAB_RESULT", f"Lab Result ({lab.test_name})", f"{lab.test_name}: {lab.value} {lab.unit}", dt_str, lab.source, lab.confidence, lab.risk_level))
 
     stmt_d = select(DocumentReference).where(DocumentReference.patient_id == pid_uuid).order_by(DocumentReference.uploaded_at.desc()).limit(limit)
     res_d = await db.execute(stmt_d)
     for d in res_d.scalars().all():
-        dt_str = d.uploaded_at.isoformat() if d.uploaded_at else datetime.now(timezone.utc).isoformat()
+        if d.uploaded_at is None:
+            continue
+        dt_str = d.uploaded_at.isoformat()
         events.append(_enrich_timeline_provenance(str(d.id), "DOCUMENT", f"Document Uploaded ({d.document_type})", f"Uploaded clinical document: {d.document_type}", dt_str, "manual"))
 
     seen = set()
@@ -373,18 +420,6 @@ async def _fetch_and_merge_timeline(id_str: str, db: AsyncSession, limit: int = 
             deduped.append(e)
 
     deduped.sort(key=lambda x: str(x.get("occurred_at", x.get("event_date", ""))), reverse=True)
-
-    if not deduped:
-        sample_dt = datetime.now(timezone.utc).isoformat()
-        fb = _enrich_timeline_provenance(
-            str(uuid.uuid4()), "ENCOUNTER", "Routine Annual Checkup",
-            "Vitals stable, prescription renewed.", sample_dt, "manual",
-            provider_name="Dr. Sarah Smith"
-        )
-        fb["provider_name"] = "Dr. Sarah Smith"
-        fb["hospital_name"] = "General Hospital"
-        fb["data_payload"] = {"bp": "120/80"}
-        deduped = [fb]
 
     return deduped[:limit]
 
@@ -414,19 +449,23 @@ async def get_patient_audit_trail(
     provider: ProviderContext = Depends(require_role("admin")),
 ):
     """Admin & Auditor Console view: returns complete, unfiltered audit ledger trail for a patient."""
+    _parse_uuid(id)
     try:
         rows = await read_audit_events(str(id), limit=limit)
     except Exception as exc:
-        logger.warning(f"Failed to read admin audit trail: {exc}")
-        rows = []
+        logger.error("Admin audit trail store unavailable", extra={"error_type": type(exc).__name__})
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "AUDIT_HISTORY_UNAVAILABLE"},
+        ) from exc
 
     trail = [
         {
-            "audit_id": str(r.get("audit_id") or r.get("record_hash") or uuid.uuid4()),
-            "actor_uid": r.get("actor_uid", "UNKNOWN"),
-            "event_type": r.get("event_type", "UNKNOWN"),
-            "timestamp": r.get("created_at") or datetime.now(timezone.utc).isoformat(),
-            "status": r.get("status", "SUCCESS"),
+            "audit_id": str(r.get("audit_id") or r.get("record_hash")) if (r.get("audit_id") or r.get("record_hash")) else None,
+            "actor_uid": r.get("actor_uid"),
+            "event_type": r.get("event_type"),
+            "timestamp": r.get("created_at"),
+            "status": r.get("status"),
             "payload": r.get("payload", {}),
         }
         for r in rows
@@ -515,19 +554,11 @@ async def append_vitals(
     )
 
     pid_uuid = _parse_uuid(id)
-    try:
-        rec_dt = datetime.fromisoformat(payload.recorded_at.replace("Z", "+00:00"))
-    except Exception:
-        rec_dt = datetime.now(timezone.utc)
-
-    doc_uuid = None
-    if payload.source_document_id:
-        try:
-            doc_uuid = uuid.UUID(str(payload.source_document_id))
-        except ValueError:
-            pass
+    rec_dt = payload.recorded_at
+    doc_uuid = payload.source_document_id
 
     v_bp = Vitals(
+        id=uuid.uuid4(),
         patient_id=pid_uuid,
         type="BP",
         value=f"{payload.systolic_bp}/{payload.diastolic_bp}",
@@ -549,7 +580,9 @@ async def append_vitals(
     )
     db.add(tl)
     await db.flush()
-    record_id = str(v_bp.id or uuid.uuid4())
+    if v_bp.id is None:
+        raise RuntimeError("Vitals record identifier was not assigned during flush")
+    record_id = str(v_bp.id)
     await db.commit()
 
     await append_audit_log_or_503(
@@ -564,7 +597,7 @@ async def append_vitals(
         "record_id": record_id,
         "patient_id": id,
         "status": "committed",
-        "audit_ledger_hash": "a8f902c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "audit_ledger_hash": None,
     }
 
 
@@ -589,19 +622,11 @@ async def append_medications(
     )
 
     pid_uuid = _parse_uuid(id)
-    try:
-        rec_dt = datetime.fromisoformat(payload.prescribed_at.replace("Z", "+00:00"))
-    except Exception:
-        rec_dt = datetime.now(timezone.utc)
-
-    doc_uuid = None
-    if payload.source_document_id:
-        try:
-            doc_uuid = uuid.UUID(str(payload.source_document_id))
-        except ValueError:
-            pass
+    rec_dt = payload.prescribed_at
+    doc_uuid = payload.source_document_id
 
     med = Medication(
+        id=uuid.uuid4(),
         patient_id=pid_uuid,
         name=payload.name,
         strength=payload.strength,
@@ -623,7 +648,9 @@ async def append_medications(
     )
     db.add(tl)
     await db.flush()
-    record_id = str(med.id or uuid.uuid4())
+    if med.id is None:
+        raise RuntimeError("Medication record identifier was not assigned during flush")
+    record_id = str(med.id)
     await db.commit()
 
     await append_audit_log_or_503(
@@ -638,7 +665,7 @@ async def append_medications(
         "record_id": record_id,
         "patient_id": id,
         "status": "committed",
-        "audit_ledger_hash": "a8f902c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "audit_ledger_hash": None,
     }
 
 
@@ -663,19 +690,11 @@ async def append_labs(
     )
 
     pid_uuid = _parse_uuid(id)
-    try:
-        rec_dt = datetime.fromisoformat(payload.recorded_at.replace("Z", "+00:00"))
-    except Exception:
-        rec_dt = datetime.now(timezone.utc)
-
-    doc_uuid = None
-    if payload.source_document_id:
-        try:
-            doc_uuid = uuid.UUID(str(payload.source_document_id))
-        except ValueError:
-            pass
+    rec_dt = payload.recorded_at
+    doc_uuid = payload.source_document_id
 
     lab = LabResult(
+        id=uuid.uuid4(),
         patient_id=pid_uuid,
         test_name=payload.test_name,
         value=payload.value,
@@ -699,7 +718,9 @@ async def append_labs(
     )
     db.add(tl)
     await db.flush()
-    record_id = str(lab.id or uuid.uuid4())
+    if lab.id is None:
+        raise RuntimeError("Lab record identifier was not assigned during flush")
+    record_id = str(lab.id)
     await db.commit()
 
     await append_audit_log_or_503(
@@ -714,7 +735,7 @@ async def append_labs(
         "record_id": record_id,
         "patient_id": id,
         "status": "committed",
-        "audit_ledger_hash": "a8f902c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "audit_ledger_hash": None,
     }
 
 
@@ -742,14 +763,10 @@ async def append_allergies(
     )
 
     pid_uuid = _parse_uuid(id)
-    doc_uuid = None
-    if payload.source_document_id:
-        try:
-            doc_uuid = uuid.UUID(str(payload.source_document_id))
-        except ValueError:
-            pass
+    doc_uuid = payload.source_document_id
 
     alg = Allergy(
+        id=uuid.uuid4(),
         patient_id=pid_uuid,
         allergen=payload.allergen,
         severity=payload.severity,
@@ -770,7 +787,9 @@ async def append_allergies(
     )
     db.add(tl)
     await db.flush()
-    record_id = str(alg.id or uuid.uuid4())
+    if alg.id is None:
+        raise RuntimeError("Allergy record identifier was not assigned during flush")
+    record_id = str(alg.id)
     await db.commit()
 
     await append_audit_log_or_503(
@@ -785,7 +804,7 @@ async def append_allergies(
         "record_id": record_id,
         "patient_id": id,
         "status": "committed",
-        "audit_ledger_hash": "a8f902c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "audit_ledger_hash": None,
     }
 
 
@@ -812,14 +831,10 @@ async def append_documents(
     pid_uuid = _parse_uuid(id)
     now = datetime.now(timezone.utc)
 
-    job_uuid = None
-    if payload.extraction_job_id:
-        try:
-            job_uuid = uuid.UUID(str(payload.extraction_job_id))
-        except ValueError:
-            pass
+    job_uuid = payload.extraction_job_id
 
     doc = DocumentReference(
+        id=uuid.uuid4(),
         patient_id=pid_uuid,
         document_type=payload.document_type,
         uploaded_at=now,
@@ -837,7 +852,9 @@ async def append_documents(
     )
     db.add(tl)
     await db.flush()
-    record_id = str(doc.id or uuid.uuid4())
+    if doc.id is None:
+        raise RuntimeError("Document record identifier was not assigned during flush")
+    record_id = str(doc.id)
     await db.commit()
 
     await append_audit_log_or_503(
@@ -852,5 +869,5 @@ async def append_documents(
         "record_id": record_id,
         "patient_id": id,
         "status": "committed",
-        "audit_ledger_hash": "a8f902c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "audit_ledger_hash": None,
     }

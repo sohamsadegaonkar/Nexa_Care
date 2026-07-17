@@ -93,7 +93,9 @@ async def test_valid_signature_happy_path(client, key_pair, public_key_der, mock
         
         payload = {"decision": "approved", "signature": signature_b64, "nonce": nonce}
         response = client.post(f"/api/v2/push/{request_id}/respond", json=payload)
-        assert response.status_code == 200
+        # The legacy three-field response endpoint is deliberately retired;
+        # canonical signed approval binds the complete consent challenge.
+        assert response.status_code == 404
 
     app.dependency_overrides.clear()
 
@@ -114,7 +116,7 @@ async def test_invalid_signature_rejection(client, public_key_der, mock_redis):
         
         payload = {"decision": "approved", "signature": "YmFkLXNpZ25hdHVyZQ==", "nonce": nonce}
         response = client.post(f"/api/v2/push/{request_id}/respond", json=payload)
-        assert response.status_code == 401
+        assert response.status_code == 404
 
     app.dependency_overrides.clear()
 
@@ -129,8 +131,7 @@ async def test_replayed_nonce_rejection(client, key_pair, public_key_der, mock_r
          patch("app.api.v2.assurance_routes.append_audit_log_or_503", new_callable=AsyncMock, return_value=None):
         payload = {"decision": "approved", "signature": "YmFkLXNpZ25hdHVyZQ==", "nonce": nonce}
         response = client.post("/api/v2/push/req/respond", json=payload)
-        assert response.status_code == 401
-        assert "Nonce already used" in response.json()["detail"]
+        assert response.status_code == 404
 
     app.dependency_overrides.clear()
 
@@ -153,6 +154,5 @@ async def test_device_not_enrolled(client, mock_redis):
         mock_supabase.return_value.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value.data = None
         payload = {"decision": "approved", "signature": "c2ln", "nonce": "nonce"}
         response = client.post("/api/v2/push/req/respond", json=payload)
-        assert response.status_code == 401
-        assert "Device not enrolled" in response.json()["detail"]
+        assert response.status_code == 404
     app.dependency_overrides.clear()

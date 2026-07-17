@@ -84,9 +84,11 @@ async def validate_consent_for_patient(
             patient_id=str(patient_id),
             clinician_id=actor_uid,
             purpose=purpose,
+            hospital_id=hospital_id,
+            session_binding=provider.session_binding,
         )
         if capability is None:
-            capability = validate_approved_access(
+            capability = await validate_approved_access(
                 token=x_consent_token,
                 patient_id=str(patient_id),
                 provider_id=actor_uid,
@@ -178,8 +180,11 @@ def require_consent(purpose: str) -> Callable[[Request, ProviderContext, str | N
                 body_json = await request.json()
                 if isinstance(body_json, dict):
                     patient_id = body_json.get("patient_id")
-            except Exception:
-                pass
+            except (ValueError, UnicodeDecodeError) as exc:
+                logger.info(
+                    "Consent gate could not parse request body",
+                    extra={"error_type": type(exc).__name__},
+                )
 
         return await validate_consent_for_patient(
             patient_id=patient_id,

@@ -38,12 +38,12 @@ export interface FieldCardProps {
 
 type RiskLevel = ExtractedField['risk_level']
 
-const RISK_STYLES: Record<RiskLevel, { bg: string; text: string; icon: string }> = {
+const RISK_STYLES = {
   LOW_RISK: { bg: '$green4', text: '$green10', icon: '✓' },
   MEDIUM_RISK: { bg: '$orange4', text: '$orange10', icon: '⚠' },
   HIGH_RISK: { bg: '$red4', text: '$red10', icon: '⛔' },
   CRITICAL_RISK: { bg: '$red4', text: '$red10', icon: '🚨' },
-}
+} as const satisfies Record<RiskLevel, { bg: string; text: string; icon: string }>
 
 // ── ProvenanceBadge ────────────────────────────────────────────────────
 
@@ -53,15 +53,15 @@ const RISK_STYLES: Record<RiskLevel, { bg: string; text: string; icon: string }>
  * - AI confidence ≥ 0.9 + approved → "Clinician verified" (green)
  * - AI confidence ≥ 0.9 + not yet verified → "AI extracted · X% · Not yet verified" (yellow)
  * - AI confidence < 0.9 → "AI extracted · X% · Not yet verified" (orange/red)
- * - Auto-approved → "Auto-approved · X%" (blue)
+ * - Legacy auto-approved → blocked, never treated as clinician review
  */
 function ProvenanceBadge({ confidence, status }: { confidence: number; status: string }) {
   const pct = Math.round(confidence * 100)
 
   if (status === 'approved' || status === 'edited') {
     return (
-      <Card bg="$green4" br="$4" px="$2" py="$1">
-        <Text col="$green10" size="$1" fontWeight="600">
+      <Card backgroundColor="$green4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+        <Text color="$green10" fontSize="$1" fontWeight="600">
           Clinician verified
         </Text>
       </Card>
@@ -70,9 +70,9 @@ function ProvenanceBadge({ confidence, status }: { confidence: number; status: s
 
   if (status === 'auto_approved') {
     return (
-      <Card bg="$blue4" br="$4" px="$2" py="$1">
-        <Text col="$blue10" size="$1" fontWeight="600">
-          Auto-approved · {pct}%
+      <Card backgroundColor="$red4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+        <Text color="$red10" fontSize="$1" fontWeight="600">
+          Legacy auto-approved blocked · {pct}% model confidence
         </Text>
       </Card>
     )
@@ -82,8 +82,8 @@ function ProvenanceBadge({ confidence, status }: { confidence: number; status: s
   const badgeText = confidence >= 0.9 ? '$yellow10' : '$orange10'
 
   return (
-    <Card bg={badgeBg} br="$4" px="$2" py="$1">
-      <Text col={badgeText} size="$1" fontWeight="600">
+    <Card backgroundColor={badgeBg} borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+      <Text color={badgeText} fontSize="$1" fontWeight="600">
         AI extracted · {pct}% model confidence · Not yet verified
       </Text>
     </Card>
@@ -98,18 +98,18 @@ function ProvenanceBadge({ confidence, status }: { confidence: number; status: s
  * after ~1.5 seconds.
  */
 function ActionConfirmation({ action }: { action: 'approved' | 'edited' | 'rejected' }) {
-  const config = {
+  const config = ({
     approved: { icon: '✓', label: 'Approved', bg: '$green4', text: '$green10' },
     edited: { icon: '✎', label: 'Edited', bg: '$yellow4', text: '$yellow10' },
     rejected: { icon: '✕', label: 'Rejected', bg: '$red4', text: '$red10' },
-  }[action]
+  } as const)[action]
 
   return (
-    <Card bg={config.bg} br="$4" p="$3" ai="center" gap="$1" animation="quick" enterStyle={{ opacity: 0, scale: 0.9 }}>
-      <Text col={config.text} size="$6" fontWeight="700">
+    <Card backgroundColor={config.bg} borderRadius="$4" padding="$3" alignItems="center" gap="$1">
+      <Text color={config.text} fontSize="$6" fontWeight="700">
         {config.icon}
       </Text>
-      <Text col={config.text} size="$3" fontWeight="600">
+      <Text color={config.text} fontSize="$3" fontWeight="600">
         {config.label}
       </Text>
     </Card>
@@ -235,21 +235,20 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
   if (lastAction && isAdjudicated) {
     return (
       <Card
-        p="$4"
-        bg="$background"
-        br="$4"
+        padding="$4"
+        backgroundColor="$background"
+        borderRadius="$4"
         borderWidth={1}
         borderColor="$borderColor"
         gap="$2"
         opacity={0.9}
-        animation="quick"
       >
         <ActionConfirmation action={lastAction} />
-        <XStack jc="space-between" ai="center">
-          <Text col="$colorSubdued" size="$2" fontFamily="$mono">
+        <XStack justifyContent="space-between" alignItems="center">
+          <Text color="$color10" fontSize="$2">
             {field.field_name}
           </Text>
-          <Text col="$colorSubdued" size="$2">
+          <Text color="$color10" fontSize="$2">
             {field.corrected_value ?? field.raw_value}
           </Text>
         </XStack>
@@ -259,9 +258,9 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
   return (
     <Card
-      p="$4"
-      bg={isReadOnly ? '$backgroundHover' : '$background'}
-      br="$4"
+      padding="$4"
+      backgroundColor={isReadOnly ? '$backgroundHover' : '$background'}
+      borderRadius="$4"
       borderWidth={1}
       borderColor={
         isAdjudicated ? '$borderColor' :
@@ -270,25 +269,24 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
       }
       gap="$2"
       opacity={field.status === 'rejected' ? 0.6 : 1}
-      animation="quick"
     >
       {/* Header: field name + status */}
-      <XStack jc="space-between" ai="center">
-        <Text col="$color" size="$4" fontWeight="700" fontFamily="$mono">
+      <XStack justifyContent="space-between" alignItems="center">
+        <Text color="$color12" fontSize="$4" fontWeight="700">
           {field.field_name}
         </Text>
-        <Card bg={
+        <Card backgroundColor={
           field.status === 'needs_review' ? '$orange4' :
           field.status === 'approved' || field.status === 'edited' ? '$green4' :
           field.status === 'rejected' ? '$red4' :
           '$blue4'
-        } br="$4" px="$2" py="$1">
-          <Text col={
+        } borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+          <Text color={
             field.status === 'needs_review' ? '$orange10' :
             field.status === 'approved' || field.status === 'edited' ? '$green10' :
             field.status === 'rejected' ? '$red10' :
             '$blue10'
-          } size="$1" fontWeight="600" textTransform="uppercase">
+          } fontSize="$1" fontWeight="600" textTransform="uppercase">
             {field.status.replace('_', ' ')}
           </Text>
         </Card>
@@ -296,22 +294,22 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Extracted value */}
       <YStack gap="$1">
-        <Text col="$colorSubdued" size="$2" textTransform="uppercase">Extracted Value</Text>
-        <Text col="$color" size="$5" fontWeight="600">
+        <Text color="$color10" fontSize="$2" textTransform="uppercase">Extracted Value</Text>
+        <Text color="$color12" fontSize="$5" fontWeight="600">
           {field.corrected_value ?? field.raw_value}
         </Text>
         {field.normalized_value && field.normalized_value !== field.raw_value && (
-          <Text col="$colorSubdued" size="$2">
+          <Text color="$color10" fontSize="$2">
             Normalized: {field.normalized_value}
           </Text>
         )}
       </YStack>
 
       {/* Confidence + Risk badges */}
-      <XStack gap="$2" ai="center" flexWrap="wrap">
+      <XStack gap="$2" alignItems="center" flexWrap="wrap">
         <ProvenanceBadge confidence={field.confidence} status={field.status} />
-        <Card bg={risk.bg} br="$4" px="$2" py="$1">
-          <Text col={risk.text} size="$1" fontWeight="600">
+        <Card backgroundColor={risk.bg} borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+          <Text color={risk.text} fontSize="$1" fontWeight="600">
             {risk.icon} {field.risk_level.replace('_', ' ')}
           </Text>
         </Card>
@@ -319,24 +317,24 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Validation messages */}
       {field.validation_result && !field.validation_result.is_valid && (
-        <YStack bg="$red3" br="$3" p="$2" gap="$1">
-          <Text col="$red10" size="$2" fontWeight="600">Validation Issues:</Text>
+        <YStack backgroundColor="$red3" borderRadius="$3" padding="$2" gap="$1">
+          <Text color="$red10" fontSize="$2" fontWeight="600">Validation Issues:</Text>
           {field.validation_result.validation_errors.map((msg, idx) => (
-            <Text key={idx} col="$red10" size="$2">• {msg}</Text>
+            <Text key={idx} color="$red10" fontSize="$2">• {msg}</Text>
           ))}
         </YStack>
       )}
 
       {/* Reference range */}
       {field.validation_result?.reference_range && (
-        <Text col="$colorSubdued" size="$2">
+        <Text color="$color10" fontSize="$2">
           Reference: {field.validation_result.reference_range.min}–{field.validation_result.reference_range.max} {field.validation_result.reference_range.unit}
         </Text>
       )}
 
       {/* Source page */}
-      <XStack ai="center" gap="$2">
-        <Text col="$colorSubdued" size="$2">
+      <XStack alignItems="center" gap="$2">
+        <Text color="$color10" fontSize="$2">
           Source: Page {field.source_page}
         </Text>
         {onSourcePageClick && (
@@ -352,19 +350,19 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Edit mode — shows original value for comparison */}
       {editMode && !isReadOnly && (
-        <YStack gap="$2" bg="$blue2" br="$3" p="$3">
-          <Text col="$blue10" size="$2" fontWeight="600">Editing Field</Text>
+        <YStack gap="$2" backgroundColor="$blue2" borderRadius="$3" padding="$3">
+          <Text color="$blue10" fontSize="$2" fontWeight="600">Editing Field</Text>
           {/* Original value for reference */}
           <YStack gap="$1">
-            <Text col="$colorSubdued" size="$2">Original AI extraction:</Text>
-            <Text col="$colorSubdued" size="$3" fontFamily="$mono" textDecorationLine="line-through">
+            <Text color="$color10" fontSize="$2">Original AI extraction:</Text>
+            <Text color="$color10" fontSize="$3" textDecorationLine="line-through">
               {field.raw_value}
             </Text>
           </YStack>
           <Separator />
           {/* Corrected value input */}
           <YStack gap="$1">
-            <Text col="$blue10" size="$2" fontWeight="600">Corrected value:</Text>
+            <Text color="$blue10" fontSize="$2" fontWeight="600">Corrected value:</Text>
             <Input
               value={editValue}
               onChangeText={setEditValue}
@@ -395,11 +393,11 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Reject mode */}
       {rejectMode && !isReadOnly && (
-        <YStack gap="$2" bg="$red2" br="$3" p="$3">
-          <Text col="$red10" size="$2" fontWeight="600">Rejecting Field</Text>
+        <YStack gap="$2" backgroundColor="$red2" borderRadius="$3" padding="$3">
+          <Text color="$red10" fontSize="$2" fontWeight="600">Rejecting Field</Text>
           <YStack gap="$1">
-            <Text col="$colorSubdued" size="$2">Value to exclude:</Text>
-            <Text col="$colorSubdued" size="$3" fontFamily="$mono" textDecorationLine="line-through">
+            <Text color="$color10" fontSize="$2">Value to exclude:</Text>
+            <Text color="$color10" fontSize="$3" textDecorationLine="line-through">
               {field.raw_value}
             </Text>
           </YStack>
@@ -432,7 +430,7 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Action buttons (only for needs_review) */}
       {!isReadOnly && !editMode && !rejectMode && (
-        <XStack gap="$2" mt="$1">
+        <XStack gap="$2" marginTop="$1">
           <Button
             theme="green"
             size="$2"
@@ -462,8 +460,8 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Action error */}
       {actionError && (
-        <Card bg="$red4" br="$3" p="$2" gap="$1">
-          <Text col="$red10" size="$2">{actionError}</Text>
+        <Card backgroundColor="$red4" borderRadius="$3" padding="$2" gap="$1">
+          <Text color="$red10" fontSize="$2">{actionError}</Text>
           <Button size="$1" chromeless onPress={() => setActionError(null)}>
             Dismiss
           </Button>
@@ -472,7 +470,7 @@ export function FieldCard({ field, consentToken, onFieldUpdated, onSourcePageCli
 
       {/* Adjudication info for completed fields */}
       {isReadOnly && !lastAction && (
-        <Text col="$colorSubdued" size="$2">
+        <Text color="$color10" fontSize="$2">
           {isAutoApproved
             ? 'This field was auto-approved by the AI pipeline.'
             : `This field has been ${field.status === 'edited' ? 'corrected' : field.status}.`}

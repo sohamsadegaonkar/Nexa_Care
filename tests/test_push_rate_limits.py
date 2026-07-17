@@ -148,7 +148,7 @@ async def test_patient_hourly_limit_exceeded(client, mock_redis, mock_db):
     app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
-async def test_fail_open_on_redis_failure(client, mock_db, mock_redis):
+async def test_fail_closed_on_redis_failure(client, mock_db, mock_redis):
     app.dependency_overrides[get_current_provider] = lambda: MagicMock(actor_uid="d1")
     app.dependency_overrides[get_db_session] = lambda: mock_db
     
@@ -159,35 +159,17 @@ async def test_fail_open_on_redis_failure(client, mock_db, mock_redis):
         payload = {"patient_id": "p1", "provider_id": "d1", "purpose": "t", "scope": "s"}
         response = client.post("/api/v2/push/request", json=payload, headers={"Authorization": "Bearer doc"})
         
-        # Should succeed because it fails open
-        assert response.status_code == 201
+        assert response.status_code == 503
     
     app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
-async def test_release_on_resolution(client, mock_redis, mock_db):
+async def test_release_clears_concurrency_lock(mock_redis):
     patient_id = "p1"
-    request_id = str(uuid.uuid4())
-    
     await mock_redis.setex(f"nexa:push_concurrent:{patient_id}", 100, "1")
-    
-    app.dependency_overrides[get_scoped_session] = lambda: patient_id
-    app.dependency_overrides[get_db_session] = lambda: mock_db
-    
-    with patch("app.core.rate_limiter.get_redis_config"), \
-         patch("redis.asyncio.from_url", return_value=mock_redis), \
-         patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis), \
-         patch("app.api.v2.assurance_routes.bio_verifier.verify_signature", return_value=MagicMock(verified=True)), \
-         patch("app.services.assurance_service.AssuranceService._get_resolve_script", return_value=AsyncMock()), \
-         patch("app.services.assurance_service.AssuranceService.resolve_push_approval", return_value={"status": "approved"}):
-        
-        payload = {"decision": "approved", "signature": "sig", "nonce": "nonce"}
-        client.post(f"/api/v2/push/{request_id}/respond", json=payload)
-        
-        # Verify lock was deleted
-        assert await mock_redis.get(f"nexa:push_concurrent:{patient_id}") is None
-    
-    app.dependency_overrides.clear()
+    from app.core.rate_limiter import ConcurrentPushLimiter
+    await ConcurrentPushLimiter(redis_client=mock_redis).release(patient_id)
+    assert await mock_redis.get(f"nexa:push_concurrent:{patient_id}") is None
 
 @pytest.mark.asyncio
 async def test_release_on_timeout(client, mock_redis, mock_db):

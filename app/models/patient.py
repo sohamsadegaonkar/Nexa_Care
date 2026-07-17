@@ -7,9 +7,9 @@ Matches the ``patients`` table defined in
 from __future__ import annotations
 
 import uuid
-from datetime import date, datetime
+from datetime import datetime
 
-from sqlalchemy import Boolean, Date, DateTime, Text, func
+from sqlalchemy import Boolean, DateTime, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,19 +37,6 @@ class Patient(Base):
         nullable=False,
         server_default=func.now(),
     )
-    full_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
-    gender: Mapped[str | None] = mapped_column(Text, nullable=True)
-    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
-    email: Mapped[str | None] = mapped_column(Text, nullable=True)
-    abha_id: Mapped[str | None] = mapped_column(Text, unique=True, nullable=True)
-    address_line1: Mapped[str | None] = mapped_column(Text, nullable=True)
-    address_line2: Mapped[str | None] = mapped_column(Text, nullable=True)
-    city: Mapped[str | None] = mapped_column(Text, nullable=True)
-    state: Mapped[str | None] = mapped_column(Text, nullable=True)
-    pincode: Mapped[str | None] = mapped_column(Text, nullable=True)
-    emergency_contact_name: Mapped[str | None] = mapped_column(Text, nullable=True)
-    emergency_contact_phone: Mapped[str | None] = mapped_column(Text, nullable=True)
     consent_assurance_policy: Mapped[str] = mapped_column(
         Text,
         nullable=False,

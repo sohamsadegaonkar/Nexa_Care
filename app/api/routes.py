@@ -24,8 +24,8 @@ SHARD-SEPARATION FIX — GET /view-record has been removed. It returned
           never be the join point for both shards. It is replaced by two
           endpoints that each read exactly one shard:
             - GET /view-record/clinical  -- de-identified clinical data only.
-            - GET /view-record/pii       -- redacted PII only, and only
-              honored for a consent token whose scope is "full".
+            - GET /view-record/pii       -- retired with HTTP 410; modern
+              clients use the canonical envelope/KMS record service.
           /request-consent now takes an explicit `scope` field
           ("clinical" default, or "full") and issues a token bound to
           that scope via app.core.redis.issue_consent_token(). See that
@@ -70,13 +70,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import get_scoped_session, require_role
-from app.core.security import decrypt_pii_field
 from app.core.supabase import get_supabase_client
 from app.models.assurance import AssuranceLevel
 import app.services.consent_engine as consent_engine
 from app.services.consent_engine import ConsentEngineUnavailable
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
-from app.observability.redactor import redact_payload           # F-10
+from app.observability.safe_exceptions import log_safe_exception
 from app.services.sharding import encrypt_vault_payload
 from app.services.crypto_kms import get_encryption_provider, EncryptionError
 from app.services.crypto_engine import process_biometric_handshake
@@ -263,12 +262,9 @@ async def register_patient(
                 .execute()
             )
         except Exception as exc:
-            logger.critical(json.dumps({
-                "event": "patient_registration_db_error",
-                "shard": "nexa_vault",
-                "masked_internal_id": patient_id_str,
-                "exception": str(exc),
-            }))
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="patient_registration_vault"
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to write PII vault record.",
@@ -286,12 +282,9 @@ async def register_patient(
                 .execute()
             )
         except Exception as exc:
-            logger.critical(json.dumps({
-                "event": "patient_registration_db_error",
-                "shard": "nexa_clinical",
-                "masked_internal_id": patient_id_str,
-                "exception": str(exc),
-            }))
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="patient_registration_clinical"
+            )
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail="Failed to write clinical record.",
@@ -484,11 +477,7 @@ async def view_record_clinical(
             .execute()
         )
     except Exception as exc:
-        logger.critical(json.dumps({
-            "event": "clinical_view_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": str(exc),
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="legacy_clinical_view")
         await _audit_best_effort(
             "CONSENT_VIEWER", "CLINICAL_VIEW_FAILED", masked_internal_id, "DB_ERROR"
         )
@@ -536,80 +525,12 @@ async def view_record_clinical(
 
 @router.get("/view-record/pii", tags=["consent"])
 async def view_record_pii(
-    consent_token_header: str | None = Header(default=None, alias="X-Consent-Token"),
-    consent_token_query: str | None = Query(default=None, alias="consent_token"),
-    db: AsyncSession = Depends(get_db_session),
 ) -> dict:
-    """Zero-trust retrieval of the (redacted) PII shard ONLY, via a
-    consent token explicitly issued with scope="full".
-    """
-    masked_internal_id = await _resolve_scoped_consent(
-        consent_token_header, consent_token_query, required_capability="pii", db=db
+    """Compatibility tombstone for the retired static-Fernet PII path."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "error_code": "LEGACY_PII_ENDPOINT_RETIRED",
+            "canonical_endpoint": "/api/v2/patient/{patient_id}/records",
+        },
     )
-
-    supabase = get_supabase_client()
-
-    try:
-        vault_res = (
-            supabase.table("nexa_vault")
-            .select("patient_name,phone,masked_internal_id")
-            .eq("masked_internal_id", masked_internal_id)
-            .limit(1)
-            .execute()
-        )
-    except Exception as exc:
-        logger.critical(json.dumps({
-            "event": "pii_view_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": str(exc),
-        }))
-        await _audit_best_effort(
-            "CONSENT_VIEWER", "PII_VIEW_FAILED", masked_internal_id, "DB_ERROR"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to retrieve PII record.",
-        ) from exc
-
-    # F-17: retained as belt-and-suspenders (see register_patient above).
-    if getattr(vault_res, "error", None):
-        await _audit_best_effort(
-            "CONSENT_VIEWER", "PII_VIEW_FAILED", masked_internal_id, "DB_ERROR"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to retrieve PII record.",
-        )
-
-    vault_rows = getattr(vault_res, "data", None) or []
-    if not vault_rows:
-        await _audit_best_effort(
-            "CONSENT_VIEWER", "PII_VIEW_FAILED", masked_internal_id, "NOT_FOUND"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Record not found for masked_internal_id",
-        )
-
-    vault = vault_rows[0]
-
-    await append_audit_log_or_503(
-        actor_uid="CONSENT_VIEWER",
-        event_type="PII_VIEW_SUCCESS",
-        target_id=masked_internal_id,
-        status="SUCCESS",
-    )
-
-    # F-10: redact PII fields before returning.  patient_name and phone are
-    # both in SENSITIVE_FIELDS, so they become "[REDACTED]" here.
-    # Decrypt at-rest PII before redaction. Legacy unencrypted rows are
-    # passed through unchanged; the redactor handles them safely.
-    decrypted_patient_name = decrypt_pii_field(vault.get("patient_name"))
-    decrypted_phone = decrypt_pii_field(vault.get("phone"))
-
-    raw_response = {
-        "masked_internal_id": masked_internal_id,
-        "patient_name": decrypted_patient_name if decrypted_patient_name is not None else vault.get("patient_name"),
-        "phone": decrypted_phone if decrypted_phone is not None else vault.get("phone"),
-    }
-    return redact_payload(raw_response)

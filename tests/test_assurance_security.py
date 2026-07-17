@@ -28,7 +28,7 @@ def test_push_request_requires_auth():
     assert response.status_code == 401
 
 
-def test_push_respond_requires_auth():
+def test_push_respond_route_is_retired():
     """Responding to a push request requires an authenticated patient session.
 
     Biometric signature verification happens inside this same call (see
@@ -44,7 +44,7 @@ def test_push_respond_requires_auth():
             "nonce": "test-nonce",
         },
     )
-    assert response.status_code == 401
+    assert response.status_code == 404
 
 
 def test_break_glass_requires_auth():

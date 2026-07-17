@@ -55,6 +55,25 @@ export const ProviderLoginMfaRequiredSchema = z.object({
  */
 export const ProviderMfaVerifySuccessSchema = ProviderLoginSuccessSchema
 
+export const ProviderWebLoginStateSchema = z.object({
+  status: z.enum(['authenticated', 'mfa_required']),
+  expires_at: z.string().optional(),
+})
+export const ProviderWebAuthenticatedStateSchema = z.object({
+  status: z.literal('authenticated'),
+  expires_at: z.string().min(1),
+})
+
+export const ProviderWebSessionSchema = z.object({
+  authenticated: z.literal(true),
+  expires_at: z.string().min(1),
+  provider_uid: z.string().min(1),
+  hospital_id: z.string().uuid(),
+  display_name: z.string(),
+  hospital_name: z.string(),
+  roles: z.array(z.string().min(1)),
+})
+
 // ── Consent request/response schemas ─────────────────────────────────────────
 
 /**

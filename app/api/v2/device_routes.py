@@ -105,8 +105,8 @@ async def enroll_device(
 
     try:
         pid_uuid = uuid.UUID(patient_id)
-    except ValueError:
-        pid_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
 
     # Check active device limit (max 5 active devices per patient)
     stmt_count = select(func.count(PatientDeviceKey.id)).where(
@@ -186,8 +186,8 @@ async def list_devices(
     """List active enrolled devices for a patient. Never returns raw public keys."""
     try:
         pid_uuid = uuid.UUID(patient_id)
-    except ValueError:
-        pid_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
 
     stmt = select(PatientDeviceKey).where(
         PatientDeviceKey.patient_id == pid_uuid,
@@ -224,8 +224,8 @@ async def revoke_device(
     """Immediately revoke a patient hardware device key."""
     try:
         pid_uuid = uuid.UUID(patient_id)
-    except ValueError:
-        pid_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
 
     try:
         dev_uuid = uuid.UUID(device_id)

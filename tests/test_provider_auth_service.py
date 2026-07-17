@@ -162,7 +162,7 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
 
     @patch("app.services.provider_auth_service.verify_provider_password")
     @patch("app.services.provider_auth_service.load_credential_by_login")
-    def test_invalid_password_sets_lockout_at_threshold(
+    def test_invalid_password_does_not_create_global_account_lockout(
         self,
         mock_load_credential,
         mock_verify,
@@ -178,9 +178,9 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
 
         self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
         self.assertEqual(credential.failed_login_attempts, 5)
-        self.assertIsNotNone(credential.locked_until)
-        assert credential.locked_until is not None
-        self.assertGreater(credential.locked_until, datetime.now(timezone.utc) + timedelta(minutes=10))
+        # Abuse controls are keyed by source IP and a privacy-preserving target
+        # digest in Redis; one attacker must not globally lock the account.
+        self.assertIsNone(credential.locked_until)
         db.commit.assert_awaited_once()
 
     @patch("app.services.provider_auth_service.verify_provider_password")

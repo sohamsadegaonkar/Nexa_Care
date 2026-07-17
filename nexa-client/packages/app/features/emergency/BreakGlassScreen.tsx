@@ -12,18 +12,14 @@ import {
 } from '@my/ui'
 import { AlertTriangle } from '@tamagui/lucide-icons'
 import { useState } from 'react'
+import { NexaApiClient } from '../../utils/apiClient'
 
 import {
   requestBreakGlassConsent,
   BreakGlassConsentError,
+  BREAK_GLASS_REASON_OPTIONS,
+  type BreakGlassReasonCode,
 } from '../../api/consent'
-
-const REASON_OPTIONS = [
-  { label: 'Unconscious', value: 'UNCONSCIOUS' },
-  { label: 'Cardiac Arrest', value: 'CARDIAC_ARREST' },
-  { label: 'Severe Trauma', value: 'SEVERE_TRAUMA' },
-  { label: 'Other Emergency', value: 'OTHER' },
-]
 
 interface BreakGlassScreenProps {
   onConsentIssued?: (patientId: string, token: string) => void
@@ -31,11 +27,13 @@ interface BreakGlassScreenProps {
 
 export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
   const [patientId, setPatientId] = useState('')
-  const [reasonCode, setReasonCode] = useState(REASON_OPTIONS[0].value)
+  const [reasonCode, setReasonCode] = useState<BreakGlassReasonCode>('UNCONSCIOUS_PATIENT')
   const [freeText, setFreeText] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState(false)
+  const [needsStepUp, setNeedsStepUp] = useState(false)
+  const [mfaCode, setMfaCode] = useState('')
 
   const handleBreakGlass = async () => {
     if (!patientId.trim() || !freeText.trim()) {
@@ -56,10 +54,31 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
       onConsentIssued?.(patientId.trim(), token)
     } catch (err: any) {
       if (err instanceof BreakGlassConsentError) {
-        setError(err.message)
+        if (err.status === 428) {
+          setNeedsStepUp(true)
+          setError('Recent MFA verification is required.')
+        } else setError(err.message)
       } else {
         setError('Failed to issue emergency consent')
       }
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleStepUp = async () => {
+    if (!/^\d{6}$/.test(mfaCode)) {
+      setError('Enter a valid 6-digit authenticator code.')
+      return
+    }
+    setLoading(true)
+    try {
+      await NexaApiClient.verifyActionMfa(mfaCode)
+      setNeedsStepUp(false)
+      setMfaCode('')
+      await handleBreakGlass()
+    } catch {
+      setError('MFA verification failed. Use a new code and try again.')
     } finally {
       setLoading(false)
     }
@@ -117,7 +136,7 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
           <YStack gap="$2">
             <Text color="$color11" fontWeight="700">Reason Code</Text>
             <XStack gap="$2" flexWrap="wrap">
-              {REASON_OPTIONS.map((opt) => (
+              {BREAK_GLASS_REASON_OPTIONS.map((opt) => (
                 <Button
                   key={opt.value}
                   size="$3"
@@ -147,11 +166,25 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
           </Text>
         )}
 
+        {needsStepUp && (
+          <YStack gap="$3">
+            <Input
+              placeholder="6-digit authenticator code"
+              value={mfaCode}
+              onChangeText={setMfaCode}
+              keyboardType="numeric"
+              maxLength={6}
+              secureTextEntry
+            />
+            <Button onPress={handleStepUp} disabled={loading}>Verify MFA and continue</Button>
+          </YStack>
+        )}
+
         <Button
           theme="red"
           size="$5"
           icon={AlertTriangle}
-          disabled={loading || !patientId.trim() || !freeText.trim()}
+          disabled={needsStepUp || loading || !patientId.trim() || !freeText.trim()}
           onPress={handleBreakGlass}
         >
           {loading ? (

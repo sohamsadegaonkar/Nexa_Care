@@ -2,6 +2,7 @@ import asyncio
 import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
@@ -25,8 +26,9 @@ class MockRequest:
     """Minimal request stand-in for dependency tests."""
 
     def __init__(self, user_agent: str = "TestAgent/1.0", client_ip: str = "10.0.0.1"):
-        self.headers = {"user-agent": user_agent, "x-forwarded-for": client_ip}
-        self.client = None
+        self.headers = {"user-agent": user_agent}
+        self.client = SimpleNamespace(host=client_ip)
+        self.cookies = {}
 
 
 def _sample_provider_context() -> ProviderContext:

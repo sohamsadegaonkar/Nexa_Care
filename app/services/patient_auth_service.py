@@ -11,7 +11,7 @@ from typing import Any
 
 import jwt
 
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client as get_redis_client
 
 PATIENT_ACCESS_TTL_SECONDS = 15 * 60
 DEVICE_ENROLLMENT_TTL_SECONDS = 5 * 60

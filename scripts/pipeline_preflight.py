@@ -31,6 +31,7 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv()
 
 from app.core.consent_gate import ConsentCapability  # noqa: E402
+from app.core.config import get_runtime_environment  # noqa: E402
 from app.core.database import get_async_engine  # noqa: E402
 from app.core.dependencies import get_current_provider  # noqa: E402
 from app.main import app  # noqa: E402
@@ -64,9 +65,9 @@ def get_mock_admin_context() -> ProviderContext:
 
 
 async def purge_scratch_patient(session: AsyncSession, pid: str, force: bool = False) -> None:
-    env = os.getenv("ENVIRONMENT", "development").lower().strip()
-    if env in {"prod", "production"}:
-        raise RuntimeError(f"Refusing to execute scratch purge in production environment ('{env}').")
+    runtime = get_runtime_environment()
+    if runtime.is_production_like:
+        raise RuntimeError("Refusing to execute scratch purge in a production-like environment.")
     if str(pid) != SCRATCH_PATIENT_ID and not force:
         raise RuntimeError(f"Refusing to purge non-scratch patient UUID ('{pid}'). Pass force=True if non-production scratch wipe is explicitly intended.")
 

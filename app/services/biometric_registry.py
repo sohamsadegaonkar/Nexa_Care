@@ -76,6 +76,7 @@ from fastapi import HTTPException
 from app.core.config import get_handshake_config
 from app.core.supabase import get_supabase_client
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 from app.services.crypto_kms import get_encryption_provider
 from sqlalchemy.ext.asyncio import AsyncSession
 import base64
@@ -144,8 +145,7 @@ async def _verify_biometric_binding_impl(
         # postgrest-py raises APIError with a message that contains the
         # PostgREST error code (e.g. "PGRST116" for "exactly one row required"
         # when .single() finds 0 rows).  Any other exception is unexpected.
-        exc_str = str(exc)
-        if "PGRST116" in exc_str or "JSON object requested, multiple (or no) rows returned" in exc_str:
+        if getattr(exc, "code", None) == "PGRST116":
             # 0 rows from .single() — patient simply has no enrolled binding.
             # This is a normal operational state, not an infrastructure error.
             logger.debug(json.dumps({
@@ -156,12 +156,9 @@ async def _verify_biometric_binding_impl(
         else:
             # Unexpected: table missing, RLS rejection, network error, etc.
             # Log at CRITICAL so it appears in alerting thresholds.
-            logger.critical(json.dumps({
-                "event": "biometric_verify_db_error",
-                "masked_internal_id": masked_internal_id,
-                "exception": exc_str,
-                "action": "returning_false_fail_closed",
-            }))
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="biometric_binding_lookup"
+            )
         return False
 
     # F-16: in supabase-py 2.x, execute() does not set a .error attribute;
@@ -250,12 +247,7 @@ async def update_device_public_key(
         return True
 
     except Exception as exc:
-        logger.critical(json.dumps({
-            "event": "device_key_update_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": str(exc),
-            "action": "returning_false",
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="device_key_update")
         return False
 
 
@@ -302,7 +294,7 @@ async def enroll_biometric_binding(
         #      error-surfacing behavior, this check catches it.
         error = getattr(response, "error", None)
         if error:
-            raise RuntimeError(f"PostgREST insert error: {error}")
+            raise RuntimeError("POSTGREST_INSERT_FAILED")
 
         return True
 
@@ -323,18 +315,7 @@ async def enroll_biometric_binding(
         # All three are CRITICAL because they represent either a deployment
         # gap (missing migration) or a misconfiguration that will block
         # every enrollment until resolved.
-        logger.critical(json.dumps({
-            "event": "biometric_enroll_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": str(exc),
-            "action": "returning_false",
-            "hint": (
-                "If exception contains 'does not exist': apply "
-                "migrations/0002_biometric_registry_schema.sql. "
-                "If 'duplicate key': patient already enrolled, revoke first. "
-                "If 'row-level security': verify SUPABASE_KEY is the service-role key."
-            ),
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="biometric_binding_enroll")
         return False
 
 

@@ -39,9 +39,8 @@ from __future__ import annotations
 import json
 import logging
 import os
-import tempfile
 import time
-import uuid
+import secrets
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -49,7 +48,6 @@ from fastapi import FastAPI, File, HTTPException, Request, UploadFile, status, D
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
-from starlette.concurrency import run_in_threadpool
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -79,16 +77,20 @@ from app.core.config import (
     get_handshake_config,
     get_redis_config,
     get_supabase_config,
+    get_document_extraction_config,
+    get_document_storage_config,
+    get_runtime_environment,
 )
-from app.core.supabase import get_supabase_client
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
-from app.services.sharding import encrypt_vault_payload, split_pii_and_clinical_fields
 from app.services.crypto_kms import get_encryption_provider, PatientDataErased
-from document_processor import extract_document_data
 from prometheus_client import Counter, Histogram, make_asgi_app
 
 from app.core.database import get_async_engine, get_db_session
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client
+from app.core.client_ip import trusted_proxy_networks
+from app.observability.safe_exceptions import log_safe_exception
+# Deprecated test-patch seam; runtime code uses get_async_redis_client.
+get_redis_client = get_async_redis_client
 
 load_dotenv()
 
@@ -141,9 +143,37 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "script-src 'self'; "
             "style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; "
-            "connect-src 'self';"
+            "font-src 'self'; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'; "
+            "object-src 'none';"
         )
+        if get_runtime_environment().is_production_like:
+            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
         return response
+
+
+class CookieCsrfMiddleware(BaseHTTPMiddleware):
+    """Origin + double-submit protection for provider cookie sessions."""
+
+    _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+    _LOGIN_EXEMPT = {"/api/v2/auth/web/login", "/api/v2/auth/web/mfa/verify"}
+
+    async def dispatch(self, request: Request, call_next):
+        cookie_session = request.cookies.get("nexa_provider_session")
+        if cookie_session and request.method not in self._SAFE_METHODS and request.url.path not in self._LOGIN_EXEMPT:
+            origin = request.headers.get("origin")
+            configured = {o.strip().rstrip("/") for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()}
+            same_origin = f"{request.url.scheme}://{request.headers.get('host', '')}".rstrip("/")
+            if not origin or origin.rstrip("/") not in configured | {same_origin}:
+                return JSONResponse(status_code=403, content={"error_code": "CSRF_ORIGIN_REJECTED"})
+            cookie_token = request.cookies.get("nexa_csrf", "")
+            header_token = request.headers.get("x-csrf-token", "")
+            if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
+                return JSONResponse(status_code=403, content={"error_code": "CSRF_TOKEN_REJECTED"})
+        return await call_next(request)
 
 
 # ── F-13: Modern lifespan pattern ────────────────────────────────────────────
@@ -154,24 +184,29 @@ async def lifespan(application: FastAPI):
     get_redis_config()
     get_handshake_config()
     get_database_config()
+    get_document_extraction_config()
+    get_document_storage_config()
+    get_encryption_provider()
+    trusted_proxy_networks()
     yield
     try:
         engine = get_async_engine()
         await engine.dispose()
     except Exception as exc:
-        logger.warning(f"Engine disposal during shutdown failed: {exc}")
+        log_safe_exception(logger, exc, subsystem="database", operation="shutdown_dispose")
 
     try:
-        redis_client = get_redis_client()
-        redis_client.close()
+        redis_client = get_async_redis_client()
+        await redis_client.close()
     except Exception as exc:
-        logger.warning(f"Redis close during shutdown failed: {exc}")
+        log_safe_exception(logger, exc, subsystem="redis", operation="shutdown_close")
 
 
 app = FastAPI(title="Nexa Care API", version="0.2.1", lifespan=lifespan)
 
 app.add_middleware(ContentSizeLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(CookieCsrfMiddleware)
 
 _cors_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
@@ -179,7 +214,7 @@ app.add_middleware(
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allow_headers=["Authorization", "Content-Type", "X-Hospital-Id", "X-Consent-Token", "X-Consent-Purpose"],
+    allow_headers=["Authorization", "Content-Type", "X-Hospital-Id", "X-Consent-Token", "X-Consent-Purpose", "X-CSRF-Token", "Idempotency-Key"],
 )
 
 _trusted_hosts = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
@@ -216,7 +251,7 @@ async def patient_data_erased_handler(request: Request, exc: PatientDataErased):
         status_code=status.HTTP_410_GONE,
         content={
             "error_code": "PATIENT_DATA_ERASED",
-            "message": str(exc),
+            "message": "Patient encrypted data is no longer available.",
             "patient_id": exc.patient_id,
         },
     )
@@ -267,8 +302,8 @@ async def health_check() -> dict:
     checks: dict[str, str] = {}
 
     try:
-        redis = get_redis_client()
-        redis.ping()
+        redis = get_async_redis_client()
+        await redis.ping()
         checks["redis"] = "ok"
     except Exception as exc:
         checks["redis"] = f"unavailable: {type(exc).__name__}"
@@ -295,96 +330,11 @@ async def process_document(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db_session)
 ) -> dict:
-    """Process an uploaded document and vertically shard PII + clinical data."""
-    suffix = os.path.splitext(file.filename or "")[1] or ".png"
-
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    temp_path: str = tmp.name
-
-    try:
-        contents = await file.read()
-
-        if len(contents) > _MAX_UPLOAD_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=f"Upload exceeds the {_MAX_UPLOAD_BYTES // (1024*1024)} MB limit.",
-            )
-
-        tmp.write(contents)
-        tmp.close()
-
-        document_data: dict = await run_in_threadpool(extract_document_data, temp_path)
-
-        if not document_data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to extract document data.",
-            )
-
-        vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(
-            document_data
-        )
-
-        if unrecognized_payload:
-            logger.warning(
-                json.dumps({
-                    "event": "unrecognized_extraction_keys",
-                    "keys": sorted(unrecognized_payload.keys()),
-                    "action": "dropped_no_raw_pii_column",
-                })
-            )
-
-        masked_internal_id = str(uuid.uuid4())
-        supabase = get_supabase_client()
-
-        # 1. Generate DEK first (atomic with transaction)
-        kms = get_encryption_provider()
-        await kms.generate_dek(masked_internal_id, db)
-
-        # 2. Encrypt PII using KMS
-        encrypted_vault = await encrypt_vault_payload(vault_payload, masked_internal_id, db)
-
-        try:
-            vault_columns = {
-                "masked_internal_id": masked_internal_id,
-            }
-            vault_columns.update(encrypted_vault)
-            supabase.table("nexa_vault").insert(vault_columns).execute()
-        except Exception as exc:
-            logger.critical(json.dumps({
-                "event": "process_document_db_error",
-                "shard": "nexa_vault",
-                "masked_internal_id": masked_internal_id,
-                "exception": str(exc),
-            }))
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"vault_error": str(exc), "clinical_error": None},
-            ) from exc
-
-        try:
-            supabase.table("nexa_clinical").insert({
-                "masked_internal_id": masked_internal_id,
-                "clinical_data": clinical_payload
-            }).execute()
-        except Exception as exc:
-            logger.critical(json.dumps({
-                "event": "process_document_db_error",
-                "shard": "nexa_clinical",
-                "masked_internal_id": masked_internal_id,
-                "exception": str(exc),
-            }))
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail={"vault_error": None, "clinical_error": str(exc)},
-            ) from exc
-
-        return {"masked_internal_id": masked_internal_id}
-
-    finally:
-        try:
-            tmp.close()
-        except Exception:
-            pass
-        if os.path.exists(temp_path):
-            os.unlink(temp_path)
+    """Retired legacy ingestion path; use the reviewed v2 pipeline."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "code": "LEGACY_DOCUMENT_PIPELINE_RETIRED",
+            "message": "Use the authenticated v2 upload, review, and commit workflow.",
+        },
+    )

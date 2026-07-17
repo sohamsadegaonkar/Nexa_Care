@@ -75,7 +75,7 @@ export async function requestRoutineConsent(patientId: string, purpose: string):
         )
       }
 
-      if (status === 401 || status === 403) {
+      if (status === 401 || status === 403 || status === 428) {
         throw new RoutineConsentError(
           'Provider session is not authorized to request consent.',
           'ROUTINE_CONSENT_UNAUTHORIZED',
@@ -104,13 +104,28 @@ export async function requestRoutineConsent(patientId: string, purpose: string):
 
 export interface BreakGlassConsentIssueRequest {
   patient_id: string
-  reason_code: string
-  free_text: string
+  reason_code: BreakGlassReasonCode
+  justification: string
+  requested_scope?: string[]
 }
+
+export type BreakGlassReasonCode =
+  | 'UNCONSCIOUS_PATIENT'
+  | 'LIFE_THREATENING_EMERGENCY'
+  | 'PATIENT_UNABLE_TO_CONSENT'
+
+export const BREAK_GLASS_REASON_OPTIONS: ReadonlyArray<{ value: BreakGlassReasonCode; label: string }> = [
+  { value: 'UNCONSCIOUS_PATIENT', label: 'Unconscious patient' },
+  { value: 'LIFE_THREATENING_EMERGENCY', label: 'Life-threatening emergency' },
+  { value: 'PATIENT_UNABLE_TO_CONSENT', label: 'Patient unable to consent' },
+]
 
 export interface BreakGlassConsentIssueResponse {
   consent_token: string
   expires_at?: string
+  approved_scope: string[]
+  policy_version: string
+  authorization_ref: string
 }
 
 export type BreakGlassConsentErrorCode =
@@ -143,14 +158,14 @@ export class BreakGlassConsentError extends Error {
  */
 export async function requestBreakGlassConsent(
   patientId: string,
-  reasonCode: string,
-  freeText: string
+  reasonCode: BreakGlassReasonCode,
+  justification: string
 ): Promise<string> {
   const normalizedPatientId = patientId.trim()
   const normalizedReasonCode = reasonCode.trim()
-  const normalizedFreeText = freeText.trim()
+  const normalizedJustification = justification.trim()
 
-  if (!normalizedPatientId || !normalizedReasonCode || !normalizedFreeText) {
+  if (!normalizedPatientId || !normalizedReasonCode || !normalizedJustification) {
     throw new BreakGlassConsentError(
       'Patient ID, reason code, and justification are required.',
       'BREAK_GLASS_INVALID_REQUEST',
@@ -165,8 +180,8 @@ export async function requestBreakGlassConsent(
       BreakGlassConsentIssueRequest
     >('/api/v2/consent/break-glass/issue', {
       patient_id: normalizedPatientId,
-      reason_code: normalizedReasonCode,
-      free_text: normalizedFreeText,
+      reason_code: reasonCode,
+      justification: normalizedJustification,
     })
 
     return response.data.consent_token

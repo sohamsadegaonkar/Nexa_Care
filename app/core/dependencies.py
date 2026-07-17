@@ -33,6 +33,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.security import hash_client_ip
+from app.core.client_ip import resolve_client_ip
+from app.core.session_binding import provider_session_token
+import hashlib
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
@@ -89,12 +92,7 @@ _provider_basic_scheme = HTTPBasic(auto_error=False)
 
 
 def _client_ip_from_request(request: Request) -> str:
-    """Return the request's client IP, preferring X-Forwarded-For."""
-
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    return resolve_client_ip(request)
 
 
 def _audit_status_for_failure(failure: ProviderAuthFailure) -> str:
@@ -175,10 +173,20 @@ async def get_provider_context(
     user_agent = request.headers.get("user-agent")
     client_ip = _client_ip_from_request(request)
 
+    cookies = getattr(request, "cookies", {})
+    cookie_session = cookies.get("nexa_provider_session")
     if credentials is not None and credentials.credentials:
         result = await authenticate_provider_session(
             db,
             credentials.credentials,
+            hospital_id,
+            user_agent=user_agent,
+            client_ip=client_ip,
+        )
+    elif isinstance(cookie_session, str) and cookie_session:
+        result = await authenticate_provider_session(
+            db,
+            cookie_session,
             hospital_id,
             user_agent=user_agent,
             client_ip=client_ip,
@@ -206,7 +214,9 @@ async def get_provider_context(
                 "provider_id": str(result.context.provider.provider_id),
                 "ip_hash": hash_client_ip(client_ip),
             }))
-        return result.context
+        raw_session = credentials.credentials if credentials is not None and credentials.credentials else cookie_session
+        binding = hashlib.sha256(raw_session.encode("utf-8")).hexdigest() if raw_session else None
+        return result.context.model_copy(update={"session_binding": binding})
 
     assert result.failure is not None
     await append_audit_log(
@@ -238,7 +248,11 @@ async def get_current_provider(
     user_agent = request.headers.get("user-agent")
     client_ip = _client_ip_from_request(request)
 
-    if credentials is None or not credentials.credentials:
+    cookie_token = getattr(request, "cookies", {}).get("nexa_provider_session")
+    if not isinstance(cookie_token, str):
+        cookie_token = None
+    session_token = credentials.credentials if credentials is not None and credentials.credentials else cookie_token
+    if not session_token:
         await append_audit_log(
             actor_uid="PROVIDER_GUARD",
             event_type="PROVIDER_AUTH_FAILED",
@@ -249,7 +263,7 @@ async def get_current_provider(
 
     result = await authenticate_provider_session(
         db,
-        credentials.credentials,
+        session_token,
         hospital_id,
         user_agent=user_agent,
         client_ip=client_ip,
@@ -261,7 +275,8 @@ async def get_current_provider(
                 "provider_id": str(result.context.provider.provider_id),
                 "ip_hash": hash_client_ip(client_ip),
             }))
-        return result.context
+        binding = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+        return result.context.model_copy(update={"session_binding": binding})
 
     assert result.failure is not None
     await append_audit_log(

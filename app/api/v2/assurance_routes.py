@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import inspect
-import hashlib
 import os
 import asyncio
 import base64
@@ -25,22 +24,21 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider, get_scoped_session
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client as get_redis_client
 from app.models.provider_context import ProviderContext
 from app.models.push_token import PatientPushToken
 from app.core.rate_limiter import ConcurrentPushLimiter
 from app.services.assurance_service import AssuranceService
 from app.services.push_notification_service import PushNotificationService
-from app.services.biometric_signature_verifier import BiometricSignatureVerifier
 from app.services.biometric_registry import update_device_public_key
 from app.services.provider_auth_service import resolve_provider_session_context
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 
 logger = logging.getLogger("nexa_logger")
 router = APIRouter(prefix="/api/v2/push", tags=["push-approval"])
 service = AssuranceService()
 push_service = PushNotificationService()
-bio_verifier = BiometricSignatureVerifier()
 push_limiter = ConcurrentPushLimiter()
 
 # Feature Flag: Default to 'poll'
@@ -98,11 +96,6 @@ class PushRequestPayload(BaseModel):
     provider_id: str
     purpose: str
     scope: str
-
-class PushRespondPayload(BaseModel):
-    decision: Literal["approved", "denied"]
-    signature: str = Field(..., min_length=1)
-    nonce: str = Field(..., min_length=1)
 
 class PushTokenRegistration(BaseModel):
     expo_push_token: str = Field(
@@ -325,77 +318,6 @@ async def initiate_push_request(
         await push_limiter.release(patient_id=payload.patient_id)
         raise
 
-@router.post("/{request_id}/respond", deprecated=True)
-async def respond_to_push(
-    request_id: str,
-    payload: PushRespondPayload,
-    patient_id: str = Depends(get_scoped_session),
-    db: AsyncSession = Depends(get_db_session)
-):
-    """LEGACY 3-field approval compatibility endpoint.
-
-    Deprecated: production patient approval uses POST /api/v2/consent/approve-signed.
-    """
-    redis = get_redis_client()
-    
-    # 1. Verify Biometric Signature
-    # Requirement: patient signs SHA-256(nonce + request_id + patient_id)
-    verification = await bio_verifier.verify_signature(
-        patient_id=patient_id,
-        request_id=request_id,
-        signature_b64=payload.signature,
-        challenge_nonce=payload.nonce,
-        redis=redis,
-        db=db
-    )
-    
-    if not verification.verified:
-        await append_audit_log_or_503(
-            actor_uid=patient_id,
-            event_type="BIOMETRIC_VERIFICATION_FAILED",
-            target_id=request_id,
-            status="FAILED",
-            metadata={"error": verification.error}
-        )
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, 
-            detail=f"Biometric verification failed: {verification.error}"
-        )
-
-    # 2. Resolve Approval Atomically
-    result = await service.resolve_push_approval(
-        redis=redis,
-        db=db,
-        request_id=request_id,
-        patient_id=patient_id,
-        decision=payload.decision,
-        signature_hash=hashlib.sha256(payload.signature.encode()).hexdigest()
-    )
-    
-    if result is None:
-        raise HTTPException(status_code=404, detail="Push request not found or expired")
-    
-    if isinstance(result, dict):
-        # Resolve success: release the patient concurrency lock
-        await push_limiter.release(patient_id=patient_id)
-        
-        if payload.decision == "approved":
-            await append_audit_log_or_503(
-                actor_uid=patient_id,
-                event_type="BIOMETRIC_VERIFICATION_SUCCESS",
-                target_id=request_id,
-                status="SUCCESS"
-            )
-            
-        return result
-
-    if result == "already_resolved":
-        raise HTTPException(status_code=409, detail="Push request already resolved")
-    if result == "unauthorized":
-        raise HTTPException(status_code=403, detail="Unauthorized response")
-        
-    return result
-
 @router.get("/{request_id}/status")
 async def poll_push_status(
     request_id: str,
@@ -481,8 +403,8 @@ async def push_status_websocket(
             await asyncio.sleep(95)
             try:
                 await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Push WebSocket already closed after timeout", extra={"error_type": type(exc).__name__})
 
         timeout_task = asyncio.create_task(close_after_timeout())
 
@@ -508,13 +430,16 @@ async def push_status_websocket(
 
     except WebSocketDisconnect:
         logger.info("Push WebSocket disconnected", extra={"request_id": request_id})
-    except Exception as e:
-        logger.error("Push WebSocket error", extra={"request_id": request_id, "error": str(e)})
+    except Exception as exc:
+        log_safe_exception(
+            logger, exc, subsystem="websocket", operation="push_status_stream",
+            correlation_id=request_id,
+        )
     finally:
         await pubsub.unsubscribe(channel)
         if 'timeout_task' in locals():
             timeout_task.cancel()
         try:
             await websocket.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Push WebSocket close during cleanup failed", extra={"error_type": type(exc).__name__})

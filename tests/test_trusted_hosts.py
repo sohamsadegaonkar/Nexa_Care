@@ -24,13 +24,14 @@ def test_trusted_host_parsing_trims_whitespace() -> None:
 
 def test_health_accepts_testserver_and_rejects_untrusted_host() -> None:
     redis = MagicMock()
+    redis.ping = AsyncMock(return_value=True)
     connection = AsyncMock()
     connection.execute = AsyncMock()
     context = AsyncMock()
     context.__aenter__.return_value = connection
     engine = MagicMock()
     engine.connect.return_value = context
-    with patch("app.main.get_redis_client", return_value=redis), patch(
+    with patch("app.main.get_async_redis_client", return_value=redis), patch(
         "app.main.get_async_engine", return_value=engine
     ):
         client = TestClient(app)

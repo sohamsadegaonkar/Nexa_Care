@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client as get_redis_client
 from app.core.security import (
     decrypt_mfa_secret,
     hash_client_ip,
@@ -52,8 +52,6 @@ _PASSWORD_CONTEXT = CryptContext(
 _DUMMY_PASSWORD_HASH = _PASSWORD_CONTEXT.hash("nexa-provider-auth-dummy-password")
 _PROVIDER_SESSION_PREFIX = "provider_session:"
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8  # 8 hours
-_MAX_FAILED_LOGIN_ATTEMPTS = 5
-_LOCKOUT_DURATION = timedelta(minutes=15)
 
 _MFA_PENDING_PREFIX = "mfa_pending:"
 _MFA_PENDING_TTL_SECONDS = 5 * 60  # 5 minutes
@@ -124,11 +122,9 @@ async def _maybe_await(value: Any) -> Any:
 
 
 async def _record_failed_login(db: AsyncSession, credential: ProviderCredential) -> None:
-    """Persist a failed password attempt before returning an auth failure."""
+    """Record an anomaly signal without creating attacker-controlled lockout."""
 
-    credential.failed_login_attempts = (credential.failed_login_attempts or 0) + 1
-    if credential.failed_login_attempts >= _MAX_FAILED_LOGIN_ATTEMPTS:
-        credential.locked_until = datetime.now(timezone.utc) + _LOCKOUT_DURATION
+    credential.failed_login_attempts = min((credential.failed_login_attempts or 0) + 1, 1_000_000)
     await db.commit()
 
 
@@ -255,14 +251,15 @@ async def delete_mfa_pending_token(token: str) -> None:
         delete_result = redis.delete(f"{_MFA_PENDING_PREFIX}{token.removeprefix('Bearer ').strip()}")
         if hasattr(delete_result, "__await__"):
             await delete_result
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("MFA pending-token deletion failed", extra={"error_type": type(exc).__name__})
 
 
 async def issue_provider_session_token(
     provider_id: uuid.UUID,
     user_agent: str | None = None,
     client_ip: str | None = None,
+    mfa_verified_at: datetime | None = None,
 ) -> str:
     """Mint an opaque Redis-backed session token bound to UA/IP."""
 
@@ -272,6 +269,8 @@ async def issue_provider_session_token(
         "provider_id": str(provider_id),
         "ua_hash": hash_user_agent(user_agent),
         "ip_hash": hash_client_ip(client_ip),
+        "expires_at": (datetime.now(timezone.utc) + timedelta(seconds=_PROVIDER_SESSION_TTL_SECONDS)).isoformat(),
+        "mfa_verified_at": mfa_verified_at.isoformat() if mfa_verified_at else None,
     }
     redis = get_redis_client()
     key = f"{_PROVIDER_SESSION_PREFIX}{token}"
@@ -337,6 +336,32 @@ async def resolve_provider_session_context(token: str) -> dict[str, Any] | None:
         return None
 
 
+async def mark_provider_session_mfa_verified(token: str, provider_id: uuid.UUID) -> bool:
+    """Record fresh MFA on the same live opaque session without rotating it."""
+    clean_token = token.removeprefix("Bearer ").strip()
+    if not clean_token:
+        return False
+    redis = get_redis_client()
+    key = f"{_PROVIDER_SESSION_PREFIX}{clean_token}"
+    cached = await _maybe_await(redis.get(key))
+    if not cached:
+        return False
+    if isinstance(cached, bytes):
+        cached = cached.decode("utf-8")
+    try:
+        payload = json.loads(cached)
+    except (TypeError, json.JSONDecodeError):
+        return False
+    if str(payload.get("provider_id")) != str(provider_id) or not payload.get("authenticated"):
+        return False
+    ttl = await _maybe_await(redis.ttl(key))
+    if not isinstance(ttl, int) or ttl <= 0:
+        return False
+    payload["mfa_verified_at"] = datetime.now(timezone.utc).isoformat()
+    await _maybe_await(redis.setex(key, ttl, json.dumps(payload, sort_keys=True)))
+    return True
+
+
 async def resolve_provider_session_token(token: str) -> uuid.UUID | None:
     """Load a provider_id from a Redis session token, or None if invalid."""
 
@@ -359,8 +384,8 @@ async def delete_provider_session_token(token: str) -> None:
             delete_result = redis.delete(f"{_PROVIDER_SESSION_PREFIX}{clean_token}")
             if hasattr(delete_result, "__await__"):
                 await delete_result
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("Provider session deletion failed", extra={"error_type": type(exc).__name__})
 
 
 async def refresh_provider_session_token(
@@ -385,7 +410,19 @@ async def refresh_provider_session_token(
         return None
 
     await delete_provider_session_token(old_token)
-    return await issue_provider_session_token(provider_id, user_agent, client_ip)
+    mfa_verified_at: datetime | None = None
+    raw_mfa_verified_at = payload.get("mfa_verified_at")
+    if isinstance(raw_mfa_verified_at, str):
+        try:
+            mfa_verified_at = datetime.fromisoformat(raw_mfa_verified_at)
+        except ValueError:
+            return None
+    return await issue_provider_session_token(
+        provider_id,
+        user_agent,
+        client_ip,
+        mfa_verified_at=mfa_verified_at,
+    )
 
 
 async def _get_mfa_fails_count(provider_id: uuid.UUID, ip_hash: str) -> int:
@@ -400,8 +437,9 @@ async def _get_mfa_fails_count(provider_id: uuid.UUID, ip_hash: str) -> int:
         if count is None:
             return 0
         return int(count)
-    except Exception:
-        return 0
+    except Exception as exc:
+        logger.error("MFA failure counter unavailable; failing closed", extra={"error_type": type(exc).__name__})
+        return _MAX_FAILED_MFA_ATTEMPTS
 
 
 async def _record_failed_mfa_attempt(provider_id: uuid.UUID, ip_hash: str) -> int:
@@ -417,8 +455,9 @@ async def _record_failed_mfa_attempt(provider_id: uuid.UUID, ip_hash: str) -> in
         if hasattr(results, "__await__"):
             results = await results
         return int(results[0])
-    except Exception:
-        return 0
+    except Exception as exc:
+        logger.error("MFA failure counter update unavailable; failing closed", extra={"error_type": type(exc).__name__})
+        return _MAX_FAILED_MFA_ATTEMPTS
 
 
 async def _clear_mfa_fails(provider_id: uuid.UUID, ip_hash: str) -> None:
@@ -430,8 +469,8 @@ async def _clear_mfa_fails(provider_id: uuid.UUID, ip_hash: str) -> None:
         delete_result = redis.delete(key)
         if hasattr(delete_result, "__await__"):
             await delete_result
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("MFA failure counter cleanup failed", extra={"error_type": type(exc).__name__})
 
 
 async def _is_mfa_rate_limited(provider_id: uuid.UUID, ip_hash: str) -> bool:
@@ -601,7 +640,7 @@ async def authenticate_provider_password(
             # either disable MFA or enroll a TOTP secret.
             logger.critical(json.dumps({
                 "event": "provider_auth_mfa_enabled_without_secret",
-                "login_identifier": credential.login_identifier,
+                "provider_id": str(credential.provider_id),
             }))
             return ProviderAuthResult(None, ProviderAuthFailure.MFA_NOT_CONFIGURED)
 

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import consent_engine
 
@@ -26,6 +26,7 @@ def run(coro):
 def make_fake_db():
     db = AsyncMock()
     db.add = lambda row: None
+    db.execute.return_value.scalar_one_or_none = MagicMock(return_value=None)
     return db
 
 

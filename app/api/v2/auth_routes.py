@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import inspect
 import hashlib
+import hmac
+import asyncio
 import json
 import logging
+import os
+import secrets
 from datetime import datetime, timedelta, timezone
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,7 +31,7 @@ from app.core.rate_limiter import (
     RateLimiter,
     client_ip_key,
 )
-from app.core.security import encrypt_mfa_secret
+from app.core.security import encrypt_mfa_secret, hash_client_ip
 from app.models.provider import ProviderCredential
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
@@ -42,10 +46,15 @@ from app.services.provider_auth_service import (
     get_totp_provisioning_uri,
     issue_provider_session_token,
     refresh_provider_session_token,
+    resolve_provider_session_context,
     decrypt_mfa_secret,
 )
 
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client
+from app.core.session_binding import provider_session_binding
+from app.core.config import get_otp_rate_limit_config, get_runtime_environment
+from app.core.rate_limiter import atomic_fixed_window
+from app.core.client_ip import resolve_client_ip
 from app.core.supabase import get_supabase_client
 from app.services.patient_auth_service import (
     issue_device_enrollment_token,
@@ -99,7 +108,10 @@ def _normalized_phone_or_422(phone: str) -> str:
     try:
         return normalize_indian_phone(phone)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "INVALID_PHONE_FORMAT"},
+        ) from exc
 
 
 async def _enforce_otp_limits(request: Request, phone: str) -> None:
@@ -197,12 +209,32 @@ async def patient_otp_verify(
 
 
 def _client_ip_from_request(request: Request) -> str:
-    """Return the request's client IP, preferring X-Forwarded-For."""
+    return resolve_client_ip(request)
 
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+
+async def enforce_provider_login_controls(login_identifier: str, client_ip: str) -> tuple[str, int]:
+    """Apply privacy-preserving per-IP and per-target progressive throttles."""
+    identifier_hash = hmac.new(
+        get_otp_rate_limit_config().hmac_secret.encode(),
+        login_identifier.strip().lower().encode(), hashlib.sha256,
+    ).hexdigest()
+    redis = get_async_redis_client()
+    try:
+        global_count, global_ttl = await atomic_fixed_window(
+            redis, f"provider_login:ip:{hash_client_ip(client_ip)}", 60
+        )
+        target_count, target_ttl = await atomic_fixed_window(
+            redis, f"provider_login:target:{hash_client_ip(client_ip)}:{identifier_hash}", 300
+        )
+        await atomic_fixed_window(redis, f"provider_login:anomaly:{identifier_hash}", 900)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail={"error_code": "LOGIN_SECURITY_CONTROL_UNAVAILABLE", "retryable": True}) from exc
+    if global_count > 30 or target_count > 8:
+        retry_after = max(global_ttl if global_count > 30 else 0, target_ttl if target_count > 8 else 0, 1)
+        raise HTTPException(status_code=429, detail={"error_code": "LOGIN_THROTTLED", "retry_after_seconds": retry_after}, headers={"Retry-After": str(retry_after)})
+    if target_count > 3:
+        await asyncio.sleep(min(1.0, 0.25 * (2 ** (target_count - 4))))
+    return identifier_hash, target_count
 
 
 class ProviderLoginRequest(BaseModel):
@@ -283,6 +315,44 @@ class TokenRefreshResponse(BaseModel):
     expires_at: datetime
 
 
+class ProviderWebSessionResponse(BaseModel):
+    authenticated: bool = True
+    expires_at: datetime
+    provider_uid: str
+    hospital_id: UUID
+    display_name: str = ""
+    hospital_name: str = ""
+    roles: list[str] = Field(default_factory=list)
+
+
+class ProviderWebLoginState(BaseModel):
+    status: str
+    expires_at: datetime | None = None
+
+
+class ProviderWebMfaRequest(BaseModel):
+    totp_code: str = Field(..., min_length=6, max_length=8)
+
+
+def _set_web_auth_cookies(response: Response, token: str, expires_at: datetime) -> None:
+    secure = get_runtime_environment().is_production_like
+    max_age = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+    response.set_cookie(
+        "nexa_provider_session", token, max_age=max_age, secure=secure,
+        httponly=True, samesite="lax", path="/api/v2",
+    )
+    response.set_cookie(
+        "nexa_csrf", secrets.token_urlsafe(24), max_age=max_age, secure=secure,
+        httponly=False, samesite="lax", path="/",
+    )
+
+
+def _clear_web_auth_cookies(response: Response) -> None:
+    response.delete_cookie("nexa_provider_session", path="/api/v2")
+    response.delete_cookie("nexa_mfa_pending", path="/api/v2/auth/web")
+    response.delete_cookie("nexa_csrf", path="/")
+
+
 def _status_for_failure(failure: ProviderAuthFailure) -> int:
     if failure in {
         ProviderAuthFailure.AFFILIATION_REQUIRED,
@@ -316,11 +386,13 @@ async def _issue_login_response(
     context: ProviderContext,
     user_agent: str | None = None,
     client_ip: str | None = None,
+    mfa_verified_at: datetime | None = None,
 ) -> ProviderLoginResponse:
     token = await issue_provider_session_token(
         context.provider.provider_id,
         user_agent=user_agent,
         client_ip=client_ip,
+        mfa_verified_at=mfa_verified_at,
     )
     expires_at = datetime.now(timezone.utc) + timedelta(seconds=_PROVIDER_SESSION_TTL_SECONDS)
     return ProviderLoginResponse(
@@ -347,6 +419,9 @@ async def provider_login(
     The final session token is bound to the request's User-Agent and client IP.
     """
 
+    client_ip = _client_ip_from_request(request)
+    identifier_hash, _target_count = await enforce_provider_login_controls(payload.login_identifier, client_ip)
+
     result = await authenticate_provider_password(
         db,
         payload.login_identifier,
@@ -359,7 +434,7 @@ async def provider_login(
         await append_audit_log(
             actor_uid="PROVIDER_LOGIN",
             event_type="PROVIDER_MFA_REQUIRED",
-            target_id=payload.login_identifier,
+            target_id=identifier_hash,
             status="MFA_REQUIRED",
         )
         return ProviderLoginMfaRequiredResponse(
@@ -372,13 +447,13 @@ async def provider_login(
         await append_audit_log(
             actor_uid="PROVIDER_LOGIN",
             event_type="PROVIDER_LOGIN_FAILED",
-            target_id=payload.login_identifier,
+            target_id=identifier_hash,
             status=result.failure.value.upper(),
         )
         if result.failure is ProviderAuthFailure.MFA_NOT_CONFIGURED:
             logger.critical(json.dumps({
                 "event": "provider_login_mfa_not_configured",
-                "login_identifier": payload.login_identifier,
+                "provider_login_hash": identifier_hash,
             }))
         raise HTTPException(
             status_code=_status_for_failure(result.failure),
@@ -386,7 +461,6 @@ async def provider_login(
         )
 
     user_agent = request.headers.get("user-agent")
-    client_ip = _client_ip_from_request(request)
     response = await _issue_login_response(result.context, user_agent, client_ip)
     await append_audit_log(
         actor_uid=result.context.actor_uid,
@@ -452,7 +526,12 @@ async def provider_mfa_verify(
             detail=_detail_for_failure(result.failure),
         )
 
-    response = await _issue_login_response(result.context, user_agent, client_ip)
+    response = await _issue_login_response(
+        result.context,
+        user_agent,
+        client_ip,
+        mfa_verified_at=datetime.now(timezone.utc),
+    )
     await append_audit_log(
         actor_uid=result.context.actor_uid,
         event_type="PROVIDER_LOGIN_SUCCEEDED",
@@ -466,6 +545,88 @@ async def provider_mfa_verify(
         },
     )
     return response
+
+
+@router.post("/web/login", response_model=ProviderWebLoginState)
+async def provider_web_login(
+    payload: ProviderLoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db_session),
+) -> ProviderWebLoginState:
+    """Browser login: bearer material is written only to HttpOnly cookies."""
+    login_result = await provider_login(payload, request, db, None)
+    secure = get_runtime_environment().is_production_like
+    if isinstance(login_result, ProviderLoginMfaRequiredResponse):
+        response.set_cookie(
+            "nexa_mfa_pending", login_result.mfa_token, max_age=300,
+            secure=secure, httponly=True, samesite="strict", path="/api/v2/auth/web",
+        )
+        response.set_cookie(
+            "nexa_csrf", secrets.token_urlsafe(24), max_age=300,
+            secure=secure, httponly=False, samesite="strict", path="/",
+        )
+        return ProviderWebLoginState(status="mfa_required")
+    _set_web_auth_cookies(response, login_result.access_token, login_result.expires_at)
+    return ProviderWebLoginState(status="authenticated", expires_at=login_result.expires_at)
+
+
+@router.post("/web/mfa/verify", response_model=ProviderWebLoginState)
+async def provider_web_mfa_verify(
+    payload: ProviderWebMfaRequest,
+    request: Request,
+    response: Response,
+    pending_token: str | None = Cookie(default=None, alias="nexa_mfa_pending"),
+    db: AsyncSession = Depends(get_db_session),
+) -> ProviderWebLoginState:
+    if not pending_token:
+        raise HTTPException(status_code=401, detail="MFA session expired")
+    result = await provider_mfa_verify(
+        ProviderMfaVerifyRequest(mfa_token=pending_token, totp_code=payload.totp_code),
+        request, db, None,
+    )
+    response.delete_cookie("nexa_mfa_pending", path="/api/v2/auth/web")
+    _set_web_auth_cookies(response, result.access_token, result.expires_at)
+    return ProviderWebLoginState(status="authenticated", expires_at=result.expires_at)
+
+
+@router.get("/web/session", response_model=ProviderWebSessionResponse)
+async def provider_web_session(
+    provider: ProviderContext = Depends(get_current_provider),
+    session_token: str | None = Cookie(default=None, alias="nexa_provider_session"),
+) -> ProviderWebSessionResponse:
+    if not session_token:
+        raise HTTPException(status_code=401, detail="Browser session required")
+    session_data = await resolve_provider_session_context(session_token)
+    if not session_data or str(session_data.get("provider_id")) != str(provider.provider.provider_id):
+        raise HTTPException(status_code=401, detail="Browser session expired")
+    try:
+        expires_at = datetime.fromisoformat(str(session_data["expires_at"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=401, detail="Browser session expired") from exc
+    return ProviderWebSessionResponse(
+        expires_at=expires_at,
+        provider_uid=provider.actor_uid,
+        hospital_id=provider.hospital.hospital_id,
+        display_name=provider.provider.display_name,
+        hospital_name=provider.hospital.display_name,
+        roles=sorted(set(provider.affiliation.roles or [])),
+    )
+
+
+@router.post("/web/logout", status_code=204, response_model=None)
+async def provider_web_logout(
+    response: Response,
+    provider: ProviderContext = Depends(get_current_provider),
+    session_token: str | None = Cookie(default=None, alias="nexa_provider_session"),
+) -> None:
+    if session_token:
+        await delete_provider_session_token(session_token)
+    _clear_web_auth_cookies(response)
+    await append_audit_log(
+        actor_uid=provider.actor_uid, event_type="PROVIDER_LOGOUT",
+        target_id=str(provider.provider.provider_id), status="SUCCESS",
+    )
 
 
 class ProviderMfaSetupVerifyRequest(BaseModel):
@@ -577,7 +738,7 @@ async def provider_mfa_setup_verify(
 
     secret = decrypt_mfa_secret(row.mfa_secret_encrypted)
     from app.services.provider_auth_service import verify_totp_code_once
-    if not await verify_totp_code_once(provider.provider.provider_id, secret, payload.totp_code, redis_client=get_redis_client()):
+    if not await verify_totp_code_once(provider.provider.provider_id, secret, payload.totp_code, redis_client=get_async_redis_client()):
         await append_audit_log(
             actor_uid=provider.actor_uid,
             event_type="PROVIDER_MFA_SETUP_VERIFY_FAILED",
@@ -664,6 +825,7 @@ class MergeChallengeResponse(BaseModel):
 
 @router.post("/challenge/merge", response_model=MergeChallengeResponse)
 async def create_merge_challenge(
+    request: Request,
     provider: ProviderContext = Depends(get_current_provider),
 ):
     """Generate a short-lived challenge token for the merge operation.
@@ -678,18 +840,21 @@ async def create_merge_challenge(
     challenge_token = str(uuid.uuid4())
     payload = {
         "provider_id": str(provider.provider.provider_id),
+        "hospital_id": str(provider.hospital.hospital_id),
+        "session_binding": provider_session_binding(request),
+        "operation": "patient_merge",
         "issued_at": datetime.now(timezone.utc).isoformat(),
         "verified": False,
     }
 
-    redis = get_redis_client()
+    redis = get_async_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{challenge_token}"
     await _maybe_await(redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(payload)))
 
     await append_audit_log(
         actor_uid=provider.actor_uid,
         event_type="MERGE_CHALLENGE_CREATED",
-        target_id=challenge_token,
+        target_id=hashlib.sha256(challenge_token.encode("utf-8")).hexdigest(),
         status="SUCCESS"
     )
 
@@ -701,6 +866,36 @@ class MergeChallengeVerifyRequest(BaseModel):
     totp_code: str = Field(..., min_length=6, max_length=6)
 
 
+class MergeChallengeCancelRequest(BaseModel):
+    challenge_token: str
+
+
+@router.post("/challenge/merge/cancel", status_code=status.HTTP_200_OK)
+async def cancel_merge_challenge(
+    payload: MergeChallengeCancelRequest,
+    request: Request,
+    provider: ProviderContext = Depends(get_current_provider),
+) -> None:
+    redis = get_async_redis_client()
+    key = f"{_MERGE_CHALLENGE_PREFIX}{payload.challenge_token}"
+    cached = await _maybe_await(redis.get(key))
+    if not cached:
+        return
+    if isinstance(cached, bytes):
+        cached = cached.decode("utf-8")
+    try:
+        challenge_data = json.loads(cached)
+    except (TypeError, json.JSONDecodeError):
+        await _maybe_await(redis.delete(key))
+        return
+    if (
+        challenge_data.get("provider_id") == str(provider.provider.provider_id)
+        and challenge_data.get("hospital_id") == str(provider.hospital.hospital_id)
+        and challenge_data.get("session_binding") == provider_session_binding(request)
+    ):
+        await _maybe_await(redis.delete(key))
+
+
 @router.post("/challenge/merge/verify")
 async def verify_merge_challenge(
     payload: MergeChallengeVerifyRequest,
@@ -709,7 +904,7 @@ async def verify_merge_challenge(
     provider: ProviderContext = Depends(get_current_provider),
 ):
     """Verify a merge challenge with a TOTP code."""
-    redis = get_redis_client()
+    redis = get_async_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{payload.challenge_token}"
     cached = await _maybe_await(redis.get(key))
     if not cached:
@@ -719,10 +914,16 @@ async def verify_merge_challenge(
         )
 
     challenge_data = json.loads(cached)
-    if challenge_data["provider_id"] != str(provider.provider.provider_id):
+    expected_binding = provider_session_binding(request)
+    if (
+        challenge_data.get("provider_id") != str(provider.provider.provider_id)
+        or challenge_data.get("hospital_id") != str(provider.hospital.hospital_id)
+        or challenge_data.get("session_binding") != expected_binding
+        or challenge_data.get("operation") != "patient_merge"
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Challenge bound to different provider.",
+            detail={"error_code": "MERGE_CHALLENGE_BINDING_MISMATCH"},
         )
 
     # Re-use existing MFA logic
@@ -764,12 +965,18 @@ async def verify_merge_challenge(
     await _clear_mfa_fails(provider.provider.provider_id, ip_hash)
 
     challenge_data["verified"] = True
-    await _maybe_await(redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(challenge_data)))
+    remaining_ttl = await _maybe_await(redis.ttl(key))
+    if not isinstance(remaining_ttl, int) or remaining_ttl <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"error_code": "MERGE_CHALLENGE_EXPIRED"},
+        )
+    await _maybe_await(redis.setex(key, remaining_ttl, json.dumps(challenge_data, sort_keys=True)))
 
     await append_audit_log(
         actor_uid=provider.actor_uid,
         event_type="MERGE_CHALLENGE_VERIFIED",
-        target_id=payload.challenge_token,
+        target_id=hashlib.sha256(payload.challenge_token.encode("utf-8")).hexdigest(),
         status="SUCCESS"
     )
 

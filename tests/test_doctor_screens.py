@@ -566,9 +566,8 @@ class TestLoginFlow:
         code = _read_screen("DoctorLoginScreen")
         context_code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         assert "verifyMfa" in code, "Must call verifyMfa() from context"
-        assert "pendingMfaTokenRef" in context_code and "mfa_token" in context_code, (
-            "ProviderAuthContext must retain and submit the opaque MFA token"
-        )
+        assert "providerWebMfaVerify" in context_code
+        assert "mfa_token" not in context_code
 
     def test_login_screen_has_back_to_sign_in(self) -> None:
         """MFA step must have a 'Back to Sign In' button to restart."""
@@ -609,7 +608,7 @@ class TestProviderAuthMfaFlow:
         assert "'mfa_required'" in code or '"mfa_required"' in code, (
             "LoginResult must have 'mfa_required' type variant"
         )
-        assert "mfaToken" in code, "mfa_required variant must include mfaToken"
+        assert "mfaToken" not in code, "Browser MFA state must remain in HttpOnly cookies"
 
     def test_has_verify_mfa_action(self) -> None:
         """ProviderAuthActions must include verifyMfa."""
@@ -617,31 +616,27 @@ class TestProviderAuthMfaFlow:
         assert "verifyMfa" in code, "Must export verifyMfa action"
 
     def test_verify_mfa_stores_session(self) -> None:
-        """verifyMfa must store the session on success (calls setAuthTokenProvider)."""
+        """verifyMfa must hydrate the authoritative cookie-backed session."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         code_norm = _normalize_ws(code)
-        # Look for setAuthTokenProvider call inside verifyMfa implementation
-        assert "setAuthTokenProvider" in code, "Must call setAuthTokenProvider() after MFA verification"
-        # verifyMfa should appear near setAuthTokenProvider usage
+        assert "if (!await hydrate())" in code
         assert code_norm.count("verifyMfa") >= 2, (
             "verifyMfa must appear in both type definition and implementation"
         )
 
     def test_login_calls_auth_login_endpoint(self) -> None:
-        """login() must call POST /api/v2/auth/login."""
+        """login() must call the browser cookie login endpoint."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         api_code = _read(API_CLIENT_PATH)
-        assert "NexaApiClient.providerLogin" in code
-        assert "/api/v2/auth/login" in api_code, "Must call /api/v2/auth/login"
+        assert "NexaApiClient.providerWebLogin" in code
+        assert "/api/v2/auth/web/login" in api_code
 
     def test_verify_mfa_calls_mfa_verify_endpoint(self) -> None:
-        """verifyMfa() must call POST /api/v2/auth/mfa/verify."""
+        """verifyMfa() must call the browser cookie MFA endpoint."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         api_code = _read(API_CLIENT_PATH)
-        assert "NexaApiClient.providerMfaVerify" in code
-        assert "/api/v2/auth/mfa/verify" in api_code, (
-            "Must call /api/v2/auth/mfa/verify"
-        )
+        assert "NexaApiClient.providerWebMfaVerify" in code
+        assert "/api/v2/auth/web/mfa/verify" in api_code
 
     def test_has_mfa_required_type_guard(self) -> None:
         """Must have a mechanism to detect mfa_required response (checks mfa_token field).
@@ -651,10 +646,8 @@ class TestProviderAuthMfaFlow:
         discriminates between success and MFA-required responses.
         """
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "mfa_token" in code, "Must check for mfa_token field in response"
-        assert "isMfaRequired" in code or "isMfa" in code or "validateLoginResponse" in code, (
-            "Must have a type guard or Zod validator for MFA required response"
-        )
+        assert "result.status === 'mfa_required'" in code
+        assert "mfa_token" not in code
 
     def test_has_role_in_provider_identity(self) -> None:
         """ProviderIdentity must include a role field."""

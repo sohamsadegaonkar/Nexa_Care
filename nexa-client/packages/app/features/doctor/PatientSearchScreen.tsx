@@ -147,9 +147,9 @@ export function PatientSearchScreen() {
             </Paragraph>
             <YStack marginTop="$2" gap="$1">
               <Text color="$color11" fontSize={12}>Original patient ID:</Text>
-              <Text color="$color12" fontFamily="$mono" fontSize={14}>{resolved.patient_id}</Text>
+              <Text color="$color12" fontSize={14}>{resolved.patient_id}</Text>
               <Text color="$color11" fontSize={12} marginTop="$1">Canonical patient ID:</Text>
-              <Text color="$orange10" fontFamily="$mono" fontSize={14} fontWeight="700">
+              <Text color="$orange10" fontSize={14} fontWeight="700">
                 {resolved.canonical_patient_id}
               </Text>
             </YStack>
@@ -161,7 +161,7 @@ export function PatientSearchScreen() {
           <Paragraph color="$color11" fontSize={12} textTransform="uppercase" letterSpacing={1}>
             Patient ID
           </Paragraph>
-          <Text color="$color12" fontSize={18} fontWeight="600" fontFamily="$mono">
+          <Text color="$color12" fontSize={18} fontWeight="600">
             {displayId}
           </Text>
         </Card>

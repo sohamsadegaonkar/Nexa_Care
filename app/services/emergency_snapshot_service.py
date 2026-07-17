@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.patient_records import Allergy, LabResult, Medication, TimelineEvent, Vitals
 
 logger = logging.getLogger("nexa_logger")
+from app.observability.safe_exceptions import log_safe_exception
 
 _NO_KNOWN_MEDICAL_DATA_MESSAGE = "No Known Medical Data"
 
@@ -200,13 +201,7 @@ async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> 
     try:
         structured_snapshot = await _fetch_structured_snapshot(patient_id, db_session)
     except SQLAlchemyError as exc:
-        logger.critical(json.dumps({
-            "event": "emergency_snapshot_db_error",
-            "source": "structured_patient_records",
-            "patient_id": str(patient_id),
-            "exception": str(exc),
-            "action": "raising_503_fail_closed",
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="emergency_snapshot")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Emergency snapshot retrieval is temporarily unavailable.",
@@ -226,12 +221,7 @@ async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> 
     try:
         legacy_snapshot = await _fetch_legacy_projection(patient_id, db_session)
     except SQLAlchemyError as exc:
-        logger.warning(json.dumps({
-            "event": "legacy_emergency_projection_unavailable",
-            "patient_id": str(patient_id),
-            "exception": str(exc),
-            "action": "returning_no_known_medical_data_after_empty_structured_records",
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="legacy_emergency_projection")
         legacy_snapshot = None
 
     if legacy_snapshot is None:

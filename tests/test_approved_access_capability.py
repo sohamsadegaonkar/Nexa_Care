@@ -27,16 +27,24 @@ class MemoryRedis:
     def __init__(self) -> None:
         self.data: dict[str, str] = {}
 
-    def get(self, key: str):
+    async def get(self, key: str):
         return self.data.get(key)
 
-    def set(self, key: str, value: str, **_kwargs):
+    async def set(self, key: str, value: str, **kwargs):
+        if kwargs.get("nx") and key in self.data:
+            return False
         self.data[key] = value
         return True
 
-    def delete(self, key: str):
+    async def delete(self, key: str):
         self.data.pop(key, None)
         return 1
+
+    async def eval(self, _script: str, _numkeys: int, key: str, value: str):
+        if self.data.get(key) == value:
+            self.data.pop(key, None)
+            return 1
+        return 0
 
 
 def approved_request(**overrides) -> dict:
@@ -74,33 +82,35 @@ def provider_context(provider_id: str = "00000000-0000-0000-0000-000000000001",
     )
 
 
-def test_claim_stores_only_hash_and_rotation_invalidates_prior_token():
+@pytest.mark.asyncio
+async def test_claim_stores_only_hash_and_rotation_invalidates_prior_token():
     redis = MemoryRedis()
     request = approved_request()
     seed_request(redis, request)
-    with patch("app.services.approved_access_capability.get_redis_client", return_value=redis):
-        first, _ = issue_from_approved_request(request_data=request)
-        second, _ = issue_from_approved_request(request_data=request)
+    with patch("app.services.approved_access_capability.get_async_redis_client", return_value=redis):
+        first, _ = await issue_from_approved_request(request_data=request)
+        second, _ = await issue_from_approved_request(request_data=request)
 
         assert first != second
         assert first not in " ".join(redis.data.keys())
         assert first not in " ".join(redis.data.values())
         assert f"{CAPABILITY_PREFIX}{token_hash(first)}" not in redis.data
         assert f"{CAPABILITY_PREFIX}{token_hash(second)}" in redis.data
-        assert validate(
+        assert await validate(
             token=first, patient_id="patient-1", provider_id="provider-1",
             hospital_id="hospital-1", requested_category="clinical_summary",
         ) is None
 
 
-def test_capability_is_bound_to_provider_hospital_patient_and_scope():
+@pytest.mark.asyncio
+async def test_capability_is_bound_to_provider_hospital_patient_and_scope():
     redis = MemoryRedis()
     request = approved_request()
     seed_request(redis, request)
-    with patch("app.services.approved_access_capability.get_redis_client", return_value=redis):
-        token, capability = issue_from_approved_request(request_data=request)
+    with patch("app.services.approved_access_capability.get_async_redis_client", return_value=redis):
+        token, capability = await issue_from_approved_request(request_data=request)
         assert capability.request_id == "request-1"
-        assert validate(
+        assert await validate(
             token=token, patient_id="patient-1", provider_id="provider-1",
             hospital_id="hospital-1", requested_category="timeline_view",
         ) is not None
@@ -110,22 +120,23 @@ def test_capability_is_bound_to_provider_hospital_patient_and_scope():
             {"patient_id": "patient-1", "provider_id": "provider-1", "hospital_id": "hospital-2", "requested_category": "clinical_summary"},
             {"patient_id": "patient-1", "provider_id": "provider-1", "hospital_id": "hospital-1", "requested_category": "full"},
         ):
-            assert validate(token=token, **kwargs) is None
+            assert await validate(token=token, **kwargs) is None
 
 
-def test_expired_or_invalidated_request_fails_closed():
+@pytest.mark.asyncio
+async def test_expired_or_invalidated_request_fails_closed():
     redis = MemoryRedis()
     request = approved_request()
     seed_request(redis, request)
-    with patch("app.services.approved_access_capability.get_redis_client", return_value=redis):
-        token, _ = issue_from_approved_request(request_data=request)
+    with patch("app.services.approved_access_capability.get_async_redis_client", return_value=redis):
+        token, _ = await issue_from_approved_request(request_data=request)
         request["status"] = "cancelled"
         seed_request(redis, request)
-        assert validate(
+        assert await validate(
             token=token, patient_id="patient-1", provider_id="provider-1",
             hospital_id="hospital-1", requested_category="clinical_summary",
         ) is None
-        invalidate_request("request-1")
+        await invalidate_request("request-1")
         assert f"{CAPABILITY_PREFIX}{token_hash(token)}" not in redis.data
 
 

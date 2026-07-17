@@ -1,10 +1,8 @@
 import { screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
-import {
-  PROVIDER_SESSION_STORAGE_KEY,
-  ProviderAuthProvider,
-} from './ProviderAuthContext'
+import { ApiError, NexaApiClient } from '../../utils/apiClient'
+import { ProviderAuthProvider } from './ProviderAuthContext'
 import { ProviderRouteGuard } from './ProviderRouteGuard'
 
 const replace = vi.fn()
@@ -17,6 +15,10 @@ describe('ProviderRouteGuard', () => {
   beforeEach(() => {
     replace.mockReset()
     window.sessionStorage.clear()
+    vi.restoreAllMocks()
+    vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
+      new ApiError('No provider session.', 401, 'HTTP_ERROR'),
+    )
   })
 
   it('redirects an unauthenticated consent-history visit with returnTo', async () => {
@@ -37,15 +39,15 @@ describe('ProviderRouteGuard', () => {
   })
 
   it('renders the protected page after authenticated session hydration', async () => {
-    window.sessionStorage.setItem(PROVIDER_SESSION_STORAGE_KEY, JSON.stringify({
-      access_token: 'provider-access-token',
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue({
+      authenticated: true,
       expires_at: '2099-01-01T00:00:00Z',
-      provider: {
-        provider_id: 'provider-1', display_name: '', medical_registration_number: null,
-        specialty: null, contact_email: 'provider@example.test', role: 'clinician',
-      },
-      hospital: { hospital_id: 'hospital-1', facility_code: '', display_name: '' },
-    }))
+      provider_uid: 'provider-1',
+      hospital_id: 'hospital-1',
+      display_name: 'Provider One',
+      hospital_name: 'Hospital One',
+      roles: ['clinician'],
+    })
 
     renderWithTamagui(
       <ProviderAuthProvider>

@@ -94,7 +94,7 @@ export function DoctorDashboardScreen() {
         <Text color="$color11" fontSize={12} textTransform="uppercase" letterSpacing={1}>
           Provider Identity
         </Text>
-        <Text color="$color12" fontSize={18} fontWeight="600" fontFamily="$mono">
+        <Text color="$color12" fontSize={18} fontWeight="600">
           {providerId || '—'}
         </Text>
       </Card>

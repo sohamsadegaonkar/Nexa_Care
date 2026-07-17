@@ -69,9 +69,9 @@ export function PipelineUploadScreen() {
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$6">🔒 Session Required</Text>
-        <Paragraph col="$colorSubdued" size="$3">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$6">🔒 Session Required</Text>
+        <Paragraph color="$color10" fontSize="$3">
           Please log in to upload documents.
         </Paragraph>
         <Button theme="blue" onPress={() => router.push('/doctor/login')}>
@@ -174,9 +174,9 @@ export function PipelineUploadScreen() {
   // ── Missing consent token ────────────────────────────────────────────
   if (!consentToken) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$6">🔒 Consent Required</Text>
-        <Paragraph col="$colorSubdued" size="$3">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
+        <Paragraph color="$color10" fontSize="$3">
           You must have an active consent grant for AI document ingestion
           before uploading.
         </Paragraph>
@@ -188,19 +188,19 @@ export function PipelineUploadScreen() {
   }
 
   return (
-    <ScrollView f={1} bg="$background">
-      <YStack f={1} p="$6" gap="$4" mw={800} mx="auto">
+    <ScrollView flex={1} backgroundColor="$background">
+      <YStack flex={1} padding="$6" gap="$4" maxWidth={800} marginHorizontal="auto">
         {/* ALPHA badge */}
-        <XStack ai="center" gap="$2">
-          <H2 col="$color" size="$7">Upload Document</H2>
-          <Card bg="$orange4" br="$4" px="$2" py="$1">
-            <Text col="$orange10" size="$2" fontWeight="700" textTransform="uppercase">
+        <XStack alignItems="center" gap="$2">
+          <H2 color="$color12" fontSize="$7">Upload Document</H2>
+          <Card backgroundColor="$orange4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+            <Text color="$orange10" fontSize="$2" fontWeight="700" textTransform="uppercase">
               ALPHA
             </Text>
           </Card>
         </XStack>
 
-        <Paragraph col="$colorSubdued" size="$3">
+        <Paragraph color="$color10" fontSize="$3">
           ALPHA · AI-assisted extraction results require clinical verification
           before commitment.
         </Paragraph>
@@ -209,21 +209,20 @@ export function PipelineUploadScreen() {
 
         {/* ── Patient selector ────────────────────────────────────────── */}
         <YStack gap="$2">
-          <Text col="$color" size="$4" fontWeight="600">Patient</Text>
+          <Text color="$color12" fontSize="$4" fontWeight="600">Patient</Text>
           <Input
             value={patientId}
             onChangeText={setPatientId}
             placeholder="Enter patient ID or use NFC scan…"
             size="$4"
-            fontFamily="$mono"
           />
           {urlPatientId && (
-            <Text col="$colorSubdued" size="$2">
+            <Text color="$color10" fontSize="$2">
               Pre-filled from consent context. You may change it if needed.
             </Text>
           )}
           {!patientId.trim() && (
-            <Text col="$orange10" size="$2">
+            <Text color="$orange10" fontSize="$2">
               Patient ID is required.
             </Text>
           )}
@@ -233,31 +232,31 @@ export function PipelineUploadScreen() {
 
         {/* ── Dropzone ────────────────────────────────────────────────── */}
         <YStack
-          bg={dragOver ? '$blue3' : '$backgroundHover'}
-          br="$4"
-          bw={2}
-          bc={dragOver ? '$blue8' : '$borderColor'}
+          backgroundColor={dragOver ? '$blue3' : '$backgroundHover'}
+          borderRadius="$4"
+          borderWidth={2}
+          borderColor={dragOver ? '$blue8' : '$borderColor'}
           borderStyle="dashed"
-          p="$8"
-          jc="center"
-          ai="center"
+          padding="$8"
+          justifyContent="center"
+          alignItems="center"
           gap="$3"
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
-          hoverStyle={{ bc: '$blue6' }}
+          hoverStyle={{ borderColor: '$blue6' }}
         >
           {/* Upload icon */}
-          <Text size="$8" col={dragOver ? '$blue10' : '$colorSubdued'}>
+          <Text fontSize="$8" color={dragOver ? '$blue10' : '$color10'}>
             {selectedFile ? '📄' : '📁'}
           </Text>
 
           {selectedFile ? (
-            <YStack ai="center" gap="$2">
-              <Text col="$color" size="$4" fontWeight="600">
+            <YStack alignItems="center" gap="$2">
+              <Text color="$color12" fontSize="$4" fontWeight="600">
                 {selectedFile.name}
               </Text>
-              <Text col="$colorSubdued" size="$3">
+              <Text color="$color10" fontSize="$3">
                 {(selectedFile.size / 1024).toFixed(1)} KB · {selectedFile.type || 'unknown type'}
               </Text>
               <Button
@@ -272,11 +271,11 @@ export function PipelineUploadScreen() {
               </Button>
             </YStack>
           ) : (
-            <YStack ai="center" gap="$2">
-              <Text col={dragOver ? '$blue10' : '$colorSubdued'} size="$4" fontWeight="600">
+            <YStack alignItems="center" gap="$2">
+              <Text color={dragOver ? '$blue10' : '$color10'} fontSize="$4" fontWeight="600">
                 {dragOver ? 'Drop file here' : 'Drag & drop a clinical document'}
               </Text>
-              <Text col="$colorSubdued" size="$3">
+              <Text color="$color10" fontSize="$3">
                 or
               </Text>
               <Button
@@ -301,13 +300,13 @@ export function PipelineUploadScreen() {
 
         {/* File validation error */}
         {validationError && (
-          <YStack bg="$red4" br="$3" p="$3">
-            <Text col="$red10" size="$3">{validationError}</Text>
+          <YStack backgroundColor="$red4" borderRadius="$3" padding="$3">
+            <Text color="$red10" fontSize="$3">{validationError}</Text>
           </YStack>
         )}
 
         {/* Allowed formats hint */}
-        <Text col="$colorSubdued" size="$2">
+        <Text color="$color10" fontSize="$2">
           Allowed: PDF, PNG, JPG, TIFF, DOC, DOCX · Maximum: 25 MB
         </Text>
 
@@ -315,15 +314,15 @@ export function PipelineUploadScreen() {
 
         {/* ── Upload button ───────────────────────────────────────────── */}
         {uploadStatus === 'uploading' ? (
-          <XStack ai="center" gap="$3">
+          <XStack alignItems="center" gap="$3">
             <Spinner size="small" color="$blue10" />
-            <Text col="$colorSubdued" size="$3">Uploading document…</Text>
+            <Text color="$color10" fontSize="$3">Uploading document…</Text>
           </XStack>
         ) : (
           <Button
             theme="blue"
             size="$4"
-            disabled={!selectedFile || !!validationError || !patientId.trim() || uploadStatus === 'uploading'}
+            disabled={!selectedFile || !!validationError || !patientId.trim()}
             onPress={handleUpload}
           >
             Upload &amp; Extract
@@ -332,8 +331,8 @@ export function PipelineUploadScreen() {
 
         {/* Success state */}
         {uploadStatus === 'success' && jobId && (
-          <Card bg="$green4" br="$4" p="$3">
-            <Text col="$green10" size="$3" fontWeight="600">
+          <Card backgroundColor="$green4" borderRadius="$4" padding="$3">
+            <Text color="$green10" fontSize="$3" fontWeight="600">
               Document queued for extraction. Job ID: {jobId}
             </Text>
           </Card>
@@ -341,8 +340,8 @@ export function PipelineUploadScreen() {
 
         {/* Error state */}
         {uploadStatus === 'error' && uploadError && (
-          <YStack bg="$red4" br="$3" p="$3" gap="$2">
-            <Text col="$red10" size="$3">{uploadError}</Text>
+          <YStack backgroundColor="$red4" borderRadius="$3" padding="$3" gap="$2">
+            <Text color="$red10" fontSize="$3">{uploadError}</Text>
             <Button
               size="$2"
               chromeless

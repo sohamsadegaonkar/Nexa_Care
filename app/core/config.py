@@ -10,7 +10,9 @@ Note: This module only *loads* config; it does not open DB/Redis connections yet
 from __future__ import annotations
 
 import os
+import logging
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -61,6 +63,166 @@ class ClinicConfig:
 class DatabaseConfig:
     url: str
     echo_sql: bool = False
+
+
+@dataclass(frozen=True)
+class DocumentExtractionConfig:
+    provider: str
+    environment: str
+    api_url: str | None = None
+    api_key: str | None = None
+    timeout_seconds: float = 30.0
+    max_attempts: int = 3
+
+
+@dataclass(frozen=True)
+class DocumentStorageConfig:
+    provider: str
+    environment: str
+    local_root: Path | None = None
+    encryption_key: str | None = None
+    s3_bucket: str | None = None
+    s3_region: str | None = None
+    s3_kms_key_id: str | None = None
+
+
+logger = logging.getLogger("nexa_config")
+
+
+class RuntimeEnvironment(str, Enum):
+    LOCAL = "local"
+    DEVELOPMENT = "development"
+    TEST = "test"
+    ALPHA = "alpha"
+    STAGING = "staging"
+    PREVIEW = "preview"
+    PILOT = "pilot"
+    PRODUCTION = "production"
+
+    @property
+    def is_production_like(self) -> bool:
+        return self in {self.STAGING, self.PREVIEW, self.PILOT, self.PRODUCTION}
+
+    @property
+    def is_test(self) -> bool:
+        return self is self.TEST
+
+    @property
+    def is_demo_allowed(self) -> bool:
+        return self in {self.LOCAL, self.DEVELOPMENT, self.TEST, self.ALPHA}
+
+    @property
+    def allows_simulator(self) -> bool:
+        return self in {self.LOCAL, self.DEVELOPMENT, self.TEST}
+
+
+_LEGACY_ENVIRONMENT_ALIASES = {"alpha-demo": "alpha"}
+_SAFE_DEMO_ENVIRONMENTS = frozenset(env.value for env in RuntimeEnvironment if env.is_demo_allowed)
+_PRODUCTION_LIKE_ENVIRONMENTS = frozenset(env.value for env in RuntimeEnvironment if env.is_production_like)
+
+
+def _normalize_environment(raw: str) -> str:
+    normalized = raw.strip().lower()
+    if normalized in _LEGACY_ENVIRONMENT_ALIASES:
+        logger.warning("Deprecated runtime environment name used; migrate to canonical ENVIRONMENT value")
+        return _LEGACY_ENVIRONMENT_ALIASES[normalized]
+    return normalized
+
+
+def get_runtime_environment() -> RuntimeEnvironment:
+    canonical_raw = os.getenv("ENVIRONMENT")
+    legacy_raw = os.getenv("ENV")
+    if canonical_raw and legacy_raw:
+        canonical = _normalize_environment(canonical_raw)
+        legacy = _normalize_environment(legacy_raw)
+        if canonical != legacy:
+            raise ConfigError("ENVIRONMENT and legacy ENV disagree")
+        value = canonical
+        logger.warning("Legacy ENV is deprecated; remove it after migration to ENVIRONMENT")
+    elif canonical_raw:
+        value = _normalize_environment(canonical_raw)
+    elif legacy_raw:
+        value = _normalize_environment(legacy_raw)
+        logger.warning("Legacy ENV is deprecated; configure ENVIRONMENT instead")
+    else:
+        raise ConfigError("ENVIRONMENT must explicitly identify the runtime environment")
+    try:
+        return RuntimeEnvironment(value)
+    except ValueError as exc:
+        raise ConfigError("Unsupported ENVIRONMENT value") from exc
+
+
+def runtime_environment() -> str:
+    return get_runtime_environment().value
+
+
+def get_break_glass_mfa_max_age_seconds() -> int:
+    raw = os.getenv("BREAK_GLASS_MFA_MAX_AGE_SECONDS", "600")
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ConfigError("BREAK_GLASS_MFA_MAX_AGE_SECONDS must be an integer") from exc
+    if not 60 <= value <= 1800:
+        raise ConfigError("BREAK_GLASS_MFA_MAX_AGE_SECONDS must be between 60 and 1800")
+    return value
+
+
+def get_document_extraction_config() -> DocumentExtractionConfig:
+    """Validate the explicitly selected extraction provider, fail closed."""
+
+    environment = runtime_environment()
+    if not environment:
+        raise ConfigError("ENVIRONMENT (or ENV) must explicitly identify the runtime environment")
+    provider = _require_env("DOCUMENT_EXTRACTION_PROVIDER").strip().lower()
+    if provider not in {"remote", "demo"}:
+        raise ConfigError("DOCUMENT_EXTRACTION_PROVIDER must be 'remote' or 'demo'")
+    if provider == "demo":
+        if environment not in _SAFE_DEMO_ENVIRONMENTS:
+            raise ConfigError(f"Demo document extraction is forbidden in environment '{environment}'")
+        return DocumentExtractionConfig(provider=provider, environment=environment)
+
+    api_url = _require_env("DOCUMENT_AI_API_URL").strip()
+    api_key = _require_env("DOCUMENT_AI_API_KEY").strip()
+    if environment in _PRODUCTION_LIKE_ENVIRONMENTS and not api_url.lower().startswith("https://"):
+        raise ConfigError("DOCUMENT_AI_API_URL must use HTTPS in production-like environments")
+    try:
+        timeout_seconds = float(os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "30"))
+        max_attempts = int(os.getenv("DOCUMENT_AI_MAX_ATTEMPTS", "3"))
+    except ValueError as exc:
+        raise ConfigError("Document extraction timeout/retry configuration is invalid") from exc
+    if timeout_seconds <= 0 or not 1 <= max_attempts <= 5:
+        raise ConfigError("Document extraction timeout must be positive and max attempts must be 1..5")
+    return DocumentExtractionConfig(
+        provider=provider,
+        environment=environment,
+        api_url=api_url,
+        api_key=api_key,
+        timeout_seconds=timeout_seconds,
+        max_attempts=max_attempts,
+    )
+
+
+def get_document_storage_config() -> DocumentStorageConfig:
+    environment = runtime_environment()
+    if not environment:
+        raise ConfigError("ENVIRONMENT (or ENV) must explicitly identify the runtime environment")
+    provider = _require_env("DOCUMENT_STORAGE_PROVIDER").strip().lower()
+    if provider == "local":
+        if environment not in _SAFE_DEMO_ENVIRONMENTS:
+            raise ConfigError(f"Local document storage is forbidden in environment '{environment}'")
+        root = Path(_require_env("DOCUMENT_STORAGE_LOCAL_ROOT")).expanduser().resolve()
+        key = _require_env("DOCUMENT_STORAGE_ENCRYPTION_KEY")
+        return DocumentStorageConfig(provider=provider, environment=environment, local_root=root, encryption_key=key)
+    if provider == "s3":
+        return DocumentStorageConfig(
+            provider=provider,
+            environment=environment,
+            encryption_key=_require_env("DOCUMENT_STORAGE_ENCRYPTION_KEY"),
+            s3_bucket=_require_env("DOCUMENT_STORAGE_S3_BUCKET"),
+            s3_region=_require_env("DOCUMENT_STORAGE_S3_REGION"),
+            s3_kms_key_id=_require_env("DOCUMENT_STORAGE_S3_KMS_KEY_ID"),
+        )
+    raise ConfigError("DOCUMENT_STORAGE_PROVIDER must be 'local' or 's3'")
 
 
 def get_supabase_config() -> SupabaseConfig:
@@ -129,8 +291,10 @@ def get_clinic_config() -> ClinicConfig:
 
 @dataclass(frozen=True)
 class KMSConfig:
-    kek_root_secret: str
+    kek_root_secret: str | None
     encryption_backend: str = "local"
+    kms_key_id: str | None = None
+    aws_region: str | None = None
 
 
 def get_kms_config() -> KMSConfig:
@@ -140,9 +304,19 @@ def get_kms_config() -> KMSConfig:
     - KEK_ROOT_SECRET — root secret used to derive the Key Encryption Key (KEK)
     - ENCRYPTION_BACKEND — optional 'local' (default) or 'kms'
     """
+    backend = os.getenv("ENCRYPTION_BACKEND", "local").strip().lower()
+    root_secret = os.getenv("KEK_ROOT_SECRET")
+    if backend == "local" and not root_secret:
+        raise ConfigError("Missing required environment variable: KEK_ROOT_SECRET")
+    key_id = os.getenv("KMS_KEY_ID")
+    region = os.getenv("AWS_REGION")
+    if backend == "kms" and (not key_id or not region):
+        raise ConfigError("ENCRYPTION_BACKEND=kms requires KMS_KEY_ID and AWS_REGION")
     return KMSConfig(
-        kek_root_secret=_require_env("KEK_ROOT_SECRET"),
-        encryption_backend=os.getenv("ENCRYPTION_BACKEND", "local"),
+        kek_root_secret=root_secret,
+        encryption_backend=backend,
+        kms_key_id=key_id,
+        aws_region=region,
     )
 
 

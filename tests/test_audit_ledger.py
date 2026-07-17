@@ -24,6 +24,17 @@ class ScalarResult:
         return self.value
 
 
+class MappingResult:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def mappings(self):
+        return self
+
+    def all(self):
+        return list(self.rows)
+
+
 class AuditStore:
     def __init__(self):
         self.rows: list[dict] = []
@@ -36,16 +47,26 @@ class Connection:
 
     async def execute(self, statement, params=None):
         sql = str(statement)
-        if "candidate.record_hash" in sql:
-            latest = self.store.rows[-1]["record_hash"] if self.store.rows else None
-            return ScalarResult(latest)
+        if "pg_advisory_xact_lock" in sql:
+            return ScalarResult()
+        if "idempotency_key = :idempotency_key" in sql:
+            match = next(
+                (row["record_hash"] for row in self.store.rows
+                 if row.get("idempotency_key") == params["idempotency_key"]),
+                None,
+            )
+            return ScalarResult(match)
+        if "SELECT audit_id, previous_hash, record_hash" in sql:
+            return MappingResult(self.store.rows)
         if "INSERT INTO public.audit_ledger" in sql:
             if any(row["previous_hash"] == params["previous_hash"] for row in self.store.rows):
                 error = RuntimeError("23505 duplicate previous_hash")
                 error.code = "23505"
                 raise error
             row = dict(params)
+            row["audit_id"] = len(self.store.rows) + 1
             row["payload"] = json.loads(row["details"])
+            row["details"] = row["payload"]
             self.store.rows.append(row)
             return ScalarResult()
         raise AssertionError(sql)
@@ -111,6 +132,71 @@ async def test_concurrent_writers_do_not_fork_chain():
     assert store.rows[0]["previous_hash"] == "GENESIS"
     for previous, current in zip(store.rows, store.rows[1:]):
         assert current["previous_hash"] == previous["record_hash"]
+
+
+def _ledger_row(payload: dict, previous_hash: str, audit_id: int) -> dict:
+    return {
+        "audit_id": audit_id,
+        "previous_hash": previous_hash,
+        "record_hash": _calculate_hash(payload, previous_hash),
+        "details": payload,
+        "protocol_version": payload.get("protocol_version", 2),
+        "idempotency_key": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_live_append_rejects_two_tip_fork_and_emits_metric():
+    root_payload = {"protocol_version": 2, "event": "ROOT"}
+    root = _ledger_row(root_payload, "GENESIS", 1)
+    left = _ledger_row({"protocol_version": 2, "event": "LEFT"}, root["record_hash"], 2)
+    right = _ledger_row({"protocol_version": 2, "event": "RIGHT"}, root["record_hash"], 3)
+    store = AuditStore()
+    store.rows.extend([root, left, right])
+    with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)), patch(
+        "app.observability.audit_ledger.AUDIT_LEDGER_INTEGRITY_FAILURES"
+    ) as metric:
+        assert await append_audit_log("actor", "AFTER_FORK", "target", "SUCCESS") is False
+    metric.labels.assert_called_once()
+    assert len(store.rows) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mutation", ["missing_predecessor", "altered_payload"])
+async def test_live_append_rejects_invalid_existing_chain(mutation):
+    payload = {"protocol_version": 2, "event": "ROOT"}
+    row = _ledger_row(payload, "GENESIS", 1)
+    if mutation == "missing_predecessor":
+        row["previous_hash"] = "absent"
+    else:
+        row["details"] = {**payload, "event": "ALTERED"}
+    store = AuditStore()
+    store.rows.append(row)
+    with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
+        assert await append_audit_log("actor", "EVENT", "target", "SUCCESS") is False
+
+
+@pytest.mark.asyncio
+async def test_global_scope_orders_tenant_events_without_independent_heads():
+    store = AuditStore()
+    with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
+        assert await append_audit_log("actor-a", "READ", "target-a", "SUCCESS", metadata={"hospital_id": "tenant-a"})
+        assert await append_audit_log("actor-b", "READ", "target-b", "SUCCESS", metadata={"hospital_id": "tenant-b"})
+    assert store.rows[1]["previous_hash"] == store.rows[0]["record_hash"]
+    assert {row["chain_scope"] for row in store.rows} == {"global"}
+
+
+@pytest.mark.asyncio
+async def test_explicit_idempotency_key_does_not_duplicate_event():
+    store = AuditStore()
+    with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
+        assert await append_audit_log(
+            "actor", "EVENT", "target", "SUCCESS", idempotency_key="request-123"
+        )
+        assert await append_audit_log(
+            "actor", "EVENT", "target", "SUCCESS", idempotency_key="request-123"
+        )
+    assert len(store.rows) == 1
 
 
 @pytest.mark.asyncio

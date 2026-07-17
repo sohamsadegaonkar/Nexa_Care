@@ -45,7 +45,8 @@ from app.main import app
 #      notification rework replaced them with the Expo-push + signed-response
 #      design now living under /api/v2/push/* (assurance_routes.py). There is
 #      no standalone biometric/verify route any more -- verification is
-#      folded into POST /api/v2/push/{request_id}/respond.
+#      legacy three-field push response was removed; canonical signed consent
+#      approval is POST /api/v2/consent/approve-signed.
 #   2. Several routers shipped after this set was last touched and were
 #      never added: merge-challenge auth (auth_routes.py), break-glass
 #      revoke (consent_routes.py), consent validation (consent_routes.py),
@@ -80,13 +81,17 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/challenge/merge"),
     ("POST", "/api/v2/auth/challenge/merge/verify"),
     ("POST", "/api/v2/push/request"),
-    ("POST", "/api/v2/push/{request_id}/respond"),
+    ("POST", "/api/v2/auth/web/login"),
+    ("POST", "/api/v2/auth/web/mfa/verify"),
+    ("GET", "/api/v2/auth/web/session"),
+    ("POST", "/api/v2/auth/web/logout"),
     ("GET", "/api/v2/push/{request_id}/status"),
     ("POST", "/api/v2/push/register-token"),
     ("POST", "/api/v2/push/register-device-key"),
     ("GET", "/api/v2/push/transport-config"),
     ("POST", "/api/v2/consent/grant"),
     ("GET", "/api/v2/consent/history"),
+    ("GET", "/api/v2/consent/history/self"),
     ("GET", "/api/v2/consent/validate"),
     ("POST", "/api/v2/consent/routine/issue"),
     ("POST", "/api/v2/consent/break-glass/issue"),

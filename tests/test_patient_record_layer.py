@@ -42,7 +42,7 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, str(value))
 
 
-def _job_for(patient_id: str = "pat-101", job_id: str | uuid.UUID | None = None):
+def _job_for(patient_id: str = "11111111-1111-4111-8111-111111111111", job_id: str | uuid.UUID | None = None):
     return SimpleNamespace(
         id=_parse_uuid(str(job_id or uuid.uuid4())),
         patient_id=_parse_uuid(patient_id),
@@ -62,7 +62,7 @@ def auth_override(admin_context):
 def test_ai_extracted_vitals_without_confidence_fails(admin_headers):
     """Test 1: AI-extracted vitals without numeric confidence returns 400 Bad Request."""
     mock_cap = ConsentCapability(
-        patient_id="pat-101",
+        patient_id="11111111-1111-4111-8111-111111111111",
         clinician_id="doc-202",
         purpose="clinical_append",
         scope=["clinical"],
@@ -82,10 +82,10 @@ def test_ai_extracted_vitals_without_confidence_fails(admin_headers):
             "source": "ai_extracted",
             "confidence": None,  # Missing confidence!
             "risk_level": "LOW_RISK",
-            "source_document_id": "doc-ref-101",
+            "source_document_id": "22222222-2222-4222-8222-222222222222",
         }
         res = client.post(
-            "/api/v2/patient/pat-101/record/vitals",
+            "/api/v2/patient/11111111-1111-4111-8111-111111111111/record/vitals",
             headers={**admin_headers, "X-Consent-Token": "tok"},
             json=payload,
         )
@@ -96,7 +96,7 @@ def test_ai_extracted_vitals_without_confidence_fails(admin_headers):
 def test_ai_extracted_medication_without_source_document_id_fails(admin_headers):
     """Test 2: AI-extracted medication without source_document_id returns 400 Bad Request."""
     mock_cap = ConsentCapability(
-        patient_id="pat-101",
+        patient_id="11111111-1111-4111-8111-111111111111",
         clinician_id="doc-202",
         purpose="clinical_append",
         scope=["clinical"],
@@ -116,7 +116,7 @@ def test_ai_extracted_medication_without_source_document_id_fails(admin_headers)
             "source_document_id": None,  # Missing source document reference!
         }
         res = client.post(
-            "/api/v2/patient/pat-101/record/medications",
+            "/api/v2/patient/11111111-1111-4111-8111-111111111111/record/medications",
             headers={**admin_headers, "X-Consent-Token": "tok"},
             json=payload,
         )
@@ -131,7 +131,7 @@ def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
     assert alg.risk_level == "HIGH_RISK"
 
     mock_cap = ConsentCapability(
-        patient_id="pat-101",
+        patient_id="11111111-1111-4111-8111-111111111111",
         clinician_id="doc-202",
         purpose="clinical_append",
         scope=["clinical"],
@@ -148,7 +148,7 @@ def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
             "risk_level": "LOW_RISK",
         }
         res = client.post(
-            "/api/v2/patient/pat-101/record/allergies",
+            "/api/v2/patient/11111111-1111-4111-8111-111111111111/record/allergies",
             headers={**admin_headers, "X-Consent-Token": "tok"},
             json=payload,
         )
@@ -159,7 +159,7 @@ def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
 def test_timeline_event_created_when_lab_result_committed(admin_headers):
     """Test 4: Committing a lab result creates a TimelineEvent row linking to the lab."""
     mock_cap = ConsentCapability(
-        patient_id="pat-101",
+        patient_id="11111111-1111-4111-8111-111111111111",
         clinician_id="doc-202",
         purpose="clinical_append",
         scope=["clinical"],
@@ -179,7 +179,7 @@ def test_timeline_event_created_when_lab_result_committed(admin_headers):
             "risk_level": "MEDIUM_RISK",
         }
         res = client.post(
-            "/api/v2/patient/pat-101/record/labs",
+            "/api/v2/patient/11111111-1111-4111-8111-111111111111/record/labs",
             headers={**admin_headers, "X-Consent-Token": "tok"},
             json=payload,
         )
@@ -202,7 +202,7 @@ def test_timeline_event_created_when_lab_result_committed(admin_headers):
 def test_patient_record_read_requires_valid_consent(admin_headers):
     """Test 5: Doctor attempting patient record read without valid X-Consent-Token gets 403 Forbidden."""
     with patch("app.core.consent_gate.validate_consent_capability", return_value=None):
-        res = client.get("/api/v2/patient/pat-101/summary", headers=admin_headers)
+        res = client.get("/api/v2/patient/11111111-1111-4111-8111-111111111111/summary", headers=admin_headers)
         assert res.status_code == 403
         assert "Active consent token required" in res.json()["detail"]
 
@@ -210,20 +210,19 @@ def test_patient_record_read_requires_valid_consent(admin_headers):
 def test_patient_self_view_does_not_require_doctor_consent_token():
     """Test 6: Patient accessing own record/devices via self-session does not require doctor consent token."""
     from app.core.dependencies import get_scoped_session
-    app.dependency_overrides[get_scoped_session] = lambda: "pat-101"
+    app.dependency_overrides[get_scoped_session] = lambda: "11111111-1111-4111-8111-111111111111"
     try:
         # Patient calls self-access endpoint (e.g. list devices) with only their session bearer token
         res = client.get("/api/v2/patient/devices", headers={"Authorization": "Bearer pat-101-session"})
         assert res.status_code == 200
-        assert res.json()["patient_id"] == "pat-101"
+        assert res.json()["patient_id"] == "11111111-1111-4111-8111-111111111111"
     finally:
         app.dependency_overrides.pop(get_scoped_session, None)
 
 
-def test_pipeline_commit_preserves_extracted_field_metadata(admin_headers, mock_db):
-    """Test 7: Pipeline commit preserves ExtractedField confidence, risk, and source metadata."""
+def test_pipeline_commit_rejects_client_supplied_extracted_fields(admin_headers, mock_db):
     mock_cap = ConsentCapability(
-        patient_id="pat-101",
+        patient_id="11111111-1111-4111-8111-111111111111",
         clinician_id="doc-202",
         purpose="pipeline_commit",
         scope=["clinical"],
@@ -232,7 +231,7 @@ def test_pipeline_commit_preserves_extracted_field_metadata(admin_headers, mock_
         issued_at="2026-07-07T16:00:00Z",
     )
     mock_db.execute.side_effect = [
-        FakeScalarResult(_job_for(job_id="job-101")),
+        FakeScalarResult(_job_for(job_id="22222222-2222-4222-8222-222222222222")),
         MagicMock(scalars=lambda: MagicMock(all=lambda: [])),
     ]
     mock_db.add = MagicMock()
@@ -241,7 +240,7 @@ def test_pipeline_commit_preserves_extracted_field_metadata(admin_headers, mock_
     with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap), \
          patch("app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
         commit_payload = {
-            "patient_id": "pat-101",
+            "patient_id": "11111111-1111-4111-8111-111111111111",
             "fields": [
                 {
                     "field_id": str(uuid.uuid4()),
@@ -254,12 +253,10 @@ def test_pipeline_commit_preserves_extracted_field_metadata(admin_headers, mock_
             ],
         }
         res = client.post(
-            "/api/v2/pipeline/jobs/job-101/commit",
+            "/api/v2/pipeline/jobs/22222222-2222-4222-8222-222222222222/commit",
             headers={**admin_headers, "X-Consent-Token": "tok"},
             json=commit_payload,
         )
-        assert res.status_code == 201
-        assert res.json()["committed_fields_count"] == 1
-        passed_fields = mock_ingest.call_args.kwargs["approved_fields"]
-        assert passed_fields[0].confidence == 0.98
-        assert passed_fields[0].risk_level == "LOW_RISK"
+        assert res.status_code == 400
+        assert res.json()["detail"]["error_code"] == "CLIENT_SUPPLIED_COMMIT_FIELDS_FORBIDDEN"
+        mock_ingest.assert_not_awaited()

@@ -3,12 +3,12 @@
 import { Button, Card, Input, Text, TextArea, YStack, XStack, Spinner, Sheet } from '@my/ui'
 import { useState } from 'react'
 import { mergePatients, MergeError } from '../../api/merge'
-import { createMergeChallenge, verifyMergeChallenge } from '../../api/auth'
+import { cancelMergeChallenge, createMergeChallenge, verifyMergeChallenge } from '../../api/auth'
+import { ApiError } from '../../utils/apiClient'
 
 export function MergeAdminScreen() {
   const [mfaCode, setMfaCode] = useState('')
-  const [challengeToken, setChallengeToken] = useState<string | null>(null)
-  const [mfaVerified, setMfaVerified] = useState(false)
+  const [stepUpChallengeId, setStepUpChallengeId] = useState<string | null>(null)
   const [showMfaSheet, setShowMfaSheet] = useState(false)
   
   const [oldUuid, setOldUuid] = useState('')
@@ -30,7 +30,7 @@ export function MergeAdminScreen() {
     
     try {
       const res = await createMergeChallenge()
-      setChallengeToken(res.challenge_token)
+      setStepUpChallengeId(res.challenge_token)
       setShowMfaSheet(true)
     } catch (e: any) {
       setError('Failed to initiate merge challenge')
@@ -40,7 +40,7 @@ export function MergeAdminScreen() {
   }
 
   const handleVerifyMfa = async () => {
-    if (!mfaCode || mfaCode.length !== 6 || !challengeToken) {
+    if (!mfaCode || mfaCode.length !== 6 || !stepUpChallengeId) {
       setError('Please enter a 6-digit code')
       return
     }
@@ -49,14 +49,18 @@ export function MergeAdminScreen() {
     setError('')
 
     try {
-      const res = await verifyMergeChallenge(challengeToken, mfaCode)
+      const res = await verifyMergeChallenge(stepUpChallengeId, mfaCode)
       if (res.verified) {
-        setMfaVerified(true)
+        await executeMerge(stepUpChallengeId)
         setShowMfaSheet(false)
-        await executeMerge(challengeToken)
       }
-    } catch (e: any) {
-      setError(e.response?.data?.detail || 'MFA verification failed')
+    } catch (error: unknown) {
+      setStepUpChallengeId(null)
+      setMfaCode('')
+      if (error instanceof ApiError && error.status === 410) setError('Challenge expired. Start again.')
+      else if (error instanceof ApiError && error.status === 401) setError('MFA verification failed.')
+      else if (error instanceof ApiError && error.status === 403) setError('This session cannot use that challenge.')
+      else setError('MFA service is unavailable. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -74,6 +78,8 @@ export function MergeAdminScreen() {
         evidence: evidence ? JSON.parse(evidence) : undefined,
       }, token)
       setResult(res)
+      setStepUpChallengeId(null)
+      setMfaCode('')
     } catch (e: any) {
       if (e instanceof MergeError) {
         setError(e.message)
@@ -81,8 +87,8 @@ export function MergeAdminScreen() {
         setError('Merge failed')
       }
       // If merge failed, MFA might need to be redone since it is single-use
-      setMfaVerified(false)
-      setChallengeToken(null)
+      setStepUpChallengeId(null)
+      setMfaCode('')
     } finally {
       setLoading(false)
     }
@@ -127,7 +133,14 @@ export function MergeAdminScreen() {
       <Sheet
         modal
         open={showMfaSheet}
-        onOpenChange={setShowMfaSheet}
+        onOpenChange={(open) => {
+          setShowMfaSheet(open)
+          if (!open) {
+            if (stepUpChallengeId) void cancelMergeChallenge(stepUpChallengeId)
+            setStepUpChallengeId(null)
+            setMfaCode('')
+          }
+        }}
         snapPoints={[40]}
         dismissOnSnapToBottom
       >

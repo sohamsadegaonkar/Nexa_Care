@@ -21,15 +21,16 @@ import app.services.consent_engine as consent_engine
 from app.services.sharding import decrypt_vault_field
 from app.services.consent_gated_crypto import consent_gated_decrypt, EncryptionProvider
 from app.services.consent_engine import get_consent_redis_client
+from app.services.crypto_kms import get_encryption_provider
 
 logger = logging.getLogger("nexa_logger")
+from app.observability.safe_exceptions import log_safe_exception
 
 router = APIRouter(prefix="/api/v2/patient", tags=["patient"])
 
-# Squad C: replace with real implementation
 async def get_kms_provider() -> EncryptionProvider:
-    """Dependency provider for Squad C's KMS interface."""
-    raise NotImplementedError("Squad C's KMS provider not yet integrated.")
+    """Resolve the same configured envelope-encryption provider used elsewhere."""
+    return get_encryption_provider()
 
 
 class ErasureRequest(BaseModel):
@@ -88,13 +89,7 @@ async def _fetch_pii_shard(patient_id: str, db: AsyncSession) -> dict[str, Any]:
             select(NexaVault).where(NexaVault.masked_internal_id == patient_id).limit(1)
         )
     except SQLAlchemyError as exc:
-        logger.critical(json.dumps({
-            "event": "patient_record_reconstruction_db_error",
-            "shard": "nexa_vault",
-            "patient_id": patient_id,
-            "exception": str(exc),
-            "action": "raising_503_fail_closed",
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="patient_vault_fetch")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Patient identity shard is temporarily unavailable.",
@@ -120,13 +115,7 @@ async def _fetch_clinical_shard(patient_id: str, db: AsyncSession) -> dict[str, 
             select(NexaClinical).where(NexaClinical.masked_internal_id == patient_id).limit(1)
         )
     except SQLAlchemyError as exc:
-        logger.critical(json.dumps({
-            "event": "patient_record_reconstruction_db_error",
-            "shard": "nexa_clinical",
-            "patient_id": patient_id,
-            "exception": str(exc),
-            "action": "raising_503_fail_closed",
-        }))
+        log_safe_exception(logger, exc, subsystem="database", operation="patient_clinical_fetch")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Patient clinical shard is temporarily unavailable.",

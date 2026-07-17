@@ -36,14 +36,16 @@ const TERMINAL_STATUSES = ['auto_approved', 'review_required', 'review_pending',
 /**
  * Display labels for job status lifecycle.
  */
-const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: string }> = {
+type StatusColor = '$blue10' | '$orange10' | '$green10' | '$red10'
+
+const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: StatusColor }> = {
   queued: { label: 'Queued', icon: '⏳', color: '$blue10' },
   processing: { label: 'Extracting', icon: '⚙️', color: '$orange10' },
   extracting: { label: 'Extracting', icon: '⚙️', color: '$orange10' },
   scored: { label: 'Scored', icon: '✅', color: '$green10' },
   review_required: { label: 'Review Pending', icon: '⚠️', color: '$orange10' },
   review_pending: { label: 'Review Pending', icon: '⚠️', color: '$orange10' },
-  auto_approved: { label: 'Auto-Approved', icon: '✅', color: '$green10' },
+  auto_approved: { label: 'Legacy Unsafe State', icon: '⛔', color: '$red10' },
   failed: { label: 'Failed', icon: '❌', color: '$red10' },
   committed: { label: 'Committed', icon: '📋', color: '$green10' },
 }
@@ -56,7 +58,7 @@ const STATUS_PROGRESS: Record<string, number> = {
   scored: 80,
   review_required: 90,
   review_pending: 90,
-  auto_approved: 100,
+  auto_approved: 90,
   failed: 100,
   committed: 100,
 }
@@ -82,9 +84,9 @@ export function JobStatusScreen() {
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$6">🔒 Session Required</Text>
-        <Text col="$colorSubdued" size="$3">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$6">🔒 Session Required</Text>
+        <Text color="$color10" fontSize="$3">
           Please log in to view job status.
         </Text>
         <Button theme="blue" onPress={() => router.push('/doctor/login')}>
@@ -97,9 +99,9 @@ export function JobStatusScreen() {
   // ── Missing consent token guard ──────────────────────────────────────
   if (!consentToken) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$6">🔒 Consent Required</Text>
-        <Text col="$colorSubdued" size="$3">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
+        <Text color="$color10" fontSize="$3">
           You must have an active consent grant to view pipeline job status.
         </Text>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
@@ -169,9 +171,9 @@ export function JobStatusScreen() {
   // ── Loading state ────────────────────────────────────────────────────
   if (loading && !job) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
         <Spinner size="large" color="$blue10" />
-        <Text col="$colorSubdued" size="$3">Loading job status…</Text>
+        <Text color="$color10" fontSize="$3">Loading job status…</Text>
       </YStack>
     )
   }
@@ -179,8 +181,8 @@ export function JobStatusScreen() {
   // ── Error state ──────────────────────────────────────────────────────
   if (error && !job) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$5">{error}</Text>
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$5">{error}</Text>
         <Button theme="blue" onPress={() => { setLoading(true); setError(null); fetchJob(); }}>
           Retry
         </Button>
@@ -192,23 +194,23 @@ export function JobStatusScreen() {
   const progressPct = STATUS_PROGRESS[job?.status ?? 'queued'] ?? 0
   const autoApproved = job?.extracted_fields.filter((f) => f.status === 'auto_approved').length ?? 0
   const needsReview = job?.extracted_fields.filter((f) => f.status === 'needs_review').length ?? 0
-  const isReviewPending = job?.status === 'review_required' || job?.status === 'review_pending'
-  const isAutoApproved = job?.status === 'auto_approved'
+  const isReviewPending = job?.status === 'review_required'
+  const hasLegacyAutoApproval = job?.status === 'auto_approved'
   const isFailed = job?.status === 'failed'
 
   return (
-    <YStack f={1} bg="$background" p="$6" gap="$4" mw={900} mx="auto">
+    <YStack flex={1} backgroundColor="$background" padding="$6" gap="$4" maxWidth={900} marginHorizontal="auto">
       {/* ALPHA badge + header */}
-      <XStack ai="center" gap="$2">
-        <H2 col="$color" size="$7">Extraction Job</H2>
-        <Card bg="$orange4" br="$4" px="$2" py="$1">
-          <Text col="$orange10" size="$2" fontWeight="700" textTransform="uppercase">
+      <XStack alignItems="center" gap="$2">
+        <H2 color="$color12" fontSize="$7">Extraction Job</H2>
+        <Card backgroundColor="$orange4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+          <Text color="$orange10" fontSize="$2" fontWeight="700" textTransform="uppercase">
             ALPHA
           </Text>
         </Card>
       </XStack>
 
-      <Text col="$colorSubdued" size="$3">
+      <Text color="$color10" fontSize="$3">
         ALPHA · AI-assisted extraction results require clinical verification
         before commitment.
       </Text>
@@ -217,23 +219,23 @@ export function JobStatusScreen() {
 
       {/* ── Status banner ──────────────────────────────────────────────── */}
       <Card
-        p="$4"
-        bg={
+        padding="$4"
+        backgroundColor={
           isFailed ? '$red4' :
           isReviewPending ? '$orange4' :
-          isAutoApproved ? '$green4' :
+          hasLegacyAutoApproval ? '$red4' :
           '$blue4'
         }
-        br="$4"
+        borderRadius="$4"
         gap="$2"
       >
-        <XStack ai="center" gap="$3">
-          <Text size="$6">{statusInfo.icon}</Text>
+        <XStack alignItems="center" gap="$3">
+          <Text fontSize="$6">{statusInfo.icon}</Text>
           <YStack gap="$1">
-            <Text col={statusInfo.color} size="$5" fontWeight="700">
+            <Text color={statusInfo.color} fontSize="$5" fontWeight="700">
               {statusInfo.label}
             </Text>
-            <Text col="$colorSubdued" size="$2">
+            <Text color="$color10" fontSize="$2">
               Job ID: {job?.job_id ?? '—'} · Type: {job?.document_type ?? '—'} · Patient: {patientId}
             </Text>
           </YStack>
@@ -242,26 +244,26 @@ export function JobStatusScreen() {
 
       {/* ── Progress bar ──────────────────────────────────────────────── */}
       <YStack gap="$2">
-        <XStack jc="space-between" ai="center">
-          <Text col="$color" size="$3" fontWeight="600">Extraction Progress</Text>
-          <XStack ai="center" gap="$2">
-            <Text col="$colorSubdued" size="$3">{progressPct}%</Text>
+        <XStack justifyContent="space-between" alignItems="center">
+          <Text color="$color12" fontSize="$3" fontWeight="600">Extraction Progress</Text>
+          <XStack alignItems="center" gap="$2">
+            <Text color="$color10" fontSize="$3">{progressPct}%</Text>
             {pollingActive && <Spinner size="small" color="$blue10" />}
           </XStack>
         </XStack>
         <Progress value={progressPct} size="$3">
-          <Progress.Indicator animation="bouncy" />
+          <Progress.Indicator />
         </Progress>
         {/* Status lifecycle dots */}
-        <XStack jc="space-between" mt="$1">
+        <XStack justifyContent="space-between" marginTop="$1">
           {['Queued', 'Extracting', 'Scored', 'Review'].map((step, idx) => {
             const thresholds = [10, 40, 80, 90]
             const active = progressPct >= thresholds[idx]
             return (
               <Text
                 key={step}
-                col={active ? '$blue10' : '$colorSubdued'}
-                size="$1"
+                color={active ? '$blue10' : '$color10'}
+                fontSize="$1"
                 fontWeight={active ? '700' : '400'}
               >
                 {active ? '●' : '○'} {step}
@@ -274,19 +276,19 @@ export function JobStatusScreen() {
       {/* ── Field summary (shown when scored or beyond) ────────────────── */}
       {(autoApproved + needsReview) > 0 && (
         <YStack gap="$3">
-          <Text col="$color" size="$3" fontWeight="600">Field Summary</Text>
+          <Text color="$color12" fontSize="$3" fontWeight="600">Field Summary</Text>
           <XStack gap="$4">
-            <Card f={1} p="$3" bg="$green4" br="$4" ai="center">
-              <Text col="$green10" size="$6" fontWeight="700">{autoApproved}</Text>
-              <Text col="$green10" size="$2">Auto-Approved</Text>
+            <Card flex={1} padding="$3" backgroundColor="$red4" borderRadius="$4" alignItems="center">
+              <Text color="$red10" fontSize="$6" fontWeight="700">{autoApproved}</Text>
+              <Text color="$red10" fontSize="$2">Legacy blocked</Text>
             </Card>
-            <Card f={1} p="$3" bg="$orange4" br="$4" ai="center">
-              <Text col="$orange10" size="$6" fontWeight="700">{needsReview}</Text>
-              <Text col="$orange10" size="$2">Need Review</Text>
+            <Card flex={1} padding="$3" backgroundColor="$orange4" borderRadius="$4" alignItems="center">
+              <Text color="$orange10" fontSize="$6" fontWeight="700">{needsReview}</Text>
+              <Text color="$orange10" fontSize="$2">Need Review</Text>
             </Card>
           </XStack>
           {job?.overall_confidence != null && (
-            <Text col="$colorSubdued" size="$2">
+            <Text color="$color10" fontSize="$2">
               Overall confidence: {(job.overall_confidence * 100).toFixed(0)}%
             </Text>
           )}
@@ -295,23 +297,23 @@ export function JobStatusScreen() {
 
       {/* ── Polling indicator ──────────────────────────────────────────── */}
       {pollingActive && !error && (
-        <XStack ai="center" gap="$2">
+        <XStack alignItems="center" gap="$2">
           <Spinner size="small" color="$blue10" />
-          <Text col="$colorSubdued" size="$2">Polling every 2s for updates…</Text>
+          <Text color="$color10" fontSize="$2">Polling every 2s for updates…</Text>
         </XStack>
       )}
 
       {/* ── Error (non-blocking) ───────────────────────────────────────── */}
       {error && job && (
-        <Card bg="$red4" br="$3" p="$3">
-          <Text col="$red10" size="$3">{error}</Text>
+        <Card backgroundColor="$red4" borderRadius="$3" padding="$3">
+          <Text color="$red10" fontSize="$3">{error}</Text>
         </Card>
       )}
 
       {/* ── Navigation ────────────────────────────────────────────────── */}
       <Separator />
 
-      <XStack jc="space-between" ai="center">
+      <XStack justifyContent="space-between" alignItems="center">
         <Button chromeless onPress={() => router.push('/doctor/pipeline/upload')}>
           ← Upload Another
         </Button>
@@ -328,18 +330,10 @@ export function JobStatusScreen() {
           </Button>
         )}
 
-        {isAutoApproved && (
-          <Button
-            theme="green"
-            size="$4"
-            onPress={() =>
-              router.push(
-                `/doctor/pipeline/commit/${job!.job_id}?patient_id=${patientId}&consent_token=${consentToken}`,
-              )
-            }
-          >
-            Commit to Record →
-          </Button>
+        {hasLegacyAutoApproval && (
+          <Text color="$red10" fontSize="$3">
+            This legacy job is blocked. Quarantine and reprocess it before clinical review.
+          </Text>
         )}
 
         {isFailed && (

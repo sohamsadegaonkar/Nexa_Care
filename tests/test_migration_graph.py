@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260717_provider_pwd_canonical"
+EXPECTED_HEAD = "20260717_secure_document_pipeline"
 
 
 def _scripts() -> ScriptDirectory:

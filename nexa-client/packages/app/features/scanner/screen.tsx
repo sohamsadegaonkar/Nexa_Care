@@ -6,10 +6,9 @@ import { useRouter } from 'solito/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { Platform } from 'react-native'
 
-import { issueRoutineConsentV1, ConsentError, ConsentAssurance } from '../../api/consent_v1'
+import { issueRoutineConsentV1, ConsentError } from '../../api/consent_v1'
 import { WEB_MOCK_NFC_CARD_UID, useNfcScanner } from '../../hooks/useNfcScanner'
-import { getPatientPolicy } from '../../api/policy'
-import { getPushRequestStatus, requestPushApproval } from '../../api/assurance'
+import { claimApprovedAccess, getPushRequestStatus, requestPushApproval } from '../../api/assurance'
 
 const DEFAULT_ACCESS_PURPOSE = 'ROUTINE_CHECKUP'
 
@@ -20,11 +19,9 @@ const PURPOSE_OPTIONS = [
 
 export function ScannerScreen({ 
   onPatientResolved,
-  onOpenPolicy,
   isDev = false
 }: { 
   onPatientResolved?: (patientId: string) => void
-  onOpenPolicy?: (patientId: string) => void
   isDev?: boolean
 }) {
   const [currentPatientId, setCurrentPatientId] = useState<string | null>(null)
@@ -51,24 +48,11 @@ export function ScannerScreen({
   const [showMergedBanner, setShowMergedBanner] = useState(true)
   const [showInactiveBanner, setShowInactiveBanner] = useState(true)
 
-  // Assurance flow states
-  const [patientPolicy, setPatientPolicy] = useState<ConsentAssurance>('standard')
-
   // Polling states
   const [pollingRequestId, setPollingRequestId] = useState<string | null>(null)
   const [pollStatus, setPollStatus] = useState<'pending' | 'approved' | 'denied' | 'expired' | 'error'>('pending')
   const [secondsLeft, setSecondsLeft] = useState(90)
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
-
-  // Real call to backend policy service
-  const fetchPatientPolicy = async (pid: string): Promise<ConsentAssurance> => {
-    try {
-      const res = await getPatientPolicy(pid)
-      return res.consent_assurance_policy as ConsentAssurance
-    } catch {
-      return 'standard'
-    }
-  }
+  const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (status === 'success' && patientId) {
@@ -91,13 +75,6 @@ export function ScannerScreen({
       }
     }
   }, [status, patientId, canonicalPatientId, isRedirected, cardStatus, onPatientResolved])
-
-  // Allow opening policy screen for the current patient
-  const openPolicyForCurrentPatient = () => {
-    if (effectivePatientId && onOpenPolicy) {
-      onOpenPolicy(effectivePatientId)
-    }
-  }
 
   const handleWebSimulation = (): void => {
     void startScan(WEB_MOCK_NFC_CARD_UID)
@@ -127,7 +104,29 @@ export function ScannerScreen({
     void startScan()
   }
 
-  const proceedWithConsent = async (assurance: ConsentAssurance) => {
+  const openAuthorizedRecord = (consentToken: string) => {
+    if (!effectivePatientId) return
+    router.push(
+      `/patient/${encodeURIComponent(effectivePatientId)}?consentToken=${encodeURIComponent(
+        consentToken
+      )}&purpose=${encodeURIComponent(selectedPurpose)}`
+    )
+  }
+
+  const startPatientApproval = async () => {
+    if (!effectivePatientId) return
+    setShowConsentModal(false)
+    const { request_id } = await requestPushApproval({
+      patient_id: effectivePatientId,
+      purpose: selectedPurpose,
+      scope: 'clinical',
+    })
+    setPollingRequestId(request_id)
+    setPollStatus('pending')
+    setSecondsLeft(90)
+  }
+
+  const proceedWithConsent = async () => {
     if (!effectivePatientId) return
 
     setIsRequestingConsent(true)
@@ -135,23 +134,26 @@ export function ScannerScreen({
 
     try {
       const response = await issueRoutineConsentV1({
-        patient_uuid: effectivePatientId,
-        hospital_id: 'HOSP-DEMO',
-        clinician_id: 'CLINICIAN-DEMO',
-        purpose: selectedPurpose,
-        consent_assurance: assurance,
+        patient_id: effectivePatientId,
+        purpose: 'TREATMENT',
+        scope: ['clinical_summary', 'timeline_view'],
+        assurance_level: 'standard',
       })
 
       setShowConsentModal(false)
-
-      router.push(
-        `/patient/${encodeURIComponent(effectivePatientId)}?consentToken=${encodeURIComponent(
-          response.consent_token
-        )}&purpose=${encodeURIComponent(selectedPurpose)}`
-      )
+      openAuthorizedRecord(response.consent_token)
     } catch (error: unknown) {
       if (error instanceof ConsentError) {
-        setConsentErrorMessage(error.message)
+        if (error.code === 'CONSENT_UNAUTHORIZED' && error.status === 428) {
+          try {
+            await startPatientApproval()
+            return
+          } catch {
+            setConsentErrorMessage('Unable to request patient approval. Please try again.')
+          }
+        } else {
+          setConsentErrorMessage(error.message)
+        }
       } else {
         setConsentErrorMessage('Unable to generate consent token. Please try again.')
       }
@@ -164,51 +166,7 @@ export function ScannerScreen({
 
   const handleGenerateConsent = async (): Promise<void> => {
     if (!effectivePatientId) return
-
-    // Fetch real patient policy
-    const policy = await fetchPatientPolicy(effectivePatientId)
-    setPatientPolicy(policy)
-
-    if (policy === 'push_approved') {
-      setShowConsentModal(false)
-      // Initiate push and start polling
-      try {
-        // NOTE: field names must match PushRequestPayload in
-        // app/api/v2/assurance_routes.py exactly (patient_id / provider_id /
-        // purpose / scope) -- the previous version sent patient_uuid /
-        // clinician_name / hospital_name, none of which exist on the
-        // backend schema, so this call 422'd before the URL-prefix bug
-        // even mattered. clinician_name/hospital_name are not sent by the
-        // client at all -- the backend derives the display name for the
-        // patient's notification from the authenticated provider's own
-        // session (provider.provider.display_name), not from this payload.
-        //
-        // TODO: providerId below is a placeholder. This screen has no
-        // provider-session context wired in yet (see utils/api.ts -- auth
-        // is bearer-token-only, no decoded provider profile is available
-        // here). Thread the real authenticated provider's id through
-        // before this goes in front of a hospital; a wrong-but-well-formed
-        // provider_id will pass validation without failing loudly.
-        const providerId = 'PLACEHOLDER_PROVIDER_ID'
-        const { request_id } = await requestPushApproval({
-          patient_id: effectivePatientId,
-          provider_id: providerId,
-          purpose: selectedPurpose,
-          scope: 'clinical.read',
-        })
-        setPollingRequestId(request_id)
-        setPollStatus('pending')
-        setSecondsLeft(90)
-      } catch (err) {
-        setConsentErrorMessage('Failed to initiate push request.')
-        setShowConsentModal(true)
-      }
-    } else if (policy === 'biometric_confirmed') {
-      await handleGenerateConsent()
-    } else {
-      // Standard - proceed immediately
-      await proceedWithConsent('standard')
-    }
+    await proceedWithConsent()
   }
 
   // ─────────────────────────────────────────────
@@ -239,13 +197,13 @@ export function ScannerScreen({
           stopPolling()
 
           if (data.status === 'approved') {
-            // Auto-proceed to consent issuance
-            await proceedWithConsent('push_approved')
+            const access = await claimApprovedAccess(pollingRequestId)
+            openAuthorizedRecord(access.consent_token)
           }
         }
-      } catch (err) {
+      } catch {
         // Graceful error handling - don't stop polling yet, might be transient
-        console.error('Polling error:', err)
+        console.warn('CONSENT_STATUS_POLL_FAILED')
       }
     }, 2000)
 
@@ -271,7 +229,7 @@ export function ScannerScreen({
         }}
         onUseStandard={() => {
           setPollingRequestId(null)
-          void proceedWithConsent('standard')
+          void proceedWithConsent()
         }}
       />
     )
@@ -280,8 +238,8 @@ export function ScannerScreen({
   // MAIN SCANNER UI
   // ─────────────────────────────────────────────
   return (
-    <YStack flex={1} minH="100%" bg="$background" p="$5" gap="$5" items="center" justify="center">
-      <YStack width="100%" maxW={520} gap="$5" items="center">
+    <YStack flex={1} minHeight="100%" backgroundColor="$background" padding="$5" gap="$5" alignItems="center" justifyContent="center">
+      <YStack width="100%" maxWidth={520} gap="$5" alignItems="center">
         {status === 'success' && patientId && isRedirected && canonicalPatientId && showMergedBanner && (
           <MergedPatientBanner 
             originalId={patientId} 
@@ -299,11 +257,11 @@ export function ScannerScreen({
 
         {/* Scanner UI remains the same */}
         {status === 'idle' && (
-          <YStack gap="$4" items="center">
+          <YStack gap="$4" alignItems="center">
             {isWeb ? (
               <ScannerIcon pulsing={false} />
             ) : (
-              <YStack gap="$3" items="center">
+              <YStack gap="$3" alignItems="center">
                 <Button circular chromeless size="$10" onPress={handleNativeScan}>
                   <ScannerIcon pulsing />
                 </Button>
@@ -316,7 +274,7 @@ export function ScannerScreen({
         )}
 
         {status === 'scanning' && (
-          <XStack gap="$3" items="center" justify="center">
+          <XStack gap="$3" alignItems="center" justifyContent="center">
             <Spinner size="large" color="$blue11" />
             <Text color="$color12" fontSize={18} fontWeight="700" text="center">
               Hold card to back of phone...
@@ -325,7 +283,7 @@ export function ScannerScreen({
         )}
 
         {status === 'success' && patientId && (
-          <Card width="100%" borderWidth={2} p="$5" bg="$color2" borderColor="$green9">
+          <Card width="100%" borderWidth={2} padding="$5" backgroundColor="$color2" borderColor="$green9">
             <YStack gap="$2">
               <Text color="$green11" fontSize={15} fontWeight="800">Resolved Patient ID</Text>
               <Text color="$color12" fontSize={24} fontWeight="900">{effectivePatientId}</Text>
@@ -346,12 +304,12 @@ export function ScannerScreen({
         )}
 
         {isWeb ? (
-          <Button width="100%" maxW={320} size="$5" theme="blue" disabled={isScanning} onPress={handleWebSimulation}>
+          <Button width="100%" maxWidth={320} size="$5" theme="blue" disabled={isScanning} onPress={handleWebSimulation}>
             Simulate NFC Tap
           </Button>
         ) : (
           status !== 'idle' && (
-            <Button width="100%" maxW={320} size="$5" theme="blue" disabled={isScanning} onPress={handleNativeScan}>
+            <Button width="100%" maxWidth={320} size="$5" theme="blue" disabled={isScanning} onPress={handleNativeScan}>
               NFC Reader
             </Button>
           )
@@ -361,7 +319,7 @@ export function ScannerScreen({
         {isDev && isWeb && (
           <Button 
             width="100%" 
-            maxW={320} 
+            maxWidth={320}
             size="$4" 
             theme="orange" 
             onPress={simulateTombstonedCard}
@@ -407,17 +365,17 @@ function MergedPatientBanner({
       gap="$2"
       onPress={onDismiss}
     >
-      <XStack items="center" gap="$2">
+      <XStack alignItems="center" gap="$2">
         <AlertTriangle color="$yellow10" size={20} />
-        <H4 color="$yellow10" size="$4">Record Merged</H4>
+        <H4 color="$yellow10" fontSize="$4">Record Merged</H4>
       </XStack>
-      <Paragraph color="$yellow11" size="$3">
+      <Paragraph color="$yellow11" fontSize="$3">
         ⚠️ This patient record has been merged. Displaying canonical record.
       </Paragraph>
-      <XStack gap="$2" items="center">
-        <Text fontWeight="700" size="$2" color="$yellow11">Original ID: {originalId}</Text>
-        <Text size="$2" color="$yellow11">→</Text>
-        <Text fontWeight="700" size="$2" color="$yellow11">Canonical ID: {canonicalId}</Text>
+      <XStack gap="$2" alignItems="center">
+        <Text fontWeight="700" fontSize="$2" color="$yellow11">Original ID: {originalId}</Text>
+        <Text fontSize="$2" color="$yellow11">→</Text>
+        <Text fontWeight="700" fontSize="$2" color="$yellow11">Canonical ID: {canonicalId}</Text>
       </XStack>
     </YStack>
   )
@@ -441,11 +399,11 @@ function InactiveCardBanner({
       gap="$2"
       onPress={onDismiss}
     >
-      <XStack items="center" gap="$2">
+      <XStack alignItems="center" gap="$2">
         <XCircle color="$red10" size={20} />
-        <H4 color="$red10" size="$4">Card {status === 'inactive' ? 'Inactive' : 'Lost'}</H4>
+        <H4 color="$red10" fontSize="$4">Card {status === 'inactive' ? 'Inactive' : 'Lost'}</H4>
       </XStack>
-      <Paragraph color="$red11" size="$3">
+      <Paragraph color="$red11" fontSize="$3">
         🚫 This card has been reported as {status}. Please contact the administrator.
       </Paragraph>
     </YStack>
@@ -477,7 +435,7 @@ function DoctorWaitingScreen(props: DoctorWaitingScreenProps) {
   const { requestId, status, secondsLeft, onCancel, onRetry, onUseStandard } = props
 
   return (
-    <YStack flex={1} items="center" justify="center" p="$6" gap="$6" bg="$background">
+    <YStack flex={1} alignItems="center" justifyContent="center" padding="$6" gap="$6" backgroundColor="$background">
       {status === 'pending' && (
         <>
           <H2 text="center">Waiting for Patient Approval</H2>
@@ -486,8 +444,8 @@ function DoctorWaitingScreen(props: DoctorWaitingScreenProps) {
           </Paragraph>
           <Spinner size="large" color="$blue10" />
           
-          <YStack items="center" gap="$1">
-            <XStack items="center" gap="$2">
+          <YStack alignItems="center" gap="$1">
+            <XStack alignItems="center" gap="$2">
               <Clock size={16} color="$yellow10" />
               <Text fontWeight="800" color="$yellow10">{secondsLeft}s remaining</Text>
             </XStack>
@@ -558,15 +516,15 @@ function ConsentAccessSheet(props: ConsentAccessSheetProps) {
   const { patientId, open, selectedPurpose, loading, errorMessage, onOpenChange, onPurposeChange, onSubmit } = props
   return (
     <Sheet modal open={open} onOpenChange={onOpenChange} snapPoints={[68]} dismissOnSnapToBottom={!loading}>
-      <Sheet.Overlay bg="$shadow6" opacity={0.72} />
-      <Sheet.Handle bg="$color8" />
-      <Sheet.Frame bg="$background" p="$5" gap="$5">
+      <Sheet.Overlay backgroundColor="$shadow6" opacity={0.72} />
+      <Sheet.Handle backgroundColor="$color8" />
+      <Sheet.Frame backgroundColor="$background" padding="$5" gap="$5">
         <YStack gap="$2">
           <Text color="$color12" fontSize={24} fontWeight="900">Patient Identity Verified</Text>
           <Text color="$color11" fontSize={16} fontWeight="700">Declare purpose of access</Text>
         </YStack>
         {patientId && (
-          <Card width="100%" borderWidth={2} borderColor="$green8" bg="$color2" p="$4">
+          <Card width="100%" borderWidth={2} borderColor="$green8" backgroundColor="$color2" padding="$4">
             <YStack gap="$1">
               <Text color="$green11" fontSize={14} fontWeight="900">Verified Patient ID</Text>
               <Text color="$color12" fontSize={18} fontWeight="900">{patientId}</Text>
@@ -586,7 +544,7 @@ function ConsentAccessSheet(props: ConsentAccessSheetProps) {
         </YStack>
         {errorMessage && <Text color="$red11" fontSize={16} fontWeight="900">{errorMessage}</Text>}
         <Button size="$5" theme="blue" disabled={loading || !patientId} onPress={onSubmit}>
-          {loading ? <XStack gap="$2" items="center"><Spinner color="$color12" /><Text>Generating Token...</Text></XStack> : 'Generate Token & View Record'}
+          {loading ? <XStack gap="$2" alignItems="center"><Spinner color="$color12" /><Text>Generating Token...</Text></XStack> : 'Generate Token & View Record'}
         </Button>
       </Sheet.Frame>
     </Sheet>

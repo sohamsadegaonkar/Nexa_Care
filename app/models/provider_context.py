@@ -67,6 +67,11 @@ class ProviderContext(BaseModel):
     provider: ProviderIdentityContext
     hospital: HospitalContext
     affiliation: AffiliationContext
+    session_binding: str | None = Field(
+        default=None,
+        exclude=True,
+        description="One-way binding for the authenticated provider session",
+    )
 
     @property
     def actor_uid(self) -> str:

@@ -1719,14 +1719,14 @@ class TestReviewCockpitFieldCategories:
         )
 
     def test_auto_approved_section(self) -> None:
-        """Auto-approved fields must be in a separate section with header."""
+        """Legacy auto-approved fields must be shown as blocked."""
         code = _read_screen("ReviewCockpitScreen")
         nw = _normalize_ws(code)
         assert "auto_approved" in nw, (
             "ReviewCockpitScreen doesn't have auto_approved section."
         )
-        assert "Auto-Approved" in code, (
-            "ReviewCockpitScreen missing Auto-Approved section header."
+        assert "Legacy auto-approved — blocked" in code, (
+            "ReviewCockpitScreen must label legacy auto-approved rows as blocked."
         )
 
     def test_reviewed_section(self) -> None:
@@ -1748,12 +1748,13 @@ class TestReviewCockpitFieldCategories:
         assert "autoApproved" in nw, "ReviewCockpitScreen missing autoApproved stat."
 
     def test_commit_button_gated_by_all_reviewed(self) -> None:
-        """Commit button must be disabled until all needs_review fields are resolved."""
+        """Commit is blocked by needs-review and legacy auto-approved fields."""
         code = _read_screen("ReviewCockpitScreen")
         nw = _normalize_ws(code)
         assert "allReviewed" in nw, (
             "ReviewCockpitScreen missing allReviewed check for commit gating."
         )
+        assert "needsReview.length === 0 && autoApproved.length === 0" in nw
 
 
 class TestFieldCardProvenanceBadgeStates:
@@ -1767,10 +1768,10 @@ class TestFieldCardProvenanceBadgeStates:
         )
 
     def test_auto_approved_badge(self) -> None:
-        """Auto-approved fields must show 'Auto-approved' badge with confidence."""
+        """Legacy auto-approved fields must show a blocked badge."""
         code = _read(PIPELINE_DIR / f"{FIELD_CARD}.tsx")
-        assert "Auto-approved" in code, (
-            "ProvenanceBadge missing 'Auto-approved' label."
+        assert "Legacy auto-approved blocked" in code, (
+            "ProvenanceBadge must not present legacy auto-approval as verified."
         )
 
     def test_ai_extracted_not_yet_verified(self) -> None:
@@ -1825,10 +1826,10 @@ class TestCommitSafetyBadge:
     """CommitSafetyBadge must render correct visual indicator per status."""
 
     def test_auto_approved_badge(self) -> None:
-        """Auto-approved fields must show green 'Auto ✓' badge."""
+        """Legacy auto-approved fields must show a red blocking badge."""
         code = _read_screen("CommitScreen")
-        assert "Auto ✓" in code, "CommitScreen missing 'Auto ✓' badge for auto_approved."
-        assert "$green4" in code, "CommitScreen missing green color for auto-approved badge."
+        assert "Legacy state — blocked" in code
+        assert 'backgroundColor="$red4"' in code
 
     def test_human_approved_badge(self) -> None:
         """Human-approved fields must show blue 'Verified ✓' badge."""
@@ -1865,7 +1866,7 @@ class TestCommitSafetyBadge:
             ROOT / "nexa-client" / "packages" / "app" / "features" / "pipeline" / "CommitScreen.tsx"
         )
         assert "CommitSafetyBadge" in code, "nexa-client missing CommitSafetyBadge."
-        assert "Auto ✓" in code, "nexa-client missing Auto ✓ badge."
+        assert "Legacy state — blocked" in code, "nexa-client must block legacy auto-approval."
         assert "Verified ✓" in code, "nexa-client missing Verified ✓ badge."
         assert "Edited ✎" in code, "nexa-client missing Edited ✎ badge."
         assert "✕ Excluded" in code, "nexa-client missing ✕ Excluded badge."
@@ -2055,11 +2056,12 @@ class TestCommitFieldGrouping:
     """Commit screen must group fields by status category."""
 
     def test_auto_approved_section(self) -> None:
-        """Auto-approved fields must be in a separate section."""
+        """Legacy auto-approved fields must be separated and block commit."""
         code = _read_screen("CommitScreen")
         nw = _normalize_ws(code)
         assert "autoApproved" in nw, "CommitScreen missing autoApproved field group."
-        assert "Auto-Approved" in code, "CommitScreen missing Auto-Approved section header."
+        assert "Legacy auto-approved — blocked" in code
+        assert "const committableFields = [...humanApproved, ...edited]" in nw
 
     def test_human_approved_section(self) -> None:
         """Human-approved fields must be in a separate 'Clinician Verified' section."""

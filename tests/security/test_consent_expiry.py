@@ -239,45 +239,11 @@ def test_expired_challenge_cannot_be_approved(
     detects the expires_at has passed and rejects the signature.
     """
     import asyncio
-    import base64
-
-    from cryptography.hazmat.primitives.asymmetric import ec
-    from cryptography.hazmat.primitives import serialization
-
     from app.services.signed_approval_verifier import SignedApprovalVerifier
-
-    private_key = ec.generate_private_key(ec.SECP256R1())
     patient_id = str(uuid.uuid4())
     request_id = str(uuid.uuid4())
     challenge_nonce = "expired-nonce-1234"
-
-    # Build signing input with a past expires_at
     past_time = "2020-01-01T00:00:00+00:00"
-    signing_input = (
-        f"{request_id}|{patient_id}|doctor-uid|{challenge_nonce}|approved|"
-        f"clinical|checkup|900|{past_time}"
-    )
-    raw_sig = private_key.sign(signing_input.encode("utf-8"), ec.ECDSA(
-        __import__("cryptography.hazmat.primitives.hashes", fromlist=["SHA256"]).SHA256()
-    ))
-    sig_b64 = base64.b64encode(raw_sig).decode("ascii")
-
-    # Seed an enrolled key in mock DB
-    der_bytes = private_key.public_key().public_bytes(
-        serialization.Encoding.DER,
-        serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    device_row = MagicMock()
-    device_row.id = uuid.uuid4()
-    device_row.patient_id = uuid.UUID(patient_id)
-    device_row.device_public_key = der_bytes
-    device_row.status = "active"
-    device_row.revoked_at = None
-
-    mock_db.execute.side_effect = _side_effect_with_fallback([
-        _db_result(scalars_all=[device_row]),
-    ])
-
     verifier = SignedApprovalVerifier()
     result = asyncio.run(verifier.verify_signed_approval(
         db=mock_db,
@@ -285,12 +251,14 @@ def test_expired_challenge_cannot_be_approved(
         request_id=request_id,
         challenge_nonce=challenge_nonce,
         decision="approved",
-        signature_b64=sig_b64,
+        signature_b64="invalid",
         expires_at=past_time,
+        issued_at="2019-12-31T23:58:00+00:00",
         provider_id="doctor-uid",
         scope="clinical",
         purpose="checkup",
         access_duration=900,
+        device_id=str(uuid.uuid4()),
     ))
     assert not result.verified, "Expired challenge must fail signature verification"
 

@@ -13,7 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import get_provider_context
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client
+from app.core.rate_limiter import atomic_fixed_window
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.card_resolution_service import CardResolutionService
@@ -68,15 +69,22 @@ async def resolve_nfc_card(
 
     # Rate limiting: 30 NFC scans per provider per minute
     try:
-        redis = get_redis_client()
+        redis = get_async_redis_client()
         rate_key = f"nfc_resolve_rate:{provider.actor_uid}"
-        current = await redis.incr(rate_key)
-        if current == 1:
-            await redis.expire(rate_key, 60)
+        current, retry_after = await atomic_fixed_window(redis, rate_key, 60)
         if current > 30:
-            raise HTTPException(status_code=429, detail="Too many NFC scan attempts")
-    except Exception:
-        pass
+            raise HTTPException(
+                status_code=429,
+                detail={"error_code": "NFC_RATE_LIMITED", "retry_after_seconds": retry_after},
+                headers={"Retry-After": str(max(1, retry_after))},
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "NFC_SECURITY_CONTROL_UNAVAILABLE", "retryable": True},
+        ) from exc
 
     resolver = CardResolutionService(db)
     redirect_service = CardRedirectService(db)
@@ -102,11 +110,11 @@ async def resolve_nfc_card(
             event_type="TOMBSTONE_INTEGRITY_VIOLATION",
             target_id=payload.card_uid,
             status="FAILED",
-            metadata={"reason": str(exc)},
+            metadata={"reason": "TOMBSTONE_INTEGRITY_VIOLATION"},
         )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Patient merge tombstone integrity violation: {exc}",
+            detail={"error_code": "TOMBSTONE_INTEGRITY_VIOLATION"},
         ) from exc
     except Exception as exc:
         raise HTTPException(

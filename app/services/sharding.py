@@ -96,7 +96,10 @@ async def decrypt_vault_field(
                 metadata={"field": field_name, "mechanism": "read_trigger"}
             )
         except Exception as exc:
-            logger.error(f"Failed to write back auto-migrated field {field_name} for {patient_id}: {exc}")
+            logger.error(
+                "Failed to write back auto-migrated field",
+                extra={"error_type": type(exc).__name__},
+            )
             
         return plaintext
 

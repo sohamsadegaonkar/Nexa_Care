@@ -13,6 +13,7 @@ from redis.asyncio import Redis
 import app.services.consent_engine as consent_engine
 from app.models.shards import NexaVault, NexaClinical
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 
 from app.services.crypto_kms import EncryptedField, PatientDataErased
 
@@ -146,9 +147,9 @@ async def consent_gated_decrypt(
                 clinician_id=provider_id,
                 purpose=purpose,
             )
-        except Exception as e:
+        except Exception as exc:
             # Consent consume failure after successful decrypt: Log warning but return data
-            logger.warning(f"Consent token consumption failed after successful decryption: {e}")
+            log_safe_exception(logger, exc, subsystem="redis", operation="consent_consume_after_decrypt")
 
         # Step 6: Hard-audit Decrypt Completed
         await append_audit_log_or_503(
@@ -169,7 +170,7 @@ async def consent_gated_decrypt(
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=patient_id,
             status="FAILED",
-            metadata={"error": str(exc), "requested_scope": requested_scope},
+            metadata={"error_code": "CONSENT_GATED_DECRYPT_FAILED", "requested_scope": requested_scope},
         )
 
         # Force consume the token if we reached the decrypt step
@@ -183,11 +184,13 @@ async def consent_gated_decrypt(
                     purpose=purpose,
                 )
             except Exception as consume_err:
-                logger.error(f"Failed to consume token during error cleanup: {consume_err}")
+                log_safe_exception(
+                    logger, consume_err, subsystem="redis", operation="consent_consume_cleanup"
+                )
 
         if isinstance(exc, (HTTPException, PatientDataErased)):
             raise
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Decryption operation failed: {str(exc)}",
+            detail={"error_code": "DECRYPTION_OPERATION_FAILED"},
         ) from exc

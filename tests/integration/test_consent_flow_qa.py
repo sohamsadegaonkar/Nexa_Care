@@ -15,6 +15,7 @@ The Supabase audit ledger is patched to a MagicMock.
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import uuid
 from contextlib import ExitStack
@@ -24,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
+from app.services.signed_approval_verifier import canonical_signed_approval_payload
 
 from app.core.dependencies import get_current_provider, get_scoped_session
 from app.main import app
@@ -69,13 +71,16 @@ def build_signing_input(
     scope: str,
     purpose: str,
     access_duration: int,
+    issued_at: str,
     expires_at: str,
+    device_id: str,
 ) -> str:
-    """Reconstruct the canonical 9-attribute signing input that the verifier expects."""
-    return (
-        f"{request_id}|{patient_id}|{provider_id}|{challenge_nonce}|{decision}|"
-        f"{scope}|{purpose}|{access_duration}|{expires_at}"
-    )
+    return canonical_signed_approval_payload(
+        request_id=request_id, patient_id=patient_id, provider_id=provider_id,
+        challenge_nonce=challenge_nonce, decision=decision, scope=scope,
+        purpose=purpose, access_duration=access_duration, issued_at=issued_at,
+        expires_at=expires_at, device_id=device_id,
+    ).decode("utf-8")
 
 
 # ── Mock DB helpers ──────────────────────────────────────────────────────────
@@ -262,7 +267,7 @@ def _patch_stack(fake_redis, fake_sync_redis):
         patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis)
     )
     stack.enter_context(
-        patch("app.services.approved_access_capability.get_redis_client", return_value=fake_sync_redis)
+        patch("app.services.approved_access_capability.get_async_redis_client", return_value=fake_redis)
     )
     stack.enter_context(
         patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis)
@@ -402,7 +407,9 @@ class TestConsentFlowIntegration:
                 scope="clinical",
                 purpose="routine_checkup",
                 access_duration=access_duration,
+                issued_at=challenge_data["created_at"],
                 expires_at=expires_at,
+                device_id=device_id,
             )
             real_signature = sign_challenge(private_key, signing_input)
 
@@ -442,13 +449,13 @@ class TestConsentFlowIntegration:
             assert consent_token not in str(fake_sync_redis._a.data.keys())
 
             from app.services.approved_access_capability import validate
-            capability = validate(
+            capability = asyncio.run(validate(
                 token=consent_token,
                 patient_id=patient_id,
                 provider_id=provider_id,
                 hospital_id=str(provider.hospital_id),
                 requested_category="clinical_summary",
-            )
+            ))
             assert capability is not None, "Consent token validation failed"
             assert capability.patient_id == patient_id
             assert capability.clinician_id == provider_id
@@ -496,7 +503,7 @@ class TestConsentFlowIntegration:
             signing_input = build_signing_input(
                 request_id, patient_id, provider_id, challenge_nonce, "denied",
                 "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["expires_at"],
+                challenge_data["created_at"], challenge_data["expires_at"], device_id,
             )
             real_signature = sign_challenge(private_key, signing_input)
 
@@ -563,7 +570,7 @@ class TestConsentFlowIntegration:
             signing_input = build_signing_input(
                 request_id, patient_id, provider_id, challenge_nonce, "approved",
                 "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["expires_at"],
+                challenge_data["created_at"], challenge_data["expires_at"], device_id,
             )
             forged_signature = sign_challenge(wrong_private_key, signing_input)
 
@@ -626,7 +633,7 @@ class TestConsentFlowIntegration:
             signing_input = build_signing_input(
                 request_id, patient_id, provider_id, challenge_nonce, "approved",
                 "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["expires_at"],
+                challenge_data["created_at"], challenge_data["expires_at"], device_id,
             )
             real_sig = sign_challenge(private_key, signing_input)
 
@@ -685,7 +692,7 @@ class TestConsentFlowIntegration:
             signing_input = build_signing_input(
                 request_id, patient_id, provider_id, challenge_nonce, "approved",
                 "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["expires_at"],
+                challenge_data["created_at"], challenge_data["expires_at"], device_id,
             )
             real_sig = sign_challenge(private_key, signing_input)
 

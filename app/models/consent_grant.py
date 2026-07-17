@@ -11,10 +11,12 @@ existed and record its lifecycle (issued -> consumed/revoked/expired).
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -33,6 +35,7 @@ class ConsentGrantLog(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     patient_id: Mapped[str] = mapped_column(String(64), nullable=False)
     clinician_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
     purpose: Mapped[str] = mapped_column(String(64), nullable=False)
     scope: Mapped[list] = mapped_column(JSONB, nullable=False)
     is_break_glass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")

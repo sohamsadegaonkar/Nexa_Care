@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 
 logger = logging.getLogger("nexa_logger")
 
@@ -148,12 +149,7 @@ class CardResolutionService:
             await self._db.commit()
         except SQLAlchemyError as exc:
             await self._db.rollback()
-            logger.critical(json.dumps({
-                "event": "nfc_card_report_lost_db_error",
-                "patient_id": str(row.patient_id),
-                "reported_by": str(request.reported_by),
-                "exception": str(exc),
-            }))
+            log_safe_exception(logger, exc, subsystem="database", operation="nfc_report_lost")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="NFC card status update failed.",
@@ -186,11 +182,7 @@ class CardResolutionService:
         try:
             result = await self._db.execute(stmt)
         except SQLAlchemyError as exc:
-            logger.critical(json.dumps({
-                "event": "nfc_card_registry_db_error",
-                "exception": str(exc),
-                "action": "raising_503_fail_closed",
-            }))
+            log_safe_exception(logger, exc, subsystem="database", operation="nfc_card_lookup")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=_CARD_DB_UNAVAILABLE_DETAIL,

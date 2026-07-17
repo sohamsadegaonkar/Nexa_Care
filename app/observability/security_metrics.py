@@ -39,3 +39,9 @@ SENSITIVE_ENDPOINT_LATENCY = Histogram(
     ["endpoint"],
     buckets=[0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0]
 )
+
+AUDIT_LEDGER_INTEGRITY_FAILURES = Counter(
+    "nexa_audit_ledger_integrity_failures_total",
+    "Detected audit ledger forks or integrity violations",
+    ["chain_scope", "reason"],
+)

@@ -29,12 +29,12 @@ import { useProviderAuth } from '../doctor/ProviderAuthContext'
 type RiskLevel = 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'CRITICAL_RISK'
 
 /** Risk level → colour mapping. */
-const RISK_COLORS: Record<RiskLevel, { bg: string; text: string }> = {
+const RISK_COLORS = {
   LOW_RISK: { bg: '$green4', text: '$green10' },
   MEDIUM_RISK: { bg: '$orange4', text: '$orange10' },
   HIGH_RISK: { bg: '$red4', text: '$red10' },
   CRITICAL_RISK: { bg: '$red4', text: '$red10' },
-}
+} as const satisfies Record<RiskLevel, { bg: string; text: string }>
 
 const RISK_ICONS: Record<RiskLevel, string> = {
   LOW_RISK: '✓',
@@ -58,9 +58,9 @@ export function ReviewQueueScreen() {
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$6">🔒 Session Required</Text>
-        <Paragraph col="$colorSubdued" size="$3">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$6">🔒 Session Required</Text>
+        <Paragraph color="$color10" fontSize="$3">
           Please log in to view the review queue.
         </Paragraph>
         <Button theme="blue" onPress={() => router.push('/doctor/login')}>
@@ -101,9 +101,9 @@ export function ReviewQueueScreen() {
   // ── Missing consent token ────────────────────────────────────────────
   if (!consentToken) {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$4" p="$6">
-        <Text col="$red10" size="$6">🔒 Consent Required</Text>
-        <Paragraph col="$colorSubdued" size="$3">
+      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
+        <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
+        <Paragraph color="$color10" fontSize="$3">
           An active consent grant with clinical review scope is required.
         </Paragraph>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
@@ -114,18 +114,18 @@ export function ReviewQueueScreen() {
   }
 
   return (
-    <YStack f={1} bg="$background" p="$6" gap="$4" mw={900} mx="auto">
+    <YStack flex={1} backgroundColor="$background" padding="$6" gap="$4" maxWidth={900} marginHorizontal="auto">
       {/* ALPHA badge + header */}
-      <XStack ai="center" gap="$2">
-        <H2 col="$color" size="$7">Review Queue</H2>
-        <Card bg="$orange4" br="$4" px="$2" py="$1">
-          <Text col="$orange10" size="$2" fontWeight="700" textTransform="uppercase">
+      <XStack alignItems="center" gap="$2">
+        <H2 color="$color12" fontSize="$7">Review Queue</H2>
+        <Card backgroundColor="$orange4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
+          <Text color="$orange10" fontSize="$2" fontWeight="700" textTransform="uppercase">
             ALPHA
           </Text>
         </Card>
       </XStack>
 
-      <Paragraph col="$colorSubdued" size="$3">
+      <Paragraph color="$color10" fontSize="$3">
         ALPHA · AI-assisted extraction results require clinical verification
         before commitment.
       </Paragraph>
@@ -134,25 +134,25 @@ export function ReviewQueueScreen() {
 
       {/* Loading state */}
       {loading && (
-        <YStack ai="center" py="$8">
+        <YStack alignItems="center" paddingVertical="$8">
           <Spinner size="large" color="$blue10" />
-          <Text col="$colorSubdued" size="$3" mt="$2">Loading review queue…</Text>
+          <Text color="$color10" fontSize="$3" marginTop="$2">Loading review queue…</Text>
         </YStack>
       )}
 
       {/* Error state */}
       {error && !loading && (
-        <YStack bg="$red4" br="$3" p="$4" gap="$2">
-          <Text col="$red10" size="$4" fontWeight="600">{error}</Text>
+        <YStack backgroundColor="$red4" borderRadius="$3" padding="$4" gap="$2">
+          <Text color="$red10" fontSize="$4" fontWeight="600">{error}</Text>
           <Button size="$2" chromeless onPress={fetchQueue}>Retry</Button>
         </YStack>
       )}
 
       {/* Empty state */}
       {!loading && !error && items.length === 0 && (
-        <YStack ai="center" py="$8">
-          <Text col="$colorSubdued" size="$5">No items pending review.</Text>
-          <Paragraph col="$colorSubdued" size="$3" mt="$2">
+        <YStack alignItems="center" paddingVertical="$8">
+          <Text color="$color10" fontSize="$5">No items pending review.</Text>
+          <Paragraph color="$color10" fontSize="$3" marginTop="$2">
             All flagged fields have been adjudicated or no documents have been
             processed yet.
           </Paragraph>
@@ -171,38 +171,38 @@ export function ReviewQueueScreen() {
               return (
                 <Card
                   key={item.review_item_id}
-                  p="$4"
-                  bg="$backgroundHover"
-                  br="$4"
-                  hoverStyle={{ bg: '$backgroundFocus' }}
-                  pressStyle={{ bg: '$backgroundPress' }}
+                  padding="$4"
+                  backgroundColor="$backgroundHover"
+                  borderRadius="$4"
+                  hoverStyle={{ backgroundColor: '$backgroundFocus' }}
+                  pressStyle={{ backgroundColor: '$backgroundPress' }}
                   onPress={() =>
                     router.push(
                       `/doctor/pipeline/review/${item.job_id}?patient_id=${item.patient_id}&consent_token=${consentToken}`,
                     )
                   }
                 >
-                  <XStack jc="space-between" ai="center">
-                    <YStack gap="$1" f={1}>
-                      <Text col="$color" size="$4" fontWeight="600">
+                  <XStack justifyContent="space-between" alignItems="center">
+                    <YStack gap="$1" flex={1}>
+                      <Text color="$color12" fontSize="$4" fontWeight="600">
                         {item.document_title}
                       </Text>
-                      <XStack gap="$3" ai="center">
-                        <Text col="$colorSubdued" size="$2">
+                      <XStack gap="$3" alignItems="center">
+                        <Text color="$color10" fontSize="$2">
                           Patient: {item.patient_id}
                         </Text>
-                        <Text col="$colorSubdued" size="$2">
+                        <Text color="$color10" fontSize="$2">
                           {item.flagged_fields_count} field{item.flagged_fields_count !== 1 ? 's' : ''} flagged
                         </Text>
-                        <Text col="$colorSubdued" size="$2">
+                        <Text color="$color10" fontSize="$2">
                           Queued: {new Date(item.queued_at).toLocaleString()}
                         </Text>
                       </XStack>
                     </YStack>
 
                     {/* Risk badge */}
-                    <Card bg={colors.bg} br="$4" px="$3" py="$2">
-                      <Text col={colors.text} size="$3" fontWeight="700">
+                    <Card backgroundColor={colors.bg} borderRadius="$4" paddingHorizontal="$3" paddingVertical="$2">
+                      <Text color={colors.text} fontSize="$3" fontWeight="700">
                         {icon} {risk.replace('_', ' ')}
                       </Text>
                     </Card>

@@ -180,7 +180,7 @@ async def test_challenge_mfa_brute_force(test_client, admin_headers, mock_redis,
     mock_cred.mfa_enabled = True
     mock_cred.mfa_secret_encrypted = "encrypted"
     
-    with patch("app.api.v2.auth_routes.get_redis_client", return_value=mock_redis), \
+    with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=mock_redis), \
          patch("app.api.v2.auth_routes.decrypt_mfa_secret", return_value="secret"), \
          patch("app.services.provider_auth_service.verify_totp_code", return_value=False), \
          patch("app.api.v2.auth_routes.select"):
@@ -210,7 +210,7 @@ async def test_challenge_mfa_brute_force(test_client, admin_headers, mock_redis,
 async def test_merge_happy_path(test_client, admin_headers, mock_redis, admin_context, test_db):
     """8. Happy path: Create -> Verify -> Merge."""
     # 1. Create
-    with patch("app.api.v2.auth_routes.get_redis_client", return_value=mock_redis):
+    with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=mock_redis):
         resp = test_client.post("/api/v2/auth/challenge/merge", headers=admin_headers)
         assert resp.status_code == 200
         challenge_token = resp.json()["challenge_token"]
@@ -220,7 +220,7 @@ async def test_merge_happy_path(test_client, admin_headers, mock_redis, admin_co
     mock_cred.mfa_enabled = True
     mock_cred.mfa_secret_encrypted = "enc"
     
-    with patch("app.api.v2.auth_routes.get_redis_client", return_value=mock_redis), \
+    with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=mock_redis), \
          patch("app.api.v2.auth_routes.decrypt_mfa_secret", return_value="secret"), \
          patch("app.services.provider_auth_service.verify_totp_code", return_value=True), \
          patch("app.api.v2.auth_routes.select"):

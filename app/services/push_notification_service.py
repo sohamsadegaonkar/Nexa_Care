@@ -6,6 +6,7 @@ import hashlib
 import logging
 import httpx
 from dataclasses import dataclass
+from app.observability.safe_exceptions import log_safe_exception
 
 logger = logging.getLogger("nexa_logger")
 
@@ -72,13 +73,54 @@ class PushNotificationService:
                         logger.info("push_notification_sent", extra={"patient_ref": patient_ref, "request_ref": request_ref})
                         return PushDeliveryResult(success=True, message_id=ticket.get("id"))
                     else:
-                        error_msg = ticket.get("message") or ticket.get("details", {}).get("error") or "Unknown Expo error"
-                        logger.error("push_notification_delivery_failed", extra={"patient_ref": patient_ref, "request_ref": request_ref, "error": error_msg})
-                        return PushDeliveryResult(success=False, error=error_msg)
+                        logger.error("push_notification_delivery_failed", extra={"patient_ref": patient_ref, "request_ref": request_ref})
+                        return PushDeliveryResult(success=False, error="PUSH_PROVIDER_REJECTED")
                 else:
                     logger.error("expo_push_api_error", extra={"request_ref": request_ref, "status_code": response.status_code})
                     return PushDeliveryResult(success=False, error=f"HTTP {response.status_code}")
 
         except Exception as exc:
-            logger.error("push_notification_exception", extra={"patient_ref": patient_ref, "request_ref": request_ref, "error": str(exc)})
-            return PushDeliveryResult(success=False, error=str(exc))
+            log_safe_exception(
+                logger,
+                exc,
+                subsystem="push_notification",
+                operation="send_approval_request",
+                correlation_id=request_ref,
+            )
+            return PushDeliveryResult(success=False, error="PUSH_PROVIDER_UNAVAILABLE")
+
+    async def send_emergency_access_notice(
+        self,
+        *,
+        patient_id: str,
+        event_id: str,
+        expo_push_token: str,
+    ) -> PushDeliveryResult:
+        payload = {
+            "to": expo_push_token,
+            "title": "Emergency record access",
+            "body": "Emergency access to limited health information was granted. Open Nexa Care for details.",
+            "data": {"type": "break_glass_notice", "event_id": event_id},
+            "sound": "default",
+            "priority": "high",
+        }
+        event_ref = _safe_ref(event_id)
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(EXPO_PUSH_API_URL, json=payload)
+            if response.status_code != 200:
+                return PushDeliveryResult(success=False, error="PUSH_PROVIDER_REJECTED")
+            data = response.json().get("data", {})
+            ticket = data[0] if isinstance(data, list) and data else data
+            if isinstance(ticket, dict) and ticket.get("status") == "ok":
+                return PushDeliveryResult(success=True, message_id=ticket.get("id"))
+            return PushDeliveryResult(success=False, error="PUSH_PROVIDER_REJECTED")
+        except Exception as exc:
+            log_safe_exception(
+                logger,
+                exc,
+                subsystem="push_notification",
+                operation="send_emergency_access_notice",
+                correlation_id=event_ref,
+            )
+            return PushDeliveryResult(success=False, error="PUSH_PROVIDER_UNAVAILABLE")

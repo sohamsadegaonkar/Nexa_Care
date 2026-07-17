@@ -12,14 +12,12 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.pipeline import _persist_auto_processed_document
 from app.core.database import get_db_session
 from app.core.dependencies import get_provider_context
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
-from app.services.sharding import split_pii_and_clinical_fields
 
 logger = logging.getLogger("nexa_logger")
 
@@ -126,72 +124,15 @@ async def approve_review(
     provider: ProviderContext = Depends(get_provider_context),
     db: AsyncSession = Depends(get_db_session),
 ) -> ReviewStatusResponse:
-    """Approve corrected AI extraction data and persist it to primary shards.
-
-    AUDIT-ORDERING FIX (2026-07-03): previously committed the shard writes
-    and flipped review.status to APPROVED *before* the audit write. A
-    failed audit write after that point left a durably committed,
-    unaudited mutation with no safe retry path -- review.status was no
-    longer PENDING, so _load_owned_pending_review() would 404 on any
-    retry. Now audits ATTEMPT (hard-fail) before touching the DB at all,
-    so a broken audit ledger blocks the mutation from ever starting,
-    matching the convention used in app/api/routes.py's register_patient.
-    """
-
-    review = await _load_owned_pending_review(db, review_id, provider.actor_uid)
-    payload = corrected_data.model_dump(exclude={"extraction_confidence"})
-    vault_payload, clinical_payload, unrecognized_payload = split_pii_and_clinical_fields(payload)
-    if unrecognized_payload:
-        vault_payload.update(unrecognized_payload)
-
-    masked_internal_id = str(uuid4())
-
-    await append_audit_log_or_503(
-        actor_uid=provider.actor_uid,
-        event_type="DOCUMENT_REVIEW_APPROVAL_ATTEMPT",
-        target_id=str(review.id),
-        status="STARTED",
-        metadata={
-            "review_id": str(review.id),
-            "masked_internal_id": masked_internal_id,
-            "provider_uid": provider.actor_uid,
+    """Retired unbound review path; staged field review is authoritative."""
+    _ = (corrected_data, provider, db)
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={
+            "error_code": "LEGACY_DOCUMENT_REVIEW_RETIRED",
+            "message": "Use /api/v2/pipeline/fields/{field_id}/review.",
         },
     )
-
-    try:
-        await _persist_auto_processed_document(
-            db=db,
-            provider_uid=provider.actor_uid,
-            masked_internal_id=masked_internal_id,
-            vault_payload=vault_payload,
-            clinical_payload=clinical_payload,
-            commit=False,
-        )
-        review.status = DocumentReviewStatus.APPROVED.value
-        await db.commit()
-    except Exception:
-        await db.rollback()
-        await _audit_best_effort(
-            actor_uid=provider.actor_uid,
-            event_type="DOCUMENT_REVIEW_APPROVAL_FAILED",
-            target_id=str(review.id),
-            status_="FAILED",
-        )
-        raise
-
-    await append_audit_log_or_503(
-        actor_uid=provider.actor_uid,
-        event_type="DOCUMENT_REVIEW_APPROVED",
-        target_id=str(review.id),
-        status="APPROVED",
-        metadata={
-            "review_id": str(review.id),
-            "masked_internal_id": masked_internal_id,
-            "provider_uid": provider.actor_uid,
-        },
-    )
-
-    return ReviewStatusResponse(review_id=review.id, status=review.status)
 
 
 @router.post("/{review_id}/reject", response_model=ReviewStatusResponse)

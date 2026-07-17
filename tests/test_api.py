@@ -354,7 +354,7 @@ class TestNexaCareLifecycle(unittest.TestCase):
             patch("app.services.crypto_engine.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.provider_auth_service.get_redis_client", return_value=cls.fake_redis),
             patch("app.services.consent_engine.get_consent_redis_client", return_value=cls.fake_async_redis),
-            patch("app.main.get_redis_client", return_value=cls.fake_redis),
+            patch("app.main.get_async_redis_client", return_value=cls.fake_async_redis),
             patch("app.main.get_async_engine", return_value=FakeAsyncEngine()),
         ]
         for p in cls._patches:

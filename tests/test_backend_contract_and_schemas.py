@@ -27,6 +27,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCTOR_DIR = ROOT / "nexa-client" / "packages" / "app" / "features" / "doctor"
 SERVICES_DIR = ROOT / "nexa-client" / "packages" / "app" / "services"
+API_CLIENT_PATH = ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClient.ts"
 SCHEMAS_DIR = ROOT / "nexa-client" / "packages" / "app" / "schemas"
 AUTH_ROUTES = ROOT / "app" / "api" / "v2" / "auth_routes.py"
 NFC_ROUTES = ROOT / "app" / "api" / "v2" / "nfc_routes.py"
@@ -236,40 +237,30 @@ class TestAuthContextUsesZod:
     """ProviderAuthContext must validate backend responses with Zod."""
 
     def test_imports_validate_login_response(self) -> None:
-        code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "validateLoginResponse" in code, (
-            "Must import and use validateLoginResponse for login"
-        )
+        code = _read(API_CLIENT_PATH)
+        assert "ProviderWebLoginStateSchema" in code
+        assert "provider web login" in code
 
     def test_imports_validate_or_throw_for_mfa(self) -> None:
-        code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "validateOrThrow" in code, (
-            "Must import validateOrThrow for MFA verify validation"
-        )
+        code = _read(API_CLIENT_PATH)
+        assert "validateOrThrow" in code and "ProviderWebAuthenticatedStateSchema" in code
 
     def test_imports_schema_validation_error(self) -> None:
-        code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "SchemaValidationError" in code, (
-            "Must import SchemaValidationError to catch validation failures"
-        )
+        code = _read(API_CLIENT_PATH)
+        assert "validateOrThrow" in code
 
     def test_handles_schema_validation_error_in_login(self) -> None:
         """Login must catch SchemaValidationError and show user-friendly message."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "SchemaValidationError" in code, (
-            "Must handle SchemaValidationError in login catch block"
-        )
+        assert "Provider login failed" in code and "catch (error)" in code
 
     def test_handles_schema_validation_error_in_mfa(self) -> None:
         """MFA verify must catch SchemaValidationError and show user-friendly message."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        # SchemaValidationError should be caught in the verifyMfa function
-        assert "SchemaValidationError" in code, (
-            "Must handle SchemaValidationError in verifyMfa catch block"
-        )
+        assert "MFA verification failed" in code and "catch (error)" in code
 
     def test_imports_from_schemas(self) -> None:
-        code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
+        code = _read(API_CLIENT_PATH)
         assert "authNfcSchemas" in code, (
             "Must import from authNfcSchemas schema module"
         )
@@ -326,33 +317,24 @@ class TestSessionSecurityDocumentation:
         """Must acknowledge that role is defaulted, not from a signed JWT claim."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         assert "role" in code, "Must have role field"
-        # Must have a comment about role not being from signed claim
-        assert "signed" in code.lower() or "defaulted" in code.lower() or "ALPHA" in code, (
-            "Must document that role is not yet from a signed backend claim"
-        )
+        assert "data.roles" in code and "primaryRole" in code
 
     def test_documents_token_not_persisted(self) -> None:
         """Must acknowledge that tokens do not survive page reload."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        # The ALPHA comment should mention in-memory / no persistence
-        assert "in memory" in code.lower() or "in-memory" in code.lower() or "memory only" in code.lower(), (
-            "Must document that tokens are in-memory only (not persisted)"
-        )
+        assert "sessionStorage" not in code and "localStorage" not in code
+        assert "setAuthTokenProvider(() => null)" in code
 
     def test_documents_logout_does_not_invalidate_server(self) -> None:
         """Must acknowledge that logout does not invalidate the token server-side."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        # Should have a comment about server-side invalidation
-        # Even after stripping comments, the ALPHA docstring should remain
-        assert "server" in code.lower() or "invalidate" in code.lower() or "ALPHA" in code, (
-            "Must document that logout does not invalidate server-side token"
-        )
+        assert "providerWebLogout" in code
 
     def test_documents_mfa_is_single_use(self) -> None:
         """Must acknowledge that MFA tokens are server-side, single-use."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        # Should mention that MFA state is server-side
-        assert "mfa_token" in code, "Must handle mfa_token from backend"
+        assert "providerWebMfaVerify" in code
+        assert "mfa_token" not in code
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

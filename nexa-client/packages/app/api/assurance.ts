@@ -3,7 +3,6 @@ import { apiClient } from '../utils/apiClient'
 /** @deprecated Name retained for callers; transport is the canonical consent API. */
 export interface PushApprovalRequest {
   patient_id: string
-  provider_id: string
   purpose: string
   scope: string
 }
@@ -19,6 +18,21 @@ export interface PushApprovalStatusResponse {
 }
 export async function getPushRequestStatus(requestId: string): Promise<PushApprovalStatusResponse> {
   const { data } = await apiClient.get<PushApprovalStatusResponse>(`/api/v2/consent/status/${requestId}`)
+  return data
+}
+
+export interface ApprovedAccessResponse {
+  patient_id: string
+  consent_token: string
+  purpose: string
+  scope: string
+  expires_at: string
+}
+
+export async function claimApprovedAccess(requestId: string): Promise<ApprovedAccessResponse> {
+  const { data } = await apiClient.post<ApprovedAccessResponse>(
+    `/api/v2/consent/${requestId}/claim-access`
+  )
   return data
 }
 

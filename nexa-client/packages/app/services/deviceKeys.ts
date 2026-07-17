@@ -152,7 +152,7 @@ function wrapEcPublicKeyAsDer(rawPoint: Uint8Array): Uint8Array {
   const algIdContent = [...ecPublicKeyOid, ...prime256v1Oid]
   const algId = [0x30, algIdContent.length, ...algIdContent]
 
-  const bitString = [0x03, rawPoint.length + 1, 0x00, ...rawPoint]
+  const bitString = [0x03, rawPoint.length + 1, 0x00, ...Array.from(rawPoint)]
 
   const spkiContent = [...algId, ...bitString]
   const spki = [0x30, spkiContent.length, ...spkiContent]
@@ -332,8 +332,23 @@ export async function getDeviceId(): Promise<string | null> {
   return id ?? null
 }
 
-export interface ConsentSigningFields { request_id: string; patient_id: string; provider_id: string; challenge_nonce: string; decision: "approved" | "denied"; scope: string; purpose: string; access_duration: number; expires_at: string }
-export function constructConsentSigningInput(params: ConsentSigningFields): string { return [params.request_id, params.patient_id, params.provider_id ?? "", params.challenge_nonce, params.decision, params.scope ?? "", params.purpose ?? "", params.access_duration ?? "", params.expires_at].join("|") }
+export interface ConsentSigningFields { request_id: string; patient_id: string; provider_id: string; challenge_nonce: string; decision: "approved" | "denied"; scope: string; purpose: string; access_duration: number; issued_at: string; expires_at: string; device_id: string }
+export function constructConsentSigningInput(params: ConsentSigningFields): string {
+  return JSON.stringify({
+    access_duration: params.access_duration,
+    challenge_nonce: params.challenge_nonce,
+    decision: params.decision,
+    device_id: params.device_id,
+    expires_at: params.expires_at,
+    issued_at: params.issued_at,
+    patient_id: params.patient_id,
+    protocol_version: 'nexa-consent-v2',
+    provider_id: params.provider_id,
+    purpose: params.purpose,
+    request_id: params.request_id,
+    scope: params.scope,
+  })
+}
 export async function authenticateWithBiometrics(): Promise<void> {
   if (!(await LocalAuthentication.hasHardwareAsync()) || !(await LocalAuthentication.isEnrolledAsync())) throw new Error("Biometric authentication is not available on this device.")
   const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Confirm your identity to approve this request", fallbackLabel: "Use Passcode", cancelLabel: "Cancel" })

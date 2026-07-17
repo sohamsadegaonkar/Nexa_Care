@@ -7,16 +7,12 @@ router = APIRouter(prefix="/api/v2/auth", tags=["roles"])
 
 class RoleResponse(BaseModel):
     role: str
+    roles: list[str]
     provider_id: str
 
 @router.get("/me/role", response_model=RoleResponse)
 async def get_my_role(provider: ProviderContext = Depends(get_provider_context)):
-    # In real system this would come from JWT claims or database
-    # For demo we return a role based on provider_id suffix
-    role = "clinician"
-    if provider.provider_id.endswith("admin"):
-        role = "admin"
-    elif provider.provider_id.endswith("reception"):
-        role = "receptionist"
-    
-    return RoleResponse(role=role, provider_id=provider.provider_id)
+    roles = sorted(set(provider.affiliation.roles or []))
+    role_priority = ("admin", "privacy_officer", "auditor", "clinician", "receptionist")
+    primary = next((candidate for candidate in role_priority if candidate in roles), roles[0] if roles else "none")
+    return RoleResponse(role=primary, roles=roles, provider_id=provider.actor_uid)

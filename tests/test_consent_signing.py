@@ -111,12 +111,11 @@ class TestConsentSigningService:
         ]:
             assert field in code, f"Signing input must include {field}"
 
-    def test_signing_input_uses_pipe_separator(self) -> None:
-        """Fields must be joined with '|' to match backend."""
+    def test_signing_input_uses_canonical_json(self) -> None:
+        """Fields must use the unambiguous v2 canonical JSON protocol."""
         code = _read(CONSENT_SIGNING_PATH)
-        assert ".join('|')" in code or "join(\"|\")" in code, (
-            "Signing input fields must be pipe-separated"
-        )
+        assert "nexa-consent-v2" in code
+        assert "JSON.stringify" in code
 
     def test_hashes_with_sha256_before_signing(self) -> None:
         """Must SHA-256 hash the message before signing with @noble/curves."""
@@ -282,14 +281,13 @@ class TestSigningInputBackendMatch:
             assert field in backend_code, f"Backend must reference {field}"
             assert field in client_code, f"Client must reference {field}"
 
-    def test_pipe_separator_matches_backend(self) -> None:
-        """Both client and backend use '|' as separator."""
+    def test_canonical_json_protocol_matches_backend(self) -> None:
+        """Both client and backend bind the v2 protocol and all fields."""
         client_code = _read(CONSENT_SIGNING_PATH)
         backend_code = _read(SIGNED_VERIFIER_PATH)
-        # Client explicitly uses .join('|')
-        assert ".join('|')" in client_code or ".join(\"|\")" in client_code, "Client uses pipe separator"
-        # Backend uses pipe inside f-strings like f"{request_id}|{patient_id}..."
-        assert "|{" in backend_code or "}|" in backend_code, "Backend uses pipe separator in f-strings"
+        assert "nexa-consent-v2" in client_code
+        assert "nexa-consent-v2" in backend_code
+        assert "sort_keys=True" in backend_code
 
     def test_sha256_hashing_matches_backend(self) -> None:
         """Both use SHA-256 for hashing."""
