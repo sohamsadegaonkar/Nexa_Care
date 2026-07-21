@@ -1,4 +1,13 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint, text
+from sqlalchemy import (
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import Base
 
@@ -25,6 +34,11 @@ class PatientPolicy(Base):
         default="standard",
         server_default=text("'standard'"),
     )
-    updated_at = Column(String)  # simplified for now
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     version = Column(Integer, nullable=False, default=1, server_default=text("1"))
     last_idempotency_key = Column(String(128), nullable=True)

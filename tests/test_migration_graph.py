@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260720_final_runtime_fix"
+EXPECTED_HEAD = "20260721_policy_audit_types"
 
 
 def _scripts() -> ScriptDirectory:
@@ -45,6 +45,16 @@ def test_final_runtime_fix_repairs_uuid_head_and_adds_recovery_schema() -> None:
     assert "fk_audit_chain_heads_head_event" in source
     assert "lease_expires_at" in source
     assert "mutation_idempotency" in source
+
+
+def test_policy_audit_type_hardening_descends_from_runtime_fix() -> None:
+    source = (
+        ROOT / "alembic" / "versions" / "20260721_policy_audit_types.py"
+    ).read_text()
+    assert 'revision: str = "20260721_policy_audit_types"' in source
+    assert 'down_revision: Union[str, None] = "20260720_final_runtime_fix"' in source
+    assert "type_=sa.DateTime(timezone=True)" in source
+    assert "type_=sa.String(192)" in source
 
 
 def test_cleanup_sql_guards_absent_tables() -> None:

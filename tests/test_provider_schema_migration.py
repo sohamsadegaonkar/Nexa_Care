@@ -39,7 +39,7 @@ def test_provider_revision_precedes_patient_auth_identity_head() -> None:
     revision = _scripts().get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == "20260713_device_key_timestamps"
-    assert _scripts().get_heads() == ["20260720_final_runtime_fix"]
+    assert _scripts().get_heads() == ["20260721_policy_audit_types"]
 
 
 def test_every_doctor_seed_model_has_migration_coverage() -> None:

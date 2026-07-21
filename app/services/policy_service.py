@@ -199,7 +199,7 @@ class PolicyService:
         internal tooling) that intentionally bypass optimistic concurrency
         and idempotency. Real clinician-facing policy mutation must go
         through set_policy_atomic()."""
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
         stmt = (
             insert(PatientPolicy)
             .values(

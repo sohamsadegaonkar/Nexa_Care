@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from datetime import datetime
 
 import pytest
 from sqlalchemy import text
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient_policy import PatientPolicy
 from app.services.audit_outbox_processor import _CLAIM_SQL
+from app.services.policy_service import PolicyService
 
 
 pytestmark = pytest.mark.postgres
@@ -187,6 +189,37 @@ async def test_runtime_table_schema_contracts(postgres_engine):
         assert version[0] == "NO"
         assert version[1] is not None and "1" in version[1]
 
+        hardened_types = {
+            (table_name, column_name): (data_type, character_maximum_length)
+            for table_name, column_name, data_type, character_maximum_length in (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT table_name, column_name, data_type, character_maximum_length
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public'
+                          AND (table_name, column_name) IN (
+                              ('patient_policies', 'updated_at'),
+                              ('audit_ledger', 'chain_scope'),
+                              ('audit_outbox', 'chain_partition'),
+                              ('audit_chain_heads', 'chain_partition')
+                          )
+                        """
+                    )
+                )
+            ).all()
+        }
+        assert hardened_types[("patient_policies", "updated_at")] == (
+            "timestamp with time zone",
+            None,
+        )
+        for key in (
+            ("audit_ledger", "chain_scope"),
+            ("audit_outbox", "chain_partition"),
+            ("audit_chain_heads", "chain_partition"),
+        ):
+            assert hardened_types[key] == ("character varying", 192)
+
         indexes = set(
             (
                 await connection.execute(
@@ -279,6 +312,89 @@ async def test_policy_orm_round_trip_version_and_constraints(postgres_engine):
                             """
                             )
                         )
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_policy_service_atomic_real_postgres_contract(postgres_engine):
+    patient_id = uuid.uuid4()
+    tenant_id = "t" * 128
+    actor_id = f"provider-{uuid.uuid4()}"
+    first_key = f"policy-create-{uuid.uuid4().hex}"
+    update_key = f"policy-update-{uuid.uuid4().hex}"
+
+    async with postgres_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            await connection.execute(
+                text("INSERT INTO public.patients (patient_uuid) VALUES (:patient_id)"),
+                {"patient_id": patient_id},
+            )
+            async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                service = PolicyService(session)
+                created = await service.set_policy_atomic(
+                    patient_id,
+                    "biometric_required",
+                    expected_version=0,
+                    idempotency_key=first_key,
+                    actor_id=actor_id,
+                    tenant_id=tenant_id,
+                )
+                assert created.version == 1
+                assert created.idempotent_replay is False
+
+                updated = await service.set_policy_atomic(
+                    patient_id,
+                    "break_glass_restricted",
+                    expected_version=1,
+                    idempotency_key=update_key,
+                    actor_id=actor_id,
+                    tenant_id=tenant_id,
+                )
+                assert updated.version == 2
+                assert updated.idempotent_replay is False
+
+                replayed = await service.set_policy_atomic(
+                    patient_id,
+                    "break_glass_restricted",
+                    expected_version=1,
+                    idempotency_key=update_key,
+                    actor_id=actor_id,
+                    tenant_id=tenant_id,
+                )
+                assert replayed.version == 2
+                assert replayed.idempotent_replay is True
+
+                persisted = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT consent_assurance_policy, version, updated_at
+                            FROM public.patient_policies
+                            WHERE patient_uuid = :patient_id
+                            """
+                        ),
+                        {"patient_id": patient_id},
+                    )
+                ).one()
+                assert persisted.consent_assurance_policy == "break_glass_restricted"
+                assert persisted.version == 2
+                assert isinstance(persisted.updated_at, datetime)
+                assert persisted.updated_at.tzinfo is not None
+
+                outbox_count = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT count(*) FROM public.audit_outbox
+                            WHERE tenant_id = :tenant_id AND patient_id = :patient_id
+                            """
+                        ),
+                        {"tenant_id": tenant_id, "patient_id": str(patient_id)},
+                    )
+                ).scalar_one()
+                assert outbox_count == 2
         finally:
             await transaction.rollback()
 

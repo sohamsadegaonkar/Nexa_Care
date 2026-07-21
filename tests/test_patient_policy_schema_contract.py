@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from sqlalchemy import DateTime
 
 from app.models.patient_policy import PatientPolicy
 
@@ -35,6 +36,9 @@ def test_patient_policy_orm_contract() -> None:
     assert not table.c.patient_uuid.nullable
     assert not table.c.consent_assurance_policy.nullable
     assert not table.c.version.nullable
+    assert isinstance(table.c.updated_at.type, DateTime)
+    assert table.c.updated_at.type.timezone is True
+    assert not table.c.updated_at.nullable
     assert table.c.tenant_id.type.length == 128
     assert table.c.last_idempotency_key.type.length == 128
     assert {
