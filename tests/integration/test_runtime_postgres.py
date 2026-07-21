@@ -11,8 +11,11 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.patient_policy import PatientPolicy
 from app.services.audit_outbox_processor import _CLAIM_SQL
 
 
@@ -63,6 +66,162 @@ async def test_uuid_audit_head_schema_and_foreign_key(postgres_engine):
             """
         ))).one()
         assert tuple(foreign_key) == ("audit_ledger", "audit_id", "RESTRICT")
+
+
+@pytest.mark.asyncio
+async def test_runtime_table_schema_contracts(postgres_engine):
+    expected_columns = {
+        "patient_policies": {
+            "patient_uuid", "tenant_id", "consent_assurance_policy", "updated_at",
+            "version", "last_idempotency_key",
+        },
+        "audit_outbox": {
+            "id", "event_id", "idempotency_key", "chain_partition", "event_type",
+            "actor_id", "tenant_id", "patient_id", "payload", "status",
+            "attempt_count", "available_at", "processed_at", "last_error_code",
+            "created_at", "processing_started_at", "lease_expires_at", "worker_id",
+        },
+        "audit_chain_heads": {
+            "chain_partition", "head_event_id", "head_hash", "sequence_number",
+            "protocol_version", "is_healthy", "updated_at",
+        },
+        "patient_erasure_tombstones": {
+            "id", "tenant_id", "patient_ref", "status", "assurance_level",
+            "wrapping_key_type", "patient_wrapping_key_id", "kms_state",
+            "requested_at", "effective_at", "scheduled_deletion_date",
+            "completion_date", "failure_code", "operator_action_required",
+            "retry_required", "audit_event_id", "created_at", "updated_at",
+        },
+        "mutation_idempotency": {
+            "id", "tenant_id", "actor_id", "operation", "resource_id",
+            "idempotency_key", "request_hash", "response_status", "response_payload",
+            "resulting_resource_version", "created_at", "retention_expires_at",
+        },
+    }
+    async with postgres_engine.connect() as connection:
+        rows = (await connection.execute(text(
+            """
+            SELECT table_name, column_name
+            FROM information_schema.columns
+            WHERE table_schema = 'public' AND table_name = ANY(:tables)
+            """
+        ), {"tables": list(expected_columns)})).all()
+        actual = {table: set() for table in expected_columns}
+        for table_name, column_name in rows:
+            actual[table_name].add(column_name)
+        assert actual == expected_columns
+
+        version = (await connection.execute(text(
+            """
+            SELECT is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name = 'patient_policies'
+              AND column_name = 'version'
+            """
+        ))).one()
+        assert version[0] == "NO"
+        assert version[1] is not None and "1" in version[1]
+
+        indexes = set((await connection.execute(text(
+            """
+            SELECT indexname FROM pg_indexes
+            WHERE schemaname = 'public' AND tablename = 'audit_outbox'
+            """
+        ))).scalars())
+        assert {
+            "uq_audit_outbox_tenant_idempotency",
+            "uq_audit_outbox_global_idempotency",
+            "ix_audit_outbox_status_available_at",
+            "ix_audit_outbox_expired_lease",
+            "ix_audit_outbox_dead_letter",
+        } <= indexes
+
+
+@pytest.mark.asyncio
+async def test_policy_orm_round_trip_version_and_constraints(postgres_engine):
+    patient_id = uuid.uuid4()
+    async with postgres_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            await connection.execute(
+                text("INSERT INTO public.patients (patient_uuid) VALUES (:patient_id)"),
+                {"patient_id": patient_id},
+            )
+            async with AsyncSession(bind=connection, expire_on_commit=False) as first_session:
+                policy = PatientPolicy(
+                    patient_uuid=patient_id,
+                    tenant_id="migration-test-tenant",
+                    consent_assurance_policy="standard",
+                    version=1,
+                    last_idempotency_key="initial-write",
+                )
+                first_session.add(policy)
+                await first_session.flush()
+                await first_session.refresh(policy)
+                assert policy.patient_uuid == patient_id
+                assert policy.version == 1
+
+                updated = await first_session.execute(text(
+                    """
+                    UPDATE public.patient_policies
+                    SET version = version + 1,
+                        last_idempotency_key = 'versioned-write'
+                    WHERE patient_uuid = :patient_id AND version = 1
+                    RETURNING version
+                    """
+                ), {"patient_id": patient_id})
+                assert updated.scalar_one() == 2
+
+            # Use a distinct identity map to model a second database client and
+            # avoid masking the database constraint with an ORM identity warning.
+            async with AsyncSession(bind=connection, expire_on_commit=False) as second_session:
+                with pytest.raises(IntegrityError):
+                    async with second_session.begin_nested():
+                        second_session.add(PatientPolicy(
+                            patient_uuid=patient_id,
+                            tenant_id="migration-test-tenant",
+                            consent_assurance_policy="standard",
+                            version=1,
+                        ))
+                        await second_session.flush()
+
+            async with AsyncSession(bind=connection, expire_on_commit=False) as constraint_session:
+                with pytest.raises(IntegrityError):
+                    async with constraint_session.begin_nested():
+                        await constraint_session.execute(text(
+                            """
+                            INSERT INTO public.patient_policies
+                                (patient_uuid, tenant_id, consent_assurance_policy, version)
+                            VALUES (gen_random_uuid(), 'migration-test-tenant', 'standard', NULL)
+                            """
+                        ))
+        finally:
+            await transaction.rollback()
+
+
+@pytest.mark.asyncio
+async def test_mutation_idempotency_scope_constraint(postgres_engine):
+    async with postgres_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            values = {
+                "tenant": "migration-test-tenant",
+                "key": f"migration-test-{uuid.uuid4().hex}",
+            }
+            insert = text(
+                """
+                INSERT INTO public.mutation_idempotency
+                    (tenant_id, actor_id, operation, resource_id, idempotency_key, request_hash)
+                VALUES (:tenant, 'test-actor', 'policy_update', 'test-resource', :key, :hash)
+                """
+            )
+            await connection.execute(insert, {**values, "hash": "a" * 64})
+            with pytest.raises(IntegrityError):
+                async with connection.begin_nested():
+                    await connection.execute(insert, {**values, "hash": "b" * 64})
+        finally:
+            await transaction.rollback()
 
 
 @pytest.mark.asyncio

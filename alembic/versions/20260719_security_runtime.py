@@ -34,7 +34,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20260719_security_runtime"
-down_revision: Union[str, None] = "20260718_security_governance"
+down_revision: Union[str, None] = "20260718_policy_schema"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -153,6 +153,13 @@ def _backfill_partition(bind, chain_scope: str) -> None:
 def upgrade() -> None:
     bind = op.get_bind()
 
+    tables = set(sa.inspect(bind).get_table_names(schema="public"))
+    if "patient_policies" not in tables:
+        raise RuntimeError(
+            "Migration precondition failed: public.patient_policies must exist "
+            "before applying 20260719_security_runtime."
+        )
+
     # ── Defect 6: transactional outbox ──────────────────────────────────
     op.create_table(
         "audit_outbox",
@@ -161,7 +168,7 @@ def upgrade() -> None:
         sa.Column("event_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False,
                    server_default=sa.text("gen_random_uuid()")),
         sa.Column("idempotency_key", sa.String(128), nullable=False),
-        sa.Column("chain_partition", sa.String(64), nullable=False, server_default="global"),
+        sa.Column("chain_partition", sa.String(64), nullable=False),
         sa.Column("event_type", sa.String(128), nullable=False),
         sa.Column("actor_id", sa.String(128), nullable=False),
         sa.Column("tenant_id", sa.String(128), nullable=True),
@@ -194,8 +201,16 @@ def upgrade() -> None:
         "status IN ('pending', 'processing', 'processed', 'dead_letter')", schema="public",
     )
 
-    op.add_column("patient_policies", sa.Column("version", sa.Integer(), nullable=False, server_default="1"))
-    op.add_column("patient_policies", sa.Column("last_idempotency_key", sa.String(128), nullable=True))
+    op.add_column(
+        "patient_policies",
+        sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
+        schema="public",
+    )
+    op.add_column(
+        "patient_policies",
+        sa.Column("last_idempotency_key", sa.String(128), nullable=True),
+        schema="public",
+    )
 
     # ── Defect 7: authoritative erasure registry ────────────────────────
     op.create_table(
@@ -244,7 +259,7 @@ def upgrade() -> None:
     op.create_table(
         "audit_chain_heads",
         sa.Column("chain_partition", sa.String(64), primary_key=True),
-        sa.Column("head_event_id", sa.BigInteger(), nullable=False),
+        sa.Column("head_event_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("head_hash", sa.String(64), nullable=False),
         sa.Column("sequence_number", sa.BigInteger(), nullable=False),
         sa.Column("protocol_version", sa.Integer(), nullable=False),
@@ -288,8 +303,8 @@ def downgrade() -> None:
     op.drop_index("uq_patient_erasure_tombstones_ref", table_name="patient_erasure_tombstones", schema="public")
     op.drop_table("patient_erasure_tombstones", schema="public")
 
-    op.drop_column("patient_policies", "last_idempotency_key")
-    op.drop_column("patient_policies", "version")
+    op.drop_column("patient_policies", "last_idempotency_key", schema="public")
+    op.drop_column("patient_policies", "version", schema="public")
     op.drop_constraint("ck_audit_outbox_status", "audit_outbox", type_="check", schema="public")
     op.drop_index("ix_audit_outbox_status_available_at", table_name="audit_outbox", schema="public")
     op.drop_index("uq_audit_outbox_global_idempotency", table_name="audit_outbox", schema="public")

@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import os
 import uuid
 
 import pytest
-from redis.asyncio import Redis
+import pytest_asyncio
+from redis.asyncio import ConnectionPool, Redis
 
 from app.api.v2.consent_routes import _resolve_signed_approval_atomic
 
@@ -15,17 +18,47 @@ from app.api.v2.consent_routes import _resolve_signed_approval_atomic
 pytestmark = pytest.mark.redis
 
 
-@pytest.fixture
+async def _await_if_needed(result: object) -> None:
+    if inspect.isawaitable(result):
+        await result
+
+
+@pytest_asyncio.fixture
 async def real_redis():
     url = os.getenv("TEST_REDIS_URL")
     if not url:
         pytest.skip("TEST_REDIS_URL is not configured")
-    client = Redis.from_url(url, decode_responses=True)
+    pool = ConnectionPool.from_url(url, decode_responses=True)
+    client = Redis(connection_pool=pool)
+
     await client.ping()
+
     try:
         yield client
     finally:
-        await client.aclose()
+        # Close the client without relying on version-specific automatic
+        # connection-pool ownership.
+        client_close = getattr(client, "aclose", None)
+        if client_close is None:
+            client_close = getattr(client, "close", None)
+        if client_close is not None:
+            try:
+                await _await_if_needed(client_close())
+            except TypeError:
+                # Some older redis-py versions expose close arguments
+                # differently. The pool is still explicitly disconnected below.
+                pass
+
+        # Explicitly close every idle and in-use connection.
+        pool_close = getattr(pool, "aclose", None)
+        if pool_close is not None:
+            await _await_if_needed(pool_close())
+        else:
+            await pool.disconnect(inuse_connections=True)
+
+        # Allow Windows/Proactor SSL transports to finish shutdown before
+        # pytest closes the event loop.
+        await asyncio.sleep(0.1)
 
 
 @pytest.mark.asyncio
