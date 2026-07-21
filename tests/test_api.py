@@ -327,6 +327,11 @@ class FakeKMSProvider:
         return FakeEncryptedField(field_name, plaintext)
 
 
+class FakeRunningTask:
+    def done(self) -> bool:
+        return False
+
+
 class TestNexaCareLifecycle(unittest.TestCase):
     """Drives the full provider -> patient -> consent lifecycle through the
     real app, with only the database/cache layers faked out."""
@@ -356,12 +361,17 @@ class TestNexaCareLifecycle(unittest.TestCase):
             patch("app.services.consent_engine.get_consent_redis_client", return_value=cls.fake_async_redis),
             patch("app.main.get_async_redis_client", return_value=cls.fake_async_redis),
             patch("app.main.get_async_engine", return_value=FakeAsyncEngine()),
+            patch(
+                "app.main.get_outbox_health",
+                new=AsyncMock(return_value={"dead_letter_backlog": 0, "stalled_pending_events": 0}),
+            ),
         ]
         for p in cls._patches:
             p.start()
 
         app.dependency_overrides[get_provider_context] = _override_provider_context
         app.dependency_overrides[get_db_session] = _mock_db_session
+        app.state.audit_outbox_task = FakeRunningTask()
         cls.client = TestClient(app)
 
     @classmethod
@@ -393,6 +403,9 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["redis"], "ok")
         self.assertEqual(data["postgres"], "ok")
+        self.assertEqual(data["audit_outbox_worker"], "ok")
+        self.assertEqual(data["audit_outbox_dead_letter_backlog"], "0")
+        self.assertEqual(data["audit_outbox_stalled_pending_events"], "0")
 
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 

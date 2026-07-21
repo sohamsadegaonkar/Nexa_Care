@@ -201,3 +201,21 @@ async def test_legacy_url_query_token_is_retired(client):
         headers={"Authorization": "Bearer session", "X-Consent-Token": "header-token"},
     )
     assert resp2.status_code == 410
+
+
+@pytest.mark.asyncio
+async def test_v1_clinical_query_token_is_retired_before_token_processing():
+    """The legacy clinical endpoint must never consume a URL capability."""
+    from fastapi import HTTPException
+
+    from app.api.routes import view_record_clinical
+
+    with pytest.raises(HTTPException) as exc_info:
+        await view_record_clinical(
+            consent_token_header="header-capability",
+            consent_token_query="url-capability",
+            db=object(),
+        )
+
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail["error_code"] == "CONSENT_TOKEN_IN_URL_RETIRED"

@@ -139,15 +139,17 @@ class PolicyService:
         expected_version: int,
         idempotency_key: str,
         actor_id: str,
-        tenant_id: str | None,
+        tenant_id: str,
         event_type: str = "PATIENT_POLICY_CHANGED",
-        chain_partition: str = "global",
     ) -> PolicyUpdateResult:
         """Atomically: CAS-update the policy -> insert the audit-outbox
         event -> commit. Exactly one transaction, one commit, no
         intermediate commit before the outbox write (Defect 6)."""
 
         validate_idempotency_key(idempotency_key)
+        if not tenant_id.strip():
+            raise PolicyValidationError("A trusted tenant context is required for policy audit events.")
+        chain_partition = f"tenant:{tenant_id}:policy"
 
         existing = await self.get_policy_row(patient_uuid)
 

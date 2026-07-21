@@ -31,8 +31,14 @@ def test_health_accepts_testserver_and_rejects_untrusted_host() -> None:
     context.__aenter__.return_value = connection
     engine = MagicMock()
     engine.connect.return_value = context
+    running_task = MagicMock()
+    running_task.done.return_value = False
+    app.state.audit_outbox_task = running_task
     with patch("app.main.get_async_redis_client", return_value=redis), patch(
         "app.main.get_async_engine", return_value=engine
+    ), patch(
+        "app.main.get_outbox_health",
+        new=AsyncMock(return_value={"dead_letter_backlog": 0, "stalled_pending_events": 0}),
     ):
         client = TestClient(app)
         assert client.get("/health").status_code == 200

@@ -62,7 +62,11 @@ def test_policy_update_requires_role():
     try:
         response = client.put(
             "/api/v2/patient/123e4567-e89b-12d3-a456-426614174000/policy",
-            json={"consent_assurance_policy": "standard"},
+            json={
+                "consent_assurance_policy": "standard",
+                "idempotency_key": "role-check-001",
+                "expected_version": 0,
+            },
             headers={"Authorization": "Bearer receptionist-token"},
         )
     finally:

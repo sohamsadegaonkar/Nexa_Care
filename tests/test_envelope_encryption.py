@@ -50,6 +50,7 @@ async def test_encrypt_decrypt_roundtrip(env_setup, mock_db):
     mock_row.dek_version = 1
     mock_row.is_active = True
     mock_row.destroyed_at = None
+    mock_row.status = "active"
     
     mock_db.scalar.return_value = 1
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
@@ -119,7 +120,12 @@ async def test_destroy_dek_fails_decrypt(env_setup, mock_db):
     mock_db.scalar.return_value = 1
 
     encrypted = await provider.encrypt_field(patient_id, "f", "data", mock_db)
-    
+
+    # destroy_dek first queries the authoritative tombstone registry, then
+    # loads the patient's DEK rows.
+    mock_db.execute.return_value.scalar_one_or_none.return_value = None
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_row]
+
     # Destroy DEK
     await provider.destroy_dek(patient_id, mock_db)
     

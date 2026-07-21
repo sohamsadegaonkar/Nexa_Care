@@ -37,6 +37,7 @@ Fixes applied in this file:
 from __future__ import annotations
 
 import json
+import asyncio
 import logging
 import os
 import time
@@ -86,10 +87,11 @@ from app.services.crypto_kms import get_encryption_provider, PatientDataErased
 from app.security.erasure_registry import ErasureRegistryUnavailable
 from prometheus_client import Counter, Histogram, make_asgi_app
 
-from app.core.database import get_async_engine, get_db_session
+from app.core.database import get_async_engine, get_db_session, get_session_factory
 from app.core.redis import get_async_redis_client
 from app.core.client_ip import trusted_proxy_networks
 from app.observability.safe_exceptions import log_safe_exception
+from app.services.audit_outbox_processor import get_outbox_health, run_outbox_processor_forever
 # Deprecated test-patch seam; runtime code uses get_async_redis_client.
 get_redis_client = get_async_redis_client
 
@@ -189,7 +191,19 @@ async def lifespan(application: FastAPI):
     get_document_storage_config()
     get_encryption_provider()
     trusted_proxy_networks()
-    yield
+    outbox_shutdown_event = asyncio.Event()
+    outbox_task = asyncio.create_task(
+        run_outbox_processor_forever(
+            get_session_factory(), shutdown_event=outbox_shutdown_event,
+        )
+    )
+    application.state.audit_outbox_task = outbox_task
+    try:
+        yield
+    finally:
+        outbox_shutdown_event.set()
+        await outbox_task
+        application.state.audit_outbox_task = None
     try:
         engine = get_async_engine()
         await engine.dispose()
@@ -314,6 +328,8 @@ async def health_check() -> dict:
     """Readiness probe. Verifies Redis and Postgres reachability."""
 
     checks: dict[str, str] = {}
+    outbox_task = getattr(app.state, "audit_outbox_task", None)
+    checks["audit_outbox_worker"] = "ok" if outbox_task is not None and not outbox_task.done() else "unavailable"
 
     try:
         redis = get_async_redis_client()
@@ -327,10 +343,19 @@ async def health_check() -> dict:
         async with engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         checks["postgres"] = "ok"
+        async with get_session_factory()() as db:
+            outbox_health = await get_outbox_health(db)
+        checks["audit_outbox_dead_letter_backlog"] = str(outbox_health["dead_letter_backlog"])
+        checks["audit_outbox_stalled_pending_events"] = str(outbox_health["stalled_pending_events"])
+        if any(outbox_health.values()):
+            checks["audit_outbox_backlog"] = "unhealthy"
+        else:
+            checks["audit_outbox_backlog"] = "ok"
     except Exception as exc:
         checks["postgres"] = f"unavailable: {type(exc).__name__}"
 
-    if all(status == "ok" for status in checks.values()):
+    readiness_checks = ("audit_outbox_worker", "redis", "postgres", "audit_outbox_backlog")
+    if all(checks.get(name) == "ok" for name in readiness_checks):
         return {"status": "ok", **checks}
 
     raise HTTPException(

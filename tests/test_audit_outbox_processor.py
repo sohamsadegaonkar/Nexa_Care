@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.audit_outbox_processor import DEFAULT_MAX_ATTEMPTS, process_outbox_batch
+from app.services.audit_outbox_processor import (
+    DEFAULT_MAX_ATTEMPTS,
+    get_outbox_health,
+    process_outbox_batch,
+    run_outbox_processor_forever,
+)
 
 
 class _FakeResult:
@@ -18,6 +24,9 @@ class _FakeResult:
 
     def all(self):
         return self._rows
+
+    def one(self):
+        return self._rows[0]
 
 
 def _row(**overrides):
@@ -132,3 +141,48 @@ async def test_claim_uses_skip_locked_for_multi_instance_safety():
     await process_outbox_batch(db)
     claim_sql = [sql for sql, _ in db.executed if "SELECT" in sql][0]
     assert "FOR UPDATE SKIP LOCKED" in claim_sql
+
+
+@pytest.mark.asyncio
+async def test_health_reports_only_aggregate_backlog_counts():
+    db = _FakeDB([])
+    db._claim_rows = [{"dead_letter_backlog": 2, "stalled_pending_events": 3}]
+
+    # The health query is not the claim query, so provide its aggregate result.
+    async def execute(statement, params=None):
+        db.executed.append((str(statement), params or {}))
+        return _FakeResult(db._claim_rows)
+
+    db.execute = execute
+    assert await get_outbox_health(db) == {
+        "dead_letter_backlog": 2,
+        "stalled_pending_events": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_forever_worker_survives_batch_failure_and_stops_on_signal():
+    shutdown = asyncio.Event()
+
+    class SessionContext:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *args):
+            return None
+
+    attempts = 0
+
+    async def batch(_db):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("transient")
+        shutdown.set()
+
+    with patch("app.services.audit_outbox_processor.process_outbox_batch", side_effect=batch):
+        await run_outbox_processor_forever(
+            lambda: SessionContext(), poll_interval_seconds=0, shutdown_event=shutdown,
+        )
+
+    assert attempts == 2

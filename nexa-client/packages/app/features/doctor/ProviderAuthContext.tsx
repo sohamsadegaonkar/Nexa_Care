@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react'
 import { ApiError, NexaApiClient, setAuthTokenProvider, setProviderCookieAuthEnabled } from '../../utils/apiClient'
+import { clearAllCapabilities } from '../../services/capabilityStore'
 
 export interface ProviderIdentity {
   provider_id: string
@@ -110,6 +111,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
 
   const cancelMfa = useCallback(() => { setMfaDetail(null); setLoginError(null); setStatus('unauthenticated') }, [])
   const logout = useCallback(() => {
+    clearAllCapabilities()
     void NexaApiClient.providerWebLogout().finally(() => {
       setSession(null); setAccessGrantState(null); setMfaDetail(null); setLoginError(null); setStatus('unauthenticated')
     })

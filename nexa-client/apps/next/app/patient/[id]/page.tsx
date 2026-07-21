@@ -6,12 +6,12 @@ import { useParams, useSearchParams } from 'next/navigation'
 export default function Page() {
   const params = useParams<{ id: string }>()
   const searchParams = useSearchParams()
+  const workflowId = searchParams.get('workflow_id')
 
   return (
     <ProfileScreen
       patientId={params.id}
-      consentToken={searchParams.get('consentToken')}
-      purpose={searchParams.get('purpose')}
+      workflowId={workflowId}
     />
   )
 }

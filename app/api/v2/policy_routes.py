@@ -157,7 +157,6 @@ async def update_patient_policy(
             idempotency_key=payload.idempotency_key,
             actor_id=provider.actor_uid,
             tenant_id=str(provider.hospital_id),
-            chain_partition=str(provider.hospital_id),
         )
     except PolicyValidationError as err:
         raise HTTPException(

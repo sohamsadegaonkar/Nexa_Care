@@ -24,7 +24,7 @@ def test_migration_is_ordered_after_current_audit_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     revision = script.get_revision("20260717_provider_pwd_canonical")
     assert revision.down_revision == "20260716_audit_ledger_chain"
-    assert script.get_current_head() == "20260718_security_governance"
+    assert script.get_current_head() == "20260719_security_runtime"
     assert len(revision.revision) <= 32
 
 

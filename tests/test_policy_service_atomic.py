@@ -95,6 +95,7 @@ async def test_first_ever_policy_write_inserts_at_version_one():
     assert db.commits == 1
     assert len(db.outbox) == 1
     assert db.outbox[0]["idempotency_key"] == "req-first-write-001"
+    assert db.outbox[0]["chain_partition"] == "tenant:hosp-1:policy"
 
 
 @pytest.mark.asyncio

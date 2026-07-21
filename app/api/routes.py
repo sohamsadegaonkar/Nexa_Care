@@ -384,7 +384,6 @@ async def request_consent(
 
 async def _resolve_scoped_consent(
     consent_token_header: str | None,
-    consent_token_query: str | None,
     required_capability: Literal["clinical", "pii"],
     db: AsyncSession,
 ) -> str:
@@ -392,7 +391,7 @@ async def _resolve_scoped_consent(
     that the token's granted scope covers `required_capability`.
     Consumes the token upon successful validation (single-use).
     """
-    consent_token = consent_token_header or consent_token_query
+    consent_token = consent_token_header
     if not consent_token:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -462,8 +461,16 @@ async def view_record_clinical(
 ) -> dict:
     """Zero-trust retrieval of the CLINICAL shard ONLY, via consent token.
     """
+    if consent_token_query is not None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "error_code": "CONSENT_TOKEN_IN_URL_RETIRED",
+                "message": "Consent capabilities must be sent through the approved request header.",
+            },
+        )
     masked_internal_id = await _resolve_scoped_consent(
-        consent_token_header, consent_token_query, required_capability="clinical", db=db
+        consent_token_header, required_capability="clinical", db=db
     )
 
     supabase = get_supabase_client()

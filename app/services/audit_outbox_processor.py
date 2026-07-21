@@ -59,9 +59,31 @@ _MARK_DEAD_LETTER_SQL = text(
     """
 )
 
+_HEALTH_SQL = text(
+    """
+    SELECT
+        count(*) FILTER (WHERE status = 'dead_letter') AS dead_letter_backlog,
+        count(*) FILTER (
+            WHERE status = 'pending'
+              AND available_at < now() - interval '5 minutes'
+        ) AS stalled_pending_events
+    FROM public.audit_outbox
+    """
+)
+
 
 def _backoff_seconds(attempt_count: int) -> int:
     return min(_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt_count)), _BACKOFF_MAX_SECONDS)
+
+
+async def get_outbox_health(db: AsyncSession) -> dict[str, int]:
+    """Return safe aggregate readiness data; never expose outbox payloads."""
+    result = await db.execute(_HEALTH_SQL)
+    row = result.mappings().one()
+    return {
+        "dead_letter_backlog": int(row["dead_letter_backlog"] or 0),
+        "stalled_pending_events": int(row["stalled_pending_events"] or 0),
+    }
 
 
 async def process_outbox_batch(

@@ -1,4 +1,9 @@
-"""Biometric signature verification service for Nexa Care V2."""
+"""Deprecated legacy biometric verifier.
+
+``SignedApprovalVerifier`` is the sole authoritative verifier for the signed
+consent HTTP route.  This module remains temporarily importable only for
+legacy compatibility tests and must not be wired into a route or new code.
+"""
 
 from __future__ import annotations
 
@@ -32,7 +37,9 @@ class SignatureVerificationResult:
     error: str | None = None
 
 class BiometricSignatureVerifier:
-    """Verifies ECDSA signatures from patient devices."""
+    """Deprecated: use ``SignedApprovalVerifier`` for signed approvals."""
+
+    DEPRECATED = True
 
     async def verify_signature(
         self,
