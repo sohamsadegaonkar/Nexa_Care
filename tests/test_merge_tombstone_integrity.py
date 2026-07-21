@@ -9,7 +9,10 @@ from types import SimpleNamespace
 import pytest
 
 from app.models.patient_tombstone import PatientTombstone
-from app.services.card_redirect_service import CardRedirectService, TombstoneIntegrityError
+from app.services.card_redirect_service import (
+    CardRedirectService,
+    TombstoneIntegrityError,
+)
 from app.services.merge_service import PatientMergeService
 
 
@@ -48,8 +51,12 @@ class FakeMergeDB:
         sql = str(stmt).lower()
         params = stmt.compile().params
         if "patient_tombstones" in sql:
-            patient_uuid = next(value for key, value in params.items() if "old_patient_uuid" in key)
-            rows = [row for row in self.tombstones if row.old_patient_uuid == patient_uuid]
+            patient_uuid = next(
+                value for key, value in params.items() if "old_patient_uuid" in key
+            )
+            rows = [
+                row for row in self.tombstones if row.old_patient_uuid == patient_uuid
+            ]
             return FakeResult(rows=rows)
         if "nfc_card_registry" in sql:
             card_id = next(value for key, value in params.items() if "card_uid" in key)
@@ -95,7 +102,9 @@ async def test_self_merge_rejected():
     db = merge_db(old)
 
     with pytest.raises(ValueError, match="itself"):
-        await PatientMergeService(db).merge_patients(old_uuid=old, canonical_uuid=old, reason="bad")
+        await PatientMergeService(db).merge_patients(
+            old_uuid=old, canonical_uuid=old, reason="bad"
+        )
 
 
 @pytest.mark.asyncio
@@ -105,7 +114,9 @@ async def test_duplicate_merge_rejected_when_old_has_different_tombstone():
     db.tombstones.append(tombstone(old, first))
 
     with pytest.raises(ValueError, match="already been merged"):
-        await PatientMergeService(db).merge_patients(old_uuid=old, canonical_uuid=second, reason="bad")
+        await PatientMergeService(db).merge_patients(
+            old_uuid=old, canonical_uuid=second, reason="bad"
+        )
 
 
 @pytest.mark.asyncio
@@ -115,7 +126,9 @@ async def test_duplicate_tombstone_rows_rejected():
     db.tombstones.extend([tombstone(old, first), tombstone(old, second)])
 
     with pytest.raises(ValueError, match="Duplicate tombstones"):
-        await PatientMergeService(db).merge_patients(old_uuid=old, canonical_uuid=first, reason="bad")
+        await PatientMergeService(db).merge_patients(
+            old_uuid=old, canonical_uuid=first, reason="bad"
+        )
 
 
 @pytest.mark.asyncio
@@ -125,7 +138,9 @@ async def test_cycle_merge_rejected():
     db.tombstones.append(tombstone(a, b))
 
     with pytest.raises(ValueError, match="cycle"):
-        await PatientMergeService(db).merge_patients(old_uuid=b, canonical_uuid=a, reason="bad")
+        await PatientMergeService(db).merge_patients(
+            old_uuid=b, canonical_uuid=a, reason="bad"
+        )
 
 
 @pytest.mark.asyncio
@@ -133,9 +148,13 @@ async def test_chain_merge_and_card_redirect_resolve_to_final_canonical():
     a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = merge_db(a, b, c)
     db.tombstones.append(tombstone(a, b))
-    db.cards["CARD-A"] = SimpleNamespace(card_uid="CARD-A", status="ACTIVE", patient_id=a)
+    db.cards["CARD-A"] = SimpleNamespace(
+        card_uid="CARD-A", status="ACTIVE", patient_id=a
+    )
 
-    created = await PatientMergeService(db).merge_patients(old_uuid=b, canonical_uuid=c, reason="chain")
+    created = await PatientMergeService(db).merge_patients(
+        old_uuid=b, canonical_uuid=c, reason="chain"
+    )
     assert created.canonical_patient_uuid == c
 
     result = await CardRedirectService(db).resolve_card_with_redirect("CARD-A")
@@ -148,7 +167,9 @@ async def test_chain_merge_and_card_redirect_resolve_to_final_canonical():
 async def test_card_redirect_duplicate_tombstones_raise_integrity_error():
     a, b, c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = merge_db(a, b, c)
-    db.cards["CARD-A"] = SimpleNamespace(card_uid="CARD-A", status="ACTIVE", patient_id=a)
+    db.cards["CARD-A"] = SimpleNamespace(
+        card_uid="CARD-A", status="ACTIVE", patient_id=a
+    )
     db.tombstones.extend([tombstone(a, b), tombstone(a, c)])
 
     with pytest.raises(TombstoneIntegrityError, match="Duplicate tombstones"):
@@ -159,7 +180,9 @@ async def test_card_redirect_duplicate_tombstones_raise_integrity_error():
 async def test_card_redirect_cycle_fails_closed():
     a, b = uuid.uuid4(), uuid.uuid4()
     db = merge_db(a, b)
-    db.cards["CARD-A"] = SimpleNamespace(card_uid="CARD-A", status="ACTIVE", patient_id=a)
+    db.cards["CARD-A"] = SimpleNamespace(
+        card_uid="CARD-A", status="ACTIVE", patient_id=a
+    )
     db.tombstones.extend([tombstone(a, b), tombstone(b, a)])
 
     with pytest.raises(TombstoneIntegrityError, match="cycle"):

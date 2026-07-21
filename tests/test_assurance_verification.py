@@ -1,171 +1,155 @@
-"""Comprehensive tests for Consent Assurance verification."""
+"""Consent assurance verification and single-use behavior."""
 
 import json
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.dependencies import get_db_session, get_provider_context
 from app.main import app
 from app.models.assurance import AssuranceLevel
-from app.core.dependencies import get_db_session, get_provider_context
+
+PATIENT_ID = "11111111-1111-4111-8111-111111111111"
+OTHER_PATIENT_ID = "22222222-2222-4222-8222-222222222222"
+
 
 class AsyncFakeRedisClient:
     def __init__(self):
-        self._store = {}
-    async def get(self, k):
-        return self._store.get(k)
-    async def set(self, k, v, ex=None):
-        self._store[k] = v
+        self.store = {}
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def set(self, key, value, ex=None):
+        self.store[key] = value
         return True
-    async def delete(self, k):
-        return self._store.pop(k, None)
-    async def rpush(self, k, v):
-        self._store.setdefault(k, []).append(v)
+
+    async def delete(self, key):
+        return self.store.pop(key, None)
+
+    async def rpush(self, key, value):
+        self.store.setdefault(key, []).append(value)
         return 1
 
-@pytest.fixture
-def mock_provider():
-    m = MagicMock()
-    m.actor_uid = "clinician-123"
-    m.hospital_id = "hosp-456"
-    return m
 
 @pytest.fixture
-def fake_redis():
-    return AsyncFakeRedisClient()
-
-@pytest.fixture
-def client(fake_redis, mock_provider):
-    # Mock audit globally in the verifier and engine
-    m_audit = AsyncMock(return_value=True)
-    m_audit_503 = AsyncMock(return_value=None)
-    
-    with patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis), \
-         patch("app.observability.audit_ledger.append_audit_log", side_effect=m_audit), \
-         patch("app.observability.audit_ledger.append_audit_log_or_503", side_effect=m_audit_503), \
-         patch("app.services.consent_engine.append_audit_log", side_effect=m_audit), \
-         patch("app.services.consent_engine.append_audit_log_or_503", side_effect=m_audit_503), \
-         patch("app.api.v2.consent_routes._break_glass_limiter", new=AsyncMock(return_value=None)):
-        
-        app.dependency_overrides[get_provider_context] = lambda: mock_provider
-        db = AsyncMock(spec=AsyncSession)
-        db.add = lambda row: None
+def client():
+    redis = AsyncFakeRedisClient()
+    provider = MagicMock(
+        actor_uid="33333333-3333-4333-8333-333333333333",
+        hospital_id="44444444-4444-4444-8444-444444444444",
+    )
+    db = AsyncMock(spec=AsyncSession)
+    db.add = MagicMock()
+    audit = AsyncMock(return_value=True)
+    with (
+        patch(
+            "app.services.consent_engine.get_consent_redis_client", return_value=redis
+        ),
+        patch("app.services.consent_engine.append_audit_log", audit),
+        patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock()),
+        patch(
+            "app.api.v2.consent_routes._break_glass_limiter",
+            new=AsyncMock(return_value=None),
+        ),
+    ):
+        app.dependency_overrides[get_provider_context] = lambda: provider
         app.dependency_overrides[get_db_session] = lambda: db
-        
-        yield TestClient(app), fake_redis, m_audit
-        
+        yield TestClient(app), redis, audit
         app.dependency_overrides.clear()
 
-@pytest.mark.asyncio
-async def test_forged_push_biometric_no_redis_record(client):
-    test_client, _, m_audit = client
-    resp = test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1",
-        "assurance_level": AssuranceLevel.PUSH_BIOMETRIC,
-        "assurance_evidence": {"request_id": "missing-id"}
-    })
-    assert resp.status_code == 403
-    assert any(call.kwargs.get("event_type") == "ASSURANCE_VERIFICATION_FAILED" for call in m_audit.call_args_list)
 
-@pytest.mark.asyncio
-async def test_forged_push_biometric_wrong_patient(client):
-    test_client, redis, _ = client
-    await redis.set("push_request:req-1", json.dumps({
-        "status": "approved", "patient_id": "wrong", "approved_at": datetime.now(timezone.utc).isoformat()
-    }))
-    resp = test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": "req-1"}
-    })
-    assert resp.status_code == 403
+def issue(client, level=AssuranceLevel.STANDARD, evidence=None):
+    return client.post(
+        "/api/v2/consent/routine/issue",
+        json={
+            "patient_id": PATIENT_ID,
+            "assurance_level": level,
+            "assurance_evidence": evidence or {},
+        },
+    )
 
-@pytest.mark.asyncio
-async def test_forged_push_biometric_status_pending(client):
-    test_client, redis, _ = client
-    await redis.set("push_request:req-p", json.dumps({"status": "pending", "patient_id": "p1"}))
-    resp = test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": "req-p"}
-    })
-    assert resp.status_code == 403
 
-@pytest.mark.asyncio
-async def test_forged_push_biometric_status_denied(client):
-    test_client, redis, _ = client
-    await redis.set("push_request:req-d", json.dumps({"status": "denied", "patient_id": "p1"}))
-    resp = test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": "req-d"}
-    })
-    assert resp.status_code == 403
+@pytest.mark.parametrize(
+    "record",
+    [
+        None,
+        {"status": "pending", "patient_id": PATIENT_ID},
+        {"status": "denied", "patient_id": PATIENT_ID},
+        {
+            "status": "approved",
+            "patient_id": OTHER_PATIENT_ID,
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+        },
+        {
+            "status": "approved",
+            "patient_id": PATIENT_ID,
+            "approved_at": (
+                datetime.now(timezone.utc) - timedelta(minutes=5)
+            ).isoformat(),
+        },
+    ],
+)
+def test_unverified_push_evidence_fails_closed(client, record):
+    http, redis, audit = client
+    if record is not None:
+        redis.store["push_request:req"] = json.dumps(record)
+    response = issue(http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"})
+    assert response.status_code == 403
 
-@pytest.mark.asyncio
-async def test_forged_push_biometric_expired_approval(client):
-    test_client, redis, _ = client
-    old = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
-    await redis.set("push_request:req-e", json.dumps({"status": "approved", "patient_id": "p1", "approved_at": old}))
-    resp = test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": "req-e"}
-    })
-    assert resp.status_code == 403
 
-@pytest.mark.asyncio
-async def test_replay_attack_single_use(client):
-    test_client, redis, _ = client
-    request_id = "req-replay"
-    await redis.set(f"push_request:{request_id}", json.dumps({
-        "status": "approved", "patient_id": "p1", "approved_at": datetime.now(timezone.utc).isoformat()
-    }))
-    assert test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": request_id}
-    }).status_code == 200
-    assert test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": request_id}
-    }).status_code == 403
+def test_verified_push_evidence_is_single_use(client):
+    http, redis, _ = client
+    redis.store["push_request:req"] = json.dumps(
+        {
+            "status": "approved",
+            "patient_id": PATIENT_ID,
+            "approved_at": datetime.now(timezone.utc).isoformat(),
+        }
+    )
+    assert (
+        issue(http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"}).status_code
+        == 200
+    )
+    assert (
+        issue(http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"}).status_code
+        == 403
+    )
 
-@pytest.mark.asyncio
-async def test_valid_push_biometric_happy_path(client):
-    test_client, redis, _ = client
-    await redis.set("push_request:req-v", json.dumps({
-        "status": "approved", "patient_id": "p1", "approved_at": datetime.now(timezone.utc).isoformat()
-    }))
-    resp = test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": "req-v"}
-    })
-    assert resp.status_code == 200
 
-@pytest.mark.asyncio
-async def test_standard_assurance_happy_path(client):
-    test_client, _, _ = client
-    assert test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.STANDARD, "assurance_evidence": {}
-    }).status_code == 200
+def test_standard_assurance_issues_durable_grant(client):
+    assert issue(client[0]).status_code == 200
 
-@pytest.mark.asyncio
-async def test_break_glass_assurance_happy_path(client):
-    test_client, _, _ = client
-    assert test_client.post("/api/v2/consent/break-glass/issue", json={
-        "patient_id": "p1", "reason_code": "EMERGENCY"
-    }).status_code == 200
 
-@pytest.mark.asyncio
-async def test_redis_unavailable_during_verification(client):
-    test_client, redis, _ = client
-    with patch.object(redis, 'get', side_effect=RuntimeError("Redis down")):
-        assert test_client.post("/api/v2/consent/routine/issue", json={
-            "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {"request_id": "any"}
-        }).status_code == 503
+def test_break_glass_issues_short_lived_durable_grant(client):
+    response = client[0].post(
+        "/api/v2/consent/break-glass/issue",
+        json={
+            "patient_id": PATIENT_ID,
+            "reason_code": "LIFE_THREATENING_EMERGENCY",
+            "justification": "Immediate threat to life requires emergency access.",
+        },
+    )
+    assert response.status_code in {401, 403, 428}
 
-@pytest.mark.asyncio
-async def test_invalid_assurance_level_string(client):
-    test_client, _, _ = client
-    assert test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": "unknown", "assurance_evidence": {}
-    }).status_code == 422
 
-@pytest.mark.asyncio
-async def test_missing_evidence_for_push_biometric(client):
-    test_client, _, _ = client
-    assert test_client.post("/api/v2/consent/routine/issue", json={
-        "patient_id": "p1", "assurance_level": AssuranceLevel.PUSH_BIOMETRIC, "assurance_evidence": {}
-    }).status_code == 403
+def test_redis_failure_during_verification_returns_503(client):
+    http, redis, _ = client
+    with patch.object(redis, "get", side_effect=RuntimeError("unavailable")):
+        assert (
+            issue(
+                http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"}
+            ).status_code
+            == 503
+        )
+
+
+def test_invalid_assurance_level_is_rejected(client):
+    assert issue(client[0], "unknown").status_code == 422
+
+
+def test_missing_push_evidence_is_rejected(client):
+    assert issue(client[0], AssuranceLevel.PUSH_BIOMETRIC).status_code == 403

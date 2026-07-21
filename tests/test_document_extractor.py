@@ -1,133 +1,119 @@
-"""Tests for the remote medical document extractor wrapper."""
-
-from __future__ import annotations
-
-import asyncio
-import tempfile
-import unittest
-from pathlib import Path
+import sys
 from unittest.mock import AsyncMock, patch
 
-from pydantic import ValidationError
+import httpx
+import pytest
 
-from app.ai.extractor import DocumentExtractionError, MedicalDocumentExtractor
-from app.models.ai_models import ExtractedMedicalDocument
+from app.ai.extractor import (
+    DemoExtractionProvider,
+    InvalidDocumentError,
+    RemoteExtractionProvider,
+    RetryableDocumentExtractionError,
+)
+from app.core.config import (
+    ConfigError,
+    DocumentExtractionConfig,
+    get_document_extraction_config,
+)
 
 
-def run(coro):
-    return asyncio.run(coro)
+def remote_config(**overrides):
+    values = dict(
+        provider="remote",
+        environment="test",
+        api_url="https://extract.example/v1",
+        api_key="secret",
+        timeout_seconds=1,
+        max_attempts=2,
+    )
+    values.update(overrides)
+    return DocumentExtractionConfig(**values)
 
 
-class TestExtractedMedicalDocument(unittest.TestCase):
-    def test_strict_types_reject_bad_model_output(self) -> None:
-        with self.assertRaises(ValidationError):
-            ExtractedMedicalDocument(
-                patient_name="Jane Example",
-                aadhaar_abha_id="1234-5678-9012",
-                phone="9876543210",
-                diagnoses="asthma",
-                lab_results=[],
-                prescriptions=[],
-                extraction_confidence=0.96,
+@pytest.mark.asyncio
+async def test_remote_provider_validates_response_schema():
+    response = type(
+        "Response",
+        (),
+        {
+            "status_code": 200,
+            "json": lambda self: {
+                "patient_name": "Extracted Name",
+                "aadhaar_abha_id": "id",
+                "phone": "phone",
+                "diagnoses": [],
+                "lab_results": [],
+                "prescriptions": [],
+                "extraction_confidence": 0.7,
+            },
+        },
+    )()
+    client = AsyncMock()
+    client.post.return_value = response
+    result = await RemoteExtractionProvider(remote_config(), client).extract_bytes(
+        b"%PDF-1.7", mime_type="application/pdf", request_id="req-1"
+    )
+    assert result.extraction_confidence == 0.7
+
+
+@pytest.mark.asyncio
+async def test_timeout_is_retryable_and_never_returns_clinical_output():
+    client = AsyncMock()
+    client.post.side_effect = httpx.ReadTimeout("timeout")
+    with patch("app.ai.extractor.asyncio.sleep", new=AsyncMock()):
+        with pytest.raises(RetryableDocumentExtractionError) as exc:
+            await RemoteExtractionProvider(remote_config(), client).extract_bytes(
+                b"%PDF-1.7", mime_type="application/pdf", request_id="req-timeout"
             )
+    assert exc.value.error_code == "EXTRACTION_UPSTREAM_RETRYABLE"
+    assert client.post.await_count == 2
 
-    def test_confidence_must_be_between_zero_and_one(self) -> None:
-        with self.assertRaises(ValidationError):
-            ExtractedMedicalDocument(
-                patient_name="Jane Example",
-                aadhaar_abha_id="1234-5678-9012",
-                phone="9876543210",
-                diagnoses=["asthma"],
-                lab_results=[],
-                prescriptions=[],
-                extraction_confidence=1.5,
-            )
 
-    def test_extra_fields_are_preserved_for_fail_safe_sharding(self) -> None:
-        doc = ExtractedMedicalDocument(
-            patient_name="Jane Example",
-            aadhaar_abha_id="1234-5678-9012",
-            phone="9876543210",
-            diagnoses=["asthma"],
-            lab_results=[],
-            prescriptions=[],
-            extraction_confidence=0.96,
-            unexpected_identifier="vault me",
+@pytest.mark.asyncio
+async def test_invalid_upstream_payload_is_terminal():
+    response = type(
+        "Response", (), {"status_code": 200, "json": lambda self: {"fake": "clinical"}}
+    )()
+    client = AsyncMock()
+    client.post.return_value = response
+    with pytest.raises(InvalidDocumentError):
+        await RemoteExtractionProvider(remote_config(), client).extract_bytes(
+            b"%PDF-1.7", mime_type="application/pdf", request_id="req-invalid"
         )
 
-        dumped = doc.model_dump()
-        self.assertEqual(dumped["unexpected_identifier"], "vault me")
+
+@pytest.mark.asyncio
+async def test_demo_provider_has_no_filename_behavior():
+    provider = DemoExtractionProvider()
+    results = [
+        await provider.extract_bytes(
+            b"same", mime_type="application/pdf", request_id=name
+        )
+        for name in ("panel.pdf", "demo.pdf", "aarav.pdf")
+    ]
+    assert results[0] == results[1] == results[2]
+    assert results[0].diagnoses == []
 
 
-class TestMedicalDocumentExtractor(unittest.TestCase):
-    def test_initialization_does_not_load_local_ml(self) -> None:
-        with patch.dict(
-            "os.environ",
-            {"DOCUMENT_AI_API_KEY": "", "DOCUMENT_AI_API_URL": ""},
-        ):
-            extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
-
-        self.assertFalse(extractor.api_key)
-        self.assertFalse(extractor.api_url)
-
-    @patch("app.ai.extractor.asyncio.sleep", new_callable=AsyncMock)
-    def test_missing_api_key_returns_mock_after_delay(self, mock_sleep) -> None:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(b"fake medical document")
-            path = tmp.name
-
-        with patch.dict(
-            "os.environ",
-            {"DOCUMENT_AI_API_KEY": "", "DOCUMENT_AI_API_URL": ""},
-        ):
-            extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
-        try:
-            document = run(extractor.extract_data(path))
-        finally:
-            Path(path).unlink(missing_ok=True)
-
-        mock_sleep.assert_awaited_once_with(2)
-        self.assertIsInstance(document, ExtractedMedicalDocument)
-        self.assertGreaterEqual(document.extraction_confidence, 0.95)
-        self.assertEqual(document.patient_name, "Asha Raman")
-
-    def test_api_key_path_validates_remote_payload(self) -> None:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp.write(b"fake medical document")
-            path = tmp.name
-
-        extractor = MedicalDocumentExtractor(api_key="test-key", api_url="https://vlm.example")
-        extractor._call_remote_vlm_api = AsyncMock(return_value={
-            "patient_name": "Jane Example",
-            "aadhaar_abha_id": "1234-5678-9012",
-            "phone": "9876543210",
-            "diagnoses": ["asthma"],
-            "lab_results": ["CBC normal"],
-            "prescriptions": ["Salbutamol"],
-            "extraction_confidence": 0.91,
-        })
-
-        try:
-            document = run(extractor.extract_data(path))
-        finally:
-            Path(path).unlink(missing_ok=True)
-
-        self.assertEqual(document.extraction_confidence, 0.91)
-        extractor._call_remote_vlm_api.assert_awaited_once()
-
-    def test_file_read_error_raises_extraction_error(self) -> None:
-        extractor = MedicalDocumentExtractor(api_key=None, api_url=None)
-
-        with self.assertRaises(DocumentExtractionError):
-            run(extractor.extract_data("/tmp/does-not-exist-nexa-care"))
-
-    def test_no_torch_or_transformer_modules_are_imported_by_extractor(self) -> None:
-        import app.ai.extractor as extractor_module
-
-        module_globals = set(extractor_module.__dict__)
-        self.assertNotIn("torch", module_globals)
-        self.assertNotIn("pipeline", module_globals)
+@pytest.mark.parametrize("environment", ["production", "staging", "preview", "pilot"])
+def test_demo_provider_rejected_in_production_like_environments(
+    monkeypatch, environment
+):
+    monkeypatch.setenv("ENVIRONMENT", environment)
+    monkeypatch.setenv("DOCUMENT_EXTRACTION_PROVIDER", "demo")
+    with pytest.raises(ConfigError):
+        get_document_extraction_config()
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_remote_provider_requires_key_and_url(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DOCUMENT_EXTRACTION_PROVIDER", "remote")
+    monkeypatch.delenv("DOCUMENT_AI_API_KEY", raising=False)
+    monkeypatch.delenv("DOCUMENT_AI_API_URL", raising=False)
+    with pytest.raises(ConfigError):
+        get_document_extraction_config()
+
+
+def test_extractor_does_not_import_local_ml():
+    assert "torch" not in sys.modules
+    assert "transformers" not in sys.modules

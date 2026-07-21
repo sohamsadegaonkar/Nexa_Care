@@ -100,7 +100,11 @@ export async function resolveNfcCard(cardUid: string): Promise<NfcResolveRespons
       'NFC resolve response',
     )
 
-    return validated
+    return {
+      patient_id: validated.patient_id,
+      canonical_patient_id: validated.canonical_patient_id ?? null,
+      is_redirected: validated.is_redirected ?? false,
+    }
   } catch (err: unknown) {
     // If Zod validation failed, wrap in a specific error code
     if (err instanceof SchemaValidationError) {

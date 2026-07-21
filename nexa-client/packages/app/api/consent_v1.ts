@@ -1,4 +1,3 @@
-
 import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export type ConsentAssurance =
@@ -9,11 +8,11 @@ export type ConsentAssurance =
   | 'standard_fallback_from_push'
 
 export interface RoutineConsentRequest {
-  patient_uuid: string
-  hospital_id: string
-  clinician_id: string
-  purpose: string
-  consent_assurance?: ConsentAssurance
+  patient_id: string
+  purpose: 'TREATMENT' | 'PAYMENT' | 'OPERATIONS' | 'RESEARCH'
+  scope: string[]
+  assurance_level?: 'standard'
+  assurance_evidence?: Record<string, unknown>
 }
 
 export interface BreakGlassRequest {
@@ -26,10 +25,6 @@ export interface BreakGlassRequest {
 
 export interface ConsentResponse {
   consent_token: string
-  patient_uuid: string
-  purpose: string
-  consent_assurance: ConsentAssurance
-  granted_at: string
   expires_at: string
 }
 
@@ -64,7 +59,7 @@ export async function issueRoutineConsentV1(
       RoutineConsentRequest
     >('/api/v2/consent/routine/issue', {
       ...payload,
-      consent_assurance: payload.consent_assurance || 'standard',
+      assurance_level: payload.assurance_level || 'standard',
     })
     return response.data
   } catch (error: unknown) {
@@ -72,7 +67,7 @@ export async function issueRoutineConsentV1(
       const status = error.status
       throw new ConsentError(
         error.message || 'Failed to issue consent',
-        'CONSENT_FAILED',
+        error.code === 'PATIENT_APPROVAL_REQUIRED' ? 'CONSENT_UNAUTHORIZED' : 'CONSENT_FAILED',
         status
       )
     }
@@ -113,11 +108,13 @@ export async function validateConsent(
   patientUuid?: string
 ): Promise<ConsentResponse | null> {
   try {
-    const params = new URLSearchParams({ consent_token: consentToken })
-    if (patientUuid) params.append('patient_uuid', patientUuid)
+    const params = new URLSearchParams()
+    if (patientUuid) params.append('patient_id', patientUuid)
+    const query = params.toString()
 
     const response = await apiClient.get<ConsentResponse>(
-      `/api/v2/consent/validate?${params.toString()}`
+      `/api/v2/consent/validate${query ? `?${query}` : ''}`,
+      { headers: { 'X-Consent-Token': consentToken } }
     )
     return response.data
   } catch {

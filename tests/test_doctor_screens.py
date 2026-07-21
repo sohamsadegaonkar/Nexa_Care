@@ -104,7 +104,7 @@ class TestNoPlaceholderIds:
                 if "provider_id" in line:
                     stripped = line.strip()
                     # Allow: provider_id: someVar, provider_id: providerId
-                    if re.match(r'.*provider_id\s*:\s*\w', stripped):
+                    if re.match(r".*provider_id\s*:\s*\w", stripped):
                         continue
                     # Allow: provider_id: string (type annotation)
                     if "string" in stripped and ":" in stripped:
@@ -121,30 +121,30 @@ class TestNoPlaceholderIds:
         code_no_comments = _strip_comments(code)
         # Check for common placeholder patterns
         for pattern in ["provider-123", "provider-001", "PROVIDER_ID", "prov-123"]:
-            assert pattern not in code_no_comments, (
-                f"{screen} contains placeholder '{pattern}'"
-            )
+            assert (
+                pattern not in code_no_comments
+            ), f"{screen} contains placeholder '{pattern}'"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_localhost(self, screen: str) -> None:
         code = _read_screen(screen)
-        assert "localhost" not in code.lower(), (
-            f"{screen} contains 'localhost' — use apiClient which reads URL from env"
-        )
+        assert (
+            "localhost" not in code.lower()
+        ), f"{screen} contains 'localhost' — use apiClient which reads URL from env"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_raw_fetch(self, screen: str) -> None:
         code = _read_screen(screen)
-        assert not re.search(r"\bfetch\s*\(", code), (
-            f"{screen} uses raw fetch() — use apiClient instead"
-        )
+        assert not re.search(
+            r"\bfetch\s*\(", code
+        ), f"{screen} uses raw fetch() — use apiClient instead"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_axios(self, screen: str) -> None:
         code = _read_screen(screen)
-        assert "axios" not in code.lower(), (
-            f"{screen} uses axios — use apiClient instead"
-        )
+        assert (
+            "axios" not in code.lower()
+        ), f"{screen} uses axios — use apiClient instead"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -195,9 +195,9 @@ class TestApiClientUsage:
         uses_api_client = "apiClient" in code or "NexaApiClient" in code
         uses_auth_context = "ProviderAuthContext" in code
         uses_nfc_resolve = "nfcResolve" in code
-        assert uses_api_client or uses_auth_context or uses_nfc_resolve, (
-            f"{screen} must import apiClient, ProviderAuthContext, or nfcResolve service"
-        )
+        assert (
+            uses_api_client or uses_auth_context or uses_nfc_resolve
+        ), f"{screen} must import apiClient, ProviderAuthContext, or nfcResolve service"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_hardcoded_patient_id(self, screen: str) -> None:
@@ -206,9 +206,9 @@ class TestApiClientUsage:
         # patient_id as a variable name is fine (comes from search params)
         # but hardcoded values like "pat-123" are not
         for pattern in ["pat-123", "PATIENT_ID", "patient-001", "patient_001"]:
-            assert pattern not in code_no_comments, (
-                f"{screen} contains hardcoded patient ID '{pattern}'"
-            )
+            assert (
+                pattern not in code_no_comments
+            ), f"{screen} contains hardcoded patient ID '{pattern}'"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -229,7 +229,9 @@ class TestProviderAuthContext:
 
     def test_exports_provider_auth_provider(self) -> None:
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "ProviderAuthProvider" in code, "Must export ProviderAuthProvider component"
+        assert (
+            "ProviderAuthProvider" in code
+        ), "Must export ProviderAuthProvider component"
 
     def test_exports_provider_session_type(self) -> None:
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
@@ -258,7 +260,9 @@ class TestProviderAuthContext:
 
     def test_stores_jwt_via_set_auth_token(self) -> None:
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "setAuthTokenProvider" in code, "Must store session token via setAuthTokenProvider()"
+        assert (
+            "setAuthTokenProvider" in code
+        ), "Must store session token via setAuthTokenProvider()"
 
     def test_no_localhost(self) -> None:
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
@@ -283,9 +287,7 @@ class TestDoctorLoginScreen:
 
     def test_uses_provider_auth_context(self) -> None:
         code = _read_screen("DoctorLoginScreen")
-        assert "ProviderAuthContext" in code, (
-            "Must import from ProviderAuthContext"
-        )
+        assert "ProviderAuthContext" in code, "Must import from ProviderAuthContext"
 
 
 class TestDoctorDashboardScreen:
@@ -323,9 +325,9 @@ class TestPatientSearchScreen:
         code = _read_screen("PatientSearchScreen")
         code_no_comments = _strip_comments(code)
         for pattern in ["pat-123", "PATIENT_ID", "patient-001"]:
-            assert pattern not in code_no_comments, (
-                f"Must not contain hardcoded patient ID '{pattern}'"
-            )
+            assert (
+                pattern not in code_no_comments
+            ), f"Must not contain hardcoded patient ID '{pattern}'"
 
 
 # (TestRequestConsentScreen moved to section 13 below)
@@ -337,13 +339,15 @@ class TestPatientRecordViewerScreen:
         code = _read_screen("PatientRecordViewerScreen")
         # The screen fetches via NexaApiClient.getPatientSummary() which
         # encapsulates the API endpoint — check for the method call.
-        assert "getPatientSummary" in code or "/api/v2/patient/" in code, "Must fetch patient data"
+        assert (
+            "getPatientSummary" in code or "/api/v2/patient/" in code
+        ), "Must fetch patient data"
 
     def test_shows_vitals_medications_allergies(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
-        assert "vitals" in code.lower() or "medications" in code.lower(), (
-            "Must display clinical data sections"
-        )
+        assert (
+            "vitals" in code.lower() or "medications" in code.lower()
+        ), "Must display clinical data sections"
 
     def test_has_tabbed_layout(self) -> None:
         """Must have a tabbed layout with multiple tabs."""
@@ -352,7 +356,9 @@ class TestPatientRecordViewerScreen:
         assert "summary" in code.lower(), "Must have Summary tab"
         assert "vitals" in code.lower(), "Must have Vitals tab"
         assert "prescriptions" in code.lower(), "Must have Prescriptions tab"
-        assert "labs" in code.lower() or "lab" in code.lower(), "Must have Lab Reports tab"
+        assert (
+            "labs" in code.lower() or "lab" in code.lower()
+        ), "Must have Lab Reports tab"
         assert "allergies" in code.lower(), "Must have Allergies tab"
         assert "documents" in code.lower(), "Must have Documents tab"
         assert "timeline" in code.lower(), "Must have Timeline tab"
@@ -363,9 +369,9 @@ class TestPatientRecordViewerScreen:
         code = _read_screen("PatientRecordViewerScreen")
         assert "secondsRemaining" in code, "Must track remaining seconds"
         assert "expired" in code.lower(), "Must handle expired state"
-        assert "Consent Expired" in code or "Consent expired" in code, (
-            "Must show 'Consent expired' message when expired"
-        )
+        assert (
+            "Consent Expired" in code or "Consent expired" in code
+        ), "Must show 'Consent expired' message when expired"
 
     def test_allergies_prominently_displayed(self) -> None:
         """Allergies must be prominently displayed (safety-critical)."""
@@ -376,7 +382,9 @@ class TestPatientRecordViewerScreen:
     def test_has_confidence_badges(self) -> None:
         """AI-extracted fields must show confidence/source badges."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "ProvenanceBadge" in code, "Must have ProvenanceBadge component (replaces ConfidenceBadge with verification status)"
+        assert (
+            "ProvenanceBadge" in code
+        ), "Must have ProvenanceBadge component (replaces ConfidenceBadge with verification status)"
         assert "confidence" in code.lower(), "Must use confidence field"
 
     def test_locked_when_consent_expired(self) -> None:
@@ -384,9 +392,9 @@ class TestPatientRecordViewerScreen:
         code = _read_screen("PatientRecordViewerScreen")
         code_norm = _normalize_ws(code)
         assert "expired" in code_norm.lower(), "Must have expired viewer state"
-        assert "Request access again" in code or "request access" in code.lower(), (
-            "Must prompt to request access again when expired"
-        )
+        assert (
+            "Request access again" in code or "request access" in code.lower()
+        ), "Must prompt to request access again when expired"
 
 
 class TestEmergencyAccessScreen:
@@ -398,9 +406,9 @@ class TestEmergencyAccessScreen:
         code = _read_screen("EmergencyAccessScreen")
         # The screen calls NexaApiClient.breakGlassIssue() which encapsulates
         # the API endpoint — check for the method call or the raw endpoint.
-        assert "breakGlassIssue" in code or "/api/v2/consent/break-glass/" in code, (
-            "Must call break-glass API (via NexaApiClient or direct endpoint)"
-        )
+        assert (
+            "breakGlassIssue" in code or "/api/v2/consent/break-glass/" in code
+        ), "Must call break-glass API (via NexaApiClient or direct endpoint)"
 
     def test_has_reason_code_input(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
@@ -418,36 +426,42 @@ class TestEmergencyAccessScreen:
         """Reason code must be a controlled selector, not free-text."""
         code = _read_screen("EmergencyAccessScreen")
         assert "Select" in code, "Must use Select for reason code"
-        assert "REASON_OPTIONS" in code or "BreakGlassReason" in code, (
-            "Must define controlled reason options"
-        )
-        assert "LIFE_THREATENING" in code or "IMMEDIATE_THREAT_TO_LIFE" in code, "Must include LIFE_THREATENING or IMMEDIATE_THREAT_TO_LIFE reason"
+        assert (
+            "REASON_OPTIONS" in code or "BreakGlassReason" in code
+        ), "Must define controlled reason options"
+        assert (
+            "LIFE_THREATENING" in code or "IMMEDIATE_THREAT_TO_LIFE" in code
+        ), "Must include LIFE_THREATENING or IMMEDIATE_THREAT_TO_LIFE reason"
 
     def test_requires_clinical_justification(self) -> None:
         """Clinical justification must be required (not optional)."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "freeText" in code or "justification" in code.lower(), (
-            "Must have clinical justification field"
-        )
+        assert (
+            "freeText" in code or "justification" in code.lower()
+        ), "Must have clinical justification field"
         # Must validate justification is not empty
-        assert "!freeText.trim()" in code or "!free_text" in code or "justification is required" in code.lower(), (
-            "Must require clinical justification (not optional)"
-        )
+        assert (
+            "!freeText.trim()" in code
+            or "!free_text" in code
+            or "justification is required" in code.lower()
+        ), "Must require clinical justification (not optional)"
 
     def test_shows_rate_limit_warning(self) -> None:
         """Must warn about rate limiting."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "rate" in code.lower() or "3 per hour" in code or "rate limit" in code.lower(), (
-            "Must show rate limit warning"
-        )
+        assert (
+            "rate" in code.lower()
+            or "3 per hour" in code
+            or "rate limit" in code.lower()
+        ), "Must show rate limit warning"
 
     def test_never_calls_approval_endpoint(self) -> None:
         """Emergency screen must never call consent approval endpoints."""
         code = _read_screen("EmergencyAccessScreen")
         code_no_comments = _strip_comments(code)
-        assert "approve-signed" not in code_no_comments, (
-            "Must NOT call /api/v2/consent/approve-signed"
-        )
+        assert (
+            "approve-signed" not in code_no_comments
+        ), "Must NOT call /api/v2/consent/approve-signed"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -464,9 +478,9 @@ class TestNextJsRoutes:
 
     def test_layout_imports_provider_auth(self) -> None:
         code = _read(NEXT_ROUTES_DIR.parent / "layout.tsx")
-        assert "ProviderAuthProvider" in code, (
-            "Root layout must wrap doctor routes with ProviderAuthProvider"
-        )
+        assert (
+            "ProviderAuthProvider" in code
+        ), "Root layout must wrap doctor routes with ProviderAuthProvider"
 
     @pytest.mark.parametrize("route", ROUTES, ids=ROUTES)
     def test_route_page_exists(self, route: str) -> None:
@@ -476,24 +490,28 @@ class TestNextJsRoutes:
     @pytest.mark.parametrize("route", ROUTES, ids=ROUTES)
     def test_route_imports_screen(self, route: str) -> None:
         code = _read(NEXT_ROUTES_DIR / route / "page.tsx")
-        assert "Doctor" in code or "Patient" in code or "Request" in code or "Waiting" in code or "Emergency" in code, (
-            f"Route {route} must import the corresponding screen component"
-        )
+        assert (
+            "Doctor" in code
+            or "Patient" in code
+            or "Request" in code
+            or "Waiting" in code
+            or "Emergency" in code
+        ), f"Route {route} must import the corresponding screen component"
 
     @pytest.mark.parametrize("route", ROUTES, ids=ROUTES)
     def test_route_no_localhost(self, route: str) -> None:
         code = _read(NEXT_ROUTES_DIR / route / "page.tsx")
-        assert "localhost" not in code.lower(), (
-            f"Route {route} must not contain localhost"
-        )
+        assert (
+            "localhost" not in code.lower()
+        ), f"Route {route} must not contain localhost"
 
     @pytest.mark.parametrize("route", ROUTES, ids=ROUTES)
     def test_route_no_provider_id(self, route: str) -> None:
         code = _read(NEXT_ROUTES_DIR / route / "page.tsx")
         code_no_comments = _strip_comments(code)
-        assert "provider_id" not in code_no_comments, (
-            f"Route {route} must not contain provider_id placeholder"
-        )
+        assert (
+            "provider_id" not in code_no_comments
+        ), f"Route {route} must not contain provider_id placeholder"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -515,21 +533,21 @@ class TestDoctorFlowDoc:
 
     def test_doc_mentions_provider_auth_context(self) -> None:
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "ProviderAuthContext" in code, (
-            "Doctor flow doc must mention ProviderAuthContext"
-        )
+        assert (
+            "ProviderAuthContext" in code
+        ), "Doctor flow doc must mention ProviderAuthContext"
 
     def test_doc_mentions_no_provider_id(self) -> None:
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "provider_id" in code, (
-            "Doctor flow doc must explicitly mention provider_id is from session"
-        )
+        assert (
+            "provider_id" in code
+        ), "Doctor flow doc must explicitly mention provider_id is from session"
 
     def test_doc_mentions_break_glass(self) -> None:
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "break-glass" in code.lower() or "Emergency" in code, (
-            "Doctor flow doc must cover emergency break-glass access"
-        )
+        assert (
+            "break-glass" in code.lower() or "Emergency" in code
+        ), "Doctor flow doc must cover emergency break-glass access"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -555,9 +573,9 @@ class TestLoginFlow:
     def test_login_screen_has_totp_input(self) -> None:
         """MFA step must have a TOTP code input field."""
         code = _read_screen("DoctorLoginScreen")
-        assert "totpCode" in code or "totp_code" in code, (
-            "Must have a TOTP code state variable"
-        )
+        assert (
+            "totpCode" in code or "totp_code" in code
+        ), "Must have a TOTP code state variable"
         # The TOTP input should have maxLength or similar numeric constraint
         assert "6" in code, "TOTP code must require at least 6 digits"
 
@@ -566,9 +584,8 @@ class TestLoginFlow:
         code = _read_screen("DoctorLoginScreen")
         context_code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         assert "verifyMfa" in code, "Must call verifyMfa() from context"
-        assert "pendingMfaTokenRef" in context_code and "mfa_token" in context_code, (
-            "ProviderAuthContext must retain and submit the opaque MFA token"
-        )
+        assert "providerWebMfaVerify" in context_code
+        assert "mfa_token" not in context_code
 
     def test_login_screen_has_back_to_sign_in(self) -> None:
         """MFA step must have a 'Back to Sign In' button to restart."""
@@ -583,9 +600,9 @@ class TestLoginFlow:
     def test_login_screen_shows_error_for_both_steps(self) -> None:
         """Error display must work for both credentials and MFA steps."""
         code = _read_screen("DoctorLoginScreen")
-        assert "displayError" in code or "localError" in code, (
-            "Must display errors from both steps"
-        )
+        assert (
+            "displayError" in code or "localError" in code
+        ), "Must display errors from both steps"
 
 
 class TestProviderAuthMfaFlow:
@@ -599,17 +616,19 @@ class TestProviderAuthMfaFlow:
     def test_login_result_has_authenticated_variant(self) -> None:
         """LoginResult must have an 'authenticated' variant with session."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "'authenticated'" in code or '"authenticated"' in code, (
-            "LoginResult must have 'authenticated' type variant"
-        )
+        assert (
+            "'authenticated'" in code or '"authenticated"' in code
+        ), "LoginResult must have 'authenticated' type variant"
 
     def test_login_result_has_mfa_required_variant(self) -> None:
         """LoginResult must have a 'mfa_required' variant with mfaToken."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "'mfa_required'" in code or '"mfa_required"' in code, (
-            "LoginResult must have 'mfa_required' type variant"
-        )
-        assert "mfaToken" in code, "mfa_required variant must include mfaToken"
+        assert (
+            "'mfa_required'" in code or '"mfa_required"' in code
+        ), "LoginResult must have 'mfa_required' type variant"
+        assert (
+            "mfaToken" not in code
+        ), "Browser MFA state must remain in HttpOnly cookies"
 
     def test_has_verify_mfa_action(self) -> None:
         """ProviderAuthActions must include verifyMfa."""
@@ -617,31 +636,27 @@ class TestProviderAuthMfaFlow:
         assert "verifyMfa" in code, "Must export verifyMfa action"
 
     def test_verify_mfa_stores_session(self) -> None:
-        """verifyMfa must store the session on success (calls setAuthTokenProvider)."""
+        """verifyMfa must hydrate the authoritative cookie-backed session."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         code_norm = _normalize_ws(code)
-        # Look for setAuthTokenProvider call inside verifyMfa implementation
-        assert "setAuthTokenProvider" in code, "Must call setAuthTokenProvider() after MFA verification"
-        # verifyMfa should appear near setAuthTokenProvider usage
-        assert code_norm.count("verifyMfa") >= 2, (
-            "verifyMfa must appear in both type definition and implementation"
-        )
+        assert "if (!await hydrate())" in code
+        assert (
+            code_norm.count("verifyMfa") >= 2
+        ), "verifyMfa must appear in both type definition and implementation"
 
     def test_login_calls_auth_login_endpoint(self) -> None:
-        """login() must call POST /api/v2/auth/login."""
+        """login() must call the browser cookie login endpoint."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         api_code = _read(API_CLIENT_PATH)
-        assert "NexaApiClient.providerLogin" in code
-        assert "/api/v2/auth/login" in api_code, "Must call /api/v2/auth/login"
+        assert "NexaApiClient.providerWebLogin" in code
+        assert "/api/v2/auth/web/login" in api_code
 
     def test_verify_mfa_calls_mfa_verify_endpoint(self) -> None:
-        """verifyMfa() must call POST /api/v2/auth/mfa/verify."""
+        """verifyMfa() must call the browser cookie MFA endpoint."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         api_code = _read(API_CLIENT_PATH)
-        assert "NexaApiClient.providerMfaVerify" in code
-        assert "/api/v2/auth/mfa/verify" in api_code, (
-            "Must call /api/v2/auth/mfa/verify"
-        )
+        assert "NexaApiClient.providerWebMfaVerify" in code
+        assert "/api/v2/auth/web/mfa/verify" in api_code
 
     def test_has_mfa_required_type_guard(self) -> None:
         """Must have a mechanism to detect mfa_required response (checks mfa_token field).
@@ -651,10 +666,8 @@ class TestProviderAuthMfaFlow:
         discriminates between success and MFA-required responses.
         """
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
-        assert "mfa_token" in code, "Must check for mfa_token field in response"
-        assert "isMfaRequired" in code or "isMfa" in code or "validateLoginResponse" in code, (
-            "Must have a type guard or Zod validator for MFA required response"
-        )
+        assert "result.status === 'mfa_required'" in code
+        assert "mfa_token" not in code
 
     def test_has_role_in_provider_identity(self) -> None:
         """ProviderIdentity must include a role field."""
@@ -673,9 +686,9 @@ class TestProviderAuthMfaFlow:
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         assert "LoginResult" in code, "login must return LoginResult type"
         # The function signature should not be Promise<void>
-        assert "Promise<void>" not in code or "LoginResult" in code, (
-            "login() must return Promise<LoginResult>, not Promise<void>"
-        )
+        assert (
+            "Promise<void>" not in code or "LoginResult" in code
+        ), "login() must return Promise<LoginResult>, not Promise<void>"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -689,75 +702,95 @@ class TestNfcResolveService:
     def test_nfc_resolve_service_exists(self) -> None:
         """The nfcResolve service file must exist."""
         path = ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
-        assert path.exists(), "nexa-client/packages/app/services/nfcResolve.ts must exist"
+        assert (
+            path.exists()
+        ), "nexa-client/packages/app/services/nfcResolve.ts must exist"
 
     def test_exports_resolve_nfc_card_function(self) -> None:
         """Must export the resolveNfcCard function."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
+        )
         assert "resolveNfcCard" in code, "Must export resolveNfcCard function"
 
     def test_calls_nfc_resolve_endpoint(self) -> None:
         """resolveNfcCard must call POST /api/v2/nfc/resolve."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
-        assert "/api/v2/nfc/resolve" in code, (
-            "Must call POST /api/v2/nfc/resolve"
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
+        assert "/api/v2/nfc/resolve" in code, "Must call POST /api/v2/nfc/resolve"
 
     def test_sends_card_uid_in_body(self) -> None:
         """Must send { card_uid: string } in the request body."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
+        )
         assert "card_uid" in code, "Must include card_uid in request body"
 
     def test_returns_patient_id_and_canonical(self) -> None:
         """Response type must include patient_id, canonical_patient_id, is_redirected."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
-        assert "patient_id" in code, "Response type must include patient_id"
-        assert "canonical_patient_id" in code, (
-            "Response type must include canonical_patient_id"
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
+        assert "patient_id" in code, "Response type must include patient_id"
+        assert (
+            "canonical_patient_id" in code
+        ), "Response type must include canonical_patient_id"
         assert "is_redirected" in code, "Response type must include is_redirected"
 
     def test_has_nfc_resolve_error_class(self) -> None:
         """Must export NfcResolveError class for typed error handling."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
+        )
         assert "NfcResolveError" in code, "Must export NfcResolveError class"
 
     def test_handles_card_not_found(self) -> None:
         """Must handle 404 status (card not found)."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
+        )
         assert "404" in code, "Must handle 404 status code"
         assert "NFC_CARD_NOT_FOUND" in code, "Must use NFC_CARD_NOT_FOUND error code"
 
     def test_handles_service_unavailable(self) -> None:
         """Must handle 503 status (service unavailable)."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
-        assert "503" in code, "Must handle 503 status code"
-        assert "NFC_RESOLVE_UNAVAILABLE" in code, (
-            "Must use NFC_RESOLVE_UNAVAILABLE error code"
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
+        assert "503" in code, "Must handle 503 status code"
+        assert (
+            "NFC_RESOLVE_UNAVAILABLE" in code
+        ), "Must use NFC_RESOLVE_UNAVAILABLE error code"
 
     def test_uses_api_client(self) -> None:
         """Must import and use the shared apiClient."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
-        assert "apiClient" in code, (
-            "Must import apiClient"
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
+        assert "apiClient" in code, "Must import apiClient"
 
     def test_no_localhost(self) -> None:
         """Must not contain hardcoded localhost."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
+        )
         assert "localhost" not in code.lower(), "Must not contain localhost"
 
     def test_no_raw_fetch(self) -> None:
         """Must not use raw fetch() — must use apiClient."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
-        assert not re.search(r"\bfetch\s*\(", code), (
-            "Must use apiClient, not raw fetch()"
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
+        assert not re.search(
+            r"\bfetch\s*\(", code
+        ), "Must use apiClient, not raw fetch()"
 
     def test_no_axios(self) -> None:
         """Must not use axios directly."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts")
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
+        )
         assert "axios" not in code.lower(), "Must not use axios directly"
 
 
@@ -816,9 +849,9 @@ class TestMergedPatientRedirect:
         """Must show a warning banner when patient was merged (is_redirected=true)."""
         code = _read_screen("PatientSearchScreen")
         # Should show a warning about merged/redirected patient
-        assert "Merged" in code or "merged" in code, (
-            "Must show merged-patient warning text"
-        )
+        assert (
+            "Merged" in code or "merged" in code
+        ), "Must show merged-patient warning text"
 
     def test_displays_original_patient_id(self) -> None:
         """Must display the original patient_id when redirected."""
@@ -828,28 +861,26 @@ class TestMergedPatientRedirect:
     def test_displays_canonical_patient_id(self) -> None:
         """Must display canonical_patient_id when redirected."""
         code = _read_screen("PatientSearchScreen")
-        assert "canonical_patient_id" in code, (
-            "Must display canonical_patient_id for merged patients"
-        )
+        assert (
+            "canonical_patient_id" in code
+        ), "Must display canonical_patient_id for merged patients"
 
     def test_uses_canonical_patient_id_for_navigation(self) -> None:
         """Must use canonical_patient_id when navigating to request consent."""
         code = _read_screen("PatientSearchScreen")
         # When is_redirected is true, should use canonical_patient_id for navigation
-        assert "canonical_patient_id" in code, (
-            "Must use canonical_patient_id for navigation when redirected"
-        )
+        assert (
+            "canonical_patient_id" in code
+        ), "Must use canonical_patient_id for navigation when redirected"
         # The navigation target should be request-consent
-        assert "request-consent" in code, (
-            "Must navigate to request-consent with the correct patient ID"
-        )
+        assert (
+            "request-consent" in code
+        ), "Must navigate to request-consent with the correct patient ID"
 
     def test_warning_uses_orange_color(self) -> None:
         """Merged-patient warning must use orange color scheme."""
         code = _read_screen("PatientSearchScreen")
-        assert "$orange" in code, (
-            "Merged-patient warning must use orange color scheme"
-        )
+        assert "$orange" in code, "Merged-patient warning must use orange color scheme"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -868,9 +899,7 @@ class TestDashboardRoleAndNfc:
     def test_has_nfc_scan_button(self) -> None:
         """Must have a button to scan NFC card (navigates to patient-search?mode=nfc)."""
         code = _read_screen("DoctorDashboardScreen")
-        assert "mode=nfc" in code, (
-            "Must have NFC scan button navigating to ?mode=nfc"
-        )
+        assert "mode=nfc" in code, "Must have NFC scan button navigating to ?mode=nfc"
 
     def test_shows_provider_id_card(self) -> None:
         """Must display provider ID in an identity card."""
@@ -896,9 +925,9 @@ class TestRequestConsentScreen:
 
     def test_calls_consent_request_api(self) -> None:
         code = _read_screen("RequestConsentScreen")
-        assert "/api/v2/consent/request" in code, (
-            "Must call POST /api/v2/consent/request"
-        )
+        assert (
+            "/api/v2/consent/request" in code
+        ), "Must call POST /api/v2/consent/request"
 
     def test_navigates_to_waiting(self) -> None:
         code = _read_screen("RequestConsentScreen")
@@ -914,9 +943,9 @@ class TestRequestConsentScreen:
 
     def test_has_access_duration_input(self) -> None:
         code = _read_screen("RequestConsentScreen")
-        assert "access_duration" in code.lower() or "accessDuration" in code, (
-            "Must have access duration input"
-        )
+        assert (
+            "access_duration" in code.lower() or "accessDuration" in code
+        ), "Must have access duration input"
 
     def test_uses_provider_id_from_context(self) -> None:
         """Must use providerId from auth context, not hardcoded."""
@@ -925,9 +954,9 @@ class TestRequestConsentScreen:
         # provider_id as object key is fine — check for hardcoded values
         code_no_comments = _strip_comments(code)
         for pattern in ["provider-123", "provider-001", "PROVIDER_ID", "prov-123"]:
-            assert pattern not in code_no_comments, (
-                f"Must not contain placeholder '{pattern}'"
-            )
+            assert (
+                pattern not in code_no_comments
+            ), f"Must not contain placeholder '{pattern}'"
 
     def test_has_request_access_button(self) -> None:
         code = _read_screen("RequestConsentScreen")
@@ -937,13 +966,13 @@ class TestRequestConsentScreen:
         """Doctor screen must NEVER call any approval/respond endpoint."""
         code = _read_screen("RequestConsentScreen")
         code_no_comments = _strip_comments(code)
-        assert "approve-signed" not in code_no_comments, (
-            "Must NOT call /api/v2/consent/approve-signed"
-        )
+        assert (
+            "approve-signed" not in code_no_comments
+        ), "Must NOT call /api/v2/consent/approve-signed"
         # Check for approve/deny POST endpoints (not just the word "approve")
-        assert not re.search(r'\bpost\b.*\bapprove', code_no_comments.lower()), (
-            "Must NOT POST to any approval endpoint"
-        )
+        assert not re.search(
+            r"\bpost\b.*\bapprove", code_no_comments.lower()
+        ), "Must NOT POST to any approval endpoint"
 
     def test_never_renders_approve_deny_buttons(self) -> None:
         """Doctor screen must NOT render Approve/Deny buttons."""
@@ -972,9 +1001,9 @@ class TestWaitingForApprovalPolling:
 
     def test_polls_consent_status(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "/api/v2/consent/status/" in code, (
-            "Must poll GET /api/v2/consent/status/{request_id}"
-        )
+        assert (
+            "/api/v2/consent/status/" in code
+        ), "Must poll GET /api/v2/consent/status/{request_id}"
 
     def test_polls_every_2_seconds(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
@@ -995,18 +1024,18 @@ class TestWaitingForApprovalPolling:
     def test_stops_polling_on_terminal_state(self) -> None:
         """Must stop polling when status becomes approved, denied, or expired."""
         code = _read_screen("WaitingForApprovalScreen")
-        assert "stopPolling" in code or "clearInterval" in code, (
-            "Must have mechanism to stop polling on terminal state"
-        )
+        assert (
+            "stopPolling" in code or "clearInterval" in code
+        ), "Must have mechanism to stop polling on terminal state"
 
     def test_cleans_up_interval_on_unmount(self) -> None:
         """Must clear interval on component unmount."""
         code = _read_screen("WaitingForApprovalScreen")
         assert "clearInterval" in code, "Must clearInterval on unmount"
         # The cleanup should be in a useEffect return
-        assert "return () =>" in code or "return ()" in code, (
-            "Must return cleanup function from useEffect"
-        )
+        assert (
+            "return () =>" in code or "return ()" in code
+        ), "Must return cleanup function from useEffect"
 
 
 class TestWaitingApprovalAutoProceed:
@@ -1014,9 +1043,9 @@ class TestWaitingApprovalAutoProceed:
 
     def test_navigates_to_record_on_approval(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "/doctor/patient-record" in code, (
-            "Must navigate to patient record on approval"
-        )
+        assert (
+            "/doctor/patient-record" in code
+        ), "Must navigate to patient record on approval"
 
     def test_auto_proceed_on_approval(self) -> None:
         """Approval must trigger automatic navigation, not require a button."""
@@ -1036,9 +1065,7 @@ class TestWaitingApprovalDenial:
 
     def test_shows_denied_message(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "Denied" in code or "denied" in code, (
-            "Must show denial message"
-        )
+        assert "Denied" in code or "denied" in code, "Must show denial message"
 
     def test_shows_red_on_denial(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
@@ -1046,9 +1073,9 @@ class TestWaitingApprovalDenial:
 
     def test_has_back_to_dashboard_on_denial(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "Back to Dashboard" in code, (
-            "Must have 'Back to Dashboard' button on denial"
-        )
+        assert (
+            "Back to Dashboard" in code
+        ), "Must have 'Back to Dashboard' button on denial"
 
 
 class TestWaitingApprovalExpiry:
@@ -1056,9 +1083,7 @@ class TestWaitingApprovalExpiry:
 
     def test_shows_expired_message(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "Expired" in code or "expired" in code, (
-            "Must show expiry message"
-        )
+        assert "Expired" in code or "expired" in code, "Must show expiry message"
 
     def test_shows_yellow_on_expiry(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
@@ -1075,16 +1100,16 @@ class TestWaitingApprovalNeverApproves:
     def test_never_calls_approve_signed_endpoint(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
         code_no_comments = _strip_comments(code)
-        assert "approve-signed" not in code_no_comments, (
-            "Must NOT call /api/v2/consent/approve-signed"
-        )
+        assert (
+            "approve-signed" not in code_no_comments
+        ), "Must NOT call /api/v2/consent/approve-signed"
 
     def test_never_calls_approve_endpoint(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
         code_no_comments = _strip_comments(code)
-        assert "/consent/approve" not in code_no_comments, (
-            "Must NOT call any /consent/approve endpoint"
-        )
+        assert (
+            "/consent/approve" not in code_no_comments
+        ), "Must NOT call any /consent/approve endpoint"
 
     def test_never_renders_approve_button(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
@@ -1092,23 +1117,25 @@ class TestWaitingApprovalNeverApproves:
         # "Approve" must not appear as a button label. We check each Button's
         # immediate text content, not across the whole file with DOTALL.
         # Match <Button...>text</Button> where text contains "Approve"
-        button_texts = re.findall(r'<Button[^>]*>\s*(.*?)\s*</Button>', code_no_comments, re.DOTALL)
-        approve_buttons = [t for t in button_texts if 'Approve' in t]
-        assert len(approve_buttons) == 0, (
-            f"Must NOT render Approve button — only the patient can approve. Found: {approve_buttons}"
+        button_texts = re.findall(
+            r"<Button[^>]*>\s*(.*?)\s*</Button>", code_no_comments, re.DOTALL
         )
+        approve_buttons = [t for t in button_texts if "Approve" in t]
+        assert (
+            len(approve_buttons) == 0
+        ), f"Must NOT render Approve button — only the patient can approve. Found: {approve_buttons}"
         # Also check for onPress handlers that call approval endpoints
-        assert not re.search(r'onPress.*approv', code_no_comments, re.IGNORECASE), (
-            "Must NOT have onPress handler that triggers approval"
-        )
+        assert not re.search(
+            r"onPress.*approv", code_no_comments, re.IGNORECASE
+        ), "Must NOT have onPress handler that triggers approval"
 
     def test_never_renders_deny_button(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
         code_no_comments = _strip_comments(code)
         # "Deny" must not appear as a button label
-        assert not re.search(r'<Button[^>]*>.*Deny', code_no_comments, re.DOTALL), (
-            "Must NOT render Deny button — only the patient can deny"
-        )
+        assert not re.search(
+            r"<Button[^>]*>.*Deny", code_no_comments, re.DOTALL
+        ), "Must NOT render Deny button — only the patient can deny"
 
 
 class TestWaitingApprovalPendingState:
@@ -1120,24 +1147,22 @@ class TestWaitingApprovalPendingState:
 
     def test_shows_elapsed_timer(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "Elapsed" in code or "elapsed" in code, (
-            "Must show elapsed time counter"
-        )
+        assert "Elapsed" in code or "elapsed" in code, "Must show elapsed time counter"
 
     def test_shows_request_id(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "requestId" in code or "request_id" in code, (
-            "Must display the request ID"
-        )
+        assert (
+            "requestId" in code or "request_id" in code
+        ), "Must display the request ID"
 
     def test_has_cancel_request_button(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "Cancel Request" in code or "Cancel" in code, (
-            "Must have cancel button while waiting"
-        )
+        assert (
+            "Cancel Request" in code or "Cancel" in code
+        ), "Must have cancel button while waiting"
 
     def test_shows_waiting_message(self) -> None:
         code = _read_screen("WaitingForApprovalScreen")
-        assert "Waiting" in code or "waiting" in code, (
-            "Must show waiting/pending message"
-        )
+        assert (
+            "Waiting" in code or "waiting" in code
+        ), "Must show waiting/pending message"

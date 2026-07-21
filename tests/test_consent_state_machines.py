@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.services import consent_engine
 
@@ -26,6 +26,7 @@ def run(coro):
 def make_fake_db():
     db = AsyncMock()
     db.add = lambda row: None
+    db.execute.return_value.scalar_one_or_none = MagicMock(return_value=None)
     return db
 
 
@@ -36,6 +37,7 @@ def test_routine_issue_binds_patient_clinician_purpose_scope_and_ttl(
     mock_get_redis, mock_audit, mock_audit_503
 ) -> None:
     from app.models.assurance import AssuranceLevel
+
     redis = AsyncMock()
     mock_get_redis.return_value = redis
     fake_db = make_fake_db()
@@ -80,6 +82,7 @@ def test_validate_and_consume_fail_closed_on_mismatch(mock_get_redis) -> None:
             "is_break_glass": False,
             "reason_code": None,
             "issued_at": "2026-07-02T00:00:00+00:00",
+            "expires_at": "2026-07-02T01:00:00+00:00",
         }
     )
     redis.get.return_value = payload
@@ -128,6 +131,7 @@ def test_break_glass_issue_uses_break_glass_ttl_and_notifies_compliance_queue(
     mock_get_redis, mock_audit, mock_audit_503
 ) -> None:
     from app.models.assurance import AssuranceLevel
+
     redis = AsyncMock()
     mock_get_redis.return_value = redis
     fake_db = make_fake_db()

@@ -27,10 +27,21 @@ class PatientDEKStore(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     wrapped_dek: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     dek_iv: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     dek_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    algorithm: Mapped[str] = mapped_column(String(32), nullable=False, default="AES-256-GCM")
+    algorithm: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="AES-256-GCM"
+    )
+    wrapping_backend: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="local-aes-gcm"
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     destroyed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    wrapping_key_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="shared"
+    )
+    patient_wrapping_key_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
     )
 
     __table_args__ = (

@@ -1,9 +1,8 @@
-"""Remote medical document extraction client for Nexa Care.
+"""Fail-closed document extraction providers.
 
-The extractor intentionally contains no local PyTorch or Transformer imports.
-It prepares uploads for a hosted Vision-Language Model API and validates the
-remote output through ``ExtractedMedicalDocument`` before the pipeline can act
-on it.
+Provider selection is explicit application configuration. The demo provider is
+available only in enumerated safe environments and is never selected merely
+because remote credentials are absent.
 """
 
 from __future__ import annotations
@@ -11,119 +10,197 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
+import random
+import time
+from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
+import httpx
 from pydantic import ValidationError
 
+from app.core.config import DocumentExtractionConfig, get_document_extraction_config
 from app.models.ai_models import ExtractedMedicalDocument
 
 logger = logging.getLogger("nexa_logger")
 
 
 class DocumentExtractionError(RuntimeError):
-    """Raised when remote document extraction cannot produce valid data."""
+    """Sanitized provider failure safe to persist on a job."""
+
+    error_code = "EXTRACTION_FAILED"
+    retryable = False
+
+    def __init__(self, message: str, *, upstream_status: int | None = None) -> None:
+        super().__init__(message)
+        self.upstream_status = upstream_status
 
 
-class MedicalDocumentExtractor:
-    """HTTP-client wrapper for hosted medical document extraction.
+class RetryableDocumentExtractionError(DocumentExtractionError):
+    error_code = "EXTRACTION_UPSTREAM_RETRYABLE"
+    retryable = True
 
-    The current MVP uses a high-confidence mock when ``DOCUMENT_AI_API_KEY`` is
-    absent. When the key is configured, this class is the boundary where the
-    hosted VLM request/response implementation belongs. Raw document bytes and
-    extracted PII are never logged.
-    """
 
-    def __init__(self, api_key: str | None = None, api_url: str | None = None) -> None:
-        """Configure the remote extraction client without loading local ML."""
+class InvalidDocumentError(DocumentExtractionError):
+    error_code = "INVALID_DOCUMENT"
 
-        self.api_key = api_key or os.getenv("DOCUMENT_AI_API_KEY")
-        self.api_url = api_url or os.getenv("DOCUMENT_AI_API_URL")
-        logger.info(json.dumps({
-            "event": "medical_document_extractor_configured",
-            "mode": "remote_api" if self.api_key else "mock_fallback",
-            "api_url_configured": bool(self.api_url),
-        }))
+
+class ExtractionProvider(ABC):
+    @abstractmethod
+    async def extract_bytes(
+        self, document_bytes: bytes, *, mime_type: str, request_id: str
+    ) -> ExtractedMedicalDocument:
+        """Return validated extraction output without persisting it."""
 
     async def extract_data(self, file_path: str) -> ExtractedMedicalDocument:
-        """Extract structured medical data using a hosted VLM API.
-
-        The file is read locally only to prepare the outbound API request. If no
-        API key is configured, a deterministic two-second mock response is
-        returned for development and CI. The method logs operational metadata
-        only; it never logs file contents or extracted PII.
-        """
-
         path = Path(file_path)
         try:
-            document_bytes = path.read_bytes()
+            data = await asyncio.to_thread(path.read_bytes)
         except OSError as exc:
-            logger.critical(json.dumps({
-                "event": "document_extraction_file_read_failed",
-                "file_suffix": path.suffix.lower(),
-                "exception_type": type(exc).__name__,
-            }))
-            raise DocumentExtractionError("Uploaded document could not be read.") from exc
-
-        try:
-            if not self.api_key:
-                await asyncio.sleep(2)
-                return self._mock_extraction_result()
-
-            payload = await self._call_remote_vlm_api(
-                document_bytes=document_bytes,
-                file_suffix=path.suffix.lower(),
-            )
-            return ExtractedMedicalDocument.model_validate(payload)
-        except ValidationError as exc:
-            logger.critical(json.dumps({
-                "event": "document_extraction_validation_failed",
-                "error_count": len(exc.errors()),
-            }))
-            raise DocumentExtractionError("Extracted document data failed validation.") from exc
-        finally:
-            # Explicitly release the buffer before the pipeline cleanup removes
-            # the temp file. No document bytes are logged or retained here.
-            del document_bytes
-
-    async def _call_remote_vlm_api(
-        self,
-        *,
-        document_bytes: bytes,
-        file_suffix: str,
-    ) -> dict[str, object]:
-        """Placeholder for the hosted VLM HTTP call.
-
-        A future implementation can use an async HTTP client here. The method is
-        deliberately isolated so credentials and raw bytes do not leak into the
-        rest of the application.
-        """
-
-        _ = (document_bytes, file_suffix)
-        raise DocumentExtractionError("DOCUMENT_AI_API_URL integration is not implemented yet.")
-
-    @staticmethod
-    def _mock_extraction_result() -> ExtractedMedicalDocument:
-        """Return realistic fake data for local development without a VLM key."""
-
-        return ExtractedMedicalDocument(
-            patient_name="Asha Raman",
-            aadhaar_abha_id="12-3456-7890-1234",
-            phone="9876543210",
-            diagnoses=["Type 2 Diabetes Mellitus", "Hypertension"],
-            lab_results=["HbA1c 7.2%", "Blood pressure 142/90 mmHg"],
-            prescriptions=["Metformin 500mg twice daily", "Telmisartan 40mg once daily"],
-            extraction_confidence=0.96,
+            raise InvalidDocumentError("Document could not be read") from exc
+        mime = (
+            "application/pdf"
+            if path.suffix.lower() == ".pdf"
+            else "application/octet-stream"
+        )
+        return await self.extract_bytes(
+            data, mime_type=mime, request_id="legacy-file-adapter"
         )
 
 
-_extractor_singleton: MedicalDocumentExtractor | None = None
+class RemoteExtractionProvider(ExtractionProvider):
+    def __init__(
+        self, config: DocumentExtractionConfig, client: httpx.AsyncClient | None = None
+    ) -> None:
+        if config.provider != "remote" or not config.api_url or not config.api_key:
+            raise ValueError(
+                "Remote extraction requires validated remote configuration"
+            )
+        self.config = config
+        self._client = client
+
+    async def extract_bytes(
+        self, document_bytes: bytes, *, mime_type: str, request_id: str
+    ) -> ExtractedMedicalDocument:
+        started = time.perf_counter()
+        last_error: DocumentExtractionError | None = None
+        for attempt in range(1, self.config.max_attempts + 1):
+            try:
+                client = self._client or httpx.AsyncClient(
+                    timeout=self.config.timeout_seconds
+                )
+                should_close = self._client is None
+                try:
+                    response = await client.post(
+                        self.config.api_url,
+                        headers={
+                            "Authorization": f"Bearer {self.config.api_key}",
+                            "X-Request-Id": request_id,
+                        },
+                        files={"document": ("document", document_bytes, mime_type)},
+                    )
+                finally:
+                    if should_close:
+                        await client.aclose()
+                if (
+                    response.status_code in {408, 425, 429}
+                    or response.status_code >= 500
+                ):
+                    raise RetryableDocumentExtractionError(
+                        "Extraction provider temporarily unavailable",
+                        upstream_status=response.status_code,
+                    )
+                if response.status_code >= 400:
+                    raise InvalidDocumentError(
+                        "Extraction provider rejected document",
+                        upstream_status=response.status_code,
+                    )
+                try:
+                    result = ExtractedMedicalDocument.model_validate(response.json())
+                except (ValueError, ValidationError) as exc:
+                    raise InvalidDocumentError(
+                        "Extraction response failed schema validation"
+                    ) from exc
+                logger.info(
+                    json.dumps(
+                        {
+                            "event": "document_extraction_succeeded",
+                            "request_id": request_id,
+                            "attempt": attempt,
+                            "latency_ms": round((time.perf_counter() - started) * 1000),
+                        }
+                    )
+                )
+                return result
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = RetryableDocumentExtractionError(
+                    "Extraction provider network failure"
+                )
+                last_error.__cause__ = exc
+            except RetryableDocumentExtractionError as exc:
+                last_error = exc
+            except DocumentExtractionError:
+                raise
+
+            if attempt < self.config.max_attempts:
+                delay = min(4.0, 0.25 * (2 ** (attempt - 1))) + random.uniform(0, 0.2)
+                await asyncio.sleep(delay)
+
+        assert last_error is not None
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "document_extraction_retry_exhausted",
+                    "request_id": request_id,
+                    "attempt_count": self.config.max_attempts,
+                    "error_code": last_error.error_code,
+                    "upstream_status": last_error.upstream_status,
+                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                }
+            )
+        )
+        raise last_error
 
 
-def get_medical_document_extractor() -> MedicalDocumentExtractor:
-    """Return a lightweight process-wide extractor client."""
+class DemoExtractionProvider(ExtractionProvider):
+    """Deterministic synthetic provider for explicit test/demo environments."""
 
-    global _extractor_singleton
-    if _extractor_singleton is None:
-        _extractor_singleton = MedicalDocumentExtractor()
+    async def extract_bytes(
+        self, document_bytes: bytes, *, mime_type: str, request_id: str
+    ) -> ExtractedMedicalDocument:
+        _ = (document_bytes, mime_type, request_id)
+        return ExtractedMedicalDocument(
+            patient_name="Synthetic Patient",
+            aadhaar_abha_id="SYNTHETIC-ID",
+            phone="0000000000",
+            diagnoses=[],
+            lab_results=[],
+            prescriptions=[],
+            extraction_confidence=0.50,
+        )
+
+
+# Compatibility name for callers/tests that explicitly construct the remote adapter.
+MedicalDocumentExtractor = RemoteExtractionProvider
+
+_extractor_singleton: ExtractionProvider | None = None
+_extractor_fingerprint: tuple[Any, ...] | None = None
+
+
+def get_medical_document_extractor() -> ExtractionProvider:
+    global _extractor_singleton, _extractor_fingerprint
+    config = get_document_extraction_config()
+    fingerprint = (
+        config.provider,
+        config.environment,
+        config.api_url,
+        config.max_attempts,
+    )
+    if _extractor_singleton is None or _extractor_fingerprint != fingerprint:
+        _extractor_singleton = (
+            DemoExtractionProvider()
+            if config.provider == "demo"
+            else RemoteExtractionProvider(config)
+        )
+        _extractor_fingerprint = fingerprint
     return _extractor_singleton

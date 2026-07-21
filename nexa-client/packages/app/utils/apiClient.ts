@@ -1,4 +1,5 @@
 import { RuntimeConfigError, resolveConfiguredApiUrl } from './runtimeConfig'
+import { ProviderWebAuthenticatedStateSchema, ProviderWebLoginStateSchema, ProviderWebSessionSchema, validateOrThrow } from '../schemas/authNfcSchemas'
 
 /**
  * Canonical Shared API Client for Nexa Care Alpha Demo
@@ -8,7 +9,9 @@ import { RuntimeConfigError, resolveConfiguredApiUrl } from './runtimeConfig'
 
 export type AuthTokenProvider = () => Promise<string | null | undefined> | string | null | undefined
 let authTokenProvider: AuthTokenProvider = () => null
+let providerCookieAuthEnabled = false
 export function setAuthTokenProvider(provider: AuthTokenProvider): void { authTokenProvider = provider }
+export function setProviderCookieAuthEnabled(enabled: boolean): void { providerCookieAuthEnabled = enabled }
 export async function getAuthToken(): Promise<string | null> { const token = await authTokenProvider(); return typeof token === 'string' && token.trim() ? token.trim() : null }
 
 // Preserve the public export used by existing callers without allowing an
@@ -96,6 +99,7 @@ export interface ConsentChallengeResponse {
 }
 
 export interface FullConsentChallenge {
+  protocol_version: 'nexa-consent-v2'
   request_id: string
   patient_id: string
   provider_id: string
@@ -105,6 +109,7 @@ export interface FullConsentChallenge {
   scope: string
   access_duration: number
   challenge_nonce: string
+  issued_at: string
   expires_at: string
   status: string
 }
@@ -156,6 +161,25 @@ export interface PatientSummaryResponse {
     }>
   }
   shard_scope: 'clinical' | 'full'
+}
+
+/** Response shape from GET /api/v2/patient/{id}/emergency-summary (break-glass only). */
+export interface EmergencySummaryCategoryItem {
+  [key: string]: unknown
+}
+export interface EmergencySummaryCategory {
+  category: string
+  available: boolean
+  items?: EmergencySummaryCategoryItem[]
+  value?: unknown
+  verified?: boolean
+  verification_state?: string
+  caveat?: string
+}
+export interface EmergencySummaryResponse {
+  patient_id: string
+  categories: Record<string, EmergencySummaryCategory>
+  retrieved_at: string
 }
 
 export interface PatientTimelineResponse {
@@ -327,6 +351,18 @@ function backendMessage(payload: unknown, fallback: string): string {
   return fallback
 }
 
+function backendErrorCode(payload: unknown): string | null {
+  if (!payload || typeof payload !== 'object') return null
+  const record = payload as Record<string, unknown>
+  if (typeof record.error_code === 'string') return record.error_code
+  const detail = record.detail
+  if (detail && typeof detail === 'object' && !Array.isArray(detail)) {
+    const code = (detail as Record<string, unknown>).error_code
+    if (typeof code === 'string') return code
+  }
+  return null
+}
+
 function statusCode(status: number): string {
   if (status === 400) return 'BAD_REQUEST'
   if (status === 401) return 'UNAUTHORIZED'
@@ -368,6 +404,7 @@ async function request<T>(
   customHeaders: Record<string, string> = {},
   noAuth = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  forceCookieTransport = false,
 ): Promise<T> {
   if (!API_BASE_URL) {
     try {
@@ -381,7 +418,8 @@ async function request<T>(
   }
 
   const token = noAuth ? null : await getAuthToken()
-  if (!noAuth && !token) {
+  const browserCookieSession = typeof window !== 'undefined' && (providerCookieAuthEnabled || forceCookieTransport)
+  if (!noAuth && !token && !browserCookieSession) {
     throw new ApiError('Authentication is required before making this request.', 0, 'AUTH_REQUIRED', false)
   }
   const headers: Record<string, string> = {
@@ -390,6 +428,11 @@ async function request<T>(
 
   if (token) {
     headers['Authorization'] = `Bearer ${token}`
+  }
+
+  if (browserCookieSession && !['GET', 'HEAD', 'OPTIONS'].includes((options.method ?? 'GET').toUpperCase())) {
+    const csrf = document.cookie.split('; ').find((item) => item.startsWith('nexa_csrf='))?.split('=')[1]
+    if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf)
   }
 
   if (!(options.body instanceof FormData) && !headers['Content-Type']) {
@@ -409,6 +452,7 @@ async function request<T>(
     response = await fetch(url, {
       ...options,
       headers,
+      credentials: browserCookieSession ? 'include' : options.credentials,
       signal: controller.signal,
     })
   } catch (error: unknown) {
@@ -440,7 +484,7 @@ async function request<T>(
     try {
       const data = await response.json()
       errorMsg = backendMessage(data, errorMsg)
-      if (typeof data?.error_code === 'string') errorCode = data.error_code
+      errorCode = backendErrorCode(data) ?? errorCode
     } catch {
       // ignore JSON parse error on non-JSON response
     }
@@ -460,7 +504,7 @@ async function request<T>(
       throw new ApiError(
         errorMsg || 'Consent required or access denied',
         403,
-        noAuth ? errorCode : 'CONSENT_REQUIRED',
+        errorCode,
         false,
       )
     }
@@ -558,6 +602,29 @@ export const NexaApiClient = {
     )
   },
 
+  providerWebLogin(payload: ProviderLoginRequest): Promise<{ status: 'authenticated' | 'mfa_required'; expires_at?: string }> {
+    return request('/api/v2/auth/web/login', { method: 'POST', body: JSON.stringify(payload) }, {}, true, DEFAULT_TIMEOUT_MS, true)
+      .then((data) => validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login'))
+  },
+
+  providerWebMfaVerify(totpCode: string): Promise<{ status: 'authenticated'; expires_at: string }> {
+    return request('/api/v2/auth/web/mfa/verify', {
+      method: 'POST', body: JSON.stringify({ totp_code: totpCode }),
+    }, {}, true, DEFAULT_TIMEOUT_MS, true).then((data) => validateOrThrow(ProviderWebAuthenticatedStateSchema, data, 'provider web MFA'))
+  },
+
+  providerWebSession(): Promise<{
+    authenticated: boolean; expires_at: string; provider_uid: string; hospital_id: string;
+    display_name: string; hospital_name: string; roles: string[]
+  }> {
+    return request('/api/v2/auth/web/session', { method: 'GET' }, {}, false, DEFAULT_TIMEOUT_MS, true)
+      .then((data) => validateOrThrow(ProviderWebSessionSchema, data, 'provider web session'))
+  },
+
+  providerWebLogout(): Promise<void> {
+    return request('/api/v2/auth/web/logout', { method: 'POST' }, {}, false, DEFAULT_TIMEOUT_MS, true)
+  },
+
   getConsentStatus(requestId: string, hospitalId: string): Promise<ConsentStatusResponse> {
     const normalizedHospitalId = hospitalId.trim()
     if (!normalizedHospitalId) {
@@ -612,6 +679,16 @@ export const NexaApiClient = {
     }, {
       'X-Consent-Token': consentToken,
       'X-Consent-Purpose': purpose,
+    })
+  },
+
+  /** Break-glass capabilities must use this endpoint, never getPatientRecord
+   * (the general record endpoint rejects break-glass tokens outright). */
+  getEmergencySummary(patientId: string, consentToken: string): Promise<EmergencySummaryResponse> {
+    return request<EmergencySummaryResponse>(`/api/v2/patient/${patientId}/emergency-summary`, {
+      method: 'GET',
+    }, {
+      'X-Consent-Token': consentToken,
     })
   },
 
@@ -717,11 +794,18 @@ export const NexaApiClient = {
   },
 
   /** Issue a break-glass emergency consent token (audited, rate-limited). */
-  breakGlassIssue(payload: { patient_id: string; reason_code: string; free_text: string }): Promise<{ consent_token: string; expires_at: string }> {
-    return request<{ consent_token: string; expires_at: string }>(
+  breakGlassIssue(payload: { patient_id: string; reason_code: string; justification: string; requested_scope?: string[] }): Promise<{ consent_token: string; expires_at: string; approved_scope: string[]; policy_version: string; authorization_ref: string }> {
+    return request<{ consent_token: string; expires_at: string; approved_scope: string[]; policy_version: string; authorization_ref: string }>(
       '/api/v2/consent/break-glass/issue',
       { method: 'POST', body: JSON.stringify(payload) },
     )
+  },
+
+  verifyActionMfa(code: string): Promise<{ verified: boolean }> {
+    return request<{ verified: boolean }>('/api/v2/auth/mfa/verify-action', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    })
   },
 }
 

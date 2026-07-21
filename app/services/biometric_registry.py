@@ -64,6 +64,8 @@ TIMING SIDE-CHANNEL FIX (this revision) — verify_biometric_binding() was
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import asyncio
 import hashlib
 import hmac
@@ -76,6 +78,7 @@ from fastapi import HTTPException
 from app.core.config import get_handshake_config
 from app.core.supabase import get_supabase_client
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 from app.services.crypto_kms import get_encryption_provider
 from sqlalchemy.ext.asyncio import AsyncSession
 import base64
@@ -97,10 +100,14 @@ def compute_bio_verifier(nfc_uid: str, bio_seed: str) -> str:
     of nfc_uid still isn't enough to forge or reverse a verifier."""
     pepper = get_handshake_config().pepper_secret
     message = f"{nfc_uid}:{bio_seed}".encode("utf-8")
-    return hmac.new(key=pepper.encode("utf-8"), msg=message, digestmod=hashlib.sha256).hexdigest()
+    return hmac.new(
+        key=pepper.encode("utf-8"), msg=message, digestmod=hashlib.sha256
+    ).hexdigest()
 
 
-async def verify_biometric_binding(nfc_uid: str, bio_seed: str, masked_internal_id: str) -> bool:
+async def verify_biometric_binding(
+    nfc_uid: str, bio_seed: str, masked_internal_id: str
+) -> bool:
     """True only if (nfc_uid, bio_seed) matches the verifier enrolled for
     this exact masked_internal_id, and that binding hasn't been revoked.
     Fails closed on any DB error, missing row, or revoked binding.
@@ -129,7 +136,7 @@ async def _verify_biometric_binding_impl(
             supabase.table("biometric_registry")
             .select("bio_verifier_hash,revoked_at")
             .eq("masked_internal_id", masked_internal_id)
-            .single()           # raises APIError if 0 rows (not enrolled)
+            .single()  # raises APIError if 0 rows (not enrolled)
             .execute()
         )
     except Exception as exc:
@@ -144,24 +151,24 @@ async def _verify_biometric_binding_impl(
         # postgrest-py raises APIError with a message that contains the
         # PostgREST error code (e.g. "PGRST116" for "exactly one row required"
         # when .single() finds 0 rows).  Any other exception is unexpected.
-        exc_str = str(exc)
-        if "PGRST116" in exc_str or "JSON object requested, multiple (or no) rows returned" in exc_str:
+        if getattr(exc, "code", None) == "PGRST116":
             # 0 rows from .single() — patient simply has no enrolled binding.
             # This is a normal operational state, not an infrastructure error.
-            logger.debug(json.dumps({
-                "event": "biometric_verify_not_enrolled",
-                "masked_internal_id": masked_internal_id,
-                "detail": "No binding row found for this patient.",
-            }))
+            logger.debug(
+                json.dumps(
+                    {
+                        "event": "biometric_verify_not_enrolled",
+                        "masked_internal_id": masked_internal_id,
+                        "detail": "No binding row found for this patient.",
+                    }
+                )
+            )
         else:
             # Unexpected: table missing, RLS rejection, network error, etc.
             # Log at CRITICAL so it appears in alerting thresholds.
-            logger.critical(json.dumps({
-                "event": "biometric_verify_db_error",
-                "masked_internal_id": masked_internal_id,
-                "exception": exc_str,
-                "action": "returning_false_fail_closed",
-            }))
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="biometric_binding_lookup"
+            )
         return False
 
     # F-16: in supabase-py 2.x, execute() does not set a .error attribute;
@@ -170,21 +177,29 @@ async def _verify_biometric_binding_impl(
     row = getattr(response, "data", None)
     if not row:
         # .single() returned successfully but with no data — treat as not enrolled.
-        logger.debug(json.dumps({
-            "event": "biometric_verify_empty_row",
-            "masked_internal_id": masked_internal_id,
-        }))
+        logger.debug(
+            json.dumps(
+                {
+                    "event": "biometric_verify_empty_row",
+                    "masked_internal_id": masked_internal_id,
+                }
+            )
+        )
         return False
 
     if row.get("revoked_at"):
         # Binding exists but has been administratively revoked.
         # Do NOT log the masked_internal_id at a high severity here —
         # revocation is an expected operational state, not a security alert.
-        logger.warning(json.dumps({
-            "event": "biometric_verify_revoked",
-            "masked_internal_id": masked_internal_id,
-            "revoked_at": str(row["revoked_at"]),
-        }))
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "biometric_verify_revoked",
+                    "masked_internal_id": masked_internal_id,
+                    "revoked_at": str(row["revoked_at"]),
+                }
+            )
+        )
         return False
 
     expected = row.get("bio_verifier_hash") or ""
@@ -239,23 +254,24 @@ async def update_device_public_key(
 
         rows = getattr(response, "data", None) or []
         if not rows:
-            logger.warning(json.dumps({
-                "event": "device_key_update_no_matching_row",
-                "masked_internal_id": masked_internal_id,
-                "detail": "No active (non-revoked) biometric_registry row found. "
-                          "Patient must complete provider-led NFC enrollment first.",
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "device_key_update_no_matching_row",
+                        "masked_internal_id": masked_internal_id,
+                        "detail": "No active (non-revoked) biometric_registry row found. "
+                        "Patient must complete provider-led NFC enrollment first.",
+                    }
+                )
+            )
             return False
 
         return True
 
     except Exception as exc:
-        logger.critical(json.dumps({
-            "event": "device_key_update_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": str(exc),
-            "action": "returning_false",
-        }))
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="device_key_update"
+        )
         return False
 
 
@@ -285,7 +301,9 @@ async def enroll_biometric_binding(
             kms = get_encryption_provider()
             # Encode DER bytes to base64 for encrypt_field which expects string
             plaintext_key = base64.b64encode(device_public_key).decode("utf-8")
-            encrypted_field = await kms.encrypt_field(masked_internal_id, "device_public_key", plaintext_key, db)
+            encrypted_field = await kms.encrypt_field(
+                masked_internal_id, "device_public_key", plaintext_key, db
+            )
             data["device_public_key"] = encrypted_field.serialize()
 
         response = supabase.table("biometric_registry").insert(data).execute()
@@ -302,7 +320,7 @@ async def enroll_biometric_binding(
         #      error-surfacing behavior, this check catches it.
         error = getattr(response, "error", None)
         if error:
-            raise RuntimeError(f"PostgREST insert error: {error}")
+            raise RuntimeError("POSTGREST_INSERT_FAILED")
 
         return True
 
@@ -323,18 +341,9 @@ async def enroll_biometric_binding(
         # All three are CRITICAL because they represent either a deployment
         # gap (missing migration) or a misconfiguration that will block
         # every enrollment until resolved.
-        logger.critical(json.dumps({
-            "event": "biometric_enroll_db_error",
-            "masked_internal_id": masked_internal_id,
-            "exception": str(exc),
-            "action": "returning_false",
-            "hint": (
-                "If exception contains 'does not exist': apply "
-                "migrations/0002_biometric_registry_schema.sql. "
-                "If 'duplicate key': patient already enrolled, revoke first. "
-                "If 'row-level security': verify SUPABASE_KEY is the service-role key."
-            ),
-        }))
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="biometric_binding_enroll"
+        )
         return False
 
 
@@ -349,6 +358,7 @@ async def enroll_biometric_binding_with_audit(
     trail.
     """
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PLATFORM),
         actor_uid="PROVIDER_FACILITY",
         event_type="BIOMETRIC_ENROLLMENT_ATTEMPT",
         target_id=masked_internal_id,
@@ -365,6 +375,7 @@ async def enroll_biometric_binding_with_audit(
 
     if not enrolled:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PLATFORM),
             actor_uid="PROVIDER_FACILITY",
             event_type="BIOMETRIC_ENROLLMENT_FAILED",
             target_id=masked_internal_id,
@@ -373,10 +384,11 @@ async def enroll_biometric_binding_with_audit(
         raise HTTPException(
             status_code=502,
             detail="Failed to write biometric binding (it may already be enrolled, "
-                   "or the registry write was rejected).",
+            "or the registry write was rejected).",
         )
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PLATFORM),
         actor_uid="PROVIDER_FACILITY",
         event_type="BIOMETRIC_ENROLLMENT_SUCCESS",
         target_id=masked_internal_id,

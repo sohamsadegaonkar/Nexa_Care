@@ -16,7 +16,10 @@ import unittest
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
-from app.services.auth_service import session_authorizes_patient, validate_session_context
+from app.services.auth_service import (
+    session_authorizes_patient,
+    validate_session_context,
+)
 
 
 def run(coro):
@@ -28,7 +31,6 @@ async def _resolved(value):
 
 
 class TestValidateSessionContext(unittest.TestCase):
-
     def test_empty_token_returns_none(self):
         self.assertIsNone(run(validate_session_context("")))
         self.assertIsNone(run(validate_session_context(None)))

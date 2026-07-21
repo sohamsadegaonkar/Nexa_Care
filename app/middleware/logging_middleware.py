@@ -7,11 +7,14 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.request_context import (
-    trace_id_var, request_id_var, span_id_var,
-    generate_trace_id, generate_span_id
+    trace_id_var,
+    request_id_var,
+    span_id_var,
+    generate_trace_id,
+    generate_span_id,
 )
-from app.observability.redactor import redact_payload
-from app.observability.error_catalog import Catalog, get_error
+from app.observability.error_catalog import Catalog
+from app.observability.safe_exceptions import log_safe_exception, safe_error_response
 
 logger = logging.getLogger("nexa_logger")
 
@@ -59,13 +62,17 @@ class GlobalLoggingMiddleware(BaseHTTPMiddleware):
         span_id_var.set(span_id)
 
         # 2. Log request start
-        logger.info(json.dumps({
-            "event": "request_started",
-            "trace_id": trace_id,
-            "request_id": request_id,
-            "method": request.method,
-            "path": request.url.path,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "request_started",
+                    "trace_id": trace_id,
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                }
+            )
+        )
 
         start_time = time.perf_counter()
 
@@ -81,38 +88,37 @@ class GlobalLoggingMiddleware(BaseHTTPMiddleware):
             # The old code used .code and .http_status (both AttributeError),
             # which caused the exception handler itself to crash and return a
             # blank 500 with no body or trace-id header.
-            log_payload = json.dumps({
-                "event": "request_failed",
-                "trace_id": trace_id,
-                "request_id": request_id,
-                "error_code": error_def.error_code,   # was: error_def.code (AttributeError)
-                "exception_type": type(exc).__name__,
-                "exception": str(exc),
-            })
-
-            # ErrorDefinition has no .severity field; derive log level from
-            # status_code instead: 5xx -> ERROR, 4xx -> WARNING.
-            if error_def.status_code >= 500:
-                logger.error(log_payload)
-            else:
-                logger.warning(log_payload)
+            safe_error = log_safe_exception(
+                logger,
+                logging.ERROR if error_def.status_code >= 500 else logging.WARNING,
+                "request_failed",
+                exc,
+                subsystem="http",
+                operation=f"{request.method} {request.url.path}",
+                fields={"trace_id": trace_id, "request_id": request_id},
+            )
 
             error_response = JSONResponse(
-                status_code=error_def.status_code,    # was: error_def.http_status (AttributeError)
-                content=redact_payload(get_error(error_def)),
+                status_code=error_def.status_code,  # was: error_def.http_status (AttributeError)
+                content=safe_error_response(safe_error, error_def.message),
             )
             error_response.headers["X-Trace-Id"] = trace_id
+            error_response.headers["X-Error-Id"] = str(safe_error["error_id"])
             return error_response
 
         # 4. Log success
         latency = round((time.perf_counter() - start_time) * 1000, 2)
-        logger.info(json.dumps({
-            "event": "request_completed",
-            "trace_id": trace_id,
-            "request_id": request_id,
-            "status": response.status_code,
-            "latency_ms": latency,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "request_completed",
+                    "trace_id": trace_id,
+                    "request_id": request_id,
+                    "status": response.status_code,
+                    "latency_ms": latency,
+                }
+            )
+        )
 
         response.headers["X-Trace-Id"] = trace_id
         return response

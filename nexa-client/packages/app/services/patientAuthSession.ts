@@ -31,7 +31,7 @@ const listeners = new Set<() => void>()
 
 function publish(next: PatientAuthSnapshot): PatientAuthSnapshot {
   snapshot = next
-  for (const listener of listeners) listener()
+  listeners.forEach((listener) => listener())
   return snapshot
 }
 

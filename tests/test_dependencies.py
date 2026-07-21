@@ -2,6 +2,7 @@ import asyncio
 import unittest
 import uuid
 from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasicCredentials
@@ -25,8 +26,9 @@ class MockRequest:
     """Minimal request stand-in for dependency tests."""
 
     def __init__(self, user_agent: str = "TestAgent/1.0", client_ip: str = "10.0.0.1"):
-        self.headers = {"user-agent": user_agent, "x-forwarded-for": client_ip}
-        self.client = None
+        self.headers = {"user-agent": user_agent}
+        self.client = SimpleNamespace(host=client_ip)
+        self.cookies = {}
 
 
 def _sample_provider_context() -> ProviderContext:
@@ -59,7 +61,6 @@ def _sample_provider_context() -> ProviderContext:
 
 
 class TestGetScopedSession(unittest.TestCase):
-
     @patch("app.core.dependencies.append_audit_log")
     def test_missing_authorization_header_raises_401(self, mock_audit):
         with self.assertRaises(HTTPException) as cm:
@@ -80,7 +81,9 @@ class TestGetScopedSession(unittest.TestCase):
 
     @patch("app.core.dependencies.validate_session_context")
     @patch("app.core.dependencies.append_audit_log")
-    def test_session_without_masked_internal_id_raises_401(self, mock_audit, mock_validate):
+    def test_session_without_masked_internal_id_raises_401(
+        self, mock_audit, mock_validate
+    ):
         mock_validate.return_value = {"authenticated": True, "nfc_uid": "NFC-001"}
 
         with self.assertRaises(HTTPException) as cm:
@@ -90,7 +93,9 @@ class TestGetScopedSession(unittest.TestCase):
 
     @patch("app.core.dependencies.validate_session_context")
     @patch("app.core.dependencies.append_audit_log")
-    def test_valid_scoped_session_returns_masked_internal_id(self, mock_audit, mock_validate):
+    def test_valid_scoped_session_returns_masked_internal_id(
+        self, mock_audit, mock_validate
+    ):
         mock_validate.return_value = {
             "authenticated": True,
             "masked_internal_id": "patient-uuid-123",
@@ -104,7 +109,6 @@ class TestGetScopedSession(unittest.TestCase):
 
 
 class TestGetProviderContext(unittest.TestCase):
-
     @patch("app.core.dependencies.append_audit_log")
     def test_missing_credentials_raises_401(self, mock_audit):
         db = AsyncMock()
@@ -169,7 +173,9 @@ class TestGetProviderContext(unittest.TestCase):
 
     @patch("app.core.dependencies.authenticate_provider_password")
     @patch("app.core.dependencies.append_audit_log")
-    def test_mfa_enabled_account_gets_401_with_mfa_flow_hint(self, mock_audit, mock_auth):
+    def test_mfa_enabled_account_gets_401_with_mfa_flow_hint(
+        self, mock_audit, mock_auth
+    ):
         """MFA is implemented via /login + /mfa/verify. Routes that use this
         dependency should not accept a half-authenticated password-only
         session; they must return 401 with a hint to complete the MFA flow.
@@ -178,7 +184,9 @@ class TestGetProviderContext(unittest.TestCase):
             None,
             ProviderAuthFailure.MFA_REQUIRED,
         )
-        basic = HTTPBasicCredentials(username="mfa-doctor@example.com", password="correct-password")
+        basic = HTTPBasicCredentials(
+            username="mfa-doctor@example.com", password="correct-password"
+        )
         db = AsyncMock()
 
         with self.assertRaises(HTTPException) as cm:
@@ -213,7 +221,10 @@ class TestGetProviderContext(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNotNone(result.session_binding)
         mock_audit.assert_not_called()
 
     @patch("app.core.dependencies.authenticate_provider_password")
@@ -234,7 +245,10 @@ class TestGetProviderContext(unittest.TestCase):
             )
         )
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNone(result.session_binding)
         mock_auth.assert_awaited_once_with(
             db,
             basic.username,
@@ -258,7 +272,9 @@ class TestGetProviderContext(unittest.TestCase):
         with patch("app.core.dependencies.logger") as mock_logger:
             result = run(
                 get_provider_context(
-                    request=MockRequest(user_agent="TestAgent/1.0", client_ip="10.0.0.2"),
+                    request=MockRequest(
+                        user_agent="TestAgent/1.0", client_ip="10.0.0.2"
+                    ),
                     credentials=creds,
                     basic_credentials=None,
                     hospital_id=context.hospital.hospital_id,
@@ -266,9 +282,14 @@ class TestGetProviderContext(unittest.TestCase):
                 )
             )
 
-        self.assertEqual(result, context)
+        self.assertEqual(result.provider, context.provider)
+        self.assertEqual(result.hospital, context.hospital)
+        self.assertEqual(result.affiliation, context.affiliation)
+        self.assertIsNotNone(result.session_binding)
         mock_logger.warning.assert_called_once()
-        self.assertIn("SESSION_IP_ROTATION_DETECTED", str(mock_logger.warning.call_args))
+        self.assertIn(
+            "SESSION_IP_ROTATION_DETECTED", str(mock_logger.warning.call_args)
+        )
 
 
 if __name__ == "__main__":

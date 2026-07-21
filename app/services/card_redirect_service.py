@@ -32,8 +32,7 @@ class CardRedirectService:
         """
         # First resolve the card to a patient
         stmt = select(NFCCardRegistry).where(
-            NFCCardRegistry.card_uid == card_id,
-            NFCCardRegistry.status == "active"
+            NFCCardRegistry.card_uid == card_id, NFCCardRegistry.status == "active"
         )
         result = await self.db.execute(stmt)
         card = result.scalar_one_or_none()
@@ -47,28 +46,36 @@ class CardRedirectService:
 
         for _ in range(10):
             if current_uuid in seen:
-                raise TombstoneIntegrityError("Tombstone cycle detected during card redirect")
+                raise TombstoneIntegrityError(
+                    "Tombstone cycle detected during card redirect"
+                )
             seen.add(current_uuid)
 
             tombstones = await self._tombstones_for_old(current_uuid)
             if len(tombstones) > 1:
-                raise TombstoneIntegrityError(f"Duplicate tombstones found for patient {current_uuid}")
+                raise TombstoneIntegrityError(
+                    f"Duplicate tombstones found for patient {current_uuid}"
+                )
             if not tombstones:
                 break
 
             tombstone = tombstones[0]
-            redirect_chain.append({
-                "from": str(current_uuid),
-                "to": str(tombstone.canonical_patient_uuid),
-                "merged_at": tombstone.merged_at.isoformat()
-            })
+            redirect_chain.append(
+                {
+                    "from": str(current_uuid),
+                    "to": str(tombstone.canonical_patient_uuid),
+                    "merged_at": tombstone.merged_at.isoformat(),
+                }
+            )
             current_uuid = tombstone.canonical_patient_uuid
         else:
-            raise TombstoneIntegrityError("Tombstone redirect chain exceeded maximum depth")
+            raise TombstoneIntegrityError(
+                "Tombstone redirect chain exceeded maximum depth"
+            )
 
         return {
             "canonical_patient_uuid": str(current_uuid),
             "redirect_chain": redirect_chain,
             "original_patient_uuid": str(card.patient_id),
-            "is_redirected": len(redirect_chain) > 0
+            "is_redirected": len(redirect_chain) > 0,
         }

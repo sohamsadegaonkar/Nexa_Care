@@ -19,20 +19,23 @@ client = TestClient(app)
 
 def test_push_request_requires_auth():
     """Doctor-initiated push requests require an authenticated provider."""
-    response = client.post("/api/v2/push/request", json={
-        "patient_id": "123e4567-e89b-12d3-a456-426614174000",
-        "provider_id": "prov-001",
-        "purpose": "ROUTINE",
-        "scope": "clinical.diagnoses",
-    })
+    response = client.post(
+        "/api/v2/push/request",
+        json={
+            "patient_id": "123e4567-e89b-12d3-a456-426614174000",
+            "provider_id": "prov-001",
+            "purpose": "ROUTINE",
+            "scope": "clinical.diagnoses",
+        },
+    )
     assert response.status_code == 401
 
 
-def test_push_respond_requires_auth():
+def test_push_respond_route_is_retired():
     """Responding to a push request requires an authenticated patient session.
 
     Biometric signature verification happens inside this same call (see
-    BiometricSignatureVerifier.verify_signature in assurance_routes.py), so
+    SignedApprovalVerifier in the canonical consent approval route), so
     an unauthenticated caller never even reaches that check -- the session
     guard (get_scoped_session) rejects first.
     """
@@ -44,15 +47,18 @@ def test_push_respond_requires_auth():
             "nonce": "test-nonce",
         },
     )
-    assert response.status_code == 401
+    assert response.status_code == 404
 
 
 def test_break_glass_requires_auth():
-    response = client.post("/api/v2/consent/break-glass/issue", json={
-        "patient_uuid": "123e4567-e89b-12d3-a456-426614174000",
-        "hospital_id": "H001",
-        "clinician_id": "C001",
-        "reason": "EMERGENCY",
-        "justification": "Test"
-    })
+    response = client.post(
+        "/api/v2/consent/break-glass/issue",
+        json={
+            "patient_uuid": "123e4567-e89b-12d3-a456-426614174000",
+            "hospital_id": "H001",
+            "clinician_id": "C001",
+            "reason": "EMERGENCY",
+            "justification": "Test",
+        },
+    )
     assert response.status_code == 401

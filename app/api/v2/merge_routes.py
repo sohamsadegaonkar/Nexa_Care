@@ -3,19 +3,23 @@ Patient Merge (Alias & Tombstone) Workflow
 Implements Section 9 of the Nexa Care v1.0 Architecture
 """
 
+from __future__ import annotations
+
 import inspect
 import json
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Header, status
+from fastapi import APIRouter, Depends, HTTPException, Header, Request, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client as get_redis_client
 from app.models.provider_context import ProviderContext
+from app.core.session_binding import provider_session_binding
 from app.services.merge_service import PatientMergeService
+from app.security.audit_context import AuditDomain, current_audit_context
 
 router = APIRouter(prefix="/api/v2/patient", tags=["merge"])
 _MERGE_CHALLENGE_PREFIX = "merge_challenge:"
@@ -44,6 +48,7 @@ class MergeResponse(BaseModel):
 @router.post("/merge", response_model=MergeResponse, status_code=201)
 async def merge_patients(
     payload: MergeRequest,
+    request: Request,
     x_merge_challenge: str = Header(..., alias="X-Merge-Challenge"),
     db: AsyncSession = Depends(get_db_session),
     provider: ProviderContext = Depends(get_current_provider),
@@ -60,7 +65,7 @@ async def merge_patients(
 
     redis = get_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{x_merge_challenge}"
-    
+
     getdel = getattr(redis, "getdel", None)
     if getdel is not None:
         cached = await _maybe_await(getdel(key))
@@ -85,10 +90,15 @@ async def merge_patients(
             detail="Challenge not verified.",
         )
 
-    if challenge_data["provider_id"] != str(provider.provider.provider_id):
+    if (
+        challenge_data.get("provider_id") != str(provider.provider.provider_id)
+        or challenge_data.get("hospital_id") != str(provider.hospital.hospital_id)
+        or challenge_data.get("session_binding") != provider_session_binding(request)
+        or challenge_data.get("operation") != "patient_merge"
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Challenge bound to different provider.",
+            detail={"error_code": "MERGE_CHALLENGE_BINDING_MISMATCH"},
         )
 
     from app.observability.audit_ledger import append_audit_log_or_503
@@ -110,11 +120,12 @@ async def merge_patients(
         )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.MERGE),
             actor_uid=provider.actor_uid,
             event_type="MERGE_EXECUTED",
             target_id=str(payload.old_patient_uuid),
             status="SUCCESS",
-            metadata={"canonical_patient_uuid": str(resolved_canonical_uuid)}
+            metadata={"canonical_patient_uuid": str(resolved_canonical_uuid)},
         )
 
         return MergeResponse(
@@ -124,15 +135,18 @@ async def merge_patients(
         )
     except ValueError as e:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.MERGE),
             actor_uid=provider.actor_uid,
             event_type="MERGE_REJECTED",
             target_id=str(payload.old_patient_uuid),
             status="FAILED",
             metadata={
                 "canonical_patient_uuid": str(payload.canonical_patient_uuid),
-                "reason": str(e),
+                "reason": "MERGE_VALIDATION_FAILED",
             },
         )
-        raise HTTPException(status_code=400, detail=str(e)) from e
+        raise HTTPException(
+            status_code=400, detail={"error_code": "MERGE_VALIDATION_FAILED"}
+        ) from e
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Merge operation failed") from exc

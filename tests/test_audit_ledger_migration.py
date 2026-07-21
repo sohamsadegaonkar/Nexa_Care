@@ -12,7 +12,9 @@ MIGRATION = ROOT / "alembic" / "versions" / "20260716_canonical_audit_ledger_cha
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("canonical_audit_ledger_migration", MIGRATION)
+    spec = importlib.util.spec_from_file_location(
+        "canonical_audit_ledger_migration", MIGRATION
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -28,7 +30,7 @@ def test_audit_migration_is_single_head_after_patient_auth_identity():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260717_provider_pwd_canonical"]
+    assert script.get_heads() == ["20260720_final_runtime_fix"]
     revision = script.get_revision("20260716_audit_ledger_chain")
     assert revision.down_revision == "20260715_patient_auth_identity"
 
@@ -37,12 +39,13 @@ def test_audit_migration_upgrade_evolves_existing_table():
     module = _module()
     bind = MagicMock()
     bind.execute.return_value = EmptyRows()
-    with patch.object(module.op, "get_bind", return_value=bind), patch.object(
-        module.op, "add_column"
-    ) as add_column, patch.object(module.op, "alter_column") as alter_column, patch.object(
-        module.op, "create_unique_constraint"
-    ) as create_unique, patch.object(module.op, "create_check_constraint"), patch.object(
-        module.op, "create_index"
+    with (
+        patch.object(module.op, "get_bind", return_value=bind),
+        patch.object(module.op, "add_column") as add_column,
+        patch.object(module.op, "alter_column") as alter_column,
+        patch.object(module.op, "create_unique_constraint") as create_unique,
+        patch.object(module.op, "create_check_constraint"),
+        patch.object(module.op, "create_index"),
     ):
         module.upgrade()
 
@@ -69,9 +72,11 @@ def test_audit_migration_upgrade_evolves_existing_table():
 
 def test_audit_migration_downgrade_operations_are_valid_and_ordered():
     module = _module()
-    with patch.object(module.op, "drop_index") as drop_index, patch.object(
-        module.op, "drop_constraint"
-    ) as drop_constraint, patch.object(module.op, "drop_column") as drop_column:
+    with (
+        patch.object(module.op, "drop_index") as drop_index,
+        patch.object(module.op, "drop_constraint") as drop_constraint,
+        patch.object(module.op, "drop_column") as drop_column,
+    ):
         module.downgrade()
 
     assert drop_index.call_count == 4

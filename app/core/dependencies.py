@@ -18,6 +18,12 @@ Two distinct trust models live in this module — do not conflate them:
 
 from __future__ import annotations
 
+from app.security.audit_context import (
+    AuditDomain,
+    bind_trusted_audit_hospital,
+    current_audit_context,
+)
+
 import json
 import logging
 from uuid import UUID
@@ -33,11 +39,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.security import hash_client_ip
+from app.core.client_ip import resolve_client_ip
+import hashlib
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
 from app.services.patient_auth_service import decode_patient_access_token
-from app.services.consent_engine import ConsentEngineUnavailable, validate as validate_consent_capability
+from app.services.consent_engine import (
+    ConsentEngineUnavailable,
+    validate as validate_consent_capability,
+)
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
@@ -50,6 +61,7 @@ logger = logging.getLogger("nexa_logger")
 async def get_scoped_session(authorization: str | None = Header(default=None)) -> str:
     if not authorization:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
             target_id="UNKNOWN",
@@ -64,6 +76,7 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
     session_context = await validate_session_context(authorization)
     if not session_context:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
             target_id="UNKNOWN",
@@ -74,12 +87,15 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
     masked_internal_id = session_context.get("masked_internal_id")
     if not masked_internal_id:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
             target_id="UNKNOWN",
             status="UNSCOPED_SESSION",
         )
-        raise HTTPException(status_code=401, detail="Session is not scoped to a patient")
+        raise HTTPException(
+            status_code=401, detail="Session is not scoped to a patient"
+        )
 
     return masked_internal_id
 
@@ -89,12 +105,7 @@ _provider_basic_scheme = HTTPBasic(auto_error=False)
 
 
 def _client_ip_from_request(request: Request) -> str:
-    """Return the request's client IP, preferring X-Forwarded-For."""
-
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else ""
+    return resolve_client_ip(request)
 
 
 def _audit_status_for_failure(failure: ProviderAuthFailure) -> str:
@@ -175,10 +186,20 @@ async def get_provider_context(
     user_agent = request.headers.get("user-agent")
     client_ip = _client_ip_from_request(request)
 
+    cookies = getattr(request, "cookies", {})
+    cookie_session = cookies.get("nexa_provider_session")
     if credentials is not None and credentials.credentials:
         result = await authenticate_provider_session(
             db,
             credentials.credentials,
+            hospital_id,
+            user_agent=user_agent,
+            client_ip=client_ip,
+        )
+    elif isinstance(cookie_session, str) and cookie_session:
+        result = await authenticate_provider_session(
+            db,
+            cookie_session,
             hospital_id,
             user_agent=user_agent,
             client_ip=client_ip,
@@ -192,6 +213,7 @@ async def get_provider_context(
         )
     else:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_GUARD",
             event_type="PROVIDER_AUTH_FAILED",
             target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -200,16 +222,32 @@ async def get_provider_context(
         raise HTTPException(status_code=401, detail="Missing provider credentials")
 
     if result.context is not None:
+        bind_trusted_audit_hospital(str(result.context.hospital.hospital_id))
         if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
-            logger.warning(json.dumps({
-                "event": "SESSION_IP_ROTATION_DETECTED",
-                "provider_id": str(result.context.provider.provider_id),
-                "ip_hash": hash_client_ip(client_ip),
-            }))
-        return result.context
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "SESSION_IP_ROTATION_DETECTED",
+                        "provider_id": str(result.context.provider.provider_id),
+                        "ip_hash": hash_client_ip(client_ip),
+                    }
+                )
+            )
+        raw_session = (
+            credentials.credentials
+            if credentials is not None and credentials.credentials
+            else cookie_session
+        )
+        binding = (
+            hashlib.sha256(raw_session.encode("utf-8")).hexdigest()
+            if raw_session
+            else None
+        )
+        return result.context.model_copy(update={"session_binding": binding})
 
     assert result.failure is not None
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid="PROVIDER_GUARD",
         event_type="PROVIDER_AUTH_FAILED",
         target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -238,8 +276,17 @@ async def get_current_provider(
     user_agent = request.headers.get("user-agent")
     client_ip = _client_ip_from_request(request)
 
-    if credentials is None or not credentials.credentials:
+    cookie_token = getattr(request, "cookies", {}).get("nexa_provider_session")
+    if not isinstance(cookie_token, str):
+        cookie_token = None
+    session_token = (
+        credentials.credentials
+        if credentials is not None and credentials.credentials
+        else cookie_token
+    )
+    if not session_token:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_GUARD",
             event_type="PROVIDER_AUTH_FAILED",
             target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -249,28 +296,36 @@ async def get_current_provider(
 
     result = await authenticate_provider_session(
         db,
-        credentials.credentials,
+        session_token,
         hospital_id,
         user_agent=user_agent,
         client_ip=client_ip,
     )
     if result.context is not None:
+        bind_trusted_audit_hospital(str(result.context.hospital.hospital_id))
         if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
-            logger.warning(json.dumps({
-                "event": "SESSION_IP_ROTATION_DETECTED",
-                "provider_id": str(result.context.provider.provider_id),
-                "ip_hash": hash_client_ip(client_ip),
-            }))
-        return result.context
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "SESSION_IP_ROTATION_DETECTED",
+                        "provider_id": str(result.context.provider.provider_id),
+                        "ip_hash": hash_client_ip(client_ip),
+                    }
+                )
+            )
+        binding = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+        return result.context.model_copy(update={"session_binding": binding})
 
     assert result.failure is not None
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid="PROVIDER_GUARD",
         event_type="PROVIDER_AUTH_FAILED",
         target_id=str(hospital_id) if hospital_id else "UNKNOWN",
         status=_audit_status_for_failure(result.failure),
     )
     raise _http_exception_for_failure(result.failure)
+
 
 def require_role(required_role: str):
     """Factory that returns a FastAPI dependency enforcing a provider role.
@@ -286,6 +341,7 @@ def require_role(required_role: str):
         roles = provider.affiliation.roles or []
         if required_role not in roles:
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.AUTH),
                 actor_uid=provider.actor_uid,
                 event_type="PROVIDER_ROLE_DENIED",
                 target_id=str(provider.provider.provider_id),

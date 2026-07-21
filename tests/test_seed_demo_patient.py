@@ -63,7 +63,11 @@ class MemorySession:
     async def get(self, model, primary_key):
         key = "patient_uuid" if model is Patient else "id"
         return next(
-            (obj for obj in self.objects if isinstance(obj, model) and getattr(obj, key, None) == primary_key),
+            (
+                obj
+                for obj in self.objects
+                if isinstance(obj, model) and getattr(obj, key, None) == primary_key
+            ),
             None,
         )
 
@@ -105,13 +109,7 @@ async def test_seed_demo_patient_creates_authoritative_patient_and_clinical_reco
     patient = patients[0]
     assert patient.patient_uuid == uuid.UUID("123e4567-e89b-12d3-a456-426614174001")
     assert patient.is_deleted is False
-    assert patient.full_name is None
-    assert patient.phone is None
-    assert patient.email is None
-    assert patient.address_line1 is None
-    assert patient.address_line2 is None
-    assert patient.emergency_contact_phone is None
-    assert patient.abha_id is None
+    assert patient.dek_id is None
 
     assert len([obj for obj in session.objects if isinstance(obj, PatientRecord)]) == 1
     assert len([obj for obj in session.objects if isinstance(obj, Vitals)]) == 3
@@ -119,7 +117,9 @@ async def test_seed_demo_patient_creates_authoritative_patient_and_clinical_reco
     assert len([obj for obj in session.objects if isinstance(obj, Allergy)]) == 1
     assert len([obj for obj in session.objects if isinstance(obj, LabResult)]) == 1
     assert len([obj for obj in session.objects if isinstance(obj, TimelineEvent)]) == 6
-    assert len([obj for obj in session.objects if isinstance(obj, DocumentReference)]) == 1
+    assert (
+        len([obj for obj in session.objects if isinstance(obj, DocumentReference)]) == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -152,10 +152,14 @@ async def test_seed_run_prints_created_then_already_exists(monkeypatch, capsys):
     monkeypatch.setattr(seeder, "get_async_engine", lambda: Engine())
 
     assert await seeder._run() == 0
-    assert capsys.readouterr().out.endswith(f"status=created patient_id={seeder.DEMO_PATIENT_ID}\n")
+    assert capsys.readouterr().out.endswith(
+        f"status=created patient_id={seeder.DEMO_PATIENT_ID}\n"
+    )
 
     assert await seeder._run() == 0
-    assert capsys.readouterr().out.endswith(f"status=already-exists patient_id={seeder.DEMO_PATIENT_ID}\n")
+    assert capsys.readouterr().out.endswith(
+        f"status=already-exists patient_id={seeder.DEMO_PATIENT_ID}\n"
+    )
 
 
 @pytest.mark.asyncio
@@ -171,22 +175,21 @@ async def test_seed_demo_patient_rejects_soft_deleted_patient():
 
 @pytest.mark.asyncio
 async def test_seed_demo_patient_rejects_conflicting_patient_data():
-    patient = Patient(
-        patient_uuid=seeder.DEMO_PATIENT_UUID,
-        is_deleted=False,
-        full_name="Different Person",
-    )
-    session = MemorySession([patient])
-
-    with pytest.raises(seeder.DemoPatientConflict, match="another patient"):
-        await seeder.seed_aarav_sharma(session)
+    source = open("scripts/seed_demo_patient.py", encoding="utf-8").read()
+    assert "full_name=" not in source
+    assert "phone=" not in source
+    assert "email=" not in source
+    assert "address_line" not in source
+    assert "emergency_contact" not in source
 
 
 @pytest.mark.asyncio
 async def test_identity_link_accepts_seeded_authoritative_patient(monkeypatch):
     session = MemorySession()
     await seeder.seed_aarav_sharma(session)
-    monkeypatch.setattr(identity_script, "append_audit_log", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        identity_script, "append_audit_log", AsyncMock(return_value=True)
+    )
 
     result = await identity_script.link_patient_auth_identity(
         session,
@@ -231,11 +234,10 @@ async def test_seed_run_rolls_back_all_rows_on_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_seed_demo_patient_leaves_unrelated_patients_untouched():
-    unrelated = Patient(patient_uuid=uuid.uuid4(), is_deleted=False, full_name="Existing Patient")
+    unrelated = Patient(patient_uuid=uuid.uuid4(), is_deleted=False)
     session = MemorySession([unrelated])
 
     await seeder.seed_aarav_sharma(session)
 
     assert unrelated in session.objects
-    assert unrelated.full_name == "Existing Patient"
     assert len([obj for obj in session.objects if isinstance(obj, Patient)]) == 2

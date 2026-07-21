@@ -18,17 +18,23 @@ class PatientMergeService:
 
     async def _tombstones_for_old(self, patient_uuid: UUID) -> list[PatientTombstone]:
         result = await self.db.execute(
-            select(PatientTombstone).where(PatientTombstone.old_patient_uuid == patient_uuid)
+            select(PatientTombstone).where(
+                PatientTombstone.old_patient_uuid == patient_uuid
+            )
         )
         return list(result.scalars().all())
 
-    async def _single_tombstone_for_old(self, patient_uuid: UUID) -> PatientTombstone | None:
+    async def _single_tombstone_for_old(
+        self, patient_uuid: UUID
+    ) -> PatientTombstone | None:
         rows = await self._tombstones_for_old(patient_uuid)
         if len(rows) > 1:
             raise ValueError(f"Duplicate tombstones found for patient {patient_uuid}")
         return rows[0] if rows else None
 
-    async def _resolve_canonical_target(self, target_uuid: UUID, forbidden_old_uuid: UUID) -> UUID:
+    async def _resolve_canonical_target(
+        self, target_uuid: UUID, forbidden_old_uuid: UUID
+    ) -> UUID:
         """Resolve a target through existing tombstones while rejecting cycles."""
 
         current = target_uuid
@@ -67,12 +73,16 @@ class PatientMergeService:
         if existing_old_tombstone is not None:
             if existing_old_tombstone.canonical_patient_uuid == canonical_uuid:
                 return existing_old_tombstone
-            raise ValueError("Patient has already been merged into a different canonical patient")
+            raise ValueError(
+                "Patient has already been merged into a different canonical patient"
+            )
 
         if getattr(old_patient, "is_deleted", False):
             raise ValueError("Patient is already tombstoned")
 
-        resolved_canonical_uuid = await self._resolve_canonical_target(canonical_uuid, old_uuid)
+        resolved_canonical_uuid = await self._resolve_canonical_target(
+            canonical_uuid, old_uuid
+        )
         if resolved_canonical_uuid == old_uuid:
             raise ValueError("Merge would create a tombstone cycle")
 

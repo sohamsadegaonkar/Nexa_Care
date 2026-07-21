@@ -4,7 +4,6 @@ import { renderWithTamagui } from '../../../../test/test-utils'
 import { ApiError, NexaApiClient } from '../../utils/apiClient'
 import { DoctorLoginScreen } from './DoctorLoginScreen'
 import {
-  PROVIDER_SESSION_STORAGE_KEY,
   ProviderAuthProvider,
   useProviderAuth,
 } from './ProviderAuthContext'
@@ -18,12 +17,19 @@ vi.mock('next/navigation', () => ({
   useSearchParams: () => ({ get: () => returnTo }),
 }))
 
-const directLogin = {
-  access_token: 'provider-access-token',
-  token_type: 'bearer',
+const authenticatedLogin = {
+  status: 'authenticated' as const,
+  expires_at: '2099-01-01T00:00:00Z',
+}
+
+const authenticatedSession = {
+  authenticated: true,
   expires_at: '2099-01-01T00:00:00Z',
   provider_uid: 'provider-1',
   hospital_id: 'hospital-1',
+  display_name: 'Provider One',
+  hospital_name: 'Hospital One',
+  roles: ['clinician'],
 }
 
 function renderLogin(showEntryOptions = true) {
@@ -53,6 +59,9 @@ describe('provider login state machine', () => {
     push.mockReset()
     returnTo = null
     window.sessionStorage.clear()
+    vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
+      new ApiError('No provider session.', 401, 'HTTP_ERROR'),
+    )
   })
 
   it('starts with credentials and never exposes manual MFA fields', async () => {
@@ -75,7 +84,8 @@ describe('provider login state machine', () => {
   })
 
   it('establishes a session and opens the dashboard after direct login', async () => {
-    const login = vi.spyOn(NexaApiClient, 'providerLogin').mockResolvedValue(directLogin)
+    const login = vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue(authenticatedLogin)
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     renderLogin()
     await submitCredentials()
 
@@ -84,32 +94,24 @@ describe('provider login state machine', () => {
       login_identifier: 'provider@example.test',
       password: 'entered-at-runtime',
     })
-    expect(window.sessionStorage.getItem(PROVIDER_SESSION_STORAGE_KEY)).not.toContain(
-      'entered-at-runtime',
-    )
+    expect(window.sessionStorage.length).toBe(0)
   })
 
-  it('retains the pending token internally and shows only the TOTP field', async () => {
-    vi.spyOn(NexaApiClient, 'providerLogin').mockResolvedValue({
-      detail: 'Multi-factor authentication required.',
-      mfa_token: 'internal-pending-token',
-    })
+  it('uses the server-side pending session and shows only the TOTP field', async () => {
+    vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
     renderLogin()
     await submitCredentials()
 
     expect(await screen.findByText('Verify Provider')).toBeTruthy()
     expect(screen.getByText('Authenticator Code')).toBeTruthy()
     expect(screen.queryByText('MFA Token')).toBeNull()
-    expect(screen.queryByDisplayValue('internal-pending-token')).toBeNull()
-    expect(window.sessionStorage.getItem(PROVIDER_SESSION_STORAGE_KEY)).toBeNull()
+    expect(window.sessionStorage.length).toBe(0)
   })
 
-  it('verifies MFA with the internal token and establishes the provider session', async () => {
-    vi.spyOn(NexaApiClient, 'providerLogin').mockResolvedValue({
-      detail: 'Multi-factor authentication required.',
-      mfa_token: 'internal-pending-token',
-    })
-    const verify = vi.spyOn(NexaApiClient, 'providerMfaVerify').mockResolvedValue(directLogin)
+  it('verifies MFA through the cookie session and establishes the provider session', async () => {
+    vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
+    const verify = vi.spyOn(NexaApiClient, 'providerWebMfaVerify').mockResolvedValue(authenticatedLogin)
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     renderLogin()
     await submitCredentials()
     fireEvent.change(await screen.findByPlaceholderText('000000'), {
@@ -118,14 +120,11 @@ describe('provider login state machine', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
 
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/doctor/dashboard'))
-    expect(verify).toHaveBeenCalledWith({
-      mfa_token: 'internal-pending-token',
-      totp_code: '123456',
-    })
+    expect(verify).toHaveBeenCalledWith('123456')
   })
 
   it('maps invalid credentials without exposing backend details', async () => {
-    vi.spyOn(NexaApiClient, 'providerLogin').mockRejectedValue(
+    vi.spyOn(NexaApiClient, 'providerWebLogin').mockRejectedValue(
       new ApiError('backend authentication detail', 401, 'HTTP_ERROR'),
     )
     renderLogin()
@@ -135,11 +134,8 @@ describe('provider login state machine', () => {
   })
 
   it('keeps the MFA step active for an invalid authenticator code', async () => {
-    vi.spyOn(NexaApiClient, 'providerLogin').mockResolvedValue({
-      detail: 'Multi-factor authentication required.',
-      mfa_token: 'internal-pending-token',
-    })
-    vi.spyOn(NexaApiClient, 'providerMfaVerify').mockRejectedValue(
+    vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
+    vi.spyOn(NexaApiClient, 'providerWebMfaVerify').mockRejectedValue(
       new ApiError('Invalid authenticator code.', 401, 'HTTP_ERROR'),
     )
     renderLogin()
@@ -153,12 +149,9 @@ describe('provider login state machine', () => {
     expect(screen.getByText('Verify Provider')).toBeTruthy()
   })
 
-  it('returns to provider login when the pending MFA session expires', async () => {
-    vi.spyOn(NexaApiClient, 'providerLogin').mockResolvedValue({
-      detail: 'Multi-factor authentication required.',
-      mfa_token: 'internal-pending-token',
-    })
-    vi.spyOn(NexaApiClient, 'providerMfaVerify').mockRejectedValue(
+  it('keeps the fail-closed MFA step active when its server session expires', async () => {
+    vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
+    vi.spyOn(NexaApiClient, 'providerWebMfaVerify').mockRejectedValue(
       new ApiError('MFA session expired. Sign in again.', 401, 'HTTP_ERROR'),
     )
     renderLogin()
@@ -168,14 +161,15 @@ describe('provider login state machine', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: 'Verify' }))
 
-    expect(await screen.findByText('Provider Login')).toBeTruthy()
-    expect(screen.getByText('MFA session expired. Sign in again.')).toBeTruthy()
+    expect(await screen.findByText('Invalid authenticator code.')).toBeTruthy()
+    expect(screen.getByText('Verify Provider')).toBeTruthy()
   })
 
   it('prevents duplicate password submissions', async () => {
-    let resolveLogin!: (value: typeof directLogin) => void
-    const pending = new Promise<typeof directLogin>((resolve) => { resolveLogin = resolve })
-    const login = vi.spyOn(NexaApiClient, 'providerLogin').mockReturnValue(pending)
+    let resolveLogin!: (value: typeof authenticatedLogin) => void
+    const pending = new Promise<typeof authenticatedLogin>((resolve) => { resolveLogin = resolve })
+    const login = vi.spyOn(NexaApiClient, 'providerWebLogin').mockReturnValue(pending)
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     renderLogin()
     await screen.findByText('Provider Login')
     fireEvent.change(screen.getByPlaceholderText('doctor@hospital.com'), {
@@ -189,21 +183,22 @@ describe('provider login state machine', () => {
     fireEvent.click(button)
 
     expect(login).toHaveBeenCalledOnce()
-    resolveLogin(directLogin)
+    resolveLogin(authenticatedLogin)
     await waitFor(() => expect(replace).toHaveBeenCalled())
   })
 
   it('does not log password or tokens', async () => {
     const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const normalLog = vi.spyOn(console, 'log').mockImplementation(() => undefined)
-    vi.spyOn(NexaApiClient, 'providerLogin').mockResolvedValue(directLogin)
+    vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue(authenticatedLogin)
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     renderLogin()
     await submitCredentials()
     await waitFor(() => expect(replace).toHaveBeenCalled())
 
     const output = JSON.stringify([...errorLog.mock.calls, ...normalLog.mock.calls])
     expect(output).not.toContain('entered-at-runtime')
-    expect(output).not.toContain('provider-access-token')
+    expect(output).not.toContain('123456')
   })
 
   it('preserves the patient and NFC entry routes', async () => {
@@ -217,14 +212,7 @@ describe('provider login state machine', () => {
   })
 
   it('hydrates a valid authenticated session and honors a safe return path', async () => {
-    window.sessionStorage.setItem(PROVIDER_SESSION_STORAGE_KEY, JSON.stringify({
-      ...directLogin,
-      provider: {
-        provider_id: 'provider-1', display_name: '', medical_registration_number: null,
-        specialty: null, contact_email: 'provider@example.test', role: 'clinician',
-      },
-      hospital: { hospital_id: 'hospital-1', facility_code: '', display_name: '' },
-    }))
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     returnTo = '/consent-history'
     renderLogin(false)
 
@@ -238,6 +226,14 @@ function AuthenticatedValue() {
 }
 
 describe('provider session hydration', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    window.sessionStorage.clear()
+    vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
+      new ApiError('No provider session.', 401, 'HTTP_ERROR'),
+    )
+  })
+
   it('leaves an unauthenticated refresh at login state', async () => {
     window.sessionStorage.clear()
     renderWithTamagui(

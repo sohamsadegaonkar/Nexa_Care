@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 from typing import Any, Protocol, List, Dict
 
@@ -13,6 +15,7 @@ from redis.asyncio import Redis
 import app.services.consent_engine as consent_engine
 from app.models.shards import NexaVault, NexaClinical
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 
 from app.services.crypto_kms import EncryptedField, PatientDataErased
 
@@ -23,7 +26,11 @@ class EncryptionProvider(Protocol):
     """Squad C's cryptographic interface for per-patient envelope encryption."""
 
     async def decrypt_field(
-        self, patient_id: str, field_name: str, encrypted: EncryptedField, db: AsyncSession
+        self,
+        patient_id: str,
+        field_name: str,
+        encrypted: EncryptedField,
+        db: AsyncSession,
     ) -> str:
         """Decrypt a single field using the patient's DEK."""
         ...
@@ -51,9 +58,11 @@ async def consent_gated_decrypt(
     purpose: str,
     requested_scope: str,
     provider_id: str,
+    hospital_id: str,
     db: AsyncSession,
     redis: Redis,
     kms: EncryptionProvider,
+    session_binding: str | None = None,
 ) -> dict:
     """Atomically validate/consume a consent token and decrypt requested fields.
 
@@ -67,12 +76,24 @@ async def consent_gated_decrypt(
         patient_id=patient_id,
         clinician_id=provider_id,
         purpose=purpose,
+        hospital_id=hospital_id,
+        session_binding=session_binding,
     )
 
     if capability is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Consent token invalid or expired.",
+        )
+
+    if capability.is_break_glass:
+        # Break-glass (emergency) capabilities are scoped to whole clinical
+        # categories with their own audit and filtering contract; they must
+        # never be usable against the unrestricted general record endpoint.
+        # See the dedicated emergency-summary endpoint instead.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Break-glass capabilities are not valid for this endpoint.",
         )
 
     # Squad C Requirement: Verify single-gate behavior
@@ -87,10 +108,13 @@ async def consent_gated_decrypt(
         )
 
     # Scopes we will actually process
-    scopes_to_process = capability.scope if requested_scope == "*" else [requested_scope]
+    scopes_to_process = (
+        capability.scope if requested_scope == "*" else [requested_scope]
+    )
 
     # Step 2: Hard-audit Decrypt Started
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=provider_id,
         event_type="CONSENT_GATED_DECRYPT_STARTED",
         target_id=patient_id,
@@ -106,7 +130,11 @@ async def consent_gated_decrypt(
         # Vertical Shard A: NexaVault (PII)
         pii_cols = ["patient_name", "phone", "aadhaar_abha_id"]
         if any(s == "*" or s.startswith("pii") for s in scopes_to_process):
-            stmt = select(NexaVault).where(NexaVault.masked_internal_id == patient_id).limit(1)
+            stmt = (
+                select(NexaVault)
+                .where(NexaVault.masked_internal_id == patient_id)
+                .limit(1)
+            )
             result = await db.execute(stmt)
             vault_row = result.scalars().first()
             if vault_row:
@@ -118,12 +146,18 @@ async def consent_gated_decrypt(
                             decrypt_attempted = True
                             # Step 4: Call kms.decrypt_field()
                             encrypted = EncryptedField.deserialize(val, col)
-                            decrypted_results["pii"][col] = await kms.decrypt_field(patient_id, col, encrypted, db)
+                            decrypted_results["pii"][col] = await kms.decrypt_field(
+                                patient_id, col, encrypted, db
+                            )
 
         # Vertical Shard B: NexaClinical (Clinical Data)
         clinical_cols = ["diagnoses", "lab_results", "prescriptions"]
         if any(s == "*" or s.startswith("clinical") for s in scopes_to_process):
-            stmt = select(NexaClinical).where(NexaClinical.masked_internal_id == patient_id).limit(1)
+            stmt = (
+                select(NexaClinical)
+                .where(NexaClinical.masked_internal_id == patient_id)
+                .limit(1)
+            )
             result = await db.execute(stmt)
             clinical_row = result.scalars().first()
             if clinical_row:
@@ -135,7 +169,9 @@ async def consent_gated_decrypt(
                             decrypt_attempted = True
                             # Step 4: Call kms.decrypt_field()
                             encrypted = EncryptedField.deserialize(val, col)
-                            decrypted_results["clinical"][col] = await kms.decrypt_field(patient_id, col, encrypted, db)
+                            decrypted_results["clinical"][
+                                col
+                            ] = await kms.decrypt_field(patient_id, col, encrypted, db)
 
         # Step 5: ConsentEngine.consume()
         try:
@@ -146,12 +182,18 @@ async def consent_gated_decrypt(
                 clinician_id=provider_id,
                 purpose=purpose,
             )
-        except Exception as e:
+        except Exception as exc:
             # Consent consume failure after successful decrypt: Log warning but return data
-            logger.warning(f"Consent token consumption failed after successful decryption: {e}")
+            log_safe_exception(
+                logger,
+                exc,
+                subsystem="redis",
+                operation="consent_consume_after_decrypt",
+            )
 
         # Step 6: Hard-audit Decrypt Completed
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider_id,
             event_type="CONSENT_GATED_DECRYPT_COMPLETED",
             target_id=patient_id,
@@ -165,11 +207,15 @@ async def consent_gated_decrypt(
         # Even if decryption fails, the access attempt happened.
         # Record it and consume the token as required.
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider_id,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=patient_id,
             status="FAILED",
-            metadata={"error": str(exc), "requested_scope": requested_scope},
+            metadata={
+                "error_code": "CONSENT_GATED_DECRYPT_FAILED",
+                "requested_scope": requested_scope,
+            },
         )
 
         # Force consume the token if we reached the decrypt step
@@ -183,11 +229,16 @@ async def consent_gated_decrypt(
                     purpose=purpose,
                 )
             except Exception as consume_err:
-                logger.error(f"Failed to consume token during error cleanup: {consume_err}")
+                log_safe_exception(
+                    logger,
+                    consume_err,
+                    subsystem="redis",
+                    operation="consent_consume_cleanup",
+                )
 
         if isinstance(exc, (HTTPException, PatientDataErased)):
             raise
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Decryption operation failed: {str(exc)}",
+            detail={"error_code": "DECRYPTION_OPERATION_FAILED"},
         ) from exc

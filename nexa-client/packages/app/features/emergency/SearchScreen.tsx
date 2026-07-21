@@ -17,16 +17,17 @@ import { Check, ChevronDown } from '@tamagui/lucide-icons'
 import { useRouter } from 'solito/navigation'
 import { useState } from 'react'
 
-import { requestBreakGlassConsent, BreakGlassConsentError } from '../../api/consent'
+import {
+  BREAK_GLASS_REASON_OPTIONS,
+  requestBreakGlassConsent,
+  BreakGlassConsentError,
+  type BreakGlassReasonCode,
+} from '../../api/consent'
+import { generateWorkflowId, setCapability } from '../../services/capabilityStore'
 
 const BREAK_GLASS_PURPOSE = 'EMERGENCY'
-const DEFAULT_REASON_CODE = 'UNCONSCIOUS'
-
-const REASON_CODES = [
-  { label: 'Unconscious', value: 'UNCONSCIOUS' },
-  { label: 'Cardiac Arrest', value: 'CARDIAC_ARREST' },
-  { label: 'Severe Trauma', value: 'SEVERE_TRAUMA' },
-]
+const DEFAULT_REASON_CODE: BreakGlassReasonCode = 'UNCONSCIOUS_PATIENT'
+const REASON_CODES = BREAK_GLASS_REASON_OPTIONS
 
 export interface EmergencyPatientSearchQuery {
   firstName: string
@@ -62,19 +63,23 @@ export async function searchPatients(
   ]
 }
 
-function reasonLabel(value: string): string {
+function isBreakGlassReasonCode(value: string): value is BreakGlassReasonCode {
+  return BREAK_GLASS_REASON_OPTIONS.some((reason) => reason.value === value)
+}
+
+function reasonLabel(value: BreakGlassReasonCode): string {
   return REASON_CODES.find((reason) => reason.value === value)?.label ?? value
 }
 
 interface BreakGlassSheetProps {
   patient: EmergencyPatientSearchResult | null
   open: boolean
-  reasonCode: string
+  reasonCode: BreakGlassReasonCode
   freeText: string
   loading: boolean
   errorMessage: string | null
   onOpenChange: (open: boolean) => void
-  onReasonCodeChange: (reasonCode: string) => void
+  onReasonCodeChange: (reasonCode: BreakGlassReasonCode) => void
   onFreeTextChange: (freeText: string) => void
   onSubmit: () => void
 }
@@ -173,7 +178,11 @@ function BreakGlassSheet({
           </Text>
           <Select
             value={reasonCode}
-            onValueChange={onReasonCodeChange}
+            onValueChange={(value) => {
+              if (isBreakGlassReasonCode(value)) {
+                onReasonCodeChange(value)
+              }
+            }}
             disablePreventBodyScroll
           >
             <Select.Trigger
@@ -270,7 +279,7 @@ export function SearchScreen() {
   const [dob, setDob] = useState('')
   const [results, setResults] = useState<EmergencyPatientSearchResult[]>([])
   const [selectedPatient, setSelectedPatient] = useState<EmergencyPatientSearchResult | null>(null)
-  const [reasonCode, setReasonCode] = useState(DEFAULT_REASON_CODE)
+  const [reasonCode, setReasonCode] = useState<BreakGlassReasonCode>(DEFAULT_REASON_CODE)
   const [freeText, setFreeText] = useState('')
   const [isSearching, setIsSearching] = useState(false)
   const [isRequestingOverride, setIsRequestingOverride] = useState(false)
@@ -311,15 +320,24 @@ export function SearchScreen() {
     setOverrideErrorMessage(null)
 
     try {
-      const consentToken = await requestBreakGlassConsent(
+      const grant = await requestBreakGlassConsent(
         selectedPatient.patient_id,
         reasonCode,
         freeText
       )
+      const workflowId = generateWorkflowId()
+      setCapability({
+        workflowId,
+        patientId: selectedPatient.patient_id,
+        token: grant.consent_token,
+        purpose: BREAK_GLASS_PURPOSE,
+        scope: grant.approved_scope,
+        expiresAt: grant.expires_at ?? new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      })
       router.push(
-        `/patient/${encodeURIComponent(selectedPatient.patient_id)}?consentToken=${encodeURIComponent(
-          consentToken
-        )}&purpose=${BREAK_GLASS_PURPOSE}`
+        `/patient/${encodeURIComponent(selectedPatient.patient_id)}?workflow_id=${encodeURIComponent(
+          workflowId
+        )}`
       )
     } catch (error: unknown) {
       if (error instanceof BreakGlassConsentError) {

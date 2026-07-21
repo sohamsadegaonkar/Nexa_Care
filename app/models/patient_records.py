@@ -21,7 +21,9 @@ class PatientRecord(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "patient_records"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, unique=True, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, unique=True, index=True
+    )
 
 
 class Vitals(Base, UUIDPrimaryKeyMixin):
@@ -29,17 +31,27 @@ class Vitals(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "patient_vitals"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    type: Mapped[str] = mapped_column(String(32), nullable=False)  # BP, sugar, HR, temp, SpO2
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    type: Mapped[str] = mapped_column(
+        String(32), nullable=False
+    )  # BP, sugar, HR, temp, SpO2
     value: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     # Provenance columns (Invariant 3)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="LOW_RISK")
-    source_document_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    risk_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="LOW_RISK"
+    )
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_patient_vitals_patient_recorded", "patient_id", "recorded_at"),
@@ -55,17 +67,25 @@ class Medication(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "patient_medications"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     strength: Mapped[str] = mapped_column(String(64), nullable=False)
     frequency: Mapped[str] = mapped_column(String(64), nullable=False)
-    prescribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    prescribed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     # Provenance columns (Invariant 3)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM_RISK")
-    source_document_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    risk_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="MEDIUM_RISK"
+    )
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_patient_medications_patient_id", "patient_id"),
@@ -81,19 +101,27 @@ class LabResult(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "patient_lab_results"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     test_name: Mapped[str] = mapped_column(String(128), nullable=False)
     value: Mapped[str] = mapped_column(String(64), nullable=False)
     unit: Mapped[str] = mapped_column(String(32), nullable=False)
     reference_range: Mapped[str] = mapped_column(String(64), nullable=False)
     is_abnormal: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     # Provenance columns (Invariant 3)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM_RISK")
-    source_document_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    risk_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="MEDIUM_RISK"
+    )
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
 
     __table_args__ = (
         Index("ix_patient_lab_results_patient_recorded", "patient_id", "recorded_at"),
@@ -109,15 +137,21 @@ class Allergy(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "patient_allergies"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     allergen: Mapped[str] = mapped_column(String(128), nullable=False)
     severity: Mapped[str] = mapped_column(String(32), nullable=False)
 
     # Provenance columns (Invariant 3)
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
-    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="HIGH_RISK")
-    source_document_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
+    risk_level: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="HIGH_RISK"
+    )
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
 
     def __init__(self, **kwargs):
         kwargs.setdefault("risk_level", "HIGH_RISK")
@@ -138,11 +172,17 @@ class DocumentReference(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "document_references"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     document_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     storage_ref: Mapped[str] = mapped_column(String(256), nullable=False)
-    extraction_job_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    extraction_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
 
 
 class TimelineEvent(Base, UUIDPrimaryKeyMixin):
@@ -150,11 +190,19 @@ class TimelineEvent(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "timeline_events"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    event_ref_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    event_ref_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     source: Mapped[str] = mapped_column(String(20), nullable=False, default="manual")
     summary: Mapped[str] = mapped_column(String(512), nullable=False)
 
-    __table_args__ = (Index("ix_timeline_events_patient_occurred", "patient_id", "occurred_at"),)
+    __table_args__ = (
+        Index("ix_timeline_events_patient_occurred", "patient_id", "occurred_at"),
+    )

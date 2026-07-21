@@ -87,11 +87,19 @@ class TestRequireActiveConsent(unittest.TestCase):
         provider = sample_provider_context()
 
         with self.assertRaises(HTTPException) as cm:
-            run(require_active_consent(FakeRequest(path_params={"patient_id": "patient-1"}), provider))
+            run(
+                require_active_consent(
+                    FakeRequest(path_params={"patient_id": "patient-1"}), provider
+                )
+            )
         self.assertEqual(cm.exception.status_code, 403)
 
         with self.assertRaises(HTTPException) as cm:
-            run(require_active_consent(FakeRequest(headers={"X-Consent-Token": "token"}), provider))
+            run(
+                require_active_consent(
+                    FakeRequest(headers={"X-Consent-Token": "token"}), provider
+                )
+            )
         self.assertEqual(cm.exception.status_code, 403)
 
     @patch("app.core.dependencies.validate_consent_capability", new_callable=AsyncMock)
@@ -100,29 +108,35 @@ class TestRequireActiveConsent(unittest.TestCase):
         provider = sample_provider_context()
 
         with self.assertRaises(HTTPException) as cm:
-            run(require_active_consent(
-                FakeRequest(
-                    headers={"X-Consent-Token": "bad"},
-                    path_params={"patient_id": "patient-1"},
-                ),
-                provider,
-            ))
+            run(
+                require_active_consent(
+                    FakeRequest(
+                        headers={"X-Consent-Token": "bad"},
+                        path_params={"patient_id": "patient-1"},
+                    ),
+                    provider,
+                )
+            )
 
         self.assertEqual(cm.exception.status_code, 403)
 
     @patch("app.core.dependencies.validate_consent_capability", new_callable=AsyncMock)
-    def test_dependency_returns_503_when_consent_store_unavailable(self, mock_validate) -> None:
+    def test_dependency_returns_503_when_consent_store_unavailable(
+        self, mock_validate
+    ) -> None:
         mock_validate.side_effect = ConsentEngineUnavailable("redis down")
         provider = sample_provider_context()
 
         with self.assertRaises(HTTPException) as cm:
-            run(require_active_consent(
-                FakeRequest(
-                    headers={"X-Consent-Token": "token"},
-                    path_params={"patient_id": "patient-1"},
-                ),
-                provider,
-            ))
+            run(
+                require_active_consent(
+                    FakeRequest(
+                        headers={"X-Consent-Token": "token"},
+                        path_params={"patient_id": "patient-1"},
+                    ),
+                    provider,
+                )
+            )
 
         self.assertEqual(cm.exception.status_code, 503)
 
@@ -170,6 +184,7 @@ class TestRoutineConsentRoute(unittest.TestCase):
         self.assertEqual(issue_kwargs["purpose"], "routine_access")
         self.assertEqual(issue_kwargs["scope"], ["clinical.diagnoses"])
         from app.models.assurance import AssuranceLevel
+
         self.assertEqual(issue_kwargs["assurance_level"], AssuranceLevel.STANDARD)
         self.assertEqual(issue_kwargs["assurance_evidence"], {})
 

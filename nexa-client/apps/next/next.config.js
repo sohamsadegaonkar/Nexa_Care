@@ -1,7 +1,16 @@
 /** @type {import('next').NextConfig} */
 module.exports = {
-  typescript: {
-    ignoreBuildErrors: true,
+  async headers() {
+    const values = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+      { key: 'X-Frame-Options', value: 'DENY' },
+    ]
+    if (process.env.NODE_ENV === 'production') {
+      values.push({ key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' })
+    }
+    return [{ source: '/(.*)', headers: values }]
   },
   transpilePackages: [
     'solito',

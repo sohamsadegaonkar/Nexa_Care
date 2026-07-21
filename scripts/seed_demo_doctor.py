@@ -31,9 +31,16 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Standalone alpha tooling deliberately prefers the ignored repository .env
-# over stale parent-shell values. The API and Alembic both use app.core.config.
-load_dotenv(ROOT / ".env", override=True)
+def load_standalone_demo_env() -> None:
+    """Load the ignored repo .env only for direct CLI execution."""
+
+    # Standalone alpha tooling deliberately prefers the ignored repository .env
+    # over stale parent-shell values. Imports must not mutate process config.
+    load_dotenv(ROOT / ".env", override=True)
+
+
+if __name__ == "__main__":
+    load_standalone_demo_env()
 
 from app.core.database import get_session_factory  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402

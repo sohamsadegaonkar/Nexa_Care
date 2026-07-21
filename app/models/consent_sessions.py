@@ -43,7 +43,11 @@ class ConsentSession(Base):
         nullable=False,
         server_default=func.now(),
     )
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     hospital_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     clinician_id: Mapped[str | None] = mapped_column(Text, nullable=True)

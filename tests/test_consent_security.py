@@ -34,6 +34,7 @@ client = TestClient(app)
 @pytest.fixture(autouse=True)
 def auth_override(admin_context):
     from app.core.dependencies import get_current_provider
+
     app.dependency_overrides[get_current_provider] = lambda: admin_context
     yield
     app.dependency_overrides.pop(get_current_provider, None)
@@ -58,13 +59,25 @@ def keypair_and_device():
 @pytest.fixture
 def mock_scoped_pat():
     from app.core.dependencies import get_scoped_session
+
     pat_id = "123e4567-e89b-12d3-a456-426614174001"
     app.dependency_overrides[get_scoped_session] = lambda: pat_id
     yield pat_id
     app.dependency_overrides.pop(get_scoped_session, None)
 
 
-def sign_payload(private_key, req_id, pat_id, prov_id, nonce, decision, scope, purpose, duration, expires_at) -> str:
+def sign_payload(
+    private_key,
+    req_id,
+    pat_id,
+    prov_id,
+    nonce,
+    decision,
+    scope,
+    purpose,
+    duration,
+    expires_at,
+) -> str:
     signing_input = f"{req_id}|{pat_id}|{prov_id}|{nonce}|{decision}|{scope}|{purpose}|{duration}|{expires_at}"
     sig = private_key.sign(signing_input.encode("utf-8"), ec.ECDSA(hashes.SHA256()))
     return base64.b64encode(sig).decode("utf-8")
@@ -92,12 +105,17 @@ def test_abuse_forged_signature(mock_scoped_pat, keypair_and_device):
     mock_res.scalars.return_value.all.return_value = [mock_dev]
     mock_db.execute.return_value = mock_res
     from app.core.database import get_db_session
+
     app.dependency_overrides[get_db_session] = lambda: mock_db
 
     try:
         with patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func:
             mock_redis = MagicMock()
-            mock_redis.get.side_effect = lambda k: None if k.startswith("biometric_nonce:") else json.dumps(challenge_data)
+            mock_redis.get.side_effect = (
+                lambda k: None
+                if k.startswith("biometric_nonce:")
+                else json.dumps(challenge_data)
+            )
             mock_redis_func.return_value = mock_redis
 
             payload = {
@@ -108,7 +126,11 @@ def test_abuse_forged_signature(mock_scoped_pat, keypair_and_device):
                 "signature": base64.b64encode(b"forged-sig").decode("utf-8"),
                 "device_id": dev_id,
             }
-            res = client.post("/api/v2/consent/approve-signed", headers={"Authorization": "Bearer pat-tok"}, json=payload)
+            res = client.post(
+                "/api/v2/consent/approve-signed",
+                headers={"Authorization": "Bearer pat-tok"},
+                json=payload,
+            )
             assert res.status_code == 401
     finally:
         app.dependency_overrides.pop(get_db_session, None)
@@ -139,12 +161,17 @@ def test_abuse_revoked_device_signature(mock_scoped_pat, keypair_and_device):
     mock_res.scalars.return_value.all.return_value = [mock_dev]
     mock_db.execute.return_value = mock_res
     from app.core.database import get_db_session
+
     app.dependency_overrides[get_db_session] = lambda: mock_db
 
     try:
         with patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func:
             mock_redis = MagicMock()
-            mock_redis.get.side_effect = lambda k: None if k.startswith("biometric_nonce:") else json.dumps(challenge_data)
+            mock_redis.get.side_effect = (
+                lambda k: None
+                if k.startswith("biometric_nonce:")
+                else json.dumps(challenge_data)
+            )
             mock_redis_func.return_value = mock_redis
 
             payload = {
@@ -155,7 +182,11 @@ def test_abuse_revoked_device_signature(mock_scoped_pat, keypair_and_device):
                 "signature": base64.b64encode(b"sig").decode("utf-8"),
                 "device_id": dev_id,
             }
-            res = client.post("/api/v2/consent/approve-signed", headers={"Authorization": "Bearer pat-tok"}, json=payload)
+            res = client.post(
+                "/api/v2/consent/approve-signed",
+                headers={"Authorization": "Bearer pat-tok"},
+                json=payload,
+            )
             assert res.status_code == 401
     finally:
         app.dependency_overrides.pop(get_db_session, None)
@@ -164,33 +195,51 @@ def test_abuse_revoked_device_signature(mock_scoped_pat, keypair_and_device):
 def test_abuse_cross_doctor_token_reuse(admin_headers):
     """Test 3: Cross-doctor token reuse -> 403."""
     # Token issued to doc-A, but doc-B (current provider) attempts to use it
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=None), \
-         patch("app.core.consent_gate.validate_approved_access", return_value=None):
+    with (
+        patch("app.core.consent_gate.validate_consent_capability", return_value=None),
+        patch("app.core.consent_gate.validate_approved_access", return_value=None),
+    ):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
-            headers={**admin_headers, "X-Consent-Token": "tok-for-doc-a", "X-Consent-Purpose": "clinical_summary"},
+            headers={
+                **admin_headers,
+                "X-Consent-Token": "tok-for-doc-a",
+                "X-Consent-Purpose": "clinical_summary",
+            },
         )
         assert res.status_code == 403
 
 
 def test_abuse_wrong_purpose_access(admin_headers):
     """Test 4: Wrong-purpose access -> 403."""
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=None), \
-         patch("app.core.consent_gate.validate_approved_access", return_value=None):
+    with (
+        patch("app.core.consent_gate.validate_consent_capability", return_value=None),
+        patch("app.core.consent_gate.validate_approved_access", return_value=None),
+    ):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
-            headers={**admin_headers, "X-Consent-Token": "tok-for-research", "X-Consent-Purpose": "clinical_summary"},
+            headers={
+                **admin_headers,
+                "X-Consent-Token": "tok-for-research",
+                "X-Consent-Purpose": "clinical_summary",
+            },
         )
         assert res.status_code == 403
 
 
 def test_abuse_expired_grant_access(admin_headers):
     """Test 5: Expired grant access -> 403."""
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=None), \
-         patch("app.core.consent_gate.validate_approved_access", return_value=None):
+    with (
+        patch("app.core.consent_gate.validate_consent_capability", return_value=None),
+        patch("app.core.consent_gate.validate_approved_access", return_value=None),
+    ):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
-            headers={**admin_headers, "X-Consent-Token": "expired-tok", "X-Consent-Purpose": "clinical_summary"},
+            headers={
+                **admin_headers,
+                "X-Consent-Token": "expired-tok",
+                "X-Consent-Purpose": "clinical_summary",
+            },
         )
         assert res.status_code == 403
 
@@ -199,6 +248,7 @@ def test_abuse_expired_grant_access(admin_headers):
 async def test_abuse_self_declared_assurance_without_signature():
     """Test 6: Self-declared PUSH_BIOMETRIC assurance without signature -> 403."""
     from app.services.assurance_verifier import RedisAssuranceVerifier
+
     verifier = RedisAssuranceVerifier()
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None  # No verified evidence in Redis
@@ -222,7 +272,11 @@ def test_abuse_replay_signed_approval(mock_scoped_pat):
     }
     with patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func:
         mock_redis = MagicMock()
-        mock_redis.get.side_effect = lambda k: None if k.startswith("biometric_nonce:") else json.dumps(challenge_data)
+        mock_redis.get.side_effect = (
+            lambda k: None
+            if k.startswith("biometric_nonce:")
+            else json.dumps(challenge_data)
+        )
         mock_redis_func.return_value = mock_redis
 
         payload = {
@@ -233,7 +287,11 @@ def test_abuse_replay_signed_approval(mock_scoped_pat):
             "signature": "sig",
             "device_id": str(uuid.uuid4()),
         }
-        res = client.post("/api/v2/consent/approve-signed", headers={"Authorization": "Bearer pat-tok"}, json=payload)
+        res = client.post(
+            "/api/v2/consent/approve-signed",
+            headers={"Authorization": "Bearer pat-tok"},
+            json=payload,
+        )
         assert res.status_code == 409
 
 
@@ -257,7 +315,18 @@ def test_abuse_tampered_decision_payload(mock_scoped_pat, keypair_and_device):
     }
 
     # Patient device signs "denied", but attacker sends decision="approved"
-    sig_b64 = sign_payload(private_key, req_id, mock_scoped_pat, prov_id, nonce, "denied", "clinical", "routine_checkup", 900, "2099-07-07T16:05:00Z")
+    sig_b64 = sign_payload(
+        private_key,
+        req_id,
+        mock_scoped_pat,
+        prov_id,
+        nonce,
+        "denied",
+        "clinical",
+        "routine_checkup",
+        900,
+        "2099-07-07T16:05:00Z",
+    )
 
     mock_db = AsyncMock()
     mock_res = MagicMock()
@@ -265,12 +334,17 @@ def test_abuse_tampered_decision_payload(mock_scoped_pat, keypair_and_device):
     mock_res.scalars.return_value.all.return_value = [mock_dev]
     mock_db.execute.return_value = mock_res
     from app.core.database import get_db_session
+
     app.dependency_overrides[get_db_session] = lambda: mock_db
 
     try:
         with patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func:
             mock_redis = MagicMock()
-            mock_redis.get.side_effect = lambda k: None if k.startswith("biometric_nonce:") else json.dumps(challenge_data)
+            mock_redis.get.side_effect = (
+                lambda k: None
+                if k.startswith("biometric_nonce:")
+                else json.dumps(challenge_data)
+            )
             mock_redis_func.return_value = mock_redis
 
             payload = {
@@ -281,7 +355,11 @@ def test_abuse_tampered_decision_payload(mock_scoped_pat, keypair_and_device):
                 "signature": sig_b64,
                 "device_id": dev_id,
             }
-            res = client.post("/api/v2/consent/approve-signed", headers={"Authorization": "Bearer pat-tok"}, json=payload)
+            res = client.post(
+                "/api/v2/consent/approve-signed",
+                headers={"Authorization": "Bearer pat-tok"},
+                json=payload,
+            )
             assert res.status_code == 401
     finally:
         app.dependency_overrides.pop(get_db_session, None)

@@ -76,7 +76,9 @@ class TestConsentSigningService:
     def test_uses_secure_store_for_private_key(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         assert "expo-secure-store" in code, "Must use expo-secure-store for private key"
-        assert "DEVICE_PRIVATE_KEY_STORAGE_KEY" in code, "Must reference private key storage key"
+        assert (
+            "DEVICE_PRIVATE_KEY_STORAGE_KEY" in code
+        ), "Must reference private key storage key"
 
     def test_uses_apiclient(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -85,7 +87,9 @@ class TestConsentSigningService:
     def test_no_raw_fetch(self) -> None:
         code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
         code_no_comments = _strip_comments(code)
-        assert not re.search(r"\bfetch\s*\(", code_no_comments), "Must not use raw fetch()"
+        assert not re.search(
+            r"\bfetch\s*\(", code_no_comments
+        ), "Must not use raw fetch()"
 
     def test_no_axios(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -102,29 +106,36 @@ class TestConsentSigningService:
         code = _read(CONSENT_SIGNING_PATH)
         # Must construct: request_id|patient_id|provider_id|challenge_nonce|
         # decision|scope|purpose|access_duration|expires_at
-        assert "constructSigningInput" in code, "Must have constructSigningInput function"
+        assert (
+            "constructSigningInput" in code
+        ), "Must have constructSigningInput function"
         # All 9 fields must be in the signing input
         for field in [
-            "request_id", "patient_id", "provider_id",
-            "challenge_nonce", "decision", "scope",
-            "purpose", "access_duration", "expires_at",
+            "request_id",
+            "patient_id",
+            "provider_id",
+            "challenge_nonce",
+            "decision",
+            "scope",
+            "purpose",
+            "access_duration",
+            "expires_at",
         ]:
             assert field in code, f"Signing input must include {field}"
 
-    def test_signing_input_uses_pipe_separator(self) -> None:
-        """Fields must be joined with '|' to match backend."""
+    def test_signing_input_uses_canonical_json(self) -> None:
+        """Fields must use the unambiguous v2 canonical JSON protocol."""
         code = _read(CONSENT_SIGNING_PATH)
-        assert ".join('|')" in code or "join(\"|\")" in code, (
-            "Signing input fields must be pipe-separated"
-        )
+        assert "nexa-consent-v2" in code
+        assert "JSON.stringify" in code
 
     def test_hashes_with_sha256_before_signing(self) -> None:
         """Must SHA-256 hash the message before signing with @noble/curves."""
         code = _read(CONSENT_SIGNING_PATH)
         assert "SHA256" in code or "SHA-256" in code, "Must hash with SHA-256"
-        assert "Crypto.digest" in code or "crypto.subtle" in code, (
-            "Must use expo-crypto or equivalent for hashing"
-        )
+        assert (
+            "Crypto.digest" in code or "crypto.subtle" in code
+        ), "Must use expo-crypto or equivalent for hashing"
 
     def test_signs_with_ecdsa_p256(self) -> None:
         """Must sign the hash with ECDSA P-256."""
@@ -150,56 +161,65 @@ class TestConsentSigningService:
 
     def test_has_authenticate_with_biometrics_function(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
-        assert "authenticateWithBiometrics" in code, (
-            "Must have authenticateWithBiometrics function"
-        )
+        assert (
+            "authenticateWithBiometrics" in code
+        ), "Must have authenticateWithBiometrics function"
 
     def test_approve_calls_biometric_before_signing(self) -> None:
         """Approve flow must gate private key access with biometric."""
         code = _read(CONSENT_SIGNING_PATH)
         approve_func_start = code.find("async function approveWithBiometric")
         assert approve_func_start > 0, "approveWithBiometric function must exist"
-        approve_body = code[approve_func_start:code.find("\n}", approve_func_start + 50) + 2]
+        approve_body = code[
+            approve_func_start : code.find("\n}", approve_func_start + 50) + 2
+        ]
         bio_pos = approve_body.find("requireBiometrics")
         sign_pos = approve_body.find("submitSignedDecision")
         assert bio_pos > 0, "Must call authenticateWithBiometrics in approve flow"
         assert sign_pos > 0, "Must call signConsentDecision in approve flow"
-        assert bio_pos < sign_pos, (
-            "Must authenticate with biometrics BEFORE signing in approve flow"
-        )
+        assert (
+            bio_pos < sign_pos
+        ), "Must authenticate with biometrics BEFORE signing in approve flow"
 
     def test_deny_does_not_call_biometric(self) -> None:
         """Deny flow must NOT gate with biometric per WS2."""
         code = _read(CONSENT_SIGNING_PATH)
         deny_func_start = code.find("async function denyWithSignature")
         assert deny_func_start > 0, "denyWithSignature function must exist"
-        deny_body = code[deny_func_start:code.find("\n}", deny_func_start + 50) + 2]
-        assert "authenticateWithBiometrics" not in deny_body, (
-            "Deny flow must NOT require biometric authentication per WS2"
-        )
-        assert "submitSignedDecision" in deny_body, (
-            "Deny flow must still sign to prove authenticity"
-        )
+        deny_body = code[deny_func_start : code.find("\n}", deny_func_start + 50) + 2]
+        assert (
+            "authenticateWithBiometrics" not in deny_body
+        ), "Deny flow must NOT require biometric authentication per WS2"
+        assert (
+            "submitSignedDecision" in deny_body
+        ), "Deny flow must still sign to prove authenticity"
 
     def test_approve_submits_to_correct_endpoint(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
-        assert "/api/v2/consent/approve-signed" in code, (
-            "Must submit to /api/v2/consent/approve-signed"
-        )
+        assert (
+            "/api/v2/consent/approve-signed" in code
+        ), "Must submit to /api/v2/consent/approve-signed"
 
     def test_deny_submits_to_same_endpoint(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         # Both approve and deny submit to the same endpoint with different decision
-        assert "/api/v2/consent/approve-signed" in code, (
-            "Deny must also submit to approve-signed endpoint with decision=denied"
-        )
+        assert (
+            "/api/v2/consent/approve-signed" in code
+        ), "Deny must also submit to approve-signed endpoint with decision=denied"
 
     def test_payload_includes_required_fields(self) -> None:
         """Signed approval payload must match SignedApprovalRequestPayload."""
         code = _read(CONSENT_SIGNING_PATH)
         code_no_comments = _strip_comments(code)
         # Backend requires: request_id, patient_id, decision, challenge_nonce, signature, device_id
-        for field in ["request_id", "patient_id", "decision", "challenge_nonce", "signature", "device_id"]:
+        for field in [
+            "request_id",
+            "patient_id",
+            "decision",
+            "challenge_nonce",
+            "signature",
+            "device_id",
+        ]:
             assert field in code_no_comments, f"Payload must include {field}"
 
     def test_payload_does_not_include_private_key(self) -> None:
@@ -217,21 +237,21 @@ class TestConsentSigningService:
         for section in payload_sections:
             # Check for snake_case field names that would leak secrets
             for forbidden in ["private_key", "secret_key", "secretkey"]:
-                assert forbidden not in section.lower(), (
-                    f"API payload must NOT contain '{forbidden}' field"
-                )
+                assert (
+                    forbidden not in section.lower()
+                ), f"API payload must NOT contain '{forbidden}' field"
 
     def test_uses_expo_local_authentication(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
-        assert "expo-local-authentication" in code, (
-            "Must use expo-local-authentication for biometric gating"
-        )
+        assert (
+            "expo-local-authentication" in code
+        ), "Must use expo-local-authentication for biometric gating"
 
     def test_fetches_challenge_from_correct_endpoint(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
-        assert "/api/v2/consent/challenge/" in code, (
-            "Must fetch challenge from /api/v2/consent/challenge/{requestId}"
-        )
+        assert (
+            "/api/v2/consent/challenge/" in code
+        ), "Must fetch challenge from /api/v2/consent/challenge/{requestId}"
 
     def test_has_is_challenge_expired_function(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -241,17 +261,17 @@ class TestConsentSigningService:
         code = _read(CONSENT_SIGNING_PATH)
         code_norm = _normalize_ws(code)
         assert "ALPHA" in code_norm, "Must label as ALPHA"
-        assert "P-256 keypair generated client-side" in code_norm, (
-            "Must state honest ALPHA claim"
-        )
+        assert (
+            "P-256 keypair generated client-side" in code_norm
+        ), "Must state honest ALPHA claim"
         assert "Not yet" in code_norm, "Must state not-yet capability"
 
     def test_no_hospital_grade_claims(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         code_no_comments = _strip_comments(code)
-        assert "hospital-grade" not in code_no_comments.lower(), (
-            "Must not claim hospital-grade security"
-        )
+        assert (
+            "hospital-grade" not in code_no_comments.lower()
+        ), "Must not claim hospital-grade security"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -274,38 +294,43 @@ class TestSigningInputBackendMatch:
         # f"{request_id}|{patient_id}|{provider_id or ''}|{challenge_nonce}|{decision}|"
         # f"{scope or ''}|{purpose or ''}|{access_duration or ''}|{expires_at}"
         backend_fields = [
-            "request_id", "patient_id", "provider_id",
-            "challenge_nonce", "decision", "scope",
-            "purpose", "access_duration", "expires_at",
+            "request_id",
+            "patient_id",
+            "provider_id",
+            "challenge_nonce",
+            "decision",
+            "scope",
+            "purpose",
+            "access_duration",
+            "expires_at",
         ]
         for field in backend_fields:
             assert field in backend_code, f"Backend must reference {field}"
             assert field in client_code, f"Client must reference {field}"
 
-    def test_pipe_separator_matches_backend(self) -> None:
-        """Both client and backend use '|' as separator."""
+    def test_canonical_json_protocol_matches_backend(self) -> None:
+        """Both client and backend bind the v2 protocol and all fields."""
         client_code = _read(CONSENT_SIGNING_PATH)
         backend_code = _read(SIGNED_VERIFIER_PATH)
-        # Client explicitly uses .join('|')
-        assert ".join('|')" in client_code or ".join(\"|\")" in client_code, "Client uses pipe separator"
-        # Backend uses pipe inside f-strings like f"{request_id}|{patient_id}..."
-        assert "|{" in backend_code or "}|" in backend_code, "Backend uses pipe separator in f-strings"
+        assert "nexa-consent-v2" in client_code
+        assert "nexa-consent-v2" in backend_code
+        assert "sort_keys=True" in backend_code
 
     def test_sha256_hashing_matches_backend(self) -> None:
         """Both use SHA-256 for hashing."""
         backend_code = _read(SIGNED_VERIFIER_PATH)
-        assert "SHA256" in backend_code or "hashes.SHA256()" in backend_code, (
-            "Backend uses SHA-256 hashing"
-        )
+        assert (
+            "SHA256" in backend_code or "hashes.SHA256()" in backend_code
+        ), "Backend uses SHA-256 hashing"
 
     def test_ecdsa_p256_matches_backend(self) -> None:
         """Both use ECDSA P-256 for signing/verification."""
         client_code = _read(CONSENT_SIGNING_PATH)
         backend_code = _read(SIGNED_VERIFIER_PATH)
         assert "p256" in client_code, "Client uses P-256"
-        assert "SECP256R1" in backend_code or "ec.ECDSA" in backend_code, (
-            "Backend verifies with ECDSA P-256"
-        )
+        assert (
+            "SECP256R1" in backend_code or "ec.ECDSA" in backend_code
+        ), "Backend verifies with ECDSA P-256"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -326,7 +351,9 @@ class TestPushNotificationsService:
     def test_no_raw_fetch(self) -> None:
         code = _read(PUSH_NOTIFICATIONS_PATH)
         code_no_comments = _strip_comments(code)
-        assert not re.search(r"\bfetch\s*\(", code_no_comments), "Must not use raw fetch()"
+        assert not re.search(
+            r"\bfetch\s*\(", code_no_comments
+        ), "Must not use raw fetch()"
 
     def test_no_axios(self) -> None:
         code = _read(PUSH_NOTIFICATIONS_PATH)
@@ -341,15 +368,15 @@ class TestPushNotificationsService:
     def test_registers_push_token_with_backend(self) -> None:
         code = _read(PUSH_NOTIFICATIONS_PATH)
         assert "registerPushToken" in code, "Must have registerPushToken function"
-        assert "/api/v2/push/register-token" in code, (
-            "Must register token with correct backend endpoint"
-        )
+        assert (
+            "/api/v2/push/register-token" in code
+        ), "Must register token with correct backend endpoint"
 
     def test_has_notification_tap_handler(self) -> None:
         code = _read(PUSH_NOTIFICATIONS_PATH)
-        assert "extractRequestIdFromNotification" in code, (
-            "Must have extractRequestIdFromNotification function"
-        )
+        assert (
+            "extractRequestIdFromNotification" in code
+        ), "Must have extractRequestIdFromNotification function"
 
     def test_requests_permission_and_project_scoped_expo_token(self) -> None:
         code = _read(PUSH_NOTIFICATIONS_PATH)
@@ -366,8 +393,7 @@ class TestPushNotificationsService:
 
     def test_expo_app_registers_notifications_plugin(self) -> None:
         app_json = (
-            Path(__file__).resolve().parents[1]
-            / "nexa-client/apps/expo/app.json"
+            Path(__file__).resolve().parents[1] / "nexa-client/apps/expo/app.json"
         ).read_text(encoding="utf-8")
         assert '"expo-notifications"' in app_json
 
@@ -387,9 +413,7 @@ class TestConsentRequestScreenIntegration:
 
     def test_imports_consent_signing_service(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "consentSigning" in code, (
-            "Must import from consentSigning service"
-        )
+        assert "consentSigning" in code, "Must import from consentSigning service"
 
     def test_fetches_challenge_on_mount(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
@@ -415,21 +439,21 @@ class TestConsentRequestScreenIntegration:
 
     def test_deny_calls_signing_service(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "denyWithSignature" in code, (
-            "Deny must call denyWithSignature from consentSigning service"
-        )
+        assert (
+            "denyWithSignature" in code
+        ), "Deny must call denyWithSignature from consentSigning service"
 
     def test_approve_navigates_to_biometric(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "/patient/biometric-approval" in code, (
-            "Approve must navigate to biometric approval screen"
-        )
+        assert (
+            "/patient/biometric-approval" in code
+        ), "Approve must navigate to biometric approval screen"
 
     def test_shows_countdown_timer(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "setInterval" in code or "countdown" in code.lower(), (
-            "Must show countdown timer"
-        )
+        assert (
+            "setInterval" in code or "countdown" in code.lower()
+        ), "Must show countdown timer"
 
     def test_shows_provider_and_hospital(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
@@ -450,9 +474,9 @@ class TestConsentRequestScreenIntegration:
     def test_no_hardcoded_patient_id(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
         code_no_comments = _strip_comments(code)
-        assert "patient_id" not in code_no_comments, (
-            "Must not hardcode patient_id — comes from challenge response"
-        )
+        assert (
+            "patient_id" not in code_no_comments
+        ), "Must not hardcode patient_id — comes from challenge response"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -465,21 +489,17 @@ class TestBiometricApprovalScreenIntegration:
 
     def test_imports_consent_signing_service(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
-        assert "consentSigning" in code, (
-            "Must import from consentSigning service"
-        )
+        assert "consentSigning" in code, "Must import from consentSigning service"
 
     def test_uses_approve_with_biometric(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
-        assert "approveWithBiometric" in code, (
-            "Must call approveWithBiometric from signing service"
-        )
+        assert (
+            "approveWithBiometric" in code
+        ), "Must call approveWithBiometric from signing service"
 
     def test_fetches_challenge_before_signing(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
-        assert "fetchChallenge" in code, (
-            "Must fetch challenge details before signing"
-        )
+        assert "fetchChallenge" in code, "Must fetch challenge details before signing"
 
     def test_handles_expired_challenge(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
@@ -488,9 +508,9 @@ class TestBiometricApprovalScreenIntegration:
 
     def test_navigates_to_result_on_success(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
-        assert "/patient/approval-result" in code, (
-            "Must navigate to result screen on success"
-        )
+        assert (
+            "/patient/approval-result" in code
+        ), "Must navigate to result screen on success"
 
     def test_passes_decision_param(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
@@ -512,9 +532,9 @@ class TestBiometricApprovalScreenIntegration:
     def test_no_hospital_grade_claims(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
         code_no_comments = _strip_comments(code)
-        assert "hospital-grade" not in code_no_comments.lower(), (
-            "Must not claim hospital-grade security"
-        )
+        assert (
+            "hospital-grade" not in code_no_comments.lower()
+        ), "Must not claim hospital-grade security"
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
@@ -555,15 +575,15 @@ class TestApprovalResultScreenIntegration:
 
     def test_has_countdown_timer(self) -> None:
         code = _read(APPROVAL_RESULT_PATH)
-        assert "setInterval" in code or "countdown" in code.lower(), (
-            "Must show expiry countdown for approved grants"
-        )
+        assert (
+            "setInterval" in code or "countdown" in code.lower()
+        ), "Must show expiry countdown for approved grants"
 
     def test_denied_shows_notification_text(self) -> None:
         code = _read(APPROVAL_RESULT_PATH)
-        assert "doctor has been notified" in code.lower(), (
-            "Must tell patient the doctor has been notified"
-        )
+        assert (
+            "doctor has been notified" in code.lower()
+        ), "Must tell patient the doctor has been notified"
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(APPROVAL_RESULT_PATH)
@@ -587,10 +607,17 @@ class TestBackendChallengeEndpoint:
         code = _read(CONSENT_ROUTES_PATH)
         # Must return all fields needed for display and signing
         for field in [
-            "request_id", "patient_id", "provider_id",
-            "provider_name", "hospital_name", "purpose",
-            "scope", "access_duration", "challenge_nonce",
-            "expires_at", "status",
+            "request_id",
+            "patient_id",
+            "provider_id",
+            "provider_name",
+            "hospital_name",
+            "purpose",
+            "scope",
+            "access_duration",
+            "challenge_nonce",
+            "expires_at",
+            "status",
         ]:
             assert field in code, f"Challenge response must include {field}"
 
@@ -601,15 +628,15 @@ class TestBackendChallengeEndpoint:
 
     def test_rejects_expired_challenges(self) -> None:
         code = _read(CONSENT_ROUTES_PATH)
-        assert "expired" in code.lower() or "not found" in code.lower(), (
-            "Must handle expired challenges"
-        )
+        assert (
+            "expired" in code.lower() or "not found" in code.lower()
+        ), "Must handle expired challenges"
 
     def test_rejects_already_resolved(self) -> None:
         code = _read(CONSENT_ROUTES_PATH)
-        assert "already resolved" in code.lower() or "409" in code, (
-            "Must handle already-resolved challenges"
-        )
+        assert (
+            "already resolved" in code.lower() or "409" in code
+        ), "Must handle already-resolved challenges"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -632,14 +659,14 @@ class TestConsentFlowE2E:
         assert "$green9" in consent_code, "Approve must be green"
 
         # Step 2: Approve navigates to biometric screen
-        assert "/patient/biometric-approval" in consent_code, (
-            "Approve must navigate to biometric screen"
-        )
+        assert (
+            "/patient/biometric-approval" in consent_code
+        ), "Approve must navigate to biometric screen"
 
         # Step 3: BiometricApprovalScreen calls approveWithBiometric
-        assert "approveWithBiometric" in biometric_code, (
-            "Must call approveWithBiometric"
-        )
+        assert (
+            "approveWithBiometric" in biometric_code
+        ), "Must call approveWithBiometric"
 
         # Step 4: approveWithBiometric gates with biometric then signs
         assert "authenticateWithBiometrics" in signing_code, "Must gate with biometric"
@@ -647,14 +674,14 @@ class TestConsentFlowE2E:
         assert "approved" in signing_code, "Must sign with decision=approved"
 
         # Step 5: Submits to approve-signed endpoint
-        assert "/api/v2/consent/approve-signed" in signing_code, (
-            "Must submit to approve-signed endpoint"
-        )
+        assert (
+            "/api/v2/consent/approve-signed" in signing_code
+        ), "Must submit to approve-signed endpoint"
 
         # Step 6: Navigates to result screen
-        assert "/patient/approval-result" in biometric_code, (
-            "Must navigate to result screen"
-        )
+        assert (
+            "/patient/approval-result" in biometric_code
+        ), "Must navigate to result screen"
 
     def test_deny_flow_complete(self) -> None:
         """Deny: ConsentRequestScreen → denyWithSignature → approve-signed."""
@@ -666,24 +693,25 @@ class TestConsentFlowE2E:
         assert "$red9" in consent_code, "Deny must be red"
 
         # Step 2: Deny calls denyWithSignature (no biometric gate)
-        assert "denyWithSignature" in consent_code, (
-            "Deny must call denyWithSignature"
-        )
+        assert "denyWithSignature" in consent_code, "Deny must call denyWithSignature"
 
         # Step 3: denyWithSignature signs without biometric
         assert "denyWithSignature" in signing_code, "Must have denyWithSignature"
         deny_start = signing_code.find("async function denyWithSignature")
-        deny_body = signing_code[deny_start:signing_code.find("\n}", deny_start + 50) + 2]
-        assert "authenticateWithBiometrics" not in deny_body, (
-            "Deny must NOT gate with biometric"
-        )
+        deny_body = signing_code[
+            deny_start : signing_code.find("\n}", deny_start + 50) + 2
+        ]
+        assert (
+            "authenticateWithBiometrics" not in deny_body
+        ), "Deny must NOT gate with biometric"
         assert "submitSignedDecision" in deny_body, "Deny must still sign"
         assert "denied" in deny_body, "Must sign with decision=denied"
 
         # Step 4: Submits to same endpoint
-        assert "/api/v2/consent/approve-signed" in deny_body or "/api/v2/consent/approve-signed" in signing_code, (
-            "Deny must submit to approve-signed endpoint"
-        )
+        assert (
+            "/api/v2/consent/approve-signed" in deny_body
+            or "/api/v2/consent/approve-signed" in signing_code
+        ), "Deny must submit to approve-signed endpoint"
 
     def test_expired_flow_complete(self) -> None:
         """Expired: fetch challenge → expired → show expired UI."""

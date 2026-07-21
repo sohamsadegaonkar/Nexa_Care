@@ -32,6 +32,7 @@ through unnoticed too.
 No mocking needed: this only inspects the real `app.routes` list that
 gets built at import time from the route decorators in app/api/routes.py.
 """
+
 from app.main import app
 
 
@@ -45,7 +46,8 @@ from app.main import app
 #      notification rework replaced them with the Expo-push + signed-response
 #      design now living under /api/v2/push/* (assurance_routes.py). There is
 #      no standalone biometric/verify route any more -- verification is
-#      folded into POST /api/v2/push/{request_id}/respond.
+#      legacy three-field push response was removed; canonical signed consent
+#      approval is POST /api/v2/consent/approve-signed.
 #   2. Several routers shipped after this set was last touched and were
 #      never added: merge-challenge auth (auth_routes.py), break-glass
 #      revoke (consent_routes.py), consent validation (consent_routes.py),
@@ -78,15 +80,20 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/mfa/verify-action"),
     ("GET", "/api/v2/auth/me/role"),
     ("POST", "/api/v2/auth/challenge/merge"),
+    ("POST", "/api/v2/auth/challenge/merge/cancel"),
     ("POST", "/api/v2/auth/challenge/merge/verify"),
     ("POST", "/api/v2/push/request"),
-    ("POST", "/api/v2/push/{request_id}/respond"),
+    ("POST", "/api/v2/auth/web/login"),
+    ("POST", "/api/v2/auth/web/mfa/verify"),
+    ("GET", "/api/v2/auth/web/session"),
+    ("POST", "/api/v2/auth/web/logout"),
     ("GET", "/api/v2/push/{request_id}/status"),
     ("POST", "/api/v2/push/register-token"),
     ("POST", "/api/v2/push/register-device-key"),
     ("GET", "/api/v2/push/transport-config"),
     ("POST", "/api/v2/consent/grant"),
     ("GET", "/api/v2/consent/history"),
+    ("GET", "/api/v2/consent/history/self"),
     ("GET", "/api/v2/consent/validate"),
     ("POST", "/api/v2/consent/routine/issue"),
     ("POST", "/api/v2/consent/break-glass/issue"),
@@ -94,6 +101,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/nfc/resolve"),
     ("GET", "/api/v2/fhir/export/{patient_id}"),
     ("GET", "/api/v2/patient/{patient_id}/record"),
+    ("GET", "/api/v2/patient/{patient_id}/emergency-summary"),
     ("POST", "/api/v2/patient/merge"),
     ("POST", "/api/v2/patient/{patient_id}/erase"),
     ("POST", "/api/v2/patient/merge"),
@@ -110,7 +118,10 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/approve-signed"),
     ("POST", "/api/v2/consent/{request_id}/claim-access"),
     ("GET", "/api/v2/consent/status/{request_id}"),
-    ("POST", "/api/v2/consent/request/{request_id}/cancel"),  # Day 14: real server-side cancellation
+    (
+        "POST",
+        "/api/v2/consent/request/{request_id}/cancel",
+    ),  # Day 14: real server-side cancellation
     ("GET", "/api/v2/consent/challenge/{request_id}"),
     ("GET", "/api/v2/patient/{id}/summary"),
     ("GET", "/api/v2/patient/{id}/timeline"),
@@ -186,4 +197,6 @@ def test_no_unexpected_extra_routes():
     """
     registered = set(_registered_routes())
     extra = registered - EXPECTED_ROUTES
-    assert not extra, f"Unexpected routes registered (update EXPECTED_ROUTES if intentional): {extra}"
+    assert (
+        not extra
+    ), f"Unexpected routes registered (update EXPECTED_ROUTES if intentional): {extra}"

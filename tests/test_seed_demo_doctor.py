@@ -35,7 +35,9 @@ def provider_row(*, active: bool = True) -> ProviderIdentity:
     return provider
 
 
-def credential_row(provider: ProviderIdentity, password_hash: str = "existing-hash") -> ProviderCredential:
+def credential_row(
+    provider: ProviderIdentity, password_hash: str = "existing-hash"
+) -> ProviderCredential:
     credential = ProviderCredential(
         provider_id=provider.id,
         login_identifier=DEMO_PROVIDER_EMAIL,
@@ -48,7 +50,9 @@ def credential_row(provider: ProviderIdentity, password_hash: str = "existing-ha
     return credential
 
 
-def affiliation_row(provider: ProviderIdentity, hospital_id: uuid.UUID) -> ProviderHospitalAffiliation:
+def affiliation_row(
+    provider: ProviderIdentity, hospital_id: uuid.UUID
+) -> ProviderHospitalAffiliation:
     affiliation = ProviderHospitalAffiliation(
         provider_id=provider.id,
         hospital_id=hospital_id,
@@ -66,7 +70,9 @@ def fake_session(provider=None, credentials=None, affiliation=None):
     session.add = MagicMock()
 
     def assign_id(row):
-        if isinstance(row, (ProviderIdentity, ProviderCredential, ProviderHospitalAffiliation)):
+        if isinstance(
+            row, (ProviderIdentity, ProviderCredential, ProviderHospitalAffiliation)
+        ):
             if getattr(row, "id", None) is None:
                 row.id = uuid.uuid4()
 
@@ -95,7 +101,9 @@ async def test_seeder_creates_missing_provider_identity_and_credential(monkeypat
     session = fake_session()
     hospital_id = uuid.uuid4()
 
-    with patch("scripts.seed_demo_doctor.hash_provider_password", return_value="new-hash"):
+    with patch(
+        "scripts.seed_demo_doctor.hash_provider_password", return_value="new-hash"
+    ):
         result = await seed_provider(session, hospital_id)
 
     added = [call.args[0] for call in session.add.call_args_list]
@@ -130,7 +138,9 @@ async def test_normal_seed_is_idempotent_and_does_not_overwrite_password(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_explicit_reset_updates_only_canonical_hash_and_security_state(monkeypatch):
+async def test_explicit_reset_updates_only_canonical_hash_and_security_state(
+    monkeypatch,
+):
     monkeypatch.setenv("DEMO_PROVIDER_PASSWORD", STRONG_PASSWORD)
     provider = provider_row()
     credential = credential_row(provider)
@@ -139,9 +149,13 @@ async def test_explicit_reset_updates_only_canonical_hash_and_security_state(mon
     old_changed_at = datetime.now(timezone.utc) - timedelta(days=1)
     credential.password_changed_at = old_changed_at
     hospital_id = uuid.uuid4()
-    session = fake_session(provider, [credential], affiliation_row(provider, hospital_id))
+    session = fake_session(
+        provider, [credential], affiliation_row(provider, hospital_id)
+    )
 
-    with patch("scripts.seed_demo_doctor.hash_provider_password", return_value="rotated-hash"):
+    with patch(
+        "scripts.seed_demo_doctor.hash_provider_password", return_value="rotated-hash"
+    ):
         result = await seed_provider(session, hospital_id, reset_password=True)
 
     assert result.password_reset is True
@@ -158,9 +172,13 @@ async def test_reset_does_not_silently_reactivate_accounts(monkeypatch):
     credential = credential_row(provider)
     credential.is_active = False
     hospital_id = uuid.uuid4()
-    session = fake_session(provider, [credential], affiliation_row(provider, hospital_id))
+    session = fake_session(
+        provider, [credential], affiliation_row(provider, hospital_id)
+    )
 
-    with patch("scripts.seed_demo_doctor.hash_provider_password", return_value="rotated-hash"):
+    with patch(
+        "scripts.seed_demo_doctor.hash_provider_password", return_value="rotated-hash"
+    ):
         result = await seed_provider(session, hospital_id, reset_password=True)
 
     assert result.provider_active is False
@@ -168,15 +186,21 @@ async def test_reset_does_not_silently_reactivate_accounts(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_explicit_reactivation_requires_reset_and_changes_only_demo_rows(monkeypatch):
+async def test_explicit_reactivation_requires_reset_and_changes_only_demo_rows(
+    monkeypatch,
+):
     monkeypatch.setenv("DEMO_PROVIDER_PASSWORD", STRONG_PASSWORD)
     provider = provider_row(active=False)
     credential = credential_row(provider)
     credential.is_active = False
     hospital_id = uuid.uuid4()
-    session = fake_session(provider, [credential], affiliation_row(provider, hospital_id))
+    session = fake_session(
+        provider, [credential], affiliation_row(provider, hospital_id)
+    )
 
-    with patch("scripts.seed_demo_doctor.hash_provider_password", return_value="rotated-hash"):
+    with patch(
+        "scripts.seed_demo_doctor.hash_provider_password", return_value="rotated-hash"
+    ):
         result = await seed_provider(
             session,
             hospital_id,
@@ -227,7 +251,9 @@ async def test_conflicting_credential_binding_fails_without_overwrite(monkeypatc
     credential = credential_row(provider)
     credential.provider_id = uuid.uuid4()
     hospital_id = uuid.uuid4()
-    session = fake_session(provider, [credential], affiliation_row(provider, hospital_id))
+    session = fake_session(
+        provider, [credential], affiliation_row(provider, hospital_id)
+    )
 
     with pytest.raises(RuntimeError, match="different provider identity"):
         await seed_provider(session, hospital_id, reset_password=True)
@@ -243,6 +269,7 @@ def test_no_seed_output_statement_contains_password_or_hash():
 
 @pytest.mark.asyncio
 async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("ENV", "development")
     session = AsyncMock()
     session_factory = MagicMock(return_value=FakeSessionContext(session))
@@ -259,13 +286,26 @@ async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
     )
 
     with (
-        patch("scripts.seed_demo_doctor.get_session_factory", return_value=session_factory),
-        patch("scripts.seed_demo_doctor.seed_hospital", new=AsyncMock(return_value=hospital_id)),
-        patch("scripts.seed_demo_doctor.seed_provider", new=AsyncMock(return_value=result)),
+        patch(
+            "scripts.seed_demo_doctor.get_session_factory", return_value=session_factory
+        ),
+        patch(
+            "scripts.seed_demo_doctor.seed_hospital",
+            new=AsyncMock(return_value=hospital_id),
+        ),
+        patch(
+            "scripts.seed_demo_doctor.seed_provider", new=AsyncMock(return_value=result)
+        ),
         patch("scripts.seed_demo_doctor.seed_nfc_card", new=AsyncMock()),
         patch("scripts.seed_demo_doctor.seed_clinical_records", new=AsyncMock()),
-        patch("scripts.seed_demo_doctor.revoke_provider_auth_sessions", new=AsyncMock(return_value=2)) as revoke,
-        patch("scripts.seed_demo_doctor.append_audit_log", new=AsyncMock(return_value=True)) as audit,
+        patch(
+            "scripts.seed_demo_doctor.revoke_provider_auth_sessions",
+            new=AsyncMock(return_value=2),
+        ) as revoke,
+        patch(
+            "scripts.seed_demo_doctor.append_audit_log",
+            new=AsyncMock(return_value=True),
+        ) as audit,
     ):
         exit_code = await main(["--reset-password", "--confirm-demo-provider-reset"])
 
@@ -278,6 +318,7 @@ async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_main_reset_rolls_back_when_audit_fails(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "development")
     monkeypatch.setenv("ENV", "development")
     session = AsyncMock()
     session_factory = MagicMock(return_value=FakeSessionContext(session))
@@ -292,11 +333,24 @@ async def test_main_reset_rolls_back_when_audit_fails(monkeypatch):
     )
 
     with (
-        patch("scripts.seed_demo_doctor.get_session_factory", return_value=session_factory),
-        patch("scripts.seed_demo_doctor.seed_hospital", new=AsyncMock(return_value=uuid.uuid4())),
-        patch("scripts.seed_demo_doctor.seed_provider", new=AsyncMock(return_value=result)),
-        patch("scripts.seed_demo_doctor.revoke_provider_auth_sessions", new=AsyncMock(return_value=1)),
-        patch("scripts.seed_demo_doctor.append_audit_log", new=AsyncMock(return_value=False)),
+        patch(
+            "scripts.seed_demo_doctor.get_session_factory", return_value=session_factory
+        ),
+        patch(
+            "scripts.seed_demo_doctor.seed_hospital",
+            new=AsyncMock(return_value=uuid.uuid4()),
+        ),
+        patch(
+            "scripts.seed_demo_doctor.seed_provider", new=AsyncMock(return_value=result)
+        ),
+        patch(
+            "scripts.seed_demo_doctor.revoke_provider_auth_sessions",
+            new=AsyncMock(return_value=1),
+        ),
+        patch(
+            "scripts.seed_demo_doctor.append_audit_log",
+            new=AsyncMock(return_value=False),
+        ),
     ):
         with pytest.raises(RuntimeError, match="Audit write failed"):
             await main(["--reset-password", "--confirm-demo-provider-reset"])

@@ -59,15 +59,37 @@ def _make_provider_context(provider_id=None) -> ProviderContext:
 
 def _patch_stack(fake_redis, fake_sync_redis):
     stack = ExitStack()
-    stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-    stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
-    stack.enter_context(patch("app.core.consent_gate.validate_approved_access", return_value=None))
-    stack.enter_context(patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis))
+    stack.enter_context(
+        patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+    )
+    stack.enter_context(
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=fake_redis,
+        )
+    )
+    stack.enter_context(
+        patch("app.core.consent_gate.validate_approved_access", return_value=None)
+    )
+    stack.enter_context(
+        patch(
+            "app.services.provider_auth_service.get_redis_client",
+            return_value=fake_sync_redis,
+        )
+    )
     mock_supabase = MagicMock()
-    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
-    stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+        MagicMock()
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={}
+    )
+    stack.enter_context(
+        patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+    )
     for mod in (
         "app.observability.audit_ledger",
         "app.core.consent_gate",
@@ -75,8 +97,12 @@ def _patch_stack(fake_redis, fake_sync_redis):
         "app.services.consent_engine",
     ):
         stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-    stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-    stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
+    stack.enter_context(
+        patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+    )
+    stack.enter_context(
+        patch("app.services.consent_engine.append_audit_log", return_value=None)
+    )
     return stack
 
 
@@ -110,7 +136,11 @@ def overrides():
 
 
 def test_no_consent_token_rejected(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-06a: Authenticated doctor but no X-Consent-Token → 403.
 
@@ -130,13 +160,17 @@ def test_no_consent_token_rejected(
             f"/api/v2/patient/{patient_id}/summary",
             # No X-Consent-Token header
         )
-        assert resp.status_code == 403, (
-            f"Missing consent token should return 403, got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Missing consent token should return 403, got {resp.status_code}"
 
 
 def test_invalid_consent_token_rejected(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-06b: Invalid/nonexistent consent token → 403.
 
@@ -156,13 +190,17 @@ def test_invalid_consent_token_rejected(
             f"/api/v2/patient/{patient_id}/summary",
             headers={"X-Consent-Token": "totally-fake-token"},
         )
-        assert resp.status_code == 403, (
-            f"Invalid consent token should return 403, got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Invalid consent token should return 403, got {resp.status_code}"
 
 
 def test_cross_patient_consent_rejected(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-06c: Consent for Patient A cannot access Patient B's records → 403.
 
@@ -183,15 +221,17 @@ def test_cross_patient_consent_rejected(
     # Seed consent for Patient A
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
-    cap_data = json.dumps({
-        "patient_id": patient_a,
-        "clinician_id": provider_id,
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_a,
+            "clinician_id": provider_id,
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() + 3600
 
@@ -201,9 +241,9 @@ def test_cross_patient_consent_rejected(
             f"/api/v2/patient/{patient_b}/summary",
             headers={"X-Consent-Token": token_raw},
         )
-        assert resp.status_code == 403, (
-            f"Cross-patient consent should return 403, got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Cross-patient consent should return 403, got {resp.status_code}"
 
 
 def test_validate_consent_for_patient_none_patient_id():
@@ -219,12 +259,14 @@ def test_validate_consent_for_patient_none_patient_id():
     provider = _make_provider_context()
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(validate_consent_for_patient(
-            patient_id=None,
-            purpose="test",
-            provider=provider,
-            x_consent_token="some-token",
-        ))
+        asyncio.run(
+            validate_consent_for_patient(
+                patient_id=None,
+                purpose="test",
+                provider=provider,
+                x_consent_token="some-token",
+            )
+        )
     assert exc_info.value.status_code == 403
 
 
@@ -237,17 +279,23 @@ def test_validate_consent_for_patient_missing_token():
     provider = _make_provider_context()
 
     with pytest.raises(HTTPException) as exc_info:
-        asyncio.run(validate_consent_for_patient(
-            patient_id=str(uuid.uuid4()),
-            purpose="test",
-            provider=provider,
-            x_consent_token=None,
-        ))
+        asyncio.run(
+            validate_consent_for_patient(
+                patient_id=str(uuid.uuid4()),
+                purpose="test",
+                provider=provider,
+                x_consent_token=None,
+            )
+        )
     assert exc_info.value.status_code == 403
 
 
 def test_pipeline_access_without_consent_rejected(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-06f: Pipeline endpoint without consent → 403.
 
@@ -269,6 +317,6 @@ def test_pipeline_access_without_consent_rejected(
             f"/api/v2/pipeline/jobs/{job_id}",
             # No X-Consent-Token
         )
-        assert resp.status_code == 403, (
-            f"Pipeline access without consent should return 403, got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Pipeline access without consent should return 403, got {resp.status_code}"

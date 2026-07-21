@@ -5,7 +5,9 @@ import pytest
 from scripts.demo_environment import require_demo_environment
 
 
-@pytest.mark.parametrize("environment", ["production", "prod", "staging", "preview", ""])
+@pytest.mark.parametrize(
+    "environment", ["production", "prod", "staging", "preview", ""]
+)
 def test_demo_tools_refuse_unsafe_or_implicit_environments(monkeypatch, environment):
     monkeypatch.delenv("ENV", raising=False)
     monkeypatch.delenv("ENVIRONMENT", raising=False)
@@ -16,7 +18,10 @@ def test_demo_tools_refuse_unsafe_or_implicit_environments(monkeypatch, environm
 
 
 @pytest.mark.parametrize("environment", ["alpha", "development", "test"])
-def test_demo_tools_report_only_environment_and_database_host(monkeypatch, capsys, environment):
+def test_demo_tools_report_only_environment_and_database_host(
+    monkeypatch, capsys, environment
+):
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
     monkeypatch.setenv("ENV", environment)
     monkeypatch.setenv(
         "DATABASE_URL",

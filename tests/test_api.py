@@ -38,6 +38,7 @@ not a full reimplementation of either service, just enough surface area
 to drive the real FastAPI app, real dependency graph, and real
 middleware through a full request lifecycle without live infrastructure.
 """
+
 from __future__ import annotations
 
 import os
@@ -125,6 +126,7 @@ async def _mock_db_session():
 # Minimal in-memory fakes for the Supabase / Redis layers.
 # ─────────────────────────────────────────────────────────────────────────
 
+
 class _FakeResult:
     def __init__(self, data=None, error=None):
         self.data = data
@@ -193,7 +195,9 @@ class _FakeTableQuery:
 
         if self._order_col:
             matched = sorted(
-                matched, key=lambda r: r.get(self._order_col) or "", reverse=self._order_desc
+                matched,
+                key=lambda r: r.get(self._order_col) or "",
+                reverse=self._order_desc,
             )
 
         if self._limit is not None:
@@ -323,8 +327,15 @@ class FakeKMSProvider:
         await db.commit()
         return AsyncMock(dek_version=1)
 
-    async def encrypt_field(self, patient_id: str, field_name: str, plaintext: str, db) -> FakeEncryptedField:
+    async def encrypt_field(
+        self, patient_id: str, field_name: str, plaintext: str, db
+    ) -> FakeEncryptedField:
         return FakeEncryptedField(field_name, plaintext)
+
+
+class FakeRunningTask:
+    def done(self) -> bool:
+        return False
 
 
 class TestNexaCareLifecycle(unittest.TestCase):
@@ -345,23 +356,56 @@ class TestNexaCareLifecycle(unittest.TestCase):
         # already used in test_audit_ledger.py / test_biometric_registry.py
         # / test_auth_service.py.
         cls._patches = [
-            patch("app.core.supabase.get_supabase_client", return_value=cls.fake_supabase),
+            patch(
+                "app.core.supabase.get_supabase_client", return_value=cls.fake_supabase
+            ),
             patch("app.api.routes.get_supabase_client", return_value=cls.fake_supabase),
-            patch("app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})),
-            patch("app.services.biometric_registry.get_supabase_client", return_value=cls.fake_supabase),
+            patch(
+                "app.observability.audit_ledger._append_once",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "app.services.biometric_registry.get_supabase_client",
+                return_value=cls.fake_supabase,
+            ),
             patch("app.core.redis.get_redis_client", return_value=cls.fake_redis),
-            patch("app.services.auth_service.get_redis_client", return_value=cls.fake_redis),
-            patch("app.services.crypto_engine.get_redis_client", return_value=cls.fake_redis),
-            patch("app.services.provider_auth_service.get_redis_client", return_value=cls.fake_redis),
-            patch("app.services.consent_engine.get_consent_redis_client", return_value=cls.fake_async_redis),
-            patch("app.main.get_redis_client", return_value=cls.fake_redis),
+            patch(
+                "app.services.auth_service.get_redis_client",
+                return_value=cls.fake_redis,
+            ),
+            patch(
+                "app.services.crypto_engine.get_redis_client",
+                return_value=cls.fake_redis,
+            ),
+            patch(
+                "app.services.provider_auth_service.get_redis_client",
+                return_value=cls.fake_redis,
+            ),
+            patch(
+                "app.services.consent_engine.get_consent_redis_client",
+                return_value=cls.fake_async_redis,
+            ),
+            patch("app.main.get_async_redis_client", return_value=cls.fake_async_redis),
             patch("app.main.get_async_engine", return_value=FakeAsyncEngine()),
+            patch(
+                "app.main.get_outbox_health",
+                new=AsyncMock(
+                    return_value={
+                        "pending_count": 0,
+                        "dead_letter_backlog": 0,
+                        "expired_lease_count": 0,
+                        "oldest_pending_age_seconds": 0.0,
+                        "oldest_expired_lease_age_seconds": 0.0,
+                    }
+                ),
+            ),
         ]
         for p in cls._patches:
             p.start()
 
         app.dependency_overrides[get_provider_context] = _override_provider_context
         app.dependency_overrides[get_db_session] = _mock_db_session
+        app.state.audit_outbox_task = FakeRunningTask()
         cls.client = TestClient(app)
 
     @classmethod
@@ -378,7 +422,10 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(response.json(), {"status": "ok"})
 
     def test_healthz_does_not_call_dependency_health_checks(self):
-        with patch("app.main.get_redis_client") as redis_check, patch("app.main.get_async_engine") as postgres_check:
+        with (
+            patch("app.main.get_redis_client") as redis_check,
+            patch("app.main.get_async_engine") as postgres_check,
+        ):
             response = self.client.get("/healthz")
 
         self.assertEqual(response.status_code, 200)
@@ -393,6 +440,9 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(data["status"], "ok")
         self.assertEqual(data["redis"], "ok")
         self.assertEqual(data["postgres"], "ok")
+        self.assertEqual(data["audit_outbox_worker"], "ok")
+        self.assertEqual(data["audit_outbox_dead_letter_backlog"], "0")
+        self.assertEqual(data["audit_outbox_expired_lease_count"], "0")
 
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 
@@ -407,7 +457,9 @@ class TestNexaCareLifecycle(unittest.TestCase):
                 "lab_results": [],
                 "prescriptions": [],
             }
-            with patch("app.core.dependencies.get_db_session", side_effect=_mock_db_session):
+            with patch(
+                "app.core.dependencies.get_db_session", side_effect=_mock_db_session
+            ):
                 response = self.client.post("/register", json=payload)
             self.assertEqual(response.status_code, 401)
         finally:
@@ -424,11 +476,18 @@ class TestNexaCareLifecycle(unittest.TestCase):
                 "lab_results": [],
                 "prescriptions": [],
             }
-            with patch(
-                "app.core.dependencies.authenticate_provider_session",
-                new_callable=AsyncMock,
-                return_value=ProviderAuthResult(None, ProviderAuthFailure.INVALID_CREDENTIALS),
-            ), patch("app.core.dependencies.get_db_session", side_effect=_mock_db_session):
+            with (
+                patch(
+                    "app.core.dependencies.authenticate_provider_session",
+                    new_callable=AsyncMock,
+                    return_value=ProviderAuthResult(
+                        None, ProviderAuthFailure.INVALID_CREDENTIALS
+                    ),
+                ),
+                patch(
+                    "app.core.dependencies.get_db_session", side_effect=_mock_db_session
+                ),
+            ):
                 response = self.client.post(
                     "/register",
                     json=payload,
@@ -441,10 +500,12 @@ class TestNexaCareLifecycle(unittest.TestCase):
     # ── Lane B: full patient lifecycle ──────────────────────────────────
 
     @patch.dict(os.environ, {"KEK_ROOT_SECRET": "test-kek-root-secret"})
-    @patch("app.api.routes.decrypt_pii_field", return_value=None)
+    @patch("app.api.routes.decrypt_pii_field", return_value=None, create=True)
     @patch("app.services.sharding.get_encryption_provider")
     @patch("app.api.routes.get_encryption_provider")
-    def test_full_patient_lifecycle(self, mock_get_route_kms, mock_get_sharding_kms, mock_decrypt_pii):
+    def test_full_patient_lifecycle(
+        self, mock_get_route_kms, mock_get_sharding_kms, mock_decrypt_pii
+    ):
         mock_get_route_kms.return_value = FakeKMSProvider()
         mock_get_sharding_kms.return_value = FakeKMSProvider()
         # 1. Register (provider-gated)
@@ -484,7 +545,9 @@ class TestNexaCareLifecycle(unittest.TestCase):
             "bio_seed": "lifecycle-bio-seed",
             "masked_internal_id": masked_id,
         }
-        handshake_response = self.client.post("/api/v1/handshake", json=handshake_payload)
+        handshake_response = self.client.post(
+            "/api/v1/handshake", json=handshake_payload
+        )
         self.assertEqual(handshake_response.status_code, 200, handshake_response.text)
         session_token = handshake_response.json()["session_token"]
         self.assertTrue(session_token)
@@ -521,40 +584,45 @@ class TestNexaCareLifecycle(unittest.TestCase):
         clinical_view_response = self.client.get(
             "/view-record/clinical", headers={"X-Consent-Token": consent_token}
         )
-        self.assertEqual(clinical_view_response.status_code, 200, clinical_view_response.text)
+        self.assertEqual(
+            clinical_view_response.status_code, 200, clinical_view_response.text
+        )
         clinical_view_data = clinical_view_response.json()
         self.assertEqual(clinical_view_data["masked_internal_id"], masked_id)
         self.assertIn("Type 2 Diabetes", clinical_view_data["diagnoses"])
         self.assertNotIn("patient_name", clinical_view_data)
         self.assertNotIn("phone", clinical_view_data)
 
-        # 7. A clinical-only consent token must not authorize the PII
-        # endpoint. Under-scoped and invalid tokens intentionally share
-        # the same response shape.
+        # 7. The legacy PII endpoint is now a compatibility tombstone.
+        # It never decrypts or returns static-Fernet PII, regardless of scope.
         under_scoped_pii_response = self.client.get(
             "/view-record/pii", headers={"X-Consent-Token": consent_token}
         )
-        self.assertEqual(under_scoped_pii_response.status_code, 403)
+        self.assertEqual(under_scoped_pii_response.status_code, 410)
+        self.assertEqual(
+            under_scoped_pii_response.json()["detail"]["error_code"],
+            "LEGACY_PII_ENDPOINT_RETIRED",
+        )
 
-        # 8. A full-scope token can view the PII shard, but PII fields
-        # still come back redacted (F-10), and clinical fields are absent.
+        # 8. Full-scope legacy consent cannot revive the retired static-Fernet path.
         full_consent_response = self.client.post(
             "/request-consent",
             json={"duration_seconds": 300, "scope": "full"},
             headers=session_headers,
         )
-        self.assertEqual(full_consent_response.status_code, 200, full_consent_response.text)
+        self.assertEqual(
+            full_consent_response.status_code, 200, full_consent_response.text
+        )
         full_consent_token = full_consent_response.json()["consent_token"]
 
         pii_view_response = self.client.get(
             "/view-record/pii", headers={"X-Consent-Token": full_consent_token}
         )
-        self.assertEqual(pii_view_response.status_code, 200, pii_view_response.text)
-        pii_view_data = pii_view_response.json()
-        self.assertEqual(pii_view_data["masked_internal_id"], masked_id)
-        self.assertEqual(pii_view_data["patient_name"], "[REDACTED]")
-        self.assertEqual(pii_view_data["phone"], "[REDACTED]")
-        self.assertNotIn("diagnoses", pii_view_data)
+        self.assertEqual(pii_view_response.status_code, 410, pii_view_response.text)
+        self.assertEqual(
+            pii_view_response.json()["detail"]["error_code"],
+            "LEGACY_PII_ENDPOINT_RETIRED",
+        )
 
     # ── Negative cases for the patient lane ─────────────────────────────
 

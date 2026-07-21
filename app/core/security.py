@@ -33,7 +33,9 @@ def _load_key(env_name: str) -> bytes:
     except Exception as exc:
         raise EncryptionError(f"{env_name} is not valid base64") from exc
     if len(decoded) != 32:
-        raise EncryptionError(f"{env_name} must decode to 32 bytes (got {len(decoded)})")
+        raise EncryptionError(
+            f"{env_name} must decode to 32 bytes (got {len(decoded)})"
+        )
     return value.encode("utf-8")
 
 
@@ -47,7 +49,9 @@ def encrypt_mfa_secret(plaintext: str) -> str:
 
     if not plaintext:
         raise EncryptionError("Refusing to encrypt an empty MFA secret")
-    return _fernet("MFA_ENCRYPTION_KEY").encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    return (
+        _fernet("MFA_ENCRYPTION_KEY").encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    )
 
 
 def decrypt_mfa_secret(ciphertext: str | None) -> str | None:
@@ -56,9 +60,15 @@ def decrypt_mfa_secret(ciphertext: str | None) -> str | None:
     if not ciphertext:
         return None
     try:
-        return _fernet("MFA_ENCRYPTION_KEY").decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+        return (
+            _fernet("MFA_ENCRYPTION_KEY")
+            .decrypt(ciphertext.encode("utf-8"))
+            .decode("utf-8")
+        )
     except InvalidToken as exc:
-        raise EncryptionError("MFA secret decryption failed: invalid token or key mismatch") from exc
+        raise EncryptionError(
+            "MFA secret decryption failed: invalid token or key mismatch"
+        ) from exc
 
 
 def encrypt_pii_field(plaintext: str | None) -> str | None:
@@ -66,7 +76,9 @@ def encrypt_pii_field(plaintext: str | None) -> str | None:
 
     if plaintext is None:
         return None
-    return _fernet("PII_ENCRYPTION_KEY").encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    return (
+        _fernet("PII_ENCRYPTION_KEY").encrypt(plaintext.encode("utf-8")).decode("utf-8")
+    )
 
 
 def decrypt_pii_field(ciphertext: str | None) -> str | None:
@@ -75,9 +87,15 @@ def decrypt_pii_field(ciphertext: str | None) -> str | None:
     if ciphertext is None:
         return None
     try:
-        return _fernet("PII_ENCRYPTION_KEY").decrypt(ciphertext.encode("utf-8")).decode("utf-8")
+        return (
+            _fernet("PII_ENCRYPTION_KEY")
+            .decrypt(ciphertext.encode("utf-8"))
+            .decode("utf-8")
+        )
     except InvalidToken as exc:
-        raise EncryptionError("PII decryption failed: invalid token or key mismatch") from exc
+        raise EncryptionError(
+            "PII decryption failed: invalid token or key mismatch"
+        ) from exc
 
 
 # ── Session binding hashes ───────────────────────────────────────────────

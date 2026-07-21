@@ -11,10 +11,19 @@ existed and record its lifecycle (issued -> consumed/revoked/expired).
 
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Index,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -33,22 +42,39 @@ class ConsentGrantLog(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     patient_id: Mapped[str] = mapped_column(String(64), nullable=False)
     clinician_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    hospital_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
     purpose: Mapped[str] = mapped_column(String(64), nullable=False)
     scope: Mapped[list] = mapped_column(JSONB, nullable=False)
-    is_break_glass: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    is_break_glass: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     reason_code: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     revoked_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
 
     assurance_level: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    assurance_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    assurance_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
-    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
-    signed_approval_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    request_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    signed_approval_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
 
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_consent_grant_log_token_hash"),

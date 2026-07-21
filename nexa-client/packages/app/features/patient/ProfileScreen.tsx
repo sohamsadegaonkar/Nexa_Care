@@ -10,11 +10,14 @@ import {
   type PatientDemographics,
   type PatientRecordResponse,
 } from '../../api/patient'
+import { NexaApiClient, type EmergencySummaryResponse } from '../../utils/apiClient'
+import { useCapability } from '../../services/capabilityStore'
 
 interface ProfileScreenProps {
   patientId: string
-  consentToken?: string | null
-  purpose?: string | null
+  /** Opaque workflow correlation id -- the raw token is looked up from the
+   * in-memory capability store by this id, never carried in the URL. */
+  workflowId?: string | null
 }
 
 type LoadState = 'idle' | 'loading' | 'success' | 'error'
@@ -73,6 +76,22 @@ function DataRow({ label, value }: { label: string; value: string }) {
       </Text>
     </XStack>
   )
+}
+
+function mapEmergencySummaryToRecordResponse(data: EmergencySummaryResponse): PatientRecordResponse {
+  const categories = data.categories ?? {}
+  const allergiesCat = categories['allergies']
+  const medsCat = categories['active_medications']
+  const diagnosesCat = categories['diagnoses']
+
+  return {
+    demographics: {},
+    clinical: {
+      medications: ((medsCat?.items as any[]) ?? []).map((m) => `${m.name} (${m.frequency})`),
+      allergies: ((allergiesCat?.items as any[]) ?? []).map((a) => `${a.allergen} (${a.severity})`),
+      recent_diagnoses: ((diagnosesCat?.items as any[]) ?? []).map((d) => d.summary),
+    },
+  }
 }
 
 function ClinicalBlock({ title, items }: { title: string; items: string[] }) {
@@ -176,19 +195,36 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   )
 }
 
-export function ProfileScreen({ patientId, consentToken, purpose }: ProfileScreenProps) {
+export function ProfileScreen({ patientId, workflowId }: ProfileScreenProps) {
+  const capability = useCapability(workflowId)
   const [state, setState] = useState<LoadState>('idle')
   const [record, setRecord] = useState<PatientRecordResponse | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
+  const isEmergency = capability?.purpose === 'EMERGENCY'
+
   const loadRecord = useCallback(async (): Promise<void> => {
+    if (!capability || capability.patientId !== patientId) {
+      // Covers both "never issued" and "page refresh / process restart
+      // wiped in-memory state" -- the token cannot be recovered from
+      // anywhere durable, so the only correct move is to say so.
+      setErrorMessage('Access session expired — request access again.')
+      setState('error')
+      return
+    }
+
     setState('loading')
     setErrorMessage(null)
     setRecord(null)
 
     try {
-      const response = await fetchPatientRecord(patientId, consentToken ?? '', purpose ?? '')
-      setRecord(response)
+      if (isEmergency) {
+        const summary = await NexaApiClient.getEmergencySummary(patientId, capability.token)
+        setRecord(mapEmergencySummaryToRecordResponse(summary))
+      } else {
+        const response = await fetchPatientRecord(patientId, capability.token, capability.purpose)
+        setRecord(response)
+      }
       setState('success')
     } catch (error: unknown) {
       if (error instanceof PatientRecordError) {
@@ -198,7 +234,7 @@ export function ProfileScreen({ patientId, consentToken, purpose }: ProfileScree
       }
       setState('error')
     }
-  }, [patientId, consentToken, purpose])
+  }, [patientId, capability, isEmergency])
 
   useEffect(() => {
     void loadRecord()
@@ -251,6 +287,19 @@ export function ProfileScreen({ patientId, consentToken, purpose }: ProfileScree
             Consent-scoped reconstructed record
           </Text>
         </YStack>
+
+        {isEmergency && (
+          <Card width="100%" borderWidth={2} borderColor="$red9" bg="$red3" p="$4">
+            <YStack gap="$1">
+              <Text color="$red11" fontSize={16} fontWeight="900">
+                EMERGENCY (BREAK-GLASS) ACCESS
+              </Text>
+              <Text color="$red11" fontSize={13} fontWeight="600">
+                Showing only the clinical categories approved for this emergency grant. This access is audited.
+              </Text>
+            </YStack>
+          </Card>
+        )}
 
         <Card
           width="100%"

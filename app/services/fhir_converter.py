@@ -26,26 +26,32 @@ def _entry(resource: dict) -> dict:
 
 
 def _condition(patient_id: str, diagnosis: str) -> dict:
-    return _entry({
-        "resourceType": "Condition",
-        "clinicalStatus": {
-            "coding": [
-                {
-                    "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
-                    "code": "active",
-                    "display": "Active",
-                }
-            ]
-        },
-        "code": {"text": diagnosis},
-        "subject": {"reference": f"Patient/{patient_id}"},
-    })
+    return _entry(
+        {
+            "resourceType": "Condition",
+            "clinicalStatus": {
+                "coding": [
+                    {
+                        "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+                        "code": "active",
+                        "display": "Active",
+                    }
+                ]
+            },
+            "code": {"text": diagnosis},
+            "subject": {"reference": f"Patient/{patient_id}"},
+        }
+    )
 
 
 def _medication_request(patient_id: str, medication: dict | str) -> dict:
     if isinstance(medication, dict):
         name = medication.get("name") or medication.get("text") or "Medication"
-        dosage = " ".join(str(part) for part in [medication.get("strength"), medication.get("frequency")] if part)
+        dosage = " ".join(
+            str(part)
+            for part in [medication.get("strength"), medication.get("frequency")]
+            if part
+        )
         authored_on = medication.get("prescribed_at")
     else:
         name = medication
@@ -81,21 +87,30 @@ def _observation(patient_id: str, record: dict) -> dict:
     if record.get("recorded_at"):
         resource["effectiveDateTime"] = record["recorded_at"]
     if record.get("is_abnormal"):
-        resource["interpretation"] = [{"coding": [{"code": "A", "display": "Abnormal"}]}]
+        resource["interpretation"] = [
+            {"coding": [{"code": "A", "display": "Abnormal"}]}
+        ]
     if record.get("reference_range"):
         resource["referenceRange"] = [{"text": str(record["reference_range"])}]
     return _entry(resource)
 
 
 def _allergy_intolerance(patient_id: str, allergy: dict) -> dict:
-    return _entry({
-        "resourceType": "AllergyIntolerance",
-        "clinicalStatus": {"coding": [{"code": "active"}]},
-        "code": {"text": str(allergy.get("allergen") or "Allergy")},
-        "patient": {"reference": f"Patient/{patient_id}"},
-        "criticality": "high" if str(allergy.get("risk_level") or "").upper() in {"HIGH_RISK", "CRITICAL_RISK"} else "unable-to-assess",
-        "reaction": [{"severity": str(allergy.get("severity") or "unknown").lower()}],
-    })
+    return _entry(
+        {
+            "resourceType": "AllergyIntolerance",
+            "clinicalStatus": {"coding": [{"code": "active"}]},
+            "code": {"text": str(allergy.get("allergen") or "Allergy")},
+            "patient": {"reference": f"Patient/{patient_id}"},
+            "criticality": "high"
+            if str(allergy.get("risk_level") or "").upper()
+            in {"HIGH_RISK", "CRITICAL_RISK"}
+            else "unable-to-assess",
+            "reaction": [
+                {"severity": str(allergy.get("severity") or "unknown").lower()}
+            ],
+        }
+    )
 
 
 def generate_fhir_bundle(patient_id: str, clinical_records: list[dict]) -> dict:
@@ -115,7 +130,14 @@ def generate_fhir_bundle(patient_id: str, clinical_records: list[dict]) -> dict:
             entries.append(_allergy_intolerance(patient_id, record))
             continue
         if record_type == "timeline_diagnosis":
-            entries.append(_condition(patient_id, str(record.get("summary") or record.get("diagnosis") or "Diagnosis")))
+            entries.append(
+                _condition(
+                    patient_id,
+                    str(
+                        record.get("summary") or record.get("diagnosis") or "Diagnosis"
+                    ),
+                )
+            )
             continue
 
         for diagnosis in _string_items(record.get("diagnoses")):
@@ -123,7 +145,11 @@ def generate_fhir_bundle(patient_id: str, clinical_records: list[dict]) -> dict:
         for prescription in _string_items(record.get("prescriptions")):
             entries.append(_medication_request(patient_id, prescription))
         for lab_result in _string_items(record.get("lab_results")):
-            entries.append(_observation(patient_id, {"test_name": "Legacy lab result", "value": lab_result}))
+            entries.append(
+                _observation(
+                    patient_id, {"test_name": "Legacy lab result", "value": lab_result}
+                )
+            )
 
     return {
         "resourceType": "Bundle",

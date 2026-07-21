@@ -15,6 +15,7 @@ export async function authenticateWithBiometrics(): Promise<boolean> {
 }
 
 export interface ConsentChallenge {
+  protocol_version: 'nexa-consent-v2'
   request_id: string
   patient_id: string
   provider_id: string
@@ -24,6 +25,7 @@ export interface ConsentChallenge {
   scope: string
   access_duration: number
   challenge_nonce: string
+  issued_at: string
   expires_at: string
   status: string
 }
@@ -47,7 +49,9 @@ async function submitSignedDecision(
     scope: challenge.scope,
     purpose: challenge.purpose,
     access_duration: challenge.access_duration,
+    issued_at: challenge.issued_at,
     expires_at: challenge.expires_at,
+    device_id: deviceId,
   })
   const payload = {
     request_id: challenge.request_id,

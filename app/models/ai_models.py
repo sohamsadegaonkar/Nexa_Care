@@ -15,12 +15,18 @@ class ExtractedMedicalDocument(BaseModel):
 
     model_config = ConfigDict(strict=True, extra="allow")
 
-    patient_name: str = Field(..., description="Patient name extracted from the document")
-    aadhaar_abha_id: str = Field(..., description="Aadhaar or ABHA identifier if present")
+    patient_name: str = Field(
+        ..., description="Patient name extracted from the document"
+    )
+    aadhaar_abha_id: str = Field(
+        ..., description="Aadhaar or ABHA identifier if present"
+    )
     phone: str = Field(..., description="Indian phone number if present")
     diagnoses: list[str] = Field(..., description="Diagnoses or clinical impressions")
     lab_results: list[str] = Field(..., description="Lab result summaries")
-    prescriptions: list[str] = Field(..., description="Medication or prescription entries")
+    prescriptions: list[str] = Field(
+        ..., description="Medication or prescription entries"
+    )
     extraction_confidence: float = Field(
         ...,
         ge=0.0,

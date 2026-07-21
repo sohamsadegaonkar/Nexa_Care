@@ -2,10 +2,9 @@ import { ProfileScreen } from 'app/features/patient/ProfileScreen'
 import { Stack, useLocalSearchParams } from 'expo-router'
 
 export default function Screen() {
-  const { id, consentToken, purpose } = useLocalSearchParams<{
+  const { id, workflow_id } = useLocalSearchParams<{
     id: string
-    consentToken?: string
-    purpose?: string
+    workflow_id?: string
   }>()
 
   return (
@@ -19,11 +18,7 @@ export default function Screen() {
           gestureDirection: 'horizontal',
         }}
       />
-      <ProfileScreen
-        patientId={id as string}
-        consentToken={consentToken}
-        purpose={purpose}
-      />
+      <ProfileScreen patientId={id as string} workflowId={workflow_id ?? null} />
     </>
   )
 }

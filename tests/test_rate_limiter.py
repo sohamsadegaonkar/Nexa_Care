@@ -42,6 +42,10 @@ class FakeAsyncRedisClient:
     def pipeline(self):
         return FakeAsyncRedisPipeline(self)
 
+    async def eval(self, _script, _numkeys, key, window_seconds):
+        self._counters[key] = self._counters.get(key, 0) + 1
+        return [self._counters[key], int(window_seconds)]
+
     async def close(self) -> None:
         pass
 
@@ -79,9 +83,9 @@ class TestRateLimiter(unittest.TestCase):
         self.assertTrue(asyncio.run(limiter.is_allowed("key-a")))
         self.assertTrue(asyncio.run(limiter.is_allowed("key-b")))
 
-    def test_client_ip_key_prefers_forwarded_header(self):
+    def test_client_ip_key_ignores_forwarded_header_from_untrusted_peer(self):
         request = FakeRequest(host="10.0.0.1", forwarded="203.0.113.5, 10.0.0.1")
-        self.assertEqual(client_ip_key(request), "203.0.113.5")
+        self.assertEqual(client_ip_key(request), "10.0.0.1")
 
     def test_client_ip_key_falls_back_to_client_host(self):
         request = FakeRequest(host="10.0.0.1")

@@ -8,7 +8,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from app.core.redis import get_redis_client
+from app.core.redis import get_async_redis_client
 
 
 CAPABILITY_PREFIX = "consent_access:capability:"
@@ -63,11 +63,17 @@ def _decode(raw: object) -> dict | None:
 def _scope_allows(scope: str, requested_category: str) -> bool:
     clinical_reads = {"clinical_summary", "timeline_view"}
     if scope == "full":
-        return requested_category in clinical_reads | {"full"}
+        return requested_category in clinical_reads | {
+            "full",
+            "policy_read",
+            "policy_update",
+        }
     return scope == "clinical" and requested_category in clinical_reads
 
 
-def issue_from_approved_request(*, request_data: dict) -> tuple[str, ApprovedAccessCapability]:
+async def issue_from_approved_request(
+    *, request_data: dict
+) -> tuple[str, ApprovedAccessCapability]:
     """Rotate the request's capability so retries leave only one active grant."""
     now = datetime.now(timezone.utc)
     expires_at = datetime.fromisoformat(str(request_data["access_expires_at"]))
@@ -92,24 +98,34 @@ def issue_from_approved_request(*, request_data: dict) -> tuple[str, ApprovedAcc
     }
 
     try:
-        redis = get_redis_client()
+        redis = get_async_redis_client()
         lock_key = f"{CLAIM_LOCK_PREFIX}{payload['request_id']}"
-        if not redis.set(lock_key, secrets.token_hex(16), nx=True, ex=5):
-            raise ApprovedAccessClaimInProgress("An access claim is already in progress")
+        lock_value = secrets.token_hex(16)
+        if not await redis.set(lock_key, lock_value, nx=True, ex=5):
+            raise ApprovedAccessClaimInProgress(
+                "An access claim is already in progress"
+            )
         try:
-            prior_digest = redis.get(_claim_key(payload["request_id"]))
+            prior_digest = await redis.get(_claim_key(payload["request_id"]))
             if isinstance(prior_digest, bytes):
                 prior_digest = prior_digest.decode("utf-8")
-            redis.set(_capability_key(digest), json.dumps(payload), ex=ttl)
-            redis.set(_claim_key(payload["request_id"]), digest, ex=ttl)
+            await redis.set(_capability_key(digest), json.dumps(payload), ex=ttl)
+            await redis.set(_claim_key(payload["request_id"]), digest, ex=ttl)
             if isinstance(prior_digest, str) and prior_digest != digest:
-                redis.delete(_capability_key(prior_digest))
+                await redis.delete(_capability_key(prior_digest))
         finally:
-            redis.delete(lock_key)
+            await redis.eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
+                1,
+                lock_key,
+                lock_value,
+            )
     except ApprovedAccessClaimInProgress:
         raise
     except Exception as exc:
-        raise ApprovedAccessStoreUnavailable("Approved access store is unavailable") from exc
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
 
     return token, ApprovedAccessCapability(
         patient_id=payload["patient_id"],
@@ -125,20 +141,22 @@ def issue_from_approved_request(*, request_data: dict) -> tuple[str, ApprovedAcc
     )
 
 
-def invalidate_request(request_id: str) -> None:
+async def invalidate_request(request_id: str) -> None:
     try:
-        redis = get_redis_client()
-        digest = redis.get(_claim_key(request_id))
+        redis = get_async_redis_client()
+        digest = await redis.get(_claim_key(request_id))
         if isinstance(digest, bytes):
             digest = digest.decode("utf-8")
         if isinstance(digest, str):
-            redis.delete(_capability_key(digest))
-        redis.delete(_claim_key(request_id))
+            await redis.delete(_capability_key(digest))
+        await redis.delete(_claim_key(request_id))
     except Exception as exc:
-        raise ApprovedAccessStoreUnavailable("Approved access store is unavailable") from exc
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
 
 
-def validate(
+async def validate(
     *,
     token: str,
     patient_id: str,
@@ -148,18 +166,20 @@ def validate(
 ) -> ApprovedAccessCapability | None:
     """Validate the hash-addressed grant and its live approved request."""
     try:
-        redis = get_redis_client()
+        redis = get_async_redis_client()
         digest = token_hash(token)
-        payload = _decode(redis.get(_capability_key(digest)))
+        payload = _decode(await redis.get(_capability_key(digest)))
         if payload is None:
             return None
         request_id = str(payload.get("request_id", ""))
-        active_digest = redis.get(_claim_key(request_id))
+        active_digest = await redis.get(_claim_key(request_id))
         if isinstance(active_digest, bytes):
             active_digest = active_digest.decode("utf-8")
-        request_data = _decode(redis.get(f"consent_request:{request_id}"))
+        request_data = _decode(await redis.get(f"consent_request:{request_id}"))
     except Exception as exc:
-        raise ApprovedAccessStoreUnavailable("Approved access store is unavailable") from exc
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
 
     now = datetime.now(timezone.utc)
     try:
@@ -174,13 +194,27 @@ def validate(
         "hospital_id": hospital_id,
         "patient_id": patient_id,
     }
-    if active_digest != digest or request_data is None or request_data.get("status") != "approved":
+    if (
+        active_digest != digest
+        or request_data is None
+        or request_data.get("status") != "approved"
+    ):
         return None
-    if now >= expires_at or any(str(payload.get(k)) != str(v) for k, v in expected.items()):
+    if now >= expires_at or any(
+        str(payload.get(k)) != str(v) for k, v in expected.items()
+    ):
         return None
-    if any(str(request_data.get(k)) != str(payload.get(k)) for k in (
-        "request_id", "provider_id", "hospital_id", "patient_id", "purpose", "scope"
-    )):
+    if any(
+        str(request_data.get(k)) != str(payload.get(k))
+        for k in (
+            "request_id",
+            "provider_id",
+            "hospital_id",
+            "patient_id",
+            "purpose",
+            "scope",
+        )
+    ):
         return None
     if not _scope_allows(str(payload.get("scope")), requested_category):
         return None

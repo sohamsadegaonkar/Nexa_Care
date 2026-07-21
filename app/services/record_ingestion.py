@@ -7,6 +7,8 @@ provenance enforcement, idempotency per job, and hard-auditing.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -18,9 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.extracted_field import ExtractedField
 from app.models.patient_records import (
-    Allergy,
     LabResult,
-    Medication,
     TimelineEvent,
     Vitals,
 )
@@ -34,6 +34,7 @@ VALID_RISK_LEVELS = {"LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "CRITICAL_RISK"}
 
 class IngestionResult(BaseModel):
     """Result summary returned after ingesting a pipeline extraction job."""
+
     job_id: str
     patient_id: str
     ingested_count: int
@@ -47,8 +48,10 @@ class IngestionResult(BaseModel):
 def _parse_uuid(id_str: str) -> uuid.UUID:
     try:
         return uuid.UUID(str(id_str))
-    except ValueError:
-        return uuid.uuid5(uuid.NAMESPACE_DNS, str(id_str))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=422, detail={"error_code": "INVALID_UUID"}
+        ) from exc
 
 
 async def ingest_extracted_fields(
@@ -56,6 +59,7 @@ async def ingest_extracted_fields(
     job_id: str,
     approved_fields: list[ExtractedField],
     db: AsyncSession,
+    committed_by: str,
 ) -> IngestionResult:
     """Ingest approved AI extraction fields into patient sub-models with full provenance."""
     pid_uuid = _parse_uuid(patient_id)
@@ -76,11 +80,15 @@ async def ingest_extracted_fields(
             timeline_events_created=0,
         )
 
-    stmt_existing = select(TimelineEvent).where(
-        TimelineEvent.patient_id == pid_uuid,
-        TimelineEvent.event_ref_id == job_uuid,
-        TimelineEvent.source == "ai_extracted",
-    ).limit(1)
+    stmt_existing = (
+        select(TimelineEvent)
+        .where(
+            TimelineEvent.patient_id == pid_uuid,
+            TimelineEvent.event_ref_id == job_uuid,
+            TimelineEvent.source == "ai_extracted",
+        )
+        .limit(1)
+    )
     res_existing = await db.execute(stmt_existing)
     if res_existing.scalar_one_or_none() is not None:
         return IngestionResult(
@@ -103,15 +111,29 @@ async def ingest_extracted_fields(
     now = datetime.now(timezone.utc)
 
     for field in approved_fields:
+        if field.field_id is None or field.job_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="Provenance error: field_id and job_id are required",
+            )
+        if _parse_uuid(field.job_id) != job_uuid:
+            raise HTTPException(
+                status_code=409,
+                detail="Extracted field job_id does not match commit job",
+            )
         # 2. Status adjudication enforcement: reject unreviewed or rejected AI output
-        if str(field.status).lower() not in {"auto_approved", "approved", "edited"}:
+        if str(field.status).lower() not in {"approved", "edited"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Safety violation: field '{field.field_name}' has unreviewed or rejected status '{field.status}'. Only auto_approved, approved, or edited fields may be ingested into clinical records.",
+                detail=f"Safety violation: field '{field.field_name}' has unreviewed or rejected status '{field.status}'. Only explicitly approved or edited fields may be ingested into clinical records.",
             )
 
         # 3. Provenance enforcement (Invariant 3)
-        if field.confidence is None or not isinstance(field.confidence, (int, float)) or not (0.0 <= field.confidence <= 1.0):
+        if (
+            field.confidence is None
+            or not isinstance(field.confidence, (int, float))
+            or not (0.0 <= field.confidence <= 1.0)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Provenance error: field {field.field_name} lacks valid numeric confidence.",
@@ -127,20 +149,40 @@ async def ingest_extracted_fields(
                 detail=f"Provenance error: field {field.field_name} has invalid risk_level metadata.",
             )
 
-        doc_id_str = field.source_document_id or job_id
+        if not field.source_document_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Provenance error: source_document_id is required",
+            )
+        doc_id_str = field.source_document_id
         doc_uuid = _parse_uuid(doc_id_str)
 
         fname = field.field_name.lower().strip()
         val = field.corrected_value or field.normalized_value or field.raw_value or ""
 
         # Route by field_name
-        if fname in {"bp", "sugar", "heart_rate", "blood_pressure", "temp", "temperature", "spo2", "sp_o2", "systolic_bp", "diastolic_bp"}:
-            unit_map = {"bp": "mmHg", "blood_pressure": "mmHg", "sugar": "mg/dL", "heart_rate": "bpm", "temp": "C", "temperature": "C", "spo2": "%", "sp_o2": "%"}
+        if fname in {
+            "bp",
+            "sugar",
+            "heart_rate",
+            "blood_pressure",
+            "temp",
+            "temperature",
+            "spo2",
+            "sp_o2",
+            "systolic_bp",
+            "diastolic_bp",
+        }:
+            if not field.units:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Clinically material vital units must be adjudicated before commit",
+                )
             v = Vitals(
                 patient_id=pid_uuid,
                 type=field.field_name.upper(),
                 value=val,
-                unit=unit_map.get(fname, field.normalized_value or ""),
+                unit=field.units,
                 recorded_at=now,
                 source="ai_extracted",
                 confidence=float(field.confidence),
@@ -151,41 +193,35 @@ async def ingest_extracted_fields(
             vitals_cnt += 1
             target_model = "Vitals"
         elif fname in {"medication", "prescription", "drug", "rx"}:
-            m = Medication(
-                patient_id=pid_uuid,
-                name=val,
-                strength=field.normalized_value or "Standard",
-                frequency="As prescribed",
-                prescribed_at=now,
-                source="ai_extracted",
-                confidence=float(field.confidence),
-                risk_level=str(field.risk_level),
-                source_document_id=doc_uuid,
+            raise HTTPException(
+                status_code=409,
+                detail="Medication extraction requires structured strength and frequency adjudication",
             )
-            db.add(m)
-            meds_cnt += 1
-            target_model = "Medication"
         elif fname in {"allergy", "allergen"}:
-            # Enforce HIGH_RISK per WS5 rules
-            a = Allergy(
-                patient_id=pid_uuid,
-                allergen=val,
-                severity="Severe",
-                source="ai_extracted",
-                confidence=float(field.confidence),
-                risk_level="HIGH_RISK",
-                source_document_id=doc_uuid,
+            raise HTTPException(
+                status_code=409,
+                detail="Allergy extraction requires structured allergen and severity adjudication",
             )
-            db.add(a)
-            allergies_cnt += 1
-            target_model = "Allergy"
-        else:
+        elif fname in {"lab_result", "hba1c", "glucose", "fasting_glucose"}:
+            if not field.units:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Clinically material lab units must be adjudicated before commit",
+                )
+            reference = None
+            if field.validation_result is not None:
+                reference = getattr(field.validation_result, "reference_range", None)
+            if reference is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Lab reference range must be adjudicated before commit",
+                )
             lab = LabResult(
                 patient_id=pid_uuid,
                 test_name=field.field_name,
                 value=val,
-                unit=field.normalized_value or "",
-                reference_range="Standard",
+                unit=field.units,
+                reference_range=str(reference),
                 is_abnormal=str(field.risk_level) in {"HIGH_RISK", "CRITICAL_RISK"},
                 recorded_at=now,
                 source="ai_extracted",
@@ -196,6 +232,11 @@ async def ingest_extracted_fields(
             db.add(lab)
             labs_cnt += 1
             target_model = "LabResult"
+        else:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Unsupported canonical field type: {field.field_name}",
+            )
 
         # Create TimelineEvent for ingested field
         te = TimelineEvent(
@@ -211,9 +252,10 @@ async def ingest_extracted_fields(
 
         # Hard-audit EXTRACTED_DATA_INGESTED
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PIPELINE),
             actor_uid=str(patient_id),
             event_type="EXTRACTED_DATA_INGESTED",
-            target_id=str(field.field_id or uuid.uuid4()),
+            target_id=str(field.field_id),
             status="SUCCESS",
             metadata={
                 "job_id": job_id,
@@ -228,11 +270,11 @@ async def ingest_extracted_fields(
         job_id=job_uuid,
         patient_id=pid_uuid,
         committed_at=now,
-        committed_by=str(patient_id),
+        committed_by=committed_by,
         ingested_count=len(approved_fields),
     )
     db.add(pc)
-    await db.commit()
+    await db.flush()
 
     return IngestionResult(
         job_id=job_id,

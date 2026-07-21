@@ -32,12 +32,16 @@ functions directly.
 from __future__ import annotations
 
 import json
+import logging
 from functools import lru_cache
 from uuid import uuid4
 
 import redis
+import redis.asyncio as redis_async
 
 from app.core.config import get_redis_config
+
+logger = logging.getLogger("nexa_logger")
 
 # Default TTL for consent tokens (30 minutes)
 CONSENT_TOKEN_TTL_SECONDS = 30 * 60
@@ -61,6 +65,13 @@ def get_redis_client() -> redis.Redis:
     return redis.from_url(cfg.url, decode_responses=True)
 
 
+@lru_cache()
+def get_async_redis_client() -> redis_async.Redis:
+    """Unambiguous asyncio client for async request handlers."""
+    cfg = get_redis_config()
+    return redis_async.from_url(cfg.url, decode_responses=True)
+
+
 def ping_redis() -> bool:
     """Lightweight Redis health check."""
 
@@ -71,6 +82,7 @@ def ping_redis() -> bool:
 # ─────────────────────────────────────────────────────────────────────────
 # Scope-aware consent tokens
 # ─────────────────────────────────────────────────────────────────────────
+
 
 def issue_consent_token(
     masked_internal_id: str,
@@ -158,8 +170,11 @@ def revoke_consent_token(token: str | None) -> None:
     try:
         client = get_redis_client()
         client.delete(token)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.critical(
+            "Consent token revocation failed on an audit failure path",
+            extra={"error_type": type(exc).__name__},
+        )
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -169,7 +184,10 @@ def revoke_consent_token(token: str | None) -> None:
 # "a token that can see everything" keeps working unchanged. New code
 # should call the scoped functions above directly instead.
 
-def issue_token(masked_internal_id: str, ttl_seconds: int = CONSENT_TOKEN_TTL_SECONDS) -> str:
+
+def issue_token(
+    masked_internal_id: str, ttl_seconds: int = CONSENT_TOKEN_TTL_SECONDS
+) -> str:
     return issue_consent_token(
         masked_internal_id=masked_internal_id, scope="full", ttl_seconds=ttl_seconds
     )
@@ -181,7 +199,9 @@ def validate_token(token: str) -> str | None:
 
 
 def create_access_token(masked_id: str) -> str:
-    return issue_token(masked_internal_id=masked_id, ttl_seconds=CONSENT_TOKEN_TTL_SECONDS)
+    return issue_token(
+        masked_internal_id=masked_id, ttl_seconds=CONSENT_TOKEN_TTL_SECONDS
+    )
 
 
 def get_id_from_token(token: str) -> str | None:

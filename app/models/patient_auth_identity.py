@@ -1,4 +1,5 @@
 """Stable external-authentication identities linked to Nexa patients."""
+
 from __future__ import annotations
 
 import uuid
@@ -16,7 +17,11 @@ class PatientAuthIdentity(Base):
 
     __tablename__ = "patient_auth_identities"
     __table_args__ = (
-        UniqueConstraint("provider", "provider_subject", name="uq_patient_auth_identity_provider_subject"),
+        UniqueConstraint(
+            "provider",
+            "provider_subject",
+            name="uq_patient_auth_identity_provider_subject",
+        ),
         Index("ix_patient_auth_identities_patient_id", "patient_id"),
     )
 
@@ -36,4 +41,6 @@ class PatientAuthIdentity(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

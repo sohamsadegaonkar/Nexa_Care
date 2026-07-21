@@ -13,6 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from app.observability.audit_ledger import append_audit_log
+from app.security.audit_context import AuditContext, AuditDomain
+
+AUDIT_CONTEXT = AuditContext.for_tenant(
+    tenant_id="test-tenant",
+    domain=AuditDomain.CONSENT,
+)
 
 # List of all expected event types after Sprint 2
 EXPECTED_EVENTS = {
@@ -30,6 +36,9 @@ EXPECTED_EVENTS = {
     "BREAK_GLASS_GRANT_ATTEMPT",
     "BREAK_GLASS_GRANT_FAILED",
     "BREAK_GLASS_GRANT_SUCCESS",
+    "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED",
+    "BREAK_GLASS_GOVERNANCE_APPROVED",
+    "BREAK_GLASS_PATIENT_NOTIFICATION",
     "BREAK_GLASS_REVOKE_ATTEMPT",
     "BREAK_GLASS_REVOKE_SUCCESS",
     "CLINICAL_VIEW_SUCCESS",
@@ -39,6 +48,7 @@ EXPECTED_EVENTS = {
     "CONSENT_GATED_DECRYPT_STARTED",
     "CONSENT_GRANT_ATTEMPT",
     "CONSENT_GRANT_FAILED",
+    "EXTRACTION_JOB_VALIDATED",
     "CONSENT_REQUEST_CREATED",
     "CONSENT_REQUEST_CANCELLED",
     "CONSENT_REQUEST_IDOR_REJECTED",
@@ -69,6 +79,9 @@ EXPECTED_EVENTS = {
     "EXTRACTION_FIELD_REVIEWED",
     "PIPELINE_COMMITTED_TO_TIMELINE",
     "CRYPTOGRAPHIC_ERASURE_COMPLETED",
+    "PATIENT_DEK_ACCESS_BLOCKED",
+    "PATIENT_DEK_DELETION_SCHEDULED",
+    "PATIENT_DEK_DESTRUCTION_NEEDS_OPERATOR",
     "CRYPTOGRAPHIC_ERASURE_REQUESTED",
     "DEVICE_KEY_REGISTRATION",
     "DEVICE_KEY_ENROLLED",
@@ -94,6 +107,9 @@ EXPECTED_EVENTS = {
     "PATIENT_DEK_DESTROYED",
     "PATIENT_DEK_GENERATED",
     "PATIENT_POLICY_CHANGED",
+    "PATIENT_POLICY_READ_DENIED",
+    "PATIENT_POLICY_READ_SUCCESS",
+    "PATIENT_POLICY_UPDATE_DENIED",
     "PATIENT_RECORD_VIEW_COMPLETED",
     "PATIENT_RECORD_VIEW_FAILED",
     "PATIENT_RECORD_VIEW_STARTED",
@@ -111,6 +127,7 @@ EXPECTED_EVENTS = {
     "PROVIDER_MFA_SETUP_VERIFY_FAILED",
     "PROVIDER_ROLE_DENIED",
     "PROVIDER_SESSION_REFRESH",
+    "PROVIDER_STEP_UP_MFA_VERIFIED",
     "PUSH_REQUEST_CREATED",
     "PUSH_REQUEST_TIMEOUT",
     "PUSH_RESPONSE_RECEIVED",
@@ -127,11 +144,13 @@ def test_no_undocumented_audit_events():
     """Scan the codebase for audit event literals and ensure they are in EXPECTED_EVENTS."""
     app_path = Path(__file__).parent.parent / "app"
     found_events = set()
-    
+
     # Regex to find event types in append_audit_log and append_audit_log_or_503
     # Matches event_type="EVENT" or "EVENT" as 2nd positional arg
     regex_kw = re.compile(r'event_type\s*=\s*["\']([A-Z0-9_]+)["\']')
-    regex_pos = re.compile(r'append_audit_log(?:_or_503)?\(\s*[^,]+,\s*["\']([A-Z0-9_]+)["\']')
+    regex_pos = re.compile(
+        r'append_audit_log(?:_or_503)?\(\s*[^,]+,\s*["\']([A-Z0-9_]+)["\']'
+    )
 
     for root, _, files in os.walk(app_path):
         for file in files:
@@ -141,7 +160,9 @@ def test_no_undocumented_audit_events():
                 found_events.update(regex_pos.findall(content))
 
     undocumented = found_events - EXPECTED_EVENTS
-    assert not undocumented, f"Found undocumented audit event types in codebase: {undocumented}"
+    assert (
+        not undocumented
+    ), f"Found undocumented audit event types in codebase: {undocumented}"
 
 
 @pytest.mark.asyncio
@@ -150,30 +171,35 @@ async def test_audit_event_writing_and_chaining():
     append_once = AsyncMock(return_value={})
     with patch("app.observability.audit_ledger._append_once", append_once):
         success = await append_audit_log(
+            audit_context=AUDIT_CONTEXT,
             actor_uid="test-actor",
             event_type="CONSENT_GRANT_SUCCESS",
             target_id="test-target",
             status="SUCCESS",
-            metadata={"test": "data"}
+            metadata={"test": "data"},
         )
-        
+
         assert success is True
-        
+
         call = append_once.await_args.kwargs
         assert call["event_type"] == "CONSENT_GRANT_SUCCESS"
         assert call["actor_uid"] == "test-actor"
         assert call["metadata"] == {"test": "data"}
+
 
 # Helper to verify all events can be written
 @pytest.mark.parametrize("event_type", list(EXPECTED_EVENTS))
 @pytest.mark.asyncio
 async def test_all_expected_events_can_be_written(event_type):
     """Smoke test: verify append_audit_log doesn't crash for any expected event type."""
-    with patch("app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})):
+    with patch(
+        "app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})
+    ):
         success = await append_audit_log(
+            audit_context=AUDIT_CONTEXT,
             actor_uid="system",
             event_type=event_type,
             target_id="unit-test",
-            status="SUCCESS"
+            status="SUCCESS",
         )
         assert success is True

@@ -37,7 +37,10 @@ def test_risk_classification_per_field_type():
 
 def test_abnormal_lab_escalation():
     """Test 4: Abnormal diagnostic lab observation escalates from MEDIUM_RISK to HIGH_RISK."""
-    val_res = {"is_valid": True, "reference_range": {"min": 4.0, "max": 5.6, "unit": "%", "is_abnormal": True}}
+    val_res = {
+        "is_valid": True,
+        "reference_range": {"min": 4.0, "max": 5.6, "unit": "%", "is_abnormal": True},
+    }
     risk = classify_risk("hba1c", "7.8%", val_res)
     assert risk == "HIGH_RISK"
 

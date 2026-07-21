@@ -68,7 +68,9 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "provider_identity"
 
-    provider_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    provider_uid: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
     hospital_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("hospital_registry.id", ondelete="SET NULL"),
@@ -84,7 +86,9 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         unique=True,
     )
     specialty: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    contact_email: Mapped[str | None] = mapped_column(String(320), nullable=True, unique=True)
+    contact_email: Mapped[str | None] = mapped_column(
+        String(320), nullable=True, unique=True
+    )
     contact_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -130,8 +134,12 @@ class ProviderHospitalAffiliation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     department: Mapped[str | None] = mapped_column(String(128), nullable=True)
     roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     is_primary: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     provider: Mapped[ProviderIdentity] = relationship(back_populates="affiliations")
@@ -158,7 +166,9 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "provider_credential"
 
-    provider_uid: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    provider_uid: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
     mfa_secret: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     provider_id: Mapped[uuid.UUID] = mapped_column(
@@ -167,7 +177,9 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         unique=True,
     )
-    login_identifier: Mapped[str] = mapped_column(String(320), nullable=False, unique=True)
+    login_identifier: Mapped[str] = mapped_column(
+        String(320), nullable=False, unique=True
+    )
     # Canonical password hash. The legacy ``hashed_password`` column was
     # removed by 20260717_provider_pwd_canonical and must never be read.
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
@@ -178,8 +190,12 @@ class ProviderCredential(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         server_default=func.now(),
     )
-    failed_login_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_login_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    locked_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     provider: Mapped[ProviderIdentity] = relationship(back_populates="credential")

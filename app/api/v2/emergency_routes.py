@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
@@ -34,7 +36,12 @@ class EmergencySnapshotResponse(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     patient_id: UUID
-    snapshot_status: Literal["available", "no_known_medical_data", "records_exist_but_snapshot_unavailable", "error"]
+    snapshot_status: Literal[
+        "available",
+        "no_known_medical_data",
+        "records_exist_but_snapshot_unavailable",
+        "error",
+    ]
     message: str | None = None
     snapshot: dict[str, JsonValue] = Field(default_factory=dict)
     retrieved_at: datetime
@@ -64,6 +71,7 @@ async def read_emergency_card(
 
     access_timestamp = datetime.now(timezone.utc).isoformat()
     audit_success = await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.EMERGENCY),
         actor_uid=provider.actor_uid,
         event_type="SNAPSHOT_ACCESSED",
         target_id=str(patient_id),

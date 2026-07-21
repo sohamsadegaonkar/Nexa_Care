@@ -13,7 +13,9 @@ MIGRATION = ROOT / "alembic" / "versions" / "20260717_provider_password_canonica
 
 
 def load_migration():
-    spec = importlib.util.spec_from_file_location("provider_password_migration", MIGRATION)
+    spec = importlib.util.spec_from_file_location(
+        "provider_password_migration", MIGRATION
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -24,7 +26,7 @@ def test_migration_is_ordered_after_current_audit_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     revision = script.get_revision("20260717_provider_pwd_canonical")
     assert revision.down_revision == "20260716_audit_ledger_chain"
-    assert script.get_current_head() == "20260717_provider_pwd_canonical"
+    assert script.get_current_head() == "20260720_final_runtime_fix"
     assert len(revision.revision) <= 32
 
 
@@ -37,7 +39,9 @@ def test_migration_is_ordered_after_current_audit_head():
         (" canonical ", None, "canonical"),
     ],
 )
-def test_hash_resolution_covers_canonical_legacy_and_equal_rows(canonical, legacy, expected):
+def test_hash_resolution_covers_canonical_legacy_and_equal_rows(
+    canonical, legacy, expected
+):
     assert load_migration().resolve_canonical_hash(canonical, legacy) == expected
 
 

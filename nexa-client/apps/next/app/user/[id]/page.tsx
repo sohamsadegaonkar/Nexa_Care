@@ -1,9 +1,11 @@
 'use client'
 
-import { UserDetailScreen } from 'app/features/user/detail-screen'
-import { useParams } from 'solito/navigation'
+import { ProfileScreen } from 'app/features/patient/ProfileScreen'
+import { useParams, useSearchParams } from 'next/navigation'
 
 export default function Page() {
-  const { id } = useParams()
-  return <UserDetailScreen id={id as string} />
+  const params = useParams<{ id: string }>()
+  const searchParams = useSearchParams()
+
+  return <ProfileScreen patientId={params.id} workflowId={searchParams.get('workflow_id')} />
 }

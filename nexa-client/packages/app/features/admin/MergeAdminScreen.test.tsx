@@ -4,8 +4,10 @@ import { MergeAdminScreen } from './MergeAdminScreen'
 import * as authApi from '../../api/auth'
 import * as mergeApi from '../../api/merge'
 import { renderWithTamagui } from '../../../../test/test-utils'
+import { ApiError } from '../../utils/apiClient'
 
 vi.mock('../../api/auth', () => ({
+  cancelMergeChallenge: vi.fn(),
   createMergeChallenge: vi.fn(),
   verifyMergeChallenge: vi.fn(),
 }))
@@ -93,9 +95,9 @@ describe('MergeAdminScreen', () => {
       requires_mfa: true,
       expires_in_seconds: 120,
     })
-    vi.mocked(authApi.verifyMergeChallenge).mockRejectedValue({
-      response: { data: { detail: 'Invalid code' } },
-    } as any)
+    vi.mocked(authApi.verifyMergeChallenge).mockRejectedValue(
+      new ApiError('Invalid code', 401, 'MFA_INVALID')
+    )
 
     renderWithTamagui(<MergeAdminScreen />)
 
@@ -111,7 +113,7 @@ describe('MergeAdminScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /Verify & Execute/i }))
 
     await waitFor(() => {
-      expect(screen.getAllByText(/Invalid code/i).length).toBeGreaterThan(0)
+      expect(screen.getAllByText(/MFA verification failed/i).length).toBeGreaterThan(0)
       expect(screen.getByText(/MFA Verification Required/i)).toBeTruthy()
     })
   })

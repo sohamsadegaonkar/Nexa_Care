@@ -8,7 +8,6 @@ medical data by returning an empty projection.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -21,7 +20,14 @@ from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.patient_records import Allergy, LabResult, Medication, TimelineEvent, Vitals
+from app.models.patient_records import (
+    Allergy,
+    LabResult,
+    Medication,
+    TimelineEvent,
+    Vitals,
+)
+from app.observability.safe_exceptions import log_safe_exception
 
 logger = logging.getLogger("nexa_logger")
 
@@ -80,28 +86,41 @@ async def _scalars_all(db_session: AsyncSession, stmt) -> list[object]:
     return list(result.scalars().all())
 
 
-async def _fetch_structured_snapshot(patient_id: UUID, db_session: AsyncSession) -> dict[str, JsonValue]:
+async def _fetch_structured_snapshot(
+    patient_id: UUID, db_session: AsyncSession
+) -> dict[str, JsonValue]:
     """Build an emergency snapshot from current structured clinical records."""
 
     allergies = await _scalars_all(
         db_session,
-        select(Allergy).where(Allergy.patient_id == patient_id).order_by(Allergy.severity.desc()),
+        select(Allergy)
+        .where(Allergy.patient_id == patient_id)
+        .order_by(Allergy.severity.desc()),
     )
     medications = await _scalars_all(
         db_session,
-        select(Medication).where(Medication.patient_id == patient_id).order_by(Medication.prescribed_at.desc()),
+        select(Medication)
+        .where(Medication.patient_id == patient_id)
+        .order_by(Medication.prescribed_at.desc()),
     )
     vitals = await _scalars_all(
         db_session,
-        select(Vitals).where(Vitals.patient_id == patient_id).order_by(Vitals.recorded_at.desc()),
+        select(Vitals)
+        .where(Vitals.patient_id == patient_id)
+        .order_by(Vitals.recorded_at.desc()),
     )
     labs = await _scalars_all(
         db_session,
-        select(LabResult).where(LabResult.patient_id == patient_id).order_by(LabResult.recorded_at.desc()),
+        select(LabResult)
+        .where(LabResult.patient_id == patient_id)
+        .order_by(LabResult.recorded_at.desc()),
     )
     timeline_events = await _scalars_all(
         db_session,
-        select(TimelineEvent).where(TimelineEvent.patient_id == patient_id).order_by(TimelineEvent.occurred_at.desc()).limit(20),
+        select(TimelineEvent)
+        .where(TimelineEvent.patient_id == patient_id)
+        .order_by(TimelineEvent.occurred_at.desc())
+        .limit(20),
     )
 
     if not any((allergies, medications, vitals, labs, timeline_events)):
@@ -150,20 +169,28 @@ async def _fetch_structured_snapshot(patient_id: UUID, db_session: AsyncSession)
     high_risk_allergies = [
         allergy
         for allergy in serialized_allergies
-        if str(allergy.get("risk_level") or "").upper() in {"HIGH_RISK", "CRITICAL_RISK"}
-        or str(allergy.get("severity") or "").lower() in {"severe", "anaphylaxis", "critical"}
+        if str(allergy.get("risk_level") or "").upper()
+        in {"HIGH_RISK", "CRITICAL_RISK"}
+        or str(allergy.get("severity") or "").lower()
+        in {"severe", "anaphylaxis", "critical"}
     ]
     abnormal_labs = [
         lab
         for lab in serialized_labs
-        if lab["is_abnormal"] or str(lab.get("risk_level") or "").upper() in {"HIGH_RISK", "CRITICAL_RISK"}
+        if lab["is_abnormal"]
+        or str(lab.get("risk_level") or "").upper() in {"HIGH_RISK", "CRITICAL_RISK"}
     ]
     critical_diagnoses = [
         event.summary
         for event in timeline_events
-        if any(term in event.summary.lower() for term in ("diabetes", "critical", "diagnosis"))
+        if any(
+            term in event.summary.lower()
+            for term in ("diabetes", "critical", "diagnosis")
+        )
     ]
-    last_updated = _latest_timestamp([*allergies, *medications, *vitals, *labs, *timeline_events])
+    last_updated = _latest_timestamp(
+        [*allergies, *medications, *vitals, *labs, *timeline_events]
+    )
 
     return {
         "source": "structured_patient_records",
@@ -178,7 +205,9 @@ async def _fetch_structured_snapshot(patient_id: UUID, db_session: AsyncSession)
     }
 
 
-async def _fetch_legacy_projection(patient_id: UUID, db_session: AsyncSession) -> dict[str, JsonValue] | None:
+async def _fetch_legacy_projection(
+    patient_id: UUID, db_session: AsyncSession
+) -> dict[str, JsonValue] | None:
     """Return the deprecated emergency projection row, if one exists."""
 
     stmt = text(
@@ -194,19 +223,22 @@ async def _fetch_legacy_projection(patient_id: UUID, db_session: AsyncSession) -
     return snapshot
 
 
-async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> dict[str, object]:
+async def get_emergency_snapshot(
+    patient_id: UUID, db_session: AsyncSession
+) -> dict[str, object]:
     """Return emergency-visible medical facts for a masked patient UUID."""
 
     try:
         structured_snapshot = await _fetch_structured_snapshot(patient_id, db_session)
     except SQLAlchemyError as exc:
-        logger.critical(json.dumps({
-            "event": "emergency_snapshot_db_error",
-            "source": "structured_patient_records",
-            "patient_id": str(patient_id),
-            "exception": str(exc),
-            "action": "raising_503_fail_closed",
-        }))
+        log_safe_exception(
+            logger,
+            logging.ERROR,
+            "emergency_snapshot_retrieval_failed",
+            exc,
+            subsystem="database",
+            operation="emergency_snapshot",
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Emergency snapshot retrieval is temporarily unavailable.",
@@ -226,12 +258,9 @@ async def get_emergency_snapshot(patient_id: UUID, db_session: AsyncSession) -> 
     try:
         legacy_snapshot = await _fetch_legacy_projection(patient_id, db_session)
     except SQLAlchemyError as exc:
-        logger.warning(json.dumps({
-            "event": "legacy_emergency_projection_unavailable",
-            "patient_id": str(patient_id),
-            "exception": str(exc),
-            "action": "returning_no_known_medical_data_after_empty_structured_records",
-        }))
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="legacy_emergency_projection"
+        )
         legacy_snapshot = None
 
     if legacy_snapshot is None:

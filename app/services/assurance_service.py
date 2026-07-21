@@ -5,6 +5,8 @@ Refactored for asynchronous approval flow (Sprint 2).
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import inspect
 import json
 import uuid
@@ -18,6 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 from app.models.push_token import PushRequestLog
 
 logger = logging.getLogger("nexa_logger")
@@ -47,6 +50,7 @@ redis.call('SET', key, cjson.encode(data), 'KEEPTTL')
 return 'OK'
 """
 
+
 class AssuranceService:
     """Service for Push + Biometric consent assurance via Redis state."""
 
@@ -74,7 +78,7 @@ class AssuranceService:
         challenge_nonce = secrets.token_hex(32)
         created_at_dt = datetime.now(timezone.utc)
         created_at = created_at_dt.isoformat()
-        
+
         # 1. Durable Postgres log (best-effort)
         try:
             log_entry = PushRequestLog(
@@ -83,12 +87,14 @@ class AssuranceService:
                 provider_id=uuid.UUID(provider_id),
                 purpose=purpose,
                 scope=scope,
-                status="pending"
+                status="pending",
             )
             db.add(log_entry)
             await db.commit()
-        except Exception as e:
-            logger.error(f"Failed to create push request log in Postgres: {e}")
+        except Exception as exc:
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="push_request_create"
+            )
             await db.rollback()
 
         # 2. Redis Live State
@@ -111,10 +117,11 @@ class AssuranceService:
         await redis.setex(
             f"{PUSH_REQUEST_PREFIX}{request_id}",
             PUSH_REQUEST_TTL,
-            json.dumps(payload, sort_keys=True)
+            json.dumps(payload, sort_keys=True),
         )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider_id,
             event_type="PUSH_REQUEST_CREATED",
             target_id=patient_id,
@@ -122,8 +129,8 @@ class AssuranceService:
             metadata={
                 "request_id": request_id,
                 "provider_id": provider_id,
-                "has_challenge": True
-            }
+                "has_challenge": True,
+            },
         )
 
         return {
@@ -136,7 +143,9 @@ class AssuranceService:
             "delivery_status": "queued",
         }
 
-    async def _write_request_state(self, redis: Redis, request_id: str, data: dict) -> None:
+    async def _write_request_state(
+        self, redis: Redis, request_id: str, data: dict
+    ) -> None:
         """Persist request state while preserving the remaining Redis TTL."""
         key = f"{PUSH_REQUEST_PREFIX}{request_id}"
         ttl_func = getattr(redis, "ttl", None)
@@ -183,7 +192,9 @@ class AssuranceService:
         data["delivery_completed_at"] = datetime.now(timezone.utc).isoformat()
         await self._write_request_state(redis, request_id, data)
 
-    async def mark_delivery_unavailable(self, redis: Redis, request_id: str, reason: str) -> None:
+    async def mark_delivery_unavailable(
+        self, redis: Redis, request_id: str, reason: str
+    ) -> None:
         key = f"{PUSH_REQUEST_PREFIX}{request_id}"
         raw_data = await _maybe_await(redis.get(key))
         if not raw_data:
@@ -215,20 +226,22 @@ class AssuranceService:
 
         # 1. Atomic Redis Update via Lua
         script = await self._get_resolve_script(redis)
-        result = await script(keys=[key], args=[decision, now.isoformat(), signature_hash])
+        result = await script(
+            keys=[key], args=[decision, now.isoformat(), signature_hash]
+        )
 
-        if result == 'EXPIRED':
+        if result == "EXPIRED":
             return None
-        if result == 'ALREADY_RESOLVED':
+        if result == "ALREADY_RESOLVED":
             return "already_resolved"
-        
+
         # At this point Redis update was OK. Check patient ID consistency.
         # We fetch it again because Lua script only checked status.
         # (Alternatively we could have checked patient_id inside Lua)
         raw_data = await redis.get(key)
         data = json.loads(raw_data)
         if data["patient_id"] != patient_id:
-            # We already updated it to approved/denied in Redis... 
+            # We already updated it to approved/denied in Redis...
             # Revert or handle? Usually the responder is authenticated so this is unlikely.
             # But let's be strict.
             return "unauthorized"
@@ -242,11 +255,14 @@ class AssuranceService:
             )
             await db.execute(stmt)
             await db.commit()
-        except Exception as e:
-            logger.error(f"Failed to update push request log in Postgres: {e}")
+        except Exception as exc:
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="push_request_update"
+            )
             await db.rollback()
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
             event_type="PUSH_RESPONSE_RECEIVED",
             target_id=request_id,
@@ -254,7 +270,7 @@ class AssuranceService:
             metadata={
                 "decision": decision,
                 "patient_id": patient_id,
-            }
+            },
         )
 
         return {
@@ -265,7 +281,11 @@ class AssuranceService:
     def _status_payload(self, request_id: str, data: dict) -> dict:
         delivery_status = data.get("delivery_status", "queued")
         status = data.get("status", "pending")
-        doctor_status = "delivery_failed" if status == "pending" and delivery_status in {"failed", "unavailable"} else status
+        doctor_status = (
+            "delivery_failed"
+            if status == "pending" and delivery_status in {"failed", "unavailable"}
+            else status
+        )
         return {
             "request_id": request_id,
             "status": status,
@@ -278,20 +298,24 @@ class AssuranceService:
             "delivery_completed_at": data.get("delivery_completed_at"),
         }
 
-    async def get_push_status(self, redis: Redis, db: AsyncSession, request_id: str) -> dict:
+    async def get_push_status(
+        self, redis: Redis, db: AsyncSession, request_id: str
+    ) -> dict:
         """
         Fetch status and handle inferred timeout logic.
         """
         key = f"{PUSH_REQUEST_PREFIX}{request_id}"
         raw_data = await redis.get(key)
-        
+
         if not raw_data:
             # Check Postgres for durability/timeout detection
             try:
-                stmt = select(PushRequestLog).where(PushRequestLog.request_id == uuid.UUID(request_id))
+                stmt = select(PushRequestLog).where(
+                    PushRequestLog.request_id == uuid.UUID(request_id)
+                )
                 result = await db.execute(stmt)
                 log_entry = result.scalar_one_or_none()
-                
+
                 if log_entry:
                     patient_id_str = str(log_entry.patient_id)
                     if log_entry.status == "pending":
@@ -299,35 +323,56 @@ class AssuranceService:
                         log_entry.status = "timeout"
                         log_entry.timeout_at = datetime.now(timezone.utc)
                         await db.commit()
-                        
+
                         await append_audit_log(
+                            audit_context=current_audit_context(AuditDomain.CONSENT),
                             actor_uid="SYSTEM",
                             event_type="PUSH_REQUEST_TIMEOUT",
                             target_id=request_id,
-                            status="SUCCESS"
+                            status="SUCCESS",
                         )
-                        
+
                         # Fallback logging path
-                        logger.info(json.dumps({
-                            "event": "standard_fallback_from_push",
+                        logger.info(
+                            json.dumps(
+                                {
+                                    "event": "standard_fallback_from_push",
+                                    "request_id": request_id,
+                                    "patient_ref": patient_id_str[-8:],
+                                }
+                            )
+                        )
+
+                        return {
                             "request_id": request_id,
-                            "patient_ref": patient_id_str[-8:],
-                        }))
-                        
-                        return {"request_id": request_id, "status": "timeout", "doctor_status": "timeout", "patient_id": patient_id_str, "delivery_status": "unknown"}
-                    
+                            "status": "timeout",
+                            "doctor_status": "timeout",
+                            "patient_id": patient_id_str,
+                            "delivery_status": "unknown",
+                        }
+
                     return {
-                        "request_id": request_id, 
+                        "request_id": request_id,
                         "status": log_entry.status,
                         "doctor_status": log_entry.status,
-                        "responded_at": log_entry.responded_at.isoformat() if log_entry.responded_at else None,
+                        "responded_at": log_entry.responded_at.isoformat()
+                        if log_entry.responded_at
+                        else None,
                         "patient_id": patient_id_str,
                         "delivery_status": "unknown",
                     }
-            except Exception as e:
-                logger.error(f"Error checking push timeout in Postgres: {e}")
-            
-            return {"request_id": request_id, "status": "timeout", "doctor_status": "timeout", "patient_id": None, "delivery_status": "unknown"}
+            except Exception as exc:
+                log_safe_exception(
+                    logger, exc, subsystem="database", operation="push_timeout_check"
+                )
+
+            return {
+                "request_id": request_id,
+                "status": "timeout",
+                "doctor_status": "timeout",
+                "patient_id": None,
+                "delivery_status": "unknown",
+            }
 
         data = json.loads(raw_data)
         return self._status_payload(request_id, data)

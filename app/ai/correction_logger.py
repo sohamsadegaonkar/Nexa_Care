@@ -11,6 +11,7 @@ are **redacted** before storage.  Only the field *name* is retained so that
 accuracy statistics can be computed per category without exposing patient
 data.
 """
+
 from __future__ import annotations
 
 import logging
@@ -26,10 +27,19 @@ from app.models.pipeline import FieldCorrection
 logger = logging.getLogger("nexa_logger")
 
 # ── PII field names whose values must be redacted ───────────────────────────
-_PII_FIELD_NAMES = frozenset({
-    "patient_name", "phone", "aadhaar", "aadhaar_abha_id",
-    "email", "dob", "nfc_uid", "bio_seed", "derived_alpha",
-})
+_PII_FIELD_NAMES = frozenset(
+    {
+        "patient_name",
+        "phone",
+        "aadhaar",
+        "aadhaar_abha_id",
+        "email",
+        "dob",
+        "nfc_uid",
+        "bio_seed",
+        "derived_alpha",
+    }
+)
 
 _REDACTED = "[REDACTED]"
 
@@ -75,16 +85,18 @@ async def log_correction(
     )
     db.add(fc)
 
-    logger.info({
-        "event": "field_correction_logged",
-        "field_id": str(field_id),
-        "job_id": str(job_id),
-        "field_name": field_name,
-        "confidence": confidence,
-        "original_risk": original_risk,
-        "document_type": document_type,
-        "redacted": field_name.lower().strip() in _PII_FIELD_NAMES,
-    })
+    logger.info(
+        {
+            "event": "field_correction_logged",
+            "field_id": str(field_id),
+            "job_id": str(job_id),
+            "field_name": field_name,
+            "confidence": confidence,
+            "original_risk": original_risk,
+            "document_type": document_type,
+            "redacted": field_name.lower().strip() in _PII_FIELD_NAMES,
+        }
+    )
 
     return fc
 

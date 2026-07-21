@@ -8,6 +8,8 @@ Resolution fails closed: only cards whose lifecycle state is exactly
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import json
 import logging
 from typing import Annotated
@@ -21,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 
 logger = logging.getLogger("nexa_logger")
 
@@ -88,19 +91,27 @@ class CardResolutionService:
         row = await self._load_card_by_uid(request.card_uid)
 
         if row is None:
-            logger.warning(json.dumps({
-                "event": "nfc_card_resolution_denied",
-                "reason": "card_not_found",
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "nfc_card_resolution_denied",
+                        "reason": "card_not_found",
+                    }
+                )
+            )
             raise self._forbidden()
 
         if row.status != NFCCardStatus.ACTIVE.value:
-            logger.warning(json.dumps({
-                "event": "nfc_card_resolution_denied",
-                "reason": "inactive_card",
-                "status": row.status,
-                "patient_id": str(row.patient_id),
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "nfc_card_resolution_denied",
+                        "reason": "inactive_card",
+                        "status": row.status,
+                        "patient_id": str(row.patient_id),
+                    }
+                )
+            )
             raise self._forbidden()
 
         return row.patient_id
@@ -126,17 +137,22 @@ class CardResolutionService:
         row = await self._load_card_by_uid(request.card_uid, lock_for_update=True)
 
         if row is None:
-            logger.warning(json.dumps({
-                "event": "nfc_card_report_lost_denied",
-                "reason": "card_not_found",
-                "reported_by": str(request.reported_by),
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "nfc_card_report_lost_denied",
+                        "reason": "card_not_found",
+                        "reported_by": str(request.reported_by),
+                    }
+                )
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="NFC card registry entry was not found.",
             )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.NFC),
             actor_uid=str(request.reported_by),
             event_type="NFC_CARD_REPORTED_LOST",
             target_id=str(row.patient_id),
@@ -148,18 +164,16 @@ class CardResolutionService:
             await self._db.commit()
         except SQLAlchemyError as exc:
             await self._db.rollback()
-            logger.critical(json.dumps({
-                "event": "nfc_card_report_lost_db_error",
-                "patient_id": str(row.patient_id),
-                "reported_by": str(request.reported_by),
-                "exception": str(exc),
-            }))
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="nfc_report_lost"
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="NFC card status update failed.",
             ) from exc
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.NFC),
             actor_uid=str(request.reported_by),
             event_type="NFC_CARD_REPORTED_LOST",
             target_id=str(row.patient_id),
@@ -186,11 +200,9 @@ class CardResolutionService:
         try:
             result = await self._db.execute(stmt)
         except SQLAlchemyError as exc:
-            logger.critical(json.dumps({
-                "event": "nfc_card_registry_db_error",
-                "exception": str(exc),
-                "action": "raising_503_fail_closed",
-            }))
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="nfc_card_lookup"
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=_CARD_DB_UNAVAILABLE_DETAIL,

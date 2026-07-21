@@ -8,6 +8,7 @@ Detects intra-job value discrepancies and clinical contraindications:
 Fields involved in a conflict have ``has_conflict=True``, which **forces**
 them to the human-review queue regardless of confidence score.
 """
+
 from __future__ import annotations
 
 import re
@@ -91,7 +92,9 @@ def _normalize_bp(value: str) -> str:
 
 # ── Field-name category helpers ─────────────────────────────────────────────
 
-_SUGAR_NAMES = frozenset({"sugar", "fasting_glucose", "glucose", "random_glucose", "blood_sugar"})
+_SUGAR_NAMES = frozenset(
+    {"sugar", "fasting_glucose", "glucose", "random_glucose", "blood_sugar"}
+)
 _BP_NAMES = frozenset({"bp", "blood_pressure"})
 _HBA1C_NAMES = frozenset({"hba1c", "a1c"})
 _HEART_RATE_NAMES = frozenset({"heart_rate", "pulse"})
@@ -125,7 +128,9 @@ def _canonical_category(field_name: str) -> str:
     return fn
 
 
-def _numeric_values_conflict(cat: str, f1: ExtractedField, f2: ExtractedField) -> tuple[bool, str]:
+def _numeric_values_conflict(
+    cat: str, f1: ExtractedField, f2: ExtractedField
+) -> tuple[bool, str]:
     """Return whether two non-BP numeric observations materially conflict."""
     v1 = _field_value(f1)
     v2 = _field_value(f2)
@@ -138,12 +143,18 @@ def _numeric_values_conflict(cat: str, f1: ExtractedField, f2: ExtractedField) -
     unit2 = _extract_unit(v2)
     unit_sensitive = cat in {"temperature", "weight"} or cat in _GENERIC_LAB_NAMES
     if unit_sensitive and unit1 != unit2:
-        return True, f"Incompatible units for {cat} readings ({unit1 or 'missing'} vs {unit2 or 'missing'})"
+        return (
+            True,
+            f"Incompatible units for {cat} readings ({unit1 or 'missing'} vs {unit2 or 'missing'})",
+        )
 
     if cat in _GENERIC_LAB_NAMES:
         if not unit1 or not unit2:
             return True, f"Missing comparable units for {cat} readings"
-        threshold = max(_GENERIC_LAB_ABSOLUTE_FLOOR, _GENERIC_LAB_RELATIVE_THRESHOLD * max(abs(n1), abs(n2), 1.0))
+        threshold = max(
+            _GENERIC_LAB_ABSOLUTE_FLOOR,
+            _GENERIC_LAB_RELATIVE_THRESHOLD * max(abs(n1), abs(n2), 1.0),
+        )
     else:
         threshold = _VALUE_DISCREPANCY_THRESHOLDS.get(cat)
         if threshold is None:
@@ -152,7 +163,10 @@ def _numeric_values_conflict(cat: str, f1: ExtractedField, f2: ExtractedField) -
     if abs(n1 - n2) > threshold:
         unit = unit1 or unit2 or ""
         suffix = f" {unit}" if unit else ""
-        return True, f"Material discrepancy between {cat} readings ({n1}{suffix} vs {n2}{suffix})"
+        return (
+            True,
+            f"Material discrepancy between {cat} readings ({n1}{suffix} vs {n2}{suffix})",
+        )
     return False, ""
 
 

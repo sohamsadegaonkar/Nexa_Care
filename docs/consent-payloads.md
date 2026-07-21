@@ -106,11 +106,11 @@ To ensure defense-in-depth across Workstream 2 and Workstream 6, the backend enf
 | # | Verification Check | Enforcement Mechanism | Code / Schema Reference |
 | :---: | :--- | :--- | :--- |
 | **1** | Valid ECDSA P-256 DER Public Key | `register-device-key` validates DER ASN.1 syntax and checks `isinstance(key.curve, ec.SECP256R1)` before insertion. | `app/api/v2/assurance_routes.py` |
-| **2** | Revoked Device Rejection | Signature verifier filters out or rejects keys where `revoked_at IS NOT NULL`. | `app/services/biometric_signature_verifier.py` |
-| **3** | Patient Identity Binding | Public key lookup strictly queries by the target `patient_id` parameter matching the challenge. | `app/services/biometric_signature_verifier.py` |
+| **2** | Revoked Device Rejection | The signed-approval route and verifier reject keys where `revoked_at IS NOT NULL`. | `app/services/signed_approval_verifier.py` |
+| **3** | Patient Identity Binding | Public key lookup strictly queries by the authenticated target `patient_id` matching the challenge. | `app/services/signed_approval_verifier.py` |
 | **4** | Full Grant Scope Binding | Consent token payload in Redis binds `patient_id`, `clinician_id`, `purpose`, `scope`, and `ttl`. | `app/services/consent_engine.py` |
 | **5** | Single-Use Approval ID | `signed_approval_id` is persisted and indexed; resolved challenges are immediately consumed. | `app/models/consent_grant.py` |
-| **6** | Replay & Nonce Protection | `challenge_nonce` is verified against short-lived Redis key `biometric_nonce:{nonce}:used`. | `app/services/biometric_signature_verifier.py` |
+| **6** | Replay & Nonce Protection | `challenge_nonce` is atomically consumed through the signed approval route. | `app/api/v2/consent_routes.py` |
 | **7** | Explicit Expiration Binding | `expires_at` is enforced by Redis TTL and signed explicitly within the 9-attribute digest. | `docs/consent-payloads.md` |
 
 ---

@@ -21,7 +21,9 @@ def test_secure_record_string_representations_are_redacted() -> None:
 
 @pytest.mark.parametrize("method_name", ["model_dump", "dict", "json"])
 def test_secure_record_disables_standard_serialization(method_name: str) -> None:
-    record = SecureMergedRecord({"patient_name": "Jane Doe"}, {"diagnoses": ["Diabetes"]})
+    record = SecureMergedRecord(
+        {"patient_name": "Jane Doe"}, {"diagnoses": ["Diabetes"]}
+    )
 
     with pytest.raises(TypeError):
         getattr(record, method_name)()

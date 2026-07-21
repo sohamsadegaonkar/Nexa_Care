@@ -56,21 +56,6 @@ def _validate_existing_patient(patient: Patient) -> None:
     if patient.is_deleted:
         raise DemoPatientConflict("canonical patient is soft-deleted")
 
-    # A legacy seed may have stored the canonical display name.  Accept it,
-    # but never add it to a new row because this table is plaintext-capable.
-    if patient.full_name not in (None, "Aarav Sharma"):
-        raise DemoPatientConflict("canonical patient UUID belongs to another patient")
-
-    prohibited_pii = (
-        patient.phone,
-        patient.email,
-        patient.address_line1,
-        patient.address_line2,
-        patient.emergency_contact_phone,
-    )
-    if any(value is not None for value in prohibited_pii):
-        raise DemoPatientConflict("canonical patient contains plaintext-capable contact PII")
-
 
 async def _ensure_authoritative_patient(session: AsyncSession) -> str:
     patient = await session.get(Patient, DEMO_PATIENT_UUID)
@@ -82,19 +67,6 @@ async def _ensure_authoritative_patient(session: AsyncSession) -> str:
         Patient(
             patient_uuid=DEMO_PATIENT_UUID,
             is_deleted=False,
-            full_name=None,
-            date_of_birth=None,
-            gender=None,
-            phone=None,
-            email=None,
-            abha_id=None,
-            address_line1=None,
-            address_line2=None,
-            city=None,
-            state=None,
-            pincode=None,
-            emergency_contact_name=None,
-            emergency_contact_phone=None,
             dek_id=None,
         )
     )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 from uuid import UUID
@@ -21,15 +20,24 @@ import app.services.consent_engine as consent_engine
 from app.services.sharding import decrypt_vault_field
 from app.services.consent_gated_crypto import consent_gated_decrypt, EncryptionProvider
 from app.services.consent_engine import get_consent_redis_client
+from app.services.crypto_kms import get_encryption_provider
+from app.services.emergency_summary_service import build_emergency_summary
+from app.security.clinical_categories import (
+    UnsupportedClinicalCategoryError,
+    parse_clinical_categories,
+)
+from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
+from app.security.audit_context import AuditDomain, current_audit_context
 
 logger = logging.getLogger("nexa_logger")
 
 router = APIRouter(prefix="/api/v2/patient", tags=["patient"])
 
-# Squad C: replace with real implementation
+
 async def get_kms_provider() -> EncryptionProvider:
-    """Dependency provider for Squad C's KMS interface."""
-    raise NotImplementedError("Squad C's KMS provider not yet integrated.")
+    """Resolve the same configured envelope-encryption provider used elsewhere."""
+    return get_encryption_provider()
 
 
 class ErasureRequest(BaseModel):
@@ -40,10 +48,15 @@ class ErasureRequest(BaseModel):
 class ErasureResponse(BaseModel):
     status: str
     patient_id: str
-    vault_data_recoverable: bool
+    assurance_level: str
+    wrapping_key_type: str
+    operator_action_required: bool
+    historical_backup_irrecoverability_proven: bool
 
 
-def _merge_non_null_fields(base: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
+def _merge_non_null_fields(
+    base: dict[str, Any], values: dict[str, Any]
+) -> dict[str, Any]:
     """Return a copy containing only non-null shard fields."""
 
     merged = dict(base)
@@ -88,13 +101,9 @@ async def _fetch_pii_shard(patient_id: str, db: AsyncSession) -> dict[str, Any]:
             select(NexaVault).where(NexaVault.masked_internal_id == patient_id).limit(1)
         )
     except SQLAlchemyError as exc:
-        logger.critical(json.dumps({
-            "event": "patient_record_reconstruction_db_error",
-            "shard": "nexa_vault",
-            "patient_id": patient_id,
-            "exception": str(exc),
-            "action": "raising_503_fail_closed",
-        }))
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="patient_vault_fetch"
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Patient identity shard is temporarily unavailable.",
@@ -102,13 +111,19 @@ async def _fetch_pii_shard(patient_id: str, db: AsyncSession) -> dict[str, Any]:
 
     row = result.scalars().first()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found."
+        )
 
     # Sprint 2: Transparent decryption with auto-migration
     return {
-        "patient_name": await decrypt_vault_field(patient_id, "patient_name", row.patient_name, db),
+        "patient_name": await decrypt_vault_field(
+            patient_id, "patient_name", row.patient_name, db
+        ),
         "phone": await decrypt_vault_field(patient_id, "phone", row.phone, db),
-        "aadhaar_abha_id": await decrypt_vault_field(patient_id, "aadhaar_abha_id", row.aadhaar_abha_id, db),
+        "aadhaar_abha_id": await decrypt_vault_field(
+            patient_id, "aadhaar_abha_id", row.aadhaar_abha_id, db
+        ),
     }
 
 
@@ -117,16 +132,14 @@ async def _fetch_clinical_shard(patient_id: str, db: AsyncSession) -> dict[str, 
 
     try:
         result = await db.execute(
-            select(NexaClinical).where(NexaClinical.masked_internal_id == patient_id).limit(1)
+            select(NexaClinical)
+            .where(NexaClinical.masked_internal_id == patient_id)
+            .limit(1)
         )
     except SQLAlchemyError as exc:
-        logger.critical(json.dumps({
-            "event": "patient_record_reconstruction_db_error",
-            "shard": "nexa_clinical",
-            "patient_id": patient_id,
-            "exception": str(exc),
-            "action": "raising_503_fail_closed",
-        }))
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="patient_clinical_fetch"
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Patient clinical shard is temporarily unavailable.",
@@ -134,7 +147,9 @@ async def _fetch_clinical_shard(patient_id: str, db: AsyncSession) -> dict[str, 
 
     row = result.scalars().first()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found."
+        )
 
     return _clinical_payload(row)
 
@@ -177,12 +192,113 @@ async def reconstruct_patient_record(
         purpose=normalized_purpose,
         requested_scope="*",  # Fetch all authorized fields in one atomic pass
         provider_id=clinician_id,
+        hospital_id=str(provider.hospital_id),
         db=db,
         redis=get_consent_redis_client(),
         kms=kms,
+        session_binding=provider.session_binding,
     )
 
     return response
+
+
+class EmergencySummaryResponse(BaseModel):
+    patient_id: str
+    categories: dict[str, JsonValue]
+    retrieved_at: str
+
+
+@router.get("/{patient_id}/emergency-summary", response_model=EmergencySummaryResponse)
+async def get_emergency_summary(
+    patient_id: UUID,
+    consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+) -> EmergencySummaryResponse:
+    """Return only the clinical categories a live break-glass capability
+    actually holds, for the authenticated provider/hospital/session.
+
+    This is the *only* endpoint break-glass capabilities may be used
+    against. It never accepts routine capabilities, never returns an
+    unapproved category, and never echoes the bearer token back.
+    """
+
+    if not consent_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "BREAK_GLASS_TOKEN_REQUIRED"},
+        )
+
+    try:
+        capability = await consent_engine.validate(
+            token=consent_token,
+            patient_id=str(patient_id),
+            clinician_id=provider.actor_uid,
+            purpose="EMERGENCY",
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+        )
+    except consent_engine.ConsentEngineUnavailable as exc:
+        raise _consent_error(exc) from exc
+
+    if capability is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error_code": "BREAK_GLASS_CAPABILITY_INVALID_OR_EXPIRED"},
+        )
+
+    if not capability.is_break_glass:
+        # Defect 1/2 contract: a routine capability must never satisfy this
+        # endpoint, even if its purpose happened to be EMERGENCY.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "BREAK_GLASS_CAPABILITY_REQUIRED"},
+        )
+
+    try:
+        categories = parse_clinical_categories(capability.scope)
+    except UnsupportedClinicalCategoryError as exc:
+        # A capability minted with a category outside the current canonical
+        # vocabulary (e.g. issued under a retired protocol version) fails
+        # closed rather than silently serving a subset.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": exc.error_code, "category": exc.category},
+        ) from exc
+
+    if not categories:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "BREAK_GLASS_CAPABILITY_REQUIRED"},
+        )
+
+    audit_success = await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+        actor_uid=provider.actor_uid,
+        event_type="BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED",
+        target_id=str(patient_id),
+        status="SUCCESS",
+        metadata={
+            "hospital_id": str(provider.hospital_id),
+            "patient_id": str(patient_id),
+            "reason_code": capability.reason_code,
+            "reason_code_version": capability.reason_code_version,
+            "category_protocol_version": capability.category_protocol_version,
+            "categories": [c.value for c in categories],
+        },
+    )
+    if not audit_success:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Audit ledger write failed; emergency summary access aborted.",
+        )
+
+    summary = await build_emergency_summary(patient_id, categories, db)
+    return EmergencySummaryResponse(
+        patient_id=summary.patient_id,
+        categories=summary.categories,
+        retrieved_at=summary.retrieved_at.isoformat(),
+    )
 
 
 @router.post("/{patient_id}/erase", response_model=ErasureResponse)
@@ -202,7 +318,7 @@ async def erase_patient_data(
     """
     patient_id_str = str(patient_id)
     expected_conf = f"ERASE-{patient_id_str}"
-    
+
     if payload.confirmation != expected_conf:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -210,30 +326,66 @@ async def erase_patient_data(
         )
 
     from app.observability.audit_ledger import append_audit_log_or_503
-    
+
     # 1. Audit Request
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="CRYPTOGRAPHIC_ERASURE_REQUESTED",
         target_id=patient_id_str,
         status="STARTED",
-        metadata={"reason": payload.reason}
+        metadata={"reason": payload.reason},
     )
 
     # 2. Execute Cryptographic Erasure
-    # This overwrites DEKs and deletes them, invalidating cache.
-    await kms.destroy_dek(patient_id_str, db)
+    destroy_succeeded = await kms.destroy_dek(patient_id_str, db)
 
-    # 3. Audit Completion
+    # 3. Read back the tombstone's real state -- never assume success.
+    from sqlalchemy import select as _select
+
+    from app.models.erasure_tombstone import PatientErasureTombstone
+
+    tombstone = (
+        await db.execute(
+            _select(PatientErasureTombstone).where(
+                PatientErasureTombstone.patient_ref == patient_id_str
+            )
+        )
+    ).scalar_one_or_none()
+
+    # 4. Audit Completion
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="CRYPTOGRAPHIC_ERASURE_COMPLETED",
         target_id=patient_id_str,
-        status="SUCCESS"
+        status="SUCCESS" if destroy_succeeded else "OPERATOR_ACTION_REQUIRED",
     )
 
+    if tombstone is None:
+        # Should be unreachable -- destroy_dek always creates one -- but
+        # fail with a truthful "unknown" state rather than claiming erased.
+        return ErasureResponse(
+            status="unknown",
+            patient_id=patient_id_str,
+            assurance_level="unknown",
+            wrapping_key_type="unknown",
+            operator_action_required=True,
+            historical_backup_irrecoverability_proven=False,
+        )
+
     return ErasureResponse(
-        status="erased",
+        status=tombstone.status,
         patient_id=patient_id_str,
-        vault_data_recoverable=False
+        assurance_level=tombstone.assurance_level,
+        wrapping_key_type=tombstone.wrapping_key_type,
+        operator_action_required=tombstone.operator_action_required,
+        # Only a patient-specific key that has actually reached the
+        # "destroyed" assurance level ever supports this claim. A
+        # shared-key patient (access-blocked only) or an AWS key still in
+        # its mandatory pending-deletion window never does.
+        historical_backup_irrecoverability_proven=(
+            tombstone.wrapping_key_type == "patient"
+            and tombstone.assurance_level == "patient_key_destroyed"
+        ),
     )

@@ -111,7 +111,9 @@ def test_failed_validation_to_review():
         raw_value="invalid_number",
         confidence=0.99,
         risk_level="LOW_RISK",
-        validation_result=ValidationResult(is_valid=False, validation_errors=["Not a number"]),
+        validation_result=ValidationResult(
+            is_valid=False, validation_errors=["Not a number"]
+        ),
     )
     assert can_auto_approve(field) is False
 

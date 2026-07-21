@@ -45,6 +45,7 @@ Value (mg/dL)  Classification  is_abnormal
 
 HbA1c reference range: 4.0 – 5.6 %; values above 5.6 are flagged abnormal.
 """
+
 from __future__ import annotations
 
 import difflib
@@ -73,7 +74,18 @@ _BP_FIELDS = frozenset({"bp", "blood_pressure", "systolic_bp", "diastolic_bp"})
 _DOSAGE_FIELDS = frozenset({"dosage", "strength", "frequency"})
 _MEDICATION_FIELDS = frozenset({"medication", "prescription", "drug"})
 _DATE_FIELDS = frozenset({"date", "recorded_at", "prescribed_at", "uploaded_at", "dob"})
-_LAB_FIELDS = frozenset({"sugar", "fasting_glucose", "hba1c", "lab_result", "lab", "lab_value", "cbc", "lipid_panel"})
+_LAB_FIELDS = frozenset(
+    {
+        "sugar",
+        "fasting_glucose",
+        "hba1c",
+        "lab_result",
+        "lab",
+        "lab_value",
+        "cbc",
+        "lipid_panel",
+    }
+)
 
 # ── Reference ranges for common lab observations ────────────────────────────
 _LAB_REFERENCE_RANGES: dict[str, dict[str, Any]] = {
@@ -83,18 +95,60 @@ _LAB_REFERENCE_RANGES: dict[str, dict[str, Any]] = {
 }
 
 # ── Tokens to skip when extracting drug name from medication string ─────────
-_DRUG_NAME_SKIP_TOKENS = frozenset({
-    # Units
-    "mg", "g", "ml", "mcg", "units", "unit", "meq", "iu", "ng",
-    # Frequency keywords
-    "daily", "twice", "once", "bid", "tid", "qid", "prn",
-    "morning", "night", "every", "hours", "hour", "day", "weekly", "times",
-    # Conjunctions / prepositions
-    "or", "and", "with", "without", "after", "before", "per", "the",
-    # Dosage forms
-    "tab", "tablet", "cap", "capsule", "inj", "injection",
-    "syp", "syrup", "cream", "ointment", "drops", "drop", "sachet", "patch",
-})
+_DRUG_NAME_SKIP_TOKENS = frozenset(
+    {
+        # Units
+        "mg",
+        "g",
+        "ml",
+        "mcg",
+        "units",
+        "unit",
+        "meq",
+        "iu",
+        "ng",
+        # Frequency keywords
+        "daily",
+        "twice",
+        "once",
+        "bid",
+        "tid",
+        "qid",
+        "prn",
+        "morning",
+        "night",
+        "every",
+        "hours",
+        "hour",
+        "day",
+        "weekly",
+        "times",
+        # Conjunctions / prepositions
+        "or",
+        "and",
+        "with",
+        "without",
+        "after",
+        "before",
+        "per",
+        "the",
+        # Dosage forms
+        "tab",
+        "tablet",
+        "cap",
+        "capsule",
+        "inj",
+        "injection",
+        "syp",
+        "syrup",
+        "cream",
+        "ointment",
+        "drops",
+        "drop",
+        "sachet",
+        "patch",
+    }
+)
 
 # Fuzzy-match threshold: below this ratio the medication name is flagged.
 _FUZZY_MATCH_THRESHOLD = 0.65
@@ -104,9 +158,18 @@ def _load_known_medicines() -> list[str]:
     """Load the bundled known-medicines list from ``data/known_medicines.txt``."""
     if not KNOWN_MEDICINES_PATH.exists():
         return [
-            "metformin", "penicillin", "lisinopril", "amoxicillin",
-            "telmisartan", "atorvastatin", "aspirin", "insulin",
-            "ibuprofen", "acetaminophen", "omeprazole", "amlodipine",
+            "metformin",
+            "penicillin",
+            "lisinopril",
+            "amoxicillin",
+            "telmisartan",
+            "atorvastatin",
+            "aspirin",
+            "insulin",
+            "ibuprofen",
+            "acetaminophen",
+            "omeprazole",
+            "amlodipine",
         ]
     text = KNOWN_MEDICINES_PATH.read_text(encoding="utf-8")
     return [m.strip().lower() for m in text.splitlines() if m.strip()]
@@ -179,56 +242,68 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
     # ── 1. Blood Pressure Format Check ──────────────────────────────────────
     if fname in _BP_FIELDS:
         if _BP_PATTERN.match(val):
-            checks.append({
-                "check_name": "bp_format",
-                "passed": True,
-                "message": "Valid blood pressure format",
-            })
+            checks.append(
+                {
+                    "check_name": "bp_format",
+                    "passed": True,
+                    "message": "Valid blood pressure format",
+                }
+            )
         else:
             is_valid = False
             msg = "Invalid blood pressure format (expected NNN/NNN mmHg)"
             errors.append(msg)
-            checks.append({
-                "check_name": "bp_format",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "bp_format",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
     # ── 2. Dosage Completeness (strength + frequency, NO drug-name match) ───
     elif fname in _DOSAGE_FIELDS:
         has_freq = bool(_FREQUENCY_PATTERN.search(val))
         if has_freq:
-            checks.append({
-                "check_name": "dosage_frequency",
-                "passed": True,
-                "message": "Frequency specified",
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_frequency",
+                    "passed": True,
+                    "message": "Frequency specified",
+                }
+            )
         else:
             is_valid = False
             msg = "frequency missing"
             errors.append(msg)
-            checks.append({
-                "check_name": "dosage_frequency",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_frequency",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
         has_strength = bool(_STRENGTH_PATTERN.search(val))
         if has_strength:
-            checks.append({
-                "check_name": "dosage_strength",
-                "passed": True,
-                "message": "Strength specified",
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_strength",
+                    "passed": True,
+                    "message": "Strength specified",
+                }
+            )
         else:
             is_valid = False
             msg = "strength missing"
             errors.append(msg)
-            checks.append({
-                "check_name": "dosage_strength",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_strength",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
     # ── 3. Medication / Prescription / Drug ─────────────────────────────────
     #    (strength + frequency + fuzzy-match drug name against formulary)
@@ -236,56 +311,68 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
         # Frequency
         has_freq = bool(_FREQUENCY_PATTERN.search(val))
         if has_freq:
-            checks.append({
-                "check_name": "dosage_frequency",
-                "passed": True,
-                "message": "Frequency specified",
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_frequency",
+                    "passed": True,
+                    "message": "Frequency specified",
+                }
+            )
         else:
             is_valid = False
             msg = "frequency missing"
             errors.append(msg)
-            checks.append({
-                "check_name": "dosage_frequency",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_frequency",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
         # Strength
         has_strength = bool(_STRENGTH_PATTERN.search(val))
         if has_strength:
-            checks.append({
-                "check_name": "dosage_strength",
-                "passed": True,
-                "message": "Strength specified",
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_strength",
+                    "passed": True,
+                    "message": "Strength specified",
+                }
+            )
         else:
             is_valid = False
             msg = "strength missing"
             errors.append(msg)
-            checks.append({
-                "check_name": "dosage_strength",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "dosage_strength",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
         # Fuzzy-match drug name against formulary
         best_ratio, best_match = _fuzzy_match_medication(val)
         if best_ratio >= _FUZZY_MATCH_THRESHOLD:
-            checks.append({
-                "check_name": "medication_fuzzy_match",
-                "passed": True,
-                "message": f"Matched known medicine ({best_match})",
-            })
+            checks.append(
+                {
+                    "check_name": "medication_fuzzy_match",
+                    "passed": True,
+                    "message": f"Matched known medicine ({best_match})",
+                }
+            )
         else:
             is_valid = False
             msg = f"Medication name fuzzy match low ({best_ratio:.2f})"
             errors.append(msg)
-            checks.append({
-                "check_name": "medication_fuzzy_match",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "medication_fuzzy_match",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
     # ── 4. Temporal / Date Plausibility Check ───────────────────────────────
     elif fname in _DATE_FIELDS or re.match(r"^\d{4}-\d{2}-\d{2}", val):
@@ -298,26 +385,32 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
                 is_valid = False
                 msg = "Date cannot be in the future"
                 errors.append(msg)
-                checks.append({
-                    "check_name": "date_not_future",
-                    "passed": False,
-                    "message": msg,
-                })
+                checks.append(
+                    {
+                        "check_name": "date_not_future",
+                        "passed": False,
+                        "message": msg,
+                    }
+                )
             else:
-                checks.append({
-                    "check_name": "date_not_future",
-                    "passed": True,
-                    "message": "Valid historical date",
-                })
+                checks.append(
+                    {
+                        "check_name": "date_not_future",
+                        "passed": True,
+                        "message": "Valid historical date",
+                    }
+                )
         except (ValueError, OverflowError):
             is_valid = False
             msg = "Unparseable date format"
             errors.append(msg)
-            checks.append({
-                "check_name": "date_format",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "date_format",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
     # ── 5. Blood Sugar & Diagnostic Lab Verification ────────────────────────
     elif fname in _LAB_FIELDS:
@@ -326,11 +419,13 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
         if num_match and unit_match:
             num_val = float(num_match.group(1))
             unit_str = unit_match.group(1)
-            checks.append({
-                "check_name": "lab_unit_check",
-                "passed": True,
-                "message": f"Numeric value with unit ({unit_str})",
-            })
+            checks.append(
+                {
+                    "check_name": "lab_unit_check",
+                    "passed": True,
+                    "message": f"Numeric value with unit ({unit_str})",
+                }
+            )
 
             # Abnormal lab flagging against configured reference ranges only.
             # Unknown/generic lab fields must not receive fake normal bounds.
@@ -350,11 +445,15 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
                     "unknown_reference_range": False,
                     "requires_review": False,
                 }
-                checks.append({
-                    "check_name": "abnormal_lab_check",
-                    "passed": True,
-                    "message": "Abnormal lab flagged" if is_abnorm else "Normal lab bounds",
-                })
+                checks.append(
+                    {
+                        "check_name": "abnormal_lab_check",
+                        "passed": True,
+                        "message": "Abnormal lab flagged"
+                        if is_abnorm
+                        else "Normal lab bounds",
+                    }
+                )
             else:
                 msg = "unknown reference range requires review"
                 errors.append(msg)
@@ -365,20 +464,24 @@ def validate_field(field_name: str, value: str) -> ValidationResult:
                     "unknown_reference_range": True,
                     "requires_review": True,
                 }
-                checks.append({
-                    "check_name": "reference_range_known",
-                    "passed": False,
-                    "message": msg,
-                })
+                checks.append(
+                    {
+                        "check_name": "reference_range_known",
+                        "passed": False,
+                        "message": msg,
+                    }
+                )
         else:
             is_valid = False
             msg = "Missing numeric lab value or recognized unit"
             errors.append(msg)
-            checks.append({
-                "check_name": "lab_unit_check",
-                "passed": False,
-                "message": msg,
-            })
+            checks.append(
+                {
+                    "check_name": "lab_unit_check",
+                    "passed": False,
+                    "message": msg,
+                }
+            )
 
     return ValidationResult(
         is_valid=is_valid,

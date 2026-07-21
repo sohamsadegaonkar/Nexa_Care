@@ -5,20 +5,15 @@ from __future__ import annotations
 import os
 from urllib.parse import urlsplit
 
-
-ALLOWED_DEMO_ENVIRONMENTS = {"alpha", "development", "test"}
+from app.core.config import get_runtime_environment
 
 
 def require_demo_environment(script_name: str) -> str:
-    raw = (os.getenv("ENV") or os.getenv("ENVIRONMENT") or "").strip().lower()
-    environment = "development" if raw == "dev" else raw
-    if not environment:
+    runtime = get_runtime_environment()
+    environment = runtime.value
+    if not runtime.is_demo_allowed:
         raise RuntimeError(
-            f"{script_name} requires explicit ENV=alpha, ENV=development, or ENV=test"
-        )
-    if environment not in ALLOWED_DEMO_ENVIRONMENTS:
-        raise RuntimeError(
-            f"Refusing to run {script_name} in environment {environment!r}"
+            f"Refusing to run {script_name} in this environment"
         )
 
     database_url = os.getenv("DATABASE_URL", "").strip()

@@ -10,6 +10,7 @@ Covers:
   - Routine consent issue / grant (purpose validation, scope enforcement)
   - Consent engine validation (_parse_payload, _matches, _token_hash)
 """
+
 from __future__ import annotations
 
 import base64
@@ -20,7 +21,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.dependencies import get_current_provider, get_provider_context, get_scoped_session
+from app.core.dependencies import (
+    get_current_provider,
+    get_provider_context,
+    get_scoped_session,
+)
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -63,7 +68,9 @@ def _generate_p256_public_key_der() -> bytes:
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
     private_key = ec.generate_private_key(ec.SECP256R1())
-    return private_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+    return private_key.public_key().public_bytes(
+        Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+    )
 
 
 @pytest.fixture
@@ -108,8 +115,16 @@ def overrides():
 
 @pytest.fixture(autouse=True)
 def valid_device_enrollment_grant():
-    with patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")), \
-         patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)):
+    with (
+        patch(
+            "app.api.v2.device_routes.claim_device_enrollment_token",
+            new=AsyncMock(return_value="claim-1"),
+        ),
+        patch(
+            "app.api.v2.device_routes.finalize_device_enrollment_token",
+            new=AsyncMock(return_value=True),
+        ),
+    ):
         yield
 
 
@@ -121,14 +136,16 @@ def valid_device_enrollment_grant():
 class TestDeviceEnrollmentValidation:
     """Validate device enrollment input and business rules."""
 
-    def test_enroll_valid_p256_key_returns_201(self, client, fake_sync_redis, mock_db, overrides):
+    def test_enroll_valid_p256_key_returns_201(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Enrolling a valid P-256 public key returns 201 with device_id."""
         patient_id = str(uuid.uuid4())
         pub_der = _generate_p256_public_key_der()
         pub_b64 = base64.b64encode(pub_der).decode()
 
         mock_db.execute.side_effect = [
-            MagicMock(scalar=MagicMock(return_value=0)),        # active_count
+            MagicMock(scalar=MagicMock(return_value=0)),  # active_count
             MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # no existing
         ]
 
@@ -138,8 +155,13 @@ class TestDeviceEnrollmentValidation:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
                 json={
@@ -157,7 +179,9 @@ class TestDeviceEnrollmentValidation:
             assert data["patient_id"] == patient_id
             assert "enrolled_at" in data
 
-    def test_enroll_invalid_base64_returns_400(self, client, fake_sync_redis, mock_db, overrides):
+    def test_enroll_invalid_base64_returns_400(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Non-base64 public key data is rejected with 400."""
         patient_id = str(uuid.uuid4())
 
@@ -167,8 +191,13 @@ class TestDeviceEnrollmentValidation:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
                 json={
@@ -179,15 +208,22 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 400
-            assert "Invalid" in resp.json()["detail"] or "public key" in resp.json()["detail"].lower()
+            assert (
+                "Invalid" in resp.json()["detail"]
+                or "public key" in resp.json()["detail"].lower()
+            )
 
-    def test_enroll_non_p256_key_returns_400(self, client, fake_sync_redis, mock_db, overrides):
+    def test_enroll_non_p256_key_returns_400(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """A valid DER key but non-P256 curve is rejected with 400."""
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
         private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-        pub_der = private_key.public_key().public_bytes(Encoding.DER, PublicFormat.SubjectPublicKeyInfo)
+        pub_der = private_key.public_key().public_bytes(
+            Encoding.DER, PublicFormat.SubjectPublicKeyInfo
+        )
         pub_b64 = base64.b64encode(pub_der).decode()
 
         patient_id = str(uuid.uuid4())
@@ -198,8 +234,13 @@ class TestDeviceEnrollmentValidation:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
                 json={
@@ -210,9 +251,13 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 400
-            assert "P-256" in resp.json()["detail"] or "SECP256R1" in resp.json()["detail"]
+            assert (
+                "P-256" in resp.json()["detail"] or "SECP256R1" in resp.json()["detail"]
+            )
 
-    def test_enroll_max_five_active_devices_returns_409(self, client, fake_sync_redis, mock_db, overrides):
+    def test_enroll_max_five_active_devices_returns_409(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Attempting to enroll a 6th active device returns 409."""
         patient_id = str(uuid.uuid4())
 
@@ -227,8 +272,13 @@ class TestDeviceEnrollmentValidation:
         pub_der = _generate_p256_public_key_der()
         pub_b64 = base64.b64encode(pub_der).decode()
 
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
                 json={
@@ -241,7 +291,9 @@ class TestDeviceEnrollmentValidation:
             assert resp.status_code == 409
             assert "5" in resp.json()["detail"] or "Maximum" in resp.json()["detail"]
 
-    def test_list_devices_returns_200(self, client, fake_sync_redis, mock_db, overrides):
+    def test_list_devices_returns_200(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """GET /api/v2/patient/devices returns device list without public keys."""
         patient_id = str(uuid.uuid4())
 
@@ -262,7 +314,9 @@ class TestDeviceEnrollmentValidation:
             assert data["patient_id"] == patient_id
             assert isinstance(data["devices"], list)
 
-    def test_revoke_device_returns_200(self, client, fake_sync_redis, mock_db, overrides):
+    def test_revoke_device_returns_200(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """POST /api/v2/patient/devices/{device_id}/revoke sets status to revoked."""
         patient_id = str(uuid.uuid4())
         device_id = str(uuid.uuid4())
@@ -282,8 +336,13 @@ class TestDeviceEnrollmentValidation:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(f"/api/v2/patient/devices/{device_id}/revoke")
             assert resp.status_code == 200
             data = resp.json()
@@ -291,7 +350,9 @@ class TestDeviceEnrollmentValidation:
             assert data["device_id"] == device_id
             assert "revoked_at" in data
 
-    def test_revoke_nonexistent_device_returns_404(self, client, fake_sync_redis, mock_db, overrides):
+    def test_revoke_nonexistent_device_returns_404(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Revoking a device that doesn't exist or doesn't belong to the patient returns 404."""
         patient_id = str(uuid.uuid4())
         device_id = str(uuid.uuid4())
@@ -319,7 +380,9 @@ class TestDeviceEnrollmentValidation:
 class TestConsentRequestCreation:
     """Validate consent challenge request creation and IDOR guards."""
 
-    def test_consent_request_returns_201_with_challenge(self, client, fake_sync_redis, mock_db, overrides):
+    def test_consent_request_returns_201_with_challenge(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Creating a consent request returns 201 with request_id, challenge_nonce, and status='pending'."""
         provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
@@ -336,8 +399,16 @@ class TestConsentRequestCreation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/consent/request",
                 json={
@@ -355,7 +426,9 @@ class TestConsentRequestCreation:
             assert len(data["challenge_nonce"]) == 64  # 32 bytes hex
             assert data["expires_in_seconds"] > 0
 
-    def test_consent_request_idor_rejected(self, client, fake_sync_redis, mock_db, overrides):
+    def test_consent_request_idor_rejected(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Supplying a provider_id that doesn't match the session returns 403."""
         provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
@@ -368,8 +441,16 @@ class TestConsentRequestCreation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/consent/request",
                 json={
@@ -380,9 +461,14 @@ class TestConsentRequestCreation:
                 },
             )
             assert resp.status_code == 403
-            assert "provider_id" in resp.json()["detail"].lower() or "session" in resp.json()["detail"].lower()
+            assert (
+                "provider_id" in resp.json()["detail"].lower()
+                or "session" in resp.json()["detail"].lower()
+            )
 
-    def test_consent_request_no_device_returns_409(self, client, fake_sync_redis, mock_db, overrides):
+    def test_consent_request_no_device_returns_409(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """Consent request for a patient without enrolled devices returns 409."""
         provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
@@ -398,8 +484,16 @@ class TestConsentRequestCreation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(
                 "/api/v2/consent/request",
                 json={
@@ -411,7 +505,9 @@ class TestConsentRequestCreation:
             assert resp.status_code == 409
             assert "device" in resp.json()["detail"].lower()
 
-    def test_consent_request_duration_clamped(self, client, fake_sync_redis, mock_db, overrides):
+    def test_consent_request_duration_clamped(
+        self, client, fake_sync_redis, mock_db, overrides
+    ):
         """access_duration_seconds is clamped to [300, 3600]."""
         provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
@@ -428,8 +524,16 @@ class TestConsentRequestCreation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             # Request duration below minimum (10s → clamped to 300s)
             resp = client.post(
                 "/api/v2/consent/request",
@@ -470,7 +574,9 @@ class TestConsentStatusPolling:
             "hospital_id": str(ctx.hospital_id),
             "status": "pending",
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _provider():
             return ctx
@@ -478,7 +584,9 @@ class TestConsentStatusPolling:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.get(f"/api/v2/consent/status/{request_id}")
             assert resp.status_code == 200
             data = resp.json()
@@ -497,7 +605,9 @@ class TestConsentStatusPolling:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.get(f"/api/v2/consent/status/{request_id}")
             assert resp.status_code == 200
             assert resp.json()["status"] == "expired"
@@ -517,7 +627,9 @@ class TestConsentStatusPolling:
             "status": "approved",
             "responded_at": now_iso,
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _provider():
             return ctx
@@ -525,14 +637,18 @@ class TestConsentStatusPolling:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.get(f"/api/v2/consent/status/{request_id}")
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "approved"
             assert data["responded_at"] is not None
 
-    def test_status_wrong_provider_returns_403(self, client, fake_sync_redis, overrides):
+    def test_status_wrong_provider_returns_403(
+        self, client, fake_sync_redis, overrides
+    ):
         """Polling another provider's request returns 403."""
         provider_id = str(uuid.uuid4())
         other_provider = str(uuid.uuid4())
@@ -545,7 +661,9 @@ class TestConsentStatusPolling:
             "provider_id": other_provider,
             "status": "pending",
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _provider():
             return ctx
@@ -553,7 +671,9 @@ class TestConsentStatusPolling:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.get(f"/api/v2/consent/status/{request_id}")
             assert resp.status_code == 403
 
@@ -578,7 +698,9 @@ class TestConsentCancellation:
             "provider_id": provider_id,
             "status": "pending",
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _provider():
             return ctx
@@ -586,15 +708,25 @@ class TestConsentCancellation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(f"/api/v2/consent/request/{request_id}/cancel")
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "cancelled"
             assert "cancelled_at" in data
 
-    def test_cancel_approved_request_returns_409(self, client, fake_sync_redis, overrides):
+    def test_cancel_approved_request_returns_409(
+        self, client, fake_sync_redis, overrides
+    ):
         """Cancelling an already-approved request returns 409 (terminal state)."""
         provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
@@ -606,7 +738,9 @@ class TestConsentCancellation:
             "provider_id": provider_id,
             "status": "approved",
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _provider():
             return ctx
@@ -614,12 +748,22 @@ class TestConsentCancellation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None):
+        with (
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(f"/api/v2/consent/request/{request_id}/cancel")
             assert resp.status_code == 409
 
-    def test_cancel_expired_request_returns_404(self, client, fake_sync_redis, overrides):
+    def test_cancel_expired_request_returns_404(
+        self, client, fake_sync_redis, overrides
+    ):
         """Cancelling a request that has already expired returns 404."""
         provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
@@ -631,7 +775,9 @@ class TestConsentCancellation:
         overrides.set(get_current_provider, _provider)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.post(f"/api/v2/consent/request/{request_id}/cancel")
             assert resp.status_code == 404
 
@@ -644,7 +790,9 @@ class TestConsentCancellation:
 class TestSignedApproval:
     """Validate signed approval flow (approve-signed endpoint)."""
 
-    def test_approve_expired_challenge_returns_404(self, client, fake_sync_redis, overrides):
+    def test_approve_expired_challenge_returns_404(
+        self, client, fake_sync_redis, overrides
+    ):
         """Submitting approval for an expired/missing challenge returns 404."""
         patient_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
@@ -655,7 +803,9 @@ class TestSignedApproval:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.post(
                 "/api/v2/consent/approve-signed",
                 json={
@@ -669,7 +819,9 @@ class TestSignedApproval:
             )
             assert resp.status_code == 404
 
-    def test_approve_nonce_mismatch_returns_401(self, client, fake_sync_redis, overrides):
+    def test_approve_nonce_mismatch_returns_401(
+        self, client, fake_sync_redis, overrides
+    ):
         """Submitting a wrong challenge_nonce returns 401."""
         patient_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
@@ -681,9 +833,13 @@ class TestSignedApproval:
             "provider_id": str(uuid.uuid4()),
             "challenge_nonce": "correct_nonce_value",
             "status": "pending",
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(minutes=2)
+            ).isoformat(),
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _scoped_session():
             return patient_id
@@ -691,7 +847,9 @@ class TestSignedApproval:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.post(
                 "/api/v2/consent/approve-signed",
                 json={
@@ -705,7 +863,9 @@ class TestSignedApproval:
             )
             assert resp.status_code == 401
 
-    def test_approve_already_resolved_returns_409(self, client, fake_sync_redis, overrides):
+    def test_approve_already_resolved_returns_409(
+        self, client, fake_sync_redis, overrides
+    ):
         """Submitting approval for an already-resolved challenge returns 409."""
         patient_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
@@ -717,9 +877,13 @@ class TestSignedApproval:
             "provider_id": str(uuid.uuid4()),
             "challenge_nonce": nonce,
             "status": "approved",
-            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=2)).isoformat(),
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(minutes=2)
+            ).isoformat(),
         }
-        fake_sync_redis.set(f"consent_request:{request_id}", json.dumps(challenge_data), ex=300)
+        fake_sync_redis.set(
+            f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
+        )
 
         async def _scoped_session():
             return patient_id
@@ -727,7 +891,9 @@ class TestSignedApproval:
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        ):
             resp = client.post(
                 "/api/v2/consent/approve-signed",
                 json={
@@ -750,7 +916,9 @@ class TestSignedApproval:
 class TestBreakGlassConsent:
     """Validate break-glass consent issuance and constraints."""
 
-    def test_break_glass_requires_reason_code(self, client, fake_redis, fake_sync_redis, mock_db, overrides):
+    def test_break_glass_requires_reason_code(
+        self, client, fake_redis, fake_sync_redis, mock_db, overrides
+    ):
         """Break-glass without a reason_code should fail validation."""
         provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
@@ -762,9 +930,17 @@ class TestBreakGlassConsent:
         overrides.set(get_provider_context, _provider)
         overrides.apply()
 
-        with patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None), \
-             patch("app.observability.audit_ledger.append_audit_log", return_value=None):
+        with (
+            patch(
+                "app.services.consent_engine.get_consent_redis_client",
+                return_value=fake_redis,
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+            patch("app.observability.audit_ledger.append_audit_log", return_value=None),
+        ):
             resp = client.post(
                 "/api/v2/consent/break-glass/issue",
                 json={
@@ -826,15 +1002,18 @@ class TestConsentEngineValidation:
         """_parse_payload correctly parses a valid consent capability."""
         from app.services.consent_engine import _parse_payload
 
-        payload = json.dumps({
-            "patient_id": "pat-1",
-            "clinician_id": "doc-1",
-            "purpose": "TREATMENT",
-            "scope": ["clinical.*", "pii.demographics"],
-            "is_break_glass": False,
-            "reason_code": None,
-            "issued_at": datetime.now(timezone.utc).isoformat(),
-        })
+        payload = json.dumps(
+            {
+                "patient_id": "pat-1",
+                "clinician_id": "doc-1",
+                "purpose": "TREATMENT",
+                "scope": ["clinical.*", "pii.demographics"],
+                "is_break_glass": False,
+                "reason_code": None,
+                "issued_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": "2025-01-01T01:00:00Z",
+            }
+        )
 
         cap = _parse_payload(payload)
         assert cap is not None
@@ -848,15 +1027,18 @@ class TestConsentEngineValidation:
         """_parse_payload correctly parses a break-glass capability."""
         from app.services.consent_engine import _parse_payload
 
-        payload = json.dumps({
-            "patient_id": "pat-1",
-            "clinician_id": "doc-1",
-            "purpose": "EMERGENCY",
-            "scope": ["clinical.*", "pii.*"],
-            "is_break_glass": True,
-            "reason_code": "IMMEDIATE_THREAT_TO_LIFE",
-            "issued_at": datetime.now(timezone.utc).isoformat(),
-        })
+        payload = json.dumps(
+            {
+                "patient_id": "pat-1",
+                "clinician_id": "doc-1",
+                "purpose": "EMERGENCY",
+                "scope": ["clinical.*", "pii.*"],
+                "is_break_glass": True,
+                "reason_code": "IMMEDIATE_THREAT_TO_LIFE",
+                "issued_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": "2025-01-01T00:15:00Z",
+            }
+        )
 
         cap = _parse_payload(payload)
         assert cap is not None
@@ -874,11 +1056,23 @@ class TestConsentEngineValidation:
         # None
         assert _parse_payload(None) is None
         # Break-glass without reason_code
-        assert _parse_payload(json.dumps({
-            "patient_id": "p", "clinician_id": "c", "purpose": "E",
-            "scope": ["clinical.*"], "is_break_glass": True, "reason_code": "",
-            "issued_at": "2025-01-01T00:00:00Z",
-        })) is None
+        assert (
+            _parse_payload(
+                json.dumps(
+                    {
+                        "patient_id": "p",
+                        "clinician_id": "c",
+                        "purpose": "E",
+                        "scope": ["clinical.*"],
+                        "is_break_glass": True,
+                        "reason_code": "",
+                        "issued_at": "2025-01-01T00:00:00Z",
+                        "expires_at": "2025-01-01T00:15:00Z",
+                    }
+                )
+            )
+            is None
+        )
 
     def test_matches_logic(self):
         """_matches correctly filters capabilities by constraints."""
@@ -920,13 +1114,23 @@ class TestConsentEngineValidation:
         """
         from app.services.consent_engine import _parse_payload
 
-        result = _parse_payload(json.dumps({
-            "patient_id": "p", "clinician_id": "c", "purpose": "T",
-            "scope": [], "is_break_glass": False,
-            "issued_at": "2025-01-01T00:00:00Z",
-        }))
+        result = _parse_payload(
+            json.dumps(
+                {
+                    "patient_id": "p",
+                    "clinician_id": "c",
+                    "purpose": "T",
+                    "scope": [],
+                    "is_break_glass": False,
+                    "issued_at": "2025-01-01T00:00:00Z",
+                    "expires_at": "2025-01-01T01:00:00Z",
+                }
+            )
+        )
         # Currently returns capability with empty scope — this is a known gap.
         # The issue() function rejects empty scope at issuance, so this should
         # never be reachable in practice, but _parse_payload should ideally
         # also reject it.
-        assert result is not None  # ALPHA: should be None once _parse_payload is hardened
+        assert (
+            result is not None
+        )  # ALPHA: should be None once _parse_payload is hardened

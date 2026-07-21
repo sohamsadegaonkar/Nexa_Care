@@ -21,3 +21,9 @@ export async function verifyMergeChallenge(
   })
   return res.data
 }
+
+export async function cancelMergeChallenge(challengeToken: string): Promise<void> {
+  await apiClient.post('/api/v2/auth/challenge/merge/cancel', {
+    challenge_token: challengeToken,
+  })
+}
