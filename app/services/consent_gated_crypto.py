@@ -80,6 +80,16 @@ async def consent_gated_decrypt(
             detail="Consent token invalid or expired.",
         )
 
+    if capability.is_break_glass:
+        # Break-glass (emergency) capabilities are scoped to whole clinical
+        # categories with their own audit and filtering contract; they must
+        # never be usable against the unrestricted general record endpoint.
+        # See the dedicated emergency-summary endpoint instead.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Break-glass capabilities are not valid for this endpoint.",
+        )
+
     # Squad C Requirement: Verify single-gate behavior
     # This assertion ensures that we have a valid capability before proceeding to any decryption call.
     assert capability is not None, "Internal Error: Validation gate bypassed"

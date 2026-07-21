@@ -9,6 +9,7 @@ import { Platform } from 'react-native'
 import { issueRoutineConsentV1, ConsentError } from '../../api/consent_v1'
 import { WEB_MOCK_NFC_CARD_UID, useNfcScanner } from '../../hooks/useNfcScanner'
 import { claimApprovedAccess, getPushRequestStatus, requestPushApproval } from '../../api/assurance'
+import { generateWorkflowId, setCapability } from '../../services/capabilityStore'
 
 const DEFAULT_ACCESS_PURPOSE = 'ROUTINE_CHECKUP'
 
@@ -104,12 +105,19 @@ export function ScannerScreen({
     void startScan()
   }
 
-  const openAuthorizedRecord = (consentToken: string) => {
+  const openAuthorizedRecord = (grant: { consentToken: string; scope: string[]; expiresAt: string }) => {
     if (!effectivePatientId) return
+    const workflowId = generateWorkflowId()
+    setCapability({
+      workflowId,
+      patientId: effectivePatientId,
+      token: grant.consentToken,
+      purpose: selectedPurpose,
+      scope: grant.scope,
+      expiresAt: grant.expiresAt,
+    })
     router.push(
-      `/patient/${encodeURIComponent(effectivePatientId)}?consentToken=${encodeURIComponent(
-        consentToken
-      )}&purpose=${encodeURIComponent(selectedPurpose)}`
+      `/patient/${encodeURIComponent(effectivePatientId)}?workflow_id=${encodeURIComponent(workflowId)}`
     )
   }
 
@@ -141,7 +149,11 @@ export function ScannerScreen({
       })
 
       setShowConsentModal(false)
-      openAuthorizedRecord(response.consent_token)
+      openAuthorizedRecord({
+        consentToken: response.consent_token,
+        scope: ['clinical_summary', 'timeline_view'],
+        expiresAt: response.expires_at,
+      })
     } catch (error: unknown) {
       if (error instanceof ConsentError) {
         if (error.code === 'CONSENT_UNAUTHORIZED' && error.status === 428) {
@@ -198,7 +210,11 @@ export function ScannerScreen({
 
           if (data.status === 'approved') {
             const access = await claimApprovedAccess(pollingRequestId)
-            openAuthorizedRecord(access.consent_token)
+            openAuthorizedRecord({
+              consentToken: access.consent_token,
+              scope: [access.scope],
+              expiresAt: access.expires_at,
+            })
           }
         }
       } catch {

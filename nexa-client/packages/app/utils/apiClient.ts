@@ -163,6 +163,25 @@ export interface PatientSummaryResponse {
   shard_scope: 'clinical' | 'full'
 }
 
+/** Response shape from GET /api/v2/patient/{id}/emergency-summary (break-glass only). */
+export interface EmergencySummaryCategoryItem {
+  [key: string]: unknown
+}
+export interface EmergencySummaryCategory {
+  category: string
+  available: boolean
+  items?: EmergencySummaryCategoryItem[]
+  value?: unknown
+  verified?: boolean
+  verification_state?: string
+  caveat?: string
+}
+export interface EmergencySummaryResponse {
+  patient_id: string
+  categories: Record<string, EmergencySummaryCategory>
+  retrieved_at: string
+}
+
 export interface PatientTimelineResponse {
   patient_id: string
   events: Array<{
@@ -660,6 +679,16 @@ export const NexaApiClient = {
     }, {
       'X-Consent-Token': consentToken,
       'X-Consent-Purpose': purpose,
+    })
+  },
+
+  /** Break-glass capabilities must use this endpoint, never getPatientRecord
+   * (the general record endpoint rejects break-glass tokens outright). */
+  getEmergencySummary(patientId: string, consentToken: string): Promise<EmergencySummaryResponse> {
+    return request<EmergencySummaryResponse>(`/api/v2/patient/${patientId}/emergency-summary`, {
+      method: 'GET',
+    }, {
+      'X-Consent-Token': consentToken,
     })
   },
 

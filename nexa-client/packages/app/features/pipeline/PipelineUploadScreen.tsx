@@ -21,7 +21,7 @@
  *   boundary automatically for FormData uploads.
  * - Session guard: must be authenticated via ProviderAuthContext.
  *
- * Route: /doctor/pipeline/upload?patient_id=...&consent_token=...
+ * Route: /doctor/pipeline/upload?patient_id=...&workflow_id=...
  */
 
 'use client'
@@ -33,6 +33,7 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
+import { attachJobId, useCapability } from '../../services/capabilityStore'
 
 /** Maximum upload size in bytes (25 MB). */
 const MAX_FILE_SIZE = 25 * 1024 * 1024
@@ -48,7 +49,9 @@ export function PipelineUploadScreen() {
   const { isAuthenticated } = useProviderAuth()
 
   const urlPatientId = searchParams.get('patient_id') ?? ''
-  const consentToken = searchParams.get('consent_token') ?? ''
+  const workflowId = searchParams.get('workflow_id')
+  const capability = useCapability(workflowId)
+  const consentToken = capability?.token ?? ''
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle')
@@ -149,9 +152,11 @@ export function PipelineUploadScreen() {
       setJobId(result.job_id)
       setUploadStatus('success')
 
+      if (workflowId) attachJobId(workflowId, result.job_id)
+
       // Redirect to job status screen
       router.push(
-        `/doctor/pipeline/jobs/${result.job_id}?patient_id=${patientId}&consent_token=${consentToken}`,
+        `/doctor/pipeline/jobs/${result.job_id}?patient_id=${patientId}&workflow_id=${workflowId}`,
       )
     } catch (err) {
       setUploadStatus('error')
@@ -169,7 +174,7 @@ export function PipelineUploadScreen() {
         setUploadError('Network error. Please try again.')
       }
     }
-  }, [selectedFile, patientId, consentToken, router])
+  }, [selectedFile, patientId, consentToken, workflowId, router])
 
   // ── Missing consent token ────────────────────────────────────────────
   if (!consentToken) {
@@ -177,8 +182,9 @@ export function PipelineUploadScreen() {
       <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
         <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
         <Paragraph color="$color10" fontSize="$3">
-          You must have an active consent grant for AI document ingestion
-          before uploading.
+          {workflowId
+            ? 'Access session expired — request access again.'
+            : 'You must have an active consent grant for AI document ingestion before uploading.'}
         </Paragraph>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
           Request Consent

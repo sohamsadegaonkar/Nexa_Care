@@ -38,6 +38,13 @@ vi.mock('solito/navigation', () => ({
   useRouter: () => ({ push: pushMock }),
 }))
 
+const setCapabilityMock = vi.fn()
+
+vi.mock('../../services/capabilityStore', () => ({
+  generateWorkflowId: () => 'wf-test-id',
+  setCapability: (grant: unknown) => setCapabilityMock(grant),
+}))
+
 describe('ScannerScreen Doctor Polling', () => {
   const patientId = 'pat-123'
   const requestId = 'req-456'
@@ -106,9 +113,12 @@ describe('ScannerScreen Doctor Polling', () => {
     await waitFor(() => {
       expect(screen.getByText(/Request Approved/i)).toBeTruthy()
       expect(claimApprovedAccess).toHaveBeenCalledWith(requestId)
-      expect(pushMock).toHaveBeenCalledWith(
-        `/patient/${patientId}?consentToken=token-ok&purpose=ROUTINE_CHECKUP`
+      expect(setCapabilityMock).toHaveBeenCalledWith(
+        expect.objectContaining({ workflowId: 'wf-test-id', patientId, token: 'token-ok' })
       )
+      expect(pushMock).toHaveBeenCalledWith(`/patient/${patientId}?workflow_id=wf-test-id`)
+      // DEFECT 3: the raw token must never appear in a navigated URL.
+      expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining('token-ok'))
     }, { timeout: 6500 })
 
   })

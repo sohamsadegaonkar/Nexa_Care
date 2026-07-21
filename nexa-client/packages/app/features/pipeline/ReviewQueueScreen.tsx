@@ -13,7 +13,7 @@
  * - Consent token passed as X-Consent-Token header.
  * - Session guard: must be authenticated.
  *
- * Route: /doctor/pipeline/review-queue?consent_token=...
+ * Route: /doctor/pipeline/review-queue?workflow_id=...
  */
 
 'use client'
@@ -25,6 +25,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, type ReviewQueueListResponse, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
+import { useCapability } from '../../services/capabilityStore'
 
 type RiskLevel = 'LOW_RISK' | 'MEDIUM_RISK' | 'HIGH_RISK' | 'CRITICAL_RISK'
 
@@ -48,7 +49,9 @@ export function ReviewQueueScreen() {
   const searchParams = useSearchParams()
   const { isAuthenticated } = useProviderAuth()
 
-  const consentToken = searchParams.get('consent_token') ?? ''
+  const workflowId = searchParams.get('workflow_id')
+  const capability = useCapability(workflowId)
+  const consentToken = capability?.token ?? ''
   const hospitalId = searchParams.get('hospital_id') ?? ''
 
   const [items, setItems] = useState<ReviewQueueListResponse['items']>([])
@@ -104,7 +107,9 @@ export function ReviewQueueScreen() {
       <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
         <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
         <Paragraph color="$color10" fontSize="$3">
-          An active consent grant with clinical review scope is required.
+          {workflowId
+            ? 'Access session expired — request access again.'
+            : 'An active consent grant with clinical review scope is required.'}
         </Paragraph>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
           Request Consent
@@ -178,7 +183,7 @@ export function ReviewQueueScreen() {
                   pressStyle={{ backgroundColor: '$backgroundPress' }}
                   onPress={() =>
                     router.push(
-                      `/doctor/pipeline/review/${item.job_id}?patient_id=${item.patient_id}&consent_token=${consentToken}`,
+                      `/doctor/pipeline/review/${item.job_id}?patient_id=${item.patient_id}&workflow_id=${workflowId}`,
                     )
                   }
                 >

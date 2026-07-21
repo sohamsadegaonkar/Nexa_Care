@@ -22,7 +22,7 @@
  * - Session guard: must be authenticated.
  * - Frontend field status tracking is UX-only — backend validates on commit.
  *
- * Route: /doctor/pipeline/review/[jobId]?consent_token=...&patient_id=...
+ * Route: /doctor/pipeline/review/[jobId]?workflow_id=...&patient_id=...
  */
 
 'use client'
@@ -36,6 +36,7 @@ import { NexaApiClient, type ExtractionJobStatusResponse, type ExtractedField, A
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
 import { FieldCard } from './FieldCard'
 import { DocumentPreview, type BBoxField } from './DocumentPreview'
+import { useCapability } from '../../services/capabilityStore'
 
 export function ReviewCockpitScreen() {
   const router = useRouter()
@@ -46,7 +47,9 @@ export function ReviewCockpitScreen() {
   // jobId comes from the [jobId] route param (camelCase); snake_case only in API payloads
   const jobId = (routeParams.jobId as string) ?? ''
   const patientId = searchParams.get('patient_id') ?? ''
-  const consentToken = searchParams.get('consent_token') ?? ''
+  const workflowId = searchParams.get('workflow_id')
+  const capability = useCapability(workflowId)
+  const consentToken = capability?.token ?? ''
 
   const [job, setJob] = useState<ExtractionJobStatusResponse | null>(null)
   const [fields, setFields] = useState<ExtractedField[]>([])
@@ -76,7 +79,9 @@ export function ReviewCockpitScreen() {
       <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
         <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
         <Text color="$color10" fontSize="$3">
-          You must have an active consent grant to review fields.
+          {workflowId
+            ? 'Access session expired — request access again.'
+            : 'You must have an active consent grant to review fields.'}
         </Text>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
           Request Consent
@@ -435,7 +440,7 @@ export function ReviewCockpitScreen() {
               size="$3"
               onPress={() =>
                 router.push(
-                  `/doctor/pipeline/commit/${jobId}?patient_id=${patientId}&consent_token=${consentToken}`,
+                  `/doctor/pipeline/commit/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`,
                 )
               }
             >

@@ -33,6 +33,8 @@ class PatientDEKStore(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     destroyed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    wrapping_key_type: Mapped[str] = mapped_column(String(16), nullable=False, default="shared")
+    patient_wrapping_key_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     __table_args__ = (
         UniqueConstraint("patient_id", "dek_version", name="uq_patient_dek_version"),

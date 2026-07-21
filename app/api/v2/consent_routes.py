@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,6 +64,7 @@ from app.services.break_glass_policy import (
     approved_break_glass_scope,
     validate_justification,
 )
+from app.security.clinical_categories import UnsupportedClinicalCategoryError
 from app.services.policy_service import PolicyService
 from app.observability.audit_ledger import append_audit_log_or_503
 
@@ -358,6 +359,11 @@ async def issue_break_glass_consent_route(
         )
     except HTTPException:
         raise
+    except UnsupportedClinicalCategoryError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": err.error_code, "category": err.category},
+        ) from err
     except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -419,14 +425,32 @@ async def revoke_break_glass_consent_route(
 
 @router.get("/validate")
 async def validate_consent(
-    consent_token: str,
+    consent_token: str | None = Query(default=None, include_in_schema=False),
     patient_id: str | None = None,
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     provider: ProviderContext = Depends(get_provider_context),
 ):
-    """Validate a consent token (retained for terminal revalidation)."""
+    """Validate a consent token (retained for terminal revalidation).
+
+    The bearer token must arrive via the ``X-Consent-Token`` header. A
+    ``consent_token`` query parameter is a retired legacy shape -- it is
+    never read for its value, never logged, and the request is rejected
+    outright so callers still sending it fail loudly instead of silently
+    working.
+    """
+    if consent_token is not None:
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={"error_code": "CONSENT_TOKEN_IN_URL_RETIRED"},
+        )
+    if not x_consent_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error_code": "CONSENT_TOKEN_REQUIRED"},
+        )
     try:
         capability = await consent_engine.validate(
-            token=consent_token,
+            token=x_consent_token,
             patient_id=patient_id,
             clinician_id=provider.actor_uid,
             hospital_id=str(provider.hospital_id),

@@ -42,6 +42,7 @@ from app.core.config import get_redis_config
 from app.models.assurance import AssuranceLevel
 from app.models.consent_grant import ConsentGrantLog
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
+from app.security.clinical_categories import CLINICAL_CATEGORY_PROTOCOL_VERSION
 from app.services.assurance_verifier import AssuranceVerifier, RedisAssuranceVerifier
 
 logger = logging.getLogger("nexa_logger")
@@ -80,6 +81,7 @@ class ConsentCapability:
     hospital_id: str | None = None
     session_binding: str | None = None
     reason_code_version: str | None = None
+    category_protocol_version: str | None = None
 
 
 @lru_cache(maxsize=1)
@@ -128,6 +130,7 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
     hospital_id = payload.get("hospital_id")
     session_binding = payload.get("session_binding")
     reason_code_version = payload.get("reason_code_version")
+    category_protocol_version = payload.get("category_protocol_version")
 
     required_strings = [patient_id, clinician_id, purpose, issued_at, expires_at]
     if not all(isinstance(v, str) and v for v in required_strings):
@@ -151,6 +154,9 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
         hospital_id=hospital_id if isinstance(hospital_id, str) and hospital_id else None,
         session_binding=session_binding if isinstance(session_binding, str) and session_binding else None,
         reason_code_version=(reason_code_version if isinstance(reason_code_version, str) else None),
+        category_protocol_version=(
+            category_protocol_version if isinstance(category_protocol_version, str) else None
+        ),
     )
 
 
@@ -172,12 +178,13 @@ def _matches(
         return False
     if clinician_id is not None and capability.clinician_id != clinician_id:
         return False
-    if purpose is not None:
-        if capability.is_break_glass:
-            if purpose not in capability.scope:
-                return False
-        elif capability.purpose != purpose and purpose not in capability.scope:
-            return False
+    if purpose is not None and capability.purpose != purpose:
+        # Purpose is a claim about *why* access was granted (e.g. TREATMENT,
+        # EMERGENCY) and must match exactly. It is never satisfied by the
+        # requested value merely appearing in the capability's clinical
+        # category scope -- scope is a separate claim, checked separately
+        # by the caller against the categories it actually needs.
+        return False
     if hospital_id is not None and capability.hospital_id != hospital_id:
         return False
     if session_binding is not None and capability.session_binding != session_binding:
@@ -201,6 +208,7 @@ async def issue(
     is_break_glass: bool = False,
     reason_code: str | None = None,
     reason_code_version: str | None = None,
+    category_protocol_version: str | None = None,
     session_binding: str | None = None,
     verifier: Optional[AssuranceVerifier] = None,
 ) -> str:
@@ -277,6 +285,7 @@ async def issue(
         "hospital_id": hospital_id,
         "session_binding": session_binding,
         "reason_code_version": reason_code_version,
+        "category_protocol_version": category_protocol_version,
         "assurance_level": assurance_result.actual_level,
     }
 
@@ -452,6 +461,14 @@ async def issue_break_glass(
         raise ValueError("Break-glass grants require tenant, session, policy, and MFA bindings.")
     if not scope:
         raise ValueError("Break-glass grants require an approved minimum-necessary scope.")
+    # Fail closed on any category outside the canonical vocabulary. Callers
+    # (issue_break_glass's caller, via break_glass_policy.approved_break_glass_scope)
+    # are expected to have already narrowed `scope` to approved categories,
+    # but this is validated again here so issue_break_glass can never mint a
+    # capability scoped to a non-canonical value.
+    from app.security.clinical_categories import parse_clinical_categories
+
+    parse_clinical_categories(scope)
 
     target_id = f"{patient_id}:{clinician_id}:BREAK_GLASS"
     await append_audit_log_or_503(
@@ -476,6 +493,7 @@ async def issue_break_glass(
             is_break_glass=True,
             reason_code=reason_code,
             reason_code_version=reason_code_version,
+            category_protocol_version=CLINICAL_CATEGORY_PROTOCOL_VERSION,
             session_binding=session_binding,
         )
     except Exception as exc:

@@ -207,6 +207,28 @@ def test_patient_record_read_requires_valid_consent(admin_headers):
         assert "Active consent token required" in res.json()["detail"]
 
 
+def test_break_glass_capability_rejected_at_summary_endpoint(admin_headers):
+    """DEFECT 1/2/3: a break-glass capability must never satisfy the general
+    /summary route -- only the dedicated /emergency-summary endpoint."""
+    break_glass_capability = ConsentCapability(
+        patient_id="11111111-1111-4111-8111-111111111111",
+        clinician_id="doctor-1",
+        purpose="EMERGENCY",
+        scope=["allergies"],
+        is_break_glass=True,
+        reason_code="LIFE_THREATENING_EMERGENCY",
+        issued_at="2026-07-18T00:00:00+00:00",
+        expires_at="2026-07-18T00:15:00+00:00",
+    )
+    with patch("app.core.consent_gate.validate_consent_capability", return_value=break_glass_capability):
+        res = client.get(
+            "/api/v2/patient/11111111-1111-4111-8111-111111111111/summary",
+            headers={**admin_headers, "X-Consent-Token": "tok"},
+        )
+        assert res.status_code == 403
+        assert res.json()["detail"]["error_code"] == "BREAK_GLASS_CAPABILITY_NOT_VALID_HERE"
+
+
 def test_patient_self_view_does_not_require_doctor_consent_token():
     """Test 6: Patient accessing own record/devices via self-session does not require doctor consent token."""
     from app.core.dependencies import get_scoped_session

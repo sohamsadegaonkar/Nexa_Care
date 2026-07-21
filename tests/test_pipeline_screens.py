@@ -352,19 +352,24 @@ class TestConsentTokenHandling:
             )
 
     def test_consent_token_not_in_url_path(self) -> None:
-        """Consent tokens must not appear in API URL paths — only in headers.
+        """Consent tokens must never appear in a URL -- API call or screen-to-screen navigation.
 
-        Note: Passing consent_token as a URL query param between screens
-        (e.g. router.push('/path?consent_token=...')) is acceptable for
-        screen-to-screen context transfer. The constraint is that consent
-        tokens must NOT appear in backend API call URLs — they go in headers.
+        DEFECT 3: raw bearer tokens may exist only in process memory and in
+        the X-Consent-Token header. Screen-to-screen navigation must use an
+        opaque workflow_id (looked up against the in-memory capability
+        store), never the token itself -- there is no "acceptable between
+        screens" exception.
         """
         all_code = ""
         for screen in SCREENS:
             all_code += _read_screen(screen) + "\n"
-        # Check API call URLs, not router.push URLs
-        # Pattern: consent_token in a URL that starts with /api/
         code_no_comments = _strip_comments(all_code)
+        assert not re.search(r"consent_token=\$\{", code_no_comments), (
+            "Consent token interpolated into a URL. Must use workflow_id + the in-memory capability store."
+        )
+        assert not re.search(r"consentToken=\$\{", code_no_comments), (
+            "Consent token interpolated into a URL. Must use workflow_id + the in-memory capability store."
+        )
         assert not re.search(r"/api/.*consent_token=", code_no_comments), (
             "Consent token appears in backend API URL. Must be X-Consent-Token header only."
         )
@@ -728,9 +733,10 @@ class TestUploadScreen:
         assert "MAX_FILE_SIZE" in code, "Upload screen missing file size validation."
 
     def test_consent_required_guard(self) -> None:
-        """Upload must check for consent token."""
+        """Upload must check for a live consent capability before allowing upload."""
         code = _read_screen("PipelineUploadScreen")
-        assert "consent_token" in code, "Upload screen missing consent token check."
+        assert "consentToken" in code, "Upload screen missing consent token check."
+        assert "workflow_id" in code, "Upload screen must resolve its capability via workflow_id, not a raw token in the URL."
         assert "Consent Required" in code, "Upload screen missing consent required state."
 
     def test_redirects_to_job_status(self) -> None:
@@ -2183,4 +2189,3 @@ class TestCommitFieldSummaryRow:
         """When corrected_value differs from raw_value, show original."""
         code = _read_screen("CommitScreen")
         assert "Original" in code, "CommitScreen missing Original label for edited fields."
-

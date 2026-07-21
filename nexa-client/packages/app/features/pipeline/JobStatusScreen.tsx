@@ -14,7 +14,7 @@
  * - Session guard: must be authenticated.
  * - Stops polling on terminal states; cleans up on unmount.
  *
- * Route: /doctor/pipeline/jobs/[jobId]?consent_token=...&patient_id=...
+ * Route: /doctor/pipeline/jobs/[jobId]?workflow_id=...&patient_id=...
  */
 
 'use client'
@@ -26,6 +26,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams, useParams } from 'next/navigation'
 import { NexaApiClient, type ExtractionJobStatusResponse, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
+import { useCapability } from '../../services/capabilityStore'
 
 /** Polling interval in milliseconds. */
 const POLL_INTERVAL_MS = 2_000
@@ -72,7 +73,9 @@ export function JobStatusScreen() {
   // jobId comes from the [jobId] route param (camelCase); snake_case only in API payloads
   const jobId = (routeParams.jobId as string) ?? ''
   const patientId = searchParams.get('patient_id') ?? ''
-  const consentToken = searchParams.get('consent_token') ?? ''
+  const workflowId = searchParams.get('workflow_id')
+  const capability = useCapability(workflowId)
+  const consentToken = capability?.token ?? ''
 
   const [job, setJob] = useState<ExtractionJobStatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -102,7 +105,9 @@ export function JobStatusScreen() {
       <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
         <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
         <Text color="$color10" fontSize="$3">
-          You must have an active consent grant to view pipeline job status.
+          {workflowId
+            ? 'Access session expired — request access again.'
+            : 'You must have an active consent grant to view pipeline job status.'}
         </Text>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
           Request Consent
@@ -323,7 +328,7 @@ export function JobStatusScreen() {
             theme="orange"
             size="$4"
             onPress={() =>
-              router.push(`/doctor/pipeline/review-queue?consent_token=${consentToken}`)
+              router.push(`/doctor/pipeline/review-queue?workflow_id=${workflowId}`)
             }
           >
             Go to Review Queue →
@@ -342,7 +347,7 @@ export function JobStatusScreen() {
             size="$4"
             onPress={() =>
               router.push(
-                `/doctor/pipeline/upload?patient_id=${patientId}&consent_token=${consentToken}`,
+                `/doctor/pipeline/upload?patient_id=${patientId}&workflow_id=${workflowId}`,
               )
             }
           >

@@ -439,7 +439,14 @@ async def test_dek_rotation(mock_db, mock_redis, kms_provider):
 
 @pytest.mark.asyncio
 async def test_break_glass_path(mock_db, mock_redis, kms_provider):
-    """Test 7: Break-glass consent -> full scope access including PII."""
+    """Test 7: Break-glass consent must be rejected by the general
+    consent-gated decrypt path, not granted full scope access.
+
+    Break-glass capabilities are scoped to whole clinical categories with
+    their own audit/filtering contract (the dedicated emergency-summary
+    endpoint); they must never unlock the unrestricted record-reconstruction
+    path, even for the categories they were actually granted.
+    """
     patient_id = str(uuid.uuid4())
     provider_id = "doctor-1"
     hospital_id = "123e4567-e89b-12d3-a456-426614174001"
@@ -484,31 +491,32 @@ async def test_break_glass_path(mock_db, mock_redis, kms_provider):
             reason_code="LIFE_THREATENING_EMERGENCY",
             db=mock_db,
             hospital_id=hospital_id,
-            scope=["EMERGENCY", "clinical.allergies"],
+            scope=["allergies"],
             reason_code_version="v1",
             session_binding="session-binding",
             mfa_verified_at=datetime.now(timezone.utc),
         )
 
-        # Call decrypt with "*" scope
+        # A break-glass token must be rejected outright by the general
+        # decrypt path -- even a category (allergies) it actually holds --
+        # because this path is not the audited, filtered emergency route.
         with patch("app.services.consent_gated_crypto.append_audit_log_or_503", AsyncMock()), \
              patch("app.services.consent_gated_crypto.append_audit_log", AsyncMock()):
-            
-            result = await consent_gated_decrypt(
-                patient_id=patient_id,
-                consent_token=token,
-                purpose="EMERGENCY",
-                requested_scope="clinical.allergies",
-                provider_id=provider_id,
-                hospital_id=hospital_id,
-                db=mock_db,
-                redis=mock_redis,
-                kms=kms_provider,
-                session_binding="session-binding",
-            )
 
-            assert result["pii"] == {}
-            assert result["clinical"] == {}
+            with pytest.raises(HTTPException) as exc_info:
+                await consent_gated_decrypt(
+                    patient_id=patient_id,
+                    consent_token=token,
+                    purpose="EMERGENCY",
+                    requested_scope="allergies",
+                    provider_id=provider_id,
+                    hospital_id=hospital_id,
+                    db=mock_db,
+                    redis=mock_redis,
+                    kms=kms_provider,
+                    session_binding="session-binding",
+                )
+            assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio

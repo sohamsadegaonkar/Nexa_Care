@@ -121,6 +121,23 @@ async def validate_consent_for_patient(
             detail="Active consent token required or expired.",
         )
 
+    if getattr(capability, "is_break_glass", False):
+        # Break-glass capabilities are scoped to whole clinical categories
+        # with their own audit/filtering contract and may only be used
+        # against the dedicated emergency-summary endpoint -- never any
+        # routine require_consent()-gated view (summary, timeline, record).
+        await append_audit_log_or_503(
+            actor_uid=actor_uid,
+            event_type="CONSENT_GATED_DECRYPT_FAILED",
+            target_id=target_id,
+            status="BREAK_GLASS_NOT_VALID_FOR_ROUTINE_ENDPOINT",
+            metadata={"purpose": purpose, "hospital_id": hospital_id},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "BREAK_GLASS_CAPABILITY_NOT_VALID_HERE"},
+        )
+
     approved_request_id = getattr(capability, "request_id", None)
     approved_purpose = getattr(capability, "purpose", purpose)
     audit_metadata = {

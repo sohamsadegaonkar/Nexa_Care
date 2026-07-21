@@ -1,4 +1,3 @@
-
 import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface RoutineConsentIssueRequest {
@@ -172,7 +171,7 @@ export async function requestBreakGlassConsent(
   patientId: string,
   reasonCode: BreakGlassReasonCode,
   justification: string
-): Promise<string> {
+): Promise<BreakGlassConsentIssueResponse> {
   const normalizedPatientId = patientId.trim()
   const normalizedReasonCode = reasonCode.trim()
   const normalizedJustification = justification.trim()
@@ -196,7 +195,7 @@ export async function requestBreakGlassConsent(
       justification: normalizedJustification,
     })
 
-    return response.data.consent_token
+    return response.data
   } catch (error: unknown) {
     if (error instanceof ApiError) {
       const status = error.status

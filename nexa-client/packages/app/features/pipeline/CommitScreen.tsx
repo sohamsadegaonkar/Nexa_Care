@@ -24,7 +24,7 @@
  * - Session guard: must be authenticated.
  * - Backend enforces that no `needs_review` fields remain (HTTP 409).
  *
- * Route: /doctor/pipeline/commit/[jobId]?consent_token=...&patient_id=...
+ * Route: /doctor/pipeline/commit/[jobId]?workflow_id=...&patient_id=...
  */
 
 'use client'
@@ -42,6 +42,7 @@ import {
   ApiError,
 } from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
+import { useCapability } from '../../services/capabilityStore'
 
 type CommitState = 'idle' | 'committing' | 'success' | 'error'
 
@@ -114,7 +115,9 @@ export function CommitScreen() {
   // jobId comes from the [jobId] route param (camelCase); snake_case only in API payloads
   const jobId = (routeParams.jobId as string) ?? ''
   const patientId = searchParams.get('patient_id') ?? ''
-  const consentToken = searchParams.get('consent_token') ?? ''
+  const workflowId = searchParams.get('workflow_id')
+  const capability = useCapability(workflowId)
+  const consentToken = capability?.token ?? ''
 
   const [job, setJob] = useState<ExtractionJobStatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -145,7 +148,9 @@ export function CommitScreen() {
       <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
         <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
         <Paragraph color="$color10" fontSize="$3">
-          You must have an active consent grant to commit pipeline fields.
+          {workflowId
+            ? 'Access session expired — request access again.'
+            : 'You must have an active consent grant to commit pipeline fields.'}
         </Paragraph>
         <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
           Request Consent
@@ -423,7 +428,7 @@ export function CommitScreen() {
             size="$3"
             onPress={() =>
               router.push(
-                `/doctor/pipeline/review/${jobId}?patient_id=${patientId}&consent_token=${consentToken}`,
+                `/doctor/pipeline/review/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`,
               )
             }
           >
@@ -554,7 +559,7 @@ export function CommitScreen() {
           chromeless
           onPress={() =>
             router.push(
-              `/doctor/pipeline/review/${jobId}?patient_id=${patientId}&consent_token=${consentToken}`,
+              `/doctor/pipeline/review/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`,
             )
           }
         >

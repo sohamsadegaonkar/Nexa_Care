@@ -78,7 +78,7 @@ async def test_issue_break_glass_happy_path():
             reason_code=reason_code,
             db=db,
             hospital_id="44444444-4444-4444-8444-444444444444",
-            scope=["clinical.allergies"],
+            scope=["allergies"],
             reason_code_version="v1",
             session_binding="session-binding",
             mfa_verified_at=datetime.now(timezone.utc),
@@ -88,7 +88,7 @@ async def test_issue_break_glass_happy_path():
         assert mock_issue.called
         assert mock_issue.call_args.kwargs["is_break_glass"] is True
         assert mock_issue.call_args.kwargs["ttl_seconds"] == 900
-        assert mock_issue.call_args.kwargs["scope"] == ["clinical.allergies"]
+        assert mock_issue.call_args.kwargs["scope"] == ["allergies"]
         assert mock_issue.call_args.kwargs["assurance_level"] == AssuranceLevel.BREAK_GLASS
         assert mock_audit.await_count == 2
 
@@ -120,7 +120,7 @@ async def test_issue_break_glass_enforces_15_min_ttl():
             reason_code="Emergency",
             db=db,
             hospital_id="44444444-4444-4444-8444-444444444444",
-            scope=["clinical.allergies"],
+            scope=["allergies"],
             reason_code_version="v1",
             session_binding="session-binding",
             mfa_verified_at=datetime.now(timezone.utc),

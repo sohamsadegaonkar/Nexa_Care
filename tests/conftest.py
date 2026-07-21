@@ -345,6 +345,7 @@ def override_deps(request, mock_db, mock_redis):
          patch("app.observability.audit_ledger.append_audit_log", return_value=True),
          patch("app.services.consent_engine.append_audit_log_or_503", return_value=None),
          patch("app.services.consent_engine.append_audit_log", return_value=True),
+         patch("app.services.crypto_kms.EncryptionProvider._check_erasure_registry", new=AsyncMock(return_value=None)),
     ]
     if "test_push_rate_limits" not in str(request.node.nodeid):
         patches.append(patch("app.api.v2.assurance_routes.push_limiter.check_and_acquire", return_value=None))

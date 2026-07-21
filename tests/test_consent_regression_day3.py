@@ -139,8 +139,10 @@ async def test_break_glass_lifecycle(client, mock_provider):
                             json={"consent_token": token, "revocation_reason": "S"},
                             headers={"Authorization": "Bearer session"})
     assert resp.status_code in {200, 404}
-    assert test_client.get(f"/api/v2/consent/validate?consent_token={token}&patient_id={p_id}", 
-                           headers={"Authorization": "Bearer session"}).status_code == 401
+    assert test_client.get(
+        f"/api/v2/consent/validate?patient_id={p_id}",
+        headers={"Authorization": "Bearer session", "X-Consent-Token": token},
+    ).status_code == 401
 
 @pytest.mark.asyncio
 async def test_v1_lifecycle(client):
@@ -169,8 +171,33 @@ async def test_v1_lifecycle(client):
 @pytest.mark.asyncio
 async def test_expiry_and_failure(client):
     test_client, redis = client
-    assert test_client.get("/api/v2/consent/validate?consent_token=expired&patient_id=p", 
-                           headers={"Authorization": "Bearer session"}).status_code == 401
+    assert test_client.get(
+        "/api/v2/consent/validate?patient_id=p",
+        headers={"Authorization": "Bearer session", "X-Consent-Token": "expired"},
+    ).status_code == 401
     with patch.object(redis, 'get', side_effect=RuntimeError("fail")):
-        assert test_client.get("/api/v2/consent/validate?consent_token=any&patient_id=p", 
-                               headers={"Authorization": "Bearer session"}).status_code == 503
+        assert test_client.get(
+            "/api/v2/consent/validate?patient_id=p",
+            headers={"Authorization": "Bearer session", "X-Consent-Token": "any"},
+        ).status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_legacy_url_query_token_is_retired(client):
+    """DEFECT 3: a consent_token in the query string must be rejected
+    outright with 410 CONSENT_TOKEN_IN_URL_RETIRED, never consumed."""
+    test_client, redis = client
+    resp = test_client.get(
+        "/api/v2/consent/validate?consent_token=some-token&patient_id=p",
+        headers={"Authorization": "Bearer session"},
+    )
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["error_code"] == "CONSENT_TOKEN_IN_URL_RETIRED"
+
+    # Even when a valid header token is also present, a query-string token
+    # still hard-fails the request rather than being silently ignored.
+    resp2 = test_client.get(
+        "/api/v2/consent/validate?consent_token=some-token&patient_id=p",
+        headers={"Authorization": "Bearer session", "X-Consent-Token": "header-token"},
+    )
+    assert resp2.status_code == 410

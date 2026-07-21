@@ -23,21 +23,27 @@ class ScalarResult:
     def scalar_one_or_none(self):
         return self.value
 
+    def scalar_one(self):
+        if self.value is None:
+            raise AssertionError("scalar_one() called with no value")
+        return self.value
 
-class MappingResult:
-    def __init__(self, rows):
-        self.rows = rows
+
+class MappingFirstResult:
+    def __init__(self, row):
+        self.row = row
 
     def mappings(self):
         return self
 
-    def all(self):
-        return list(self.rows)
+    def first(self):
+        return self.row
 
 
 class AuditStore:
     def __init__(self):
         self.rows: list[dict] = []
+        self.heads: dict[str, dict] = {}
         self.lock = asyncio.Lock()
 
 
@@ -47,19 +53,21 @@ class Connection:
 
     async def execute(self, statement, params=None):
         sql = str(statement)
-        if "pg_advisory_xact_lock" in sql:
-            return ScalarResult()
-        if "idempotency_key = :idempotency_key" in sql:
+        if "FOR UPDATE" in sql and "audit_chain_heads" in sql:
+            return MappingFirstResult(self.store.heads.get(params["chain_partition"]))
+        if "idempotency_key = :idempotency_key" in sql and "audit_ledger" in sql:
             match = next(
                 (row["record_hash"] for row in self.store.rows
-                 if row.get("idempotency_key") == params["idempotency_key"]),
+                 if row.get("chain_scope") == params["chain_partition"]
+                 and row.get("idempotency_key") == params["idempotency_key"]),
                 None,
             )
             return ScalarResult(match)
-        if "SELECT audit_id, previous_hash, record_hash" in sql:
-            return MappingResult(self.store.rows)
         if "INSERT INTO public.audit_ledger" in sql:
-            if any(row["previous_hash"] == params["previous_hash"] for row in self.store.rows):
+            if any(
+                row["chain_scope"] == params["chain_scope"] and row["previous_hash"] == params["previous_hash"]
+                for row in self.store.rows
+            ):
                 error = RuntimeError("23505 duplicate previous_hash")
                 error.code = "23505"
                 raise error
@@ -68,6 +76,27 @@ class Connection:
             row["payload"] = json.loads(row["details"])
             row["details"] = row["payload"]
             self.store.rows.append(row)
+            return ScalarResult(row["audit_id"])
+        if "INSERT INTO public.audit_chain_heads" in sql:
+            self.store.heads[params["chain_partition"]] = {
+                "chain_partition": params["chain_partition"],
+                "head_event_id": params["head_event_id"],
+                "head_hash": params["head_hash"],
+                "sequence_number": params["sequence_number"],
+                "protocol_version": params["protocol_version"],
+                "healthy": True,
+            }
+            return ScalarResult()
+        if "UPDATE public.audit_chain_heads" in sql and "healthy = FALSE" in sql:
+            head = self.store.heads.get(params["chain_partition"])
+            if head is not None:
+                head["healthy"] = False
+            return ScalarResult()
+        if "UPDATE public.audit_chain_heads" in sql:
+            head = self.store.heads[params["chain_partition"]]
+            head["head_event_id"] = params["head_event_id"]
+            head["head_hash"] = params["head_hash"]
+            head["sequence_number"] = params["sequence_number"]
             return ScalarResult()
         raise AssertionError(sql)
 
@@ -112,10 +141,14 @@ async def test_first_and_second_events_form_genesis_chain():
         trace_id_var.reset(token)
 
     assert store.rows[0]["previous_hash"] == "GENESIS"
+    assert store.rows[0]["sequence_number"] == 1
     assert isinstance(store.rows[0]["event_timestamp"], datetime.datetime)
     assert store.rows[1]["previous_hash"] == store.rows[0]["record_hash"]
+    assert store.rows[1]["sequence_number"] == 2
     for row in store.rows:
         assert row["record_hash"] == _calculate_hash(row["payload"], row["previous_hash"])
+    assert store.heads["global"]["head_hash"] == store.rows[-1]["record_hash"]
+    assert store.heads["global"]["sequence_number"] == 2
 
 
 @pytest.mark.asyncio
@@ -130,60 +163,51 @@ async def test_concurrent_writers_do_not_fork_chain():
     assert len(store.rows) == 10
     assert len({row["previous_hash"] for row in store.rows}) == 10
     assert store.rows[0]["previous_hash"] == "GENESIS"
+    assert {row["sequence_number"] for row in store.rows} == set(range(1, 11))
     for previous, current in zip(store.rows, store.rows[1:]):
         assert current["previous_hash"] == previous["record_hash"]
-
-
-def _ledger_row(payload: dict, previous_hash: str, audit_id: int) -> dict:
-    return {
-        "audit_id": audit_id,
-        "previous_hash": previous_hash,
-        "record_hash": _calculate_hash(payload, previous_hash),
-        "details": payload,
-        "protocol_version": payload.get("protocol_version", 2),
-        "idempotency_key": None,
-    }
+    assert store.heads["global"]["sequence_number"] == 10
 
 
 @pytest.mark.asyncio
-async def test_live_append_rejects_two_tip_fork_and_emits_metric():
-    root_payload = {"protocol_version": 2, "event": "ROOT"}
-    root = _ledger_row(root_payload, "GENESIS", 1)
-    left = _ledger_row({"protocol_version": 2, "event": "LEFT"}, root["record_hash"], 2)
-    right = _ledger_row({"protocol_version": 2, "event": "RIGHT"}, root["record_hash"], 3)
+async def test_two_partitions_never_block_or_interleave_sequences():
     store = AuditStore()
-    store.rows.extend([root, left, right])
+    with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
+        assert await append_audit_log("actor-a", "EVENT", "target-a", "SUCCESS", chain_partition="hospital-a")
+        assert await append_audit_log("actor-b", "EVENT", "target-b", "SUCCESS", chain_partition="hospital-b")
+        assert await append_audit_log("actor-a2", "EVENT", "target-a2", "SUCCESS", chain_partition="hospital-a")
+
+    a_rows = [r for r in store.rows if r["chain_scope"] == "hospital-a"]
+    b_rows = [r for r in store.rows if r["chain_scope"] == "hospital-b"]
+    assert [r["sequence_number"] for r in a_rows] == [1, 2]
+    assert [r["sequence_number"] for r in b_rows] == [1]
+    assert a_rows[1]["previous_hash"] == a_rows[0]["record_hash"]
+    assert b_rows[0]["previous_hash"] == "GENESIS"
+
+
+@pytest.mark.asyncio
+async def test_unhealthy_partition_fails_closed_without_scanning_history():
+    store = AuditStore()
+    store.heads["global"] = {
+        "chain_partition": "global", "head_event_id": 1, "head_hash": "deadbeef" * 8,
+        "sequence_number": 1, "protocol_version": 2, "healthy": False,
+    }
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)), patch(
         "app.observability.audit_ledger.AUDIT_LEDGER_INTEGRITY_FAILURES"
     ) as metric:
-        assert await append_audit_log("actor", "AFTER_FORK", "target", "SUCCESS") is False
+        assert await append_audit_log("actor", "AFTER_MARK_UNHEALTHY", "target", "SUCCESS") is False
     metric.labels.assert_called_once()
-    assert len(store.rows) == 3
+    assert len(store.rows) == 0
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mutation", ["missing_predecessor", "altered_payload"])
-async def test_live_append_rejects_invalid_existing_chain(mutation):
-    payload = {"protocol_version": 2, "event": "ROOT"}
-    row = _ledger_row(payload, "GENESIS", 1)
-    if mutation == "missing_predecessor":
-        row["previous_hash"] = "absent"
-    else:
-        row["details"] = {**payload, "event": "ALTERED"}
-    store = AuditStore()
-    store.rows.append(row)
-    with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
-        assert await append_audit_log("actor", "EVENT", "target", "SUCCESS") is False
-
-
-@pytest.mark.asyncio
-async def test_global_scope_orders_tenant_events_without_independent_heads():
+async def test_verifier_marking_partition_unhealthy_blocks_subsequent_appends():
     store = AuditStore()
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
-        assert await append_audit_log("actor-a", "READ", "target-a", "SUCCESS", metadata={"hospital_id": "tenant-a"})
-        assert await append_audit_log("actor-b", "READ", "target-b", "SUCCESS", metadata={"hospital_id": "tenant-b"})
-    assert store.rows[1]["previous_hash"] == store.rows[0]["record_hash"]
-    assert {row["chain_scope"] for row in store.rows} == {"global"}
+        assert await append_audit_log("actor", "OK_EVENT", "target", "SUCCESS")
+        store.heads["global"]["healthy"] = False
+        assert await append_audit_log("actor", "SHOULD_BE_REJECTED", "target", "SUCCESS") is False
+    assert len(store.rows) == 1
 
 
 @pytest.mark.asyncio
@@ -220,6 +244,7 @@ async def test_unique_previous_hash_conflict_retries_with_same_payload_identity(
     second = append_once.await_args_list[1].kwargs
     assert first["timestamp"] == second["timestamp"]
     assert first["trace_id"] == second["trace_id"]
+    assert first["chain_partition"] == "global"
 
 
 @pytest.mark.asyncio

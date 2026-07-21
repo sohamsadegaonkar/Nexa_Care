@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import secrets
@@ -21,6 +20,7 @@ from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.pipeline import ExtractedFieldRecord, ExtractionJob, ReviewQueueItem
 from app.models.shards import NexaVault
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
 from app.services.document_storage import DocumentStorageError, get_document_storage
 from app.services.crypto_kms import EncryptedField, EncryptionError, get_encryption_provider
 
@@ -218,10 +218,13 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job.error_code = "DOCUMENT_STORAGE_UNAVAILABLE"
         job.retryable = False
     except Exception as exc:
-        logger.exception(json.dumps({
-            "event": "extraction_job_internal_failure", "job_id": str(job.id),
-            "request_id": job.request_id, "exception_type": type(exc).__name__,
-        }))
+        log_safe_exception(
+            logger,
+            exc,
+            subsystem="extraction",
+            operation="extraction_job_processing",
+            fields={"job_id": str(job.id), "request_id": job.request_id},
+        )
         job.status = "extraction_failed_terminal"
         job.error_code = "EXTRACTION_INTERNAL_ERROR"
         job.retryable = False

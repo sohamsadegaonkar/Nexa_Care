@@ -23,6 +23,7 @@ import {
   BreakGlassConsentError,
   type BreakGlassReasonCode,
 } from '../../api/consent'
+import { generateWorkflowId, setCapability } from '../../services/capabilityStore'
 
 const BREAK_GLASS_PURPOSE = 'EMERGENCY'
 const DEFAULT_REASON_CODE: BreakGlassReasonCode = 'UNCONSCIOUS_PATIENT'
@@ -319,15 +320,24 @@ export function SearchScreen() {
     setOverrideErrorMessage(null)
 
     try {
-      const consentToken = await requestBreakGlassConsent(
+      const grant = await requestBreakGlassConsent(
         selectedPatient.patient_id,
         reasonCode,
         freeText
       )
+      const workflowId = generateWorkflowId()
+      setCapability({
+        workflowId,
+        patientId: selectedPatient.patient_id,
+        token: grant.consent_token,
+        purpose: BREAK_GLASS_PURPOSE,
+        scope: grant.approved_scope,
+        expiresAt: grant.expires_at ?? new Date(Date.now() + 15 * 60 * 1000).toISOString(),
+      })
       router.push(
-        `/patient/${encodeURIComponent(selectedPatient.patient_id)}?consentToken=${encodeURIComponent(
-          consentToken
-        )}&purpose=${BREAK_GLASS_PURPOSE}`
+        `/patient/${encodeURIComponent(selectedPatient.patient_id)}?workflow_id=${encodeURIComponent(
+          workflowId
+        )}`
       )
     } catch (error: unknown) {
       if (error instanceof BreakGlassConsentError) {

@@ -1,4 +1,3 @@
-
 import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export type ConsentAssurance =
@@ -109,11 +108,13 @@ export async function validateConsent(
   patientUuid?: string
 ): Promise<ConsentResponse | null> {
   try {
-    const params = new URLSearchParams({ consent_token: consentToken })
-    if (patientUuid) params.append('patient_uuid', patientUuid)
+    const params = new URLSearchParams()
+    if (patientUuid) params.append('patient_id', patientUuid)
+    const query = params.toString()
 
     const response = await apiClient.get<ConsentResponse>(
-      `/api/v2/consent/validate?${params.toString()}`
+      `/api/v2/consent/validate${query ? `?${query}` : ''}`,
+      { headers: { 'X-Consent-Token': consentToken } }
     )
     return response.data
   } catch {

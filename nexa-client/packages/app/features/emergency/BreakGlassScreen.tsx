@@ -45,13 +45,13 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
     setError(null)
 
     try {
-      const token = await requestBreakGlassConsent(
+      const result = await requestBreakGlassConsent(
         patientId.trim(),
         reasonCode,
         freeText.trim()
       )
       setSuccess(true)
-      onConsentIssued?.(patientId.trim(), token)
+      onConsentIssued?.(patientId.trim(), result.consent_token)
     } catch (err: any) {
       if (err instanceof BreakGlassConsentError) {
         if (err.status === 428) {

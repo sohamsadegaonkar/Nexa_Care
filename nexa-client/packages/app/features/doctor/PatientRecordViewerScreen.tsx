@@ -23,7 +23,7 @@ import { Card, Text, YStack, Button, XStack, Separator, Spinner, Paragraph, Scro
 import { AlertTriangle, Clock, ShieldCheck, FileText, Heart, Pill, FlaskConical, AlertOctagon, Activity } from '@tamagui/lucide-icons'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { NexaApiClient } from '../../utils/apiClient'
+import { NexaApiClient, type EmergencySummaryResponse } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
 
 // ── Data types ──────────────────────────────────────────────────────────────
@@ -163,6 +163,68 @@ function ProvenanceBadge({ confidence, source, verified }: {
   )
 }
 
+function isBreakGlassGrant(purpose?: string): boolean {
+  return purpose === 'EMERGENCY'
+}
+
+/** Maps the category-filtered emergency-summary response into the same
+ * shape the routine /summary rendering already understands, so a
+ * break-glass grant only ever shows the categories it was actually
+ * granted -- everything else stays empty, not fetched. */
+function mapEmergencySummary(data: EmergencySummaryResponse): PatientSummary {
+  const categories = data.categories ?? {}
+
+  const allergiesCat = categories['allergies']
+  const medsCat = categories['active_medications']
+  const vitalsCat = categories['vitals']
+  const labsCat = categories['lab_results']
+  const bloodGroupCat = categories['blood_group']
+
+  return {
+    patient_id: data.patient_id,
+    pii: { patient_name: 'Emergency access (identity not requested)', phone: '' },
+    clinical_summary: {
+      // Blood group is only ever populated once a real verified source
+      // exists on the backend -- otherwise it must stay absent, never a
+      // fabricated/default value.
+      blood_group: bloodGroupCat?.verified ? String(bloodGroupCat.value ?? '') : undefined,
+      allergies: ((allergiesCat?.items as any[]) ?? []).map(
+        (a) => `${a.allergen} (${a.severity})`
+      ),
+      chronic_conditions: [],
+      active_medications: ((medsCat?.items as any[]) ?? []).map((m) => ({
+        name: m.name,
+        dosage: m.strength,
+        frequency: m.frequency,
+        source: m.source,
+        confidence: m.confidence,
+        verified: m.verified,
+      })),
+      latest_vitals: ((vitalsCat?.items as any[]) ?? []).map((v) => ({
+        type: v.type,
+        value: v.value,
+        unit: v.unit,
+        recorded_at: v.recorded_at,
+        source: v.source,
+        confidence: v.confidence,
+        verified: v.verified,
+      })),
+      recent_labs: ((labsCat?.items as any[]) ?? []).map((l) => ({
+        test_name: l.test_name,
+        value: l.value,
+        unit: l.unit,
+        reference_range: l.reference_range,
+        is_abnormal: l.is_abnormal,
+        recorded_at: l.recorded_at,
+        source: l.source,
+        confidence: l.confidence,
+        verified: l.verified,
+      })),
+    },
+    shard_scope: 'clinical',
+  }
+}
+
 // ── Mask token for display ──────────────────────────────────────────────────
 
 function maskToken(token: string): string {
@@ -232,6 +294,14 @@ export function PatientRecordViewerScreen() {
     }
 
     try {
+      if (isBreakGlassGrant(accessGrant.purpose)) {
+        const data = await NexaApiClient.getEmergencySummary(patientId, accessGrant.consentToken)
+        setSummary(mapEmergencySummary(data))
+        setTimeline([]) // Emergency summary has no timeline; the routine timeline endpoint rejects break-glass tokens.
+        setViewerState('active')
+        return
+      }
+
       const data = await NexaApiClient.getPatientSummary(
         patientId, accessGrant.consentToken, hospitalId, 'clinical_summary',
       ) as any
@@ -396,6 +466,23 @@ export function PatientRecordViewerScreen() {
           <Text fontSize={26} fontWeight="900" color="$color12">Patient Record</Text>
           <Button size="$3" chromeless onPress={() => router.push('/doctor/dashboard')}>← Dashboard</Button>
         </XStack>
+
+        {/* Emergency access banner — break-glass grants only */}
+        {isBreakGlassGrant(accessGrant?.purpose) && (
+          <Card backgroundColor="$red3" borderWidth={2} borderColor="$red9" padding="$3">
+            <XStack alignItems="center" gap="$2">
+              <AlertOctagon size={20} color="$red10" />
+              <YStack>
+                <Text color="$red10" fontSize={15} fontWeight="800">
+                  EMERGENCY (BREAK-GLASS) ACCESS
+                </Text>
+                <Text color="$red10" fontSize={12}>
+                  Showing only the clinical categories approved for this emergency grant. This access is audited.
+                </Text>
+              </YStack>
+            </XStack>
+          </Card>
+        )}
 
         {/* Consent expiry countdown bar */}
         {secondsRemaining !== null && (

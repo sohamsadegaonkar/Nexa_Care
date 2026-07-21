@@ -13,7 +13,12 @@ from app.core.rate_limiter import atomic_fixed_window
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.observability.security_metrics import POLICY_UPDATES
-from app.services.policy_service import PolicyService
+from app.services.policy_service import (
+    PolicyIdempotencyKeyReused,
+    PolicyService,
+    PolicyValidationError,
+    PolicyVersionConflict,
+)
 
 logger = logging.getLogger("nexa_security")
 
@@ -21,6 +26,8 @@ router = APIRouter(prefix="/api/v2/patient", tags=["policy"])
 
 class PolicyUpdateRequest(BaseModel):
     consent_assurance_policy: str
+    idempotency_key: str
+    expected_version: int
 
 ALLOWED_POLICY_ROLES = {"clinician", "admin"}
 
@@ -51,7 +58,9 @@ async def get_patient_policy(
         x_consent_token=x_consent_token,
     )
     service = PolicyService(db)
-    policy = await service.get_policy(patient_uuid)
+    policy_row = await service.get_policy_row(patient_uuid)
+    policy = policy_row.consent_assurance_policy if policy_row else "standard"
+    version = policy_row.version if policy_row else 0
     await append_audit_log(
         actor_uid=provider.actor_uid,
         event_type="PATIENT_POLICY_READ_SUCCESS",
@@ -59,7 +68,7 @@ async def get_patient_policy(
         status="SUCCESS",
         metadata={"hospital_id": str(provider.hospital_id)},
     )
-    return {"patient_uuid": str(patient_uuid), "consent_assurance_policy": policy}
+    return {"patient_uuid": str(patient_uuid), "consent_assurance_policy": policy, "version": version}
 
 @router.put("/{patient_uuid}/policy")
 async def update_patient_policy(
@@ -133,29 +142,37 @@ async def update_patient_policy(
             detail={"error_code": "POLICY_SECURITY_CONTROL_UNAVAILABLE", "retryable": True},
         ) from exc
 
-    # Get current policy for audit
     service = PolicyService(db)
-    old_policy = await service.get_policy(patient_uuid)
-
-    # Update policy
-    updated = await service.set_policy(patient_uuid, payload.consent_assurance_policy)
-
     changed_by_role = next(iter(roles & ALLOWED_POLICY_ROLES))
 
-    # Audit log the change
-    await append_audit_log(
-        actor_uid=provider.actor_uid,
-        event_type="PATIENT_POLICY_CHANGED",
-        target_id=str(patient_uuid),
-        status="SUCCESS",
-        metadata={
-            "old_policy": old_policy,
-            "new_policy": updated,
-            "changed_by_role": changed_by_role,
-            "via_simulator": is_simulator,
-            "environment": runtime.value,
-        },
-    )
+    # DEFECT 6: one transaction -- CAS-update the policy, insert the
+    # audit-outbox event, commit. No separate append_audit_log() call here;
+    # the outbox processor is the only thing that appends this event to the
+    # immutable ledger, so it is never written twice.
+    try:
+        result = await service.set_policy_atomic(
+            patient_uuid,
+            payload.consent_assurance_policy,
+            expected_version=payload.expected_version,
+            idempotency_key=payload.idempotency_key,
+            actor_id=provider.actor_uid,
+            tenant_id=str(provider.hospital_id),
+            chain_partition=str(provider.hospital_id),
+        )
+    except PolicyValidationError as err:
+        raise HTTPException(
+            status_code=422, detail={"error_code": "POLICY_REQUEST_INVALID", "message": str(err)}
+        ) from err
+    except PolicyVersionConflict as err:
+        raise HTTPException(
+            status_code=409, detail={"error_code": "POLICY_VERSION_CONFLICT", "message": str(err)}
+        ) from err
+    except PolicyIdempotencyKeyReused as err:
+        raise HTTPException(
+            status_code=409, detail={"error_code": "IDEMPOTENCY_KEY_REUSED", "message": str(err)}
+        ) from err
+
+    updated = result.consent_assurance_policy
 
     # Prometheus metric
     POLICY_UPDATES.labels(
@@ -164,4 +181,9 @@ async def update_patient_policy(
         via_simulator=str(is_simulator).lower(),
     ).inc()
 
-    return {"patient_uuid": str(patient_uuid), "consent_assurance_policy": updated}
+    return {
+        "patient_uuid": str(patient_uuid),
+        "consent_assurance_policy": updated,
+        "version": result.version,
+        "idempotent_replay": result.idempotent_replay,
+    }

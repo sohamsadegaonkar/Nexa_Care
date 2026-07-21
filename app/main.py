@@ -83,6 +83,7 @@ from app.core.config import (
 )
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
 from app.services.crypto_kms import get_encryption_provider, PatientDataErased
+from app.security.erasure_registry import ErasureRegistryUnavailable
 from prometheus_client import Counter, Histogram, make_asgi_app
 
 from app.core.database import get_async_engine, get_db_session
@@ -253,6 +254,19 @@ async def patient_data_erased_handler(request: Request, exc: PatientDataErased):
             "error_code": "PATIENT_DATA_ERASED",
             "message": "Patient encrypted data is no longer available.",
             "patient_id": exc.patient_id,
+        },
+    )
+
+
+@app.exception_handler(ErasureRegistryUnavailable)
+async def erasure_registry_unavailable_handler(request: Request, exc: ErasureRegistryUnavailable):
+    """A registry query failure is never treated as 'not erased' -- fail
+    closed with a 503 rather than silently permitting decryption."""
+    return JSONResponse(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        content={
+            "error_code": "ERASURE_REGISTRY_UNAVAILABLE",
+            "message": "Could not verify erasure status; access denied.",
         },
     )
 
