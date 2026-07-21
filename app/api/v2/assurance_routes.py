@@ -5,6 +5,8 @@ Wires the refactored AssuranceService into the backend.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 import inspect
 import os
@@ -200,6 +202,7 @@ async def register_device_key(
         public_key = serialization.load_der_public_key(device_public_key)
     except (binascii.Error, UnsupportedAlgorithm, ValueError):
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
             event_type="DEVICE_KEY_REGISTRATION",
             target_id=patient_id,
@@ -213,6 +216,7 @@ async def register_device_key(
         and isinstance(public_key.curve, ec.SECP256R1)
     ):
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
             event_type="DEVICE_KEY_REGISTRATION",
             target_id=patient_id,
@@ -228,6 +232,7 @@ async def register_device_key(
     )
     if not updated:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
             event_type="DEVICE_KEY_REGISTRATION",
             target_id=patient_id,
@@ -240,6 +245,7 @@ async def register_device_key(
         )
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=patient_id,
         event_type="DEVICE_KEY_REGISTRATION",
         target_id=patient_id,

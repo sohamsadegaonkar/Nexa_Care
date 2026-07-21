@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -150,6 +152,7 @@ async def export_fhir_bundle(
 
     try:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
             actor_uid=provider.actor_uid,
             event_type="FHIR_BUNDLE_EXPORTED",
             target_id=patient_id_text,

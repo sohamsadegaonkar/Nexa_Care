@@ -13,6 +13,12 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from app.observability.audit_ledger import append_audit_log
+from app.security.audit_context import AuditContext, AuditDomain
+
+AUDIT_CONTEXT = AuditContext.for_tenant(
+    tenant_id="test-tenant",
+    domain=AuditDomain.CONSENT,
+)
 
 # List of all expected event types after Sprint 2
 EXPECTED_EVENTS = {
@@ -161,6 +167,7 @@ async def test_audit_event_writing_and_chaining():
     append_once = AsyncMock(return_value={})
     with patch("app.observability.audit_ledger._append_once", append_once):
         success = await append_audit_log(
+            audit_context=AUDIT_CONTEXT,
             actor_uid="test-actor",
             event_type="CONSENT_GRANT_SUCCESS",
             target_id="test-target",
@@ -182,6 +189,7 @@ async def test_all_expected_events_can_be_written(event_type):
     """Smoke test: verify append_audit_log doesn't crash for any expected event type."""
     with patch("app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})):
         success = await append_audit_log(
+            audit_context=AUDIT_CONTEXT,
             actor_uid="system",
             event_type=event_type,
             target_id="unit-test",

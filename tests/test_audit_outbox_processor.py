@@ -34,7 +34,7 @@ def _row(**overrides):
         "id": uuid.uuid4(),
         "event_id": uuid.uuid4(),
         "idempotency_key": "idem-" + uuid.uuid4().hex[:8],
-        "chain_partition": "global",
+        "chain_partition": "tenant:test-tenant:policy",
         "event_type": "PATIENT_POLICY_CHANGED",
         "actor_id": "doctor-1",
         "tenant_id": None,
@@ -74,7 +74,7 @@ async def test_empty_queue_is_a_no_op():
 async def test_successful_events_are_appended_and_marked_processed():
     rows = [_row(), _row()]
     db = _FakeDB(rows)
-    with patch("app.services.audit_outbox_processor.append_audit_log", AsyncMock(return_value=True)) as mock_append:
+    with patch("app.services.audit_outbox_processor.append_audit_log_for_stored_partition", AsyncMock(return_value=True)) as mock_append:
         result = await process_outbox_batch(db)
 
     assert result["processed"] == 2
@@ -82,7 +82,7 @@ async def test_successful_events_are_appended_and_marked_processed():
     assert result["dead_lettered"] == 0
     assert mock_append.await_count == 2
     for call in mock_append.await_args_list:
-        assert call.kwargs["chain_partition"] == "global"
+        assert call.kwargs["stored_partition"] == "tenant:test-tenant:policy"
         assert call.kwargs["idempotency_key"]
 
     processed_sql = [sql for sql, _ in db.executed if "status = 'processed'" in sql]
@@ -93,7 +93,7 @@ async def test_successful_events_are_appended_and_marked_processed():
 async def test_failed_event_below_max_attempts_is_retried_with_backoff():
     row = _row(attempt_count=0)
     db = _FakeDB([row])
-    with patch("app.services.audit_outbox_processor.append_audit_log", AsyncMock(side_effect=RuntimeError("db down"))):
+    with patch("app.services.audit_outbox_processor.append_audit_log_for_stored_partition", AsyncMock(side_effect=RuntimeError("db down"))):
         result = await process_outbox_batch(db)
 
     assert result["retried"] == 1
@@ -108,7 +108,7 @@ async def test_failed_event_below_max_attempts_is_retried_with_backoff():
 async def test_failed_event_at_max_attempts_is_dead_lettered():
     row = _row(attempt_count=DEFAULT_MAX_ATTEMPTS - 1)
     db = _FakeDB([row])
-    with patch("app.services.audit_outbox_processor.append_audit_log", AsyncMock(side_effect=RuntimeError("permanent"))):
+    with patch("app.services.audit_outbox_processor.append_audit_log_for_stored_partition", AsyncMock(side_effect=RuntimeError("permanent"))):
         result = await process_outbox_batch(db)
 
     assert result["dead_lettered"] == 1
@@ -128,7 +128,7 @@ async def test_one_bad_event_does_not_stop_the_batch():
         return True
 
     db = _FakeDB([bad_row, good_row])
-    with patch("app.services.audit_outbox_processor.append_audit_log", AsyncMock(side_effect=append_side_effect)):
+    with patch("app.services.audit_outbox_processor.append_audit_log_for_stored_partition", AsyncMock(side_effect=append_side_effect)):
         result = await process_outbox_batch(db)
 
     assert result["processed"] == 1
@@ -141,12 +141,32 @@ async def test_claim_uses_skip_locked_for_multi_instance_safety():
     await process_outbox_batch(db)
     claim_sql = [sql for sql, _ in db.executed if "SELECT" in sql][0]
     assert "FOR UPDATE SKIP LOCKED" in claim_sql
+    assert "lease_expires_at < now()" in claim_sql
+    assert "processing_started_at = now()" in claim_sql
+    assert "worker_id = :worker_id" in claim_sql
+
+
+@pytest.mark.asyncio
+async def test_terminal_state_updates_clear_every_lease_field():
+    processed = str(__import__("app.services.audit_outbox_processor", fromlist=["_MARK_PROCESSED_SQL"])._MARK_PROCESSED_SQL)
+    retry = str(__import__("app.services.audit_outbox_processor", fromlist=["_MARK_RETRY_SQL"])._MARK_RETRY_SQL)
+    dead = str(__import__("app.services.audit_outbox_processor", fromlist=["_MARK_DEAD_LETTER_SQL"])._MARK_DEAD_LETTER_SQL)
+    for sql in (processed, retry, dead):
+        assert "processing_started_at = NULL" in sql
+        assert "lease_expires_at = NULL" in sql
+        assert "worker_id = NULL" in sql
 
 
 @pytest.mark.asyncio
 async def test_health_reports_only_aggregate_backlog_counts():
     db = _FakeDB([])
-    db._claim_rows = [{"dead_letter_backlog": 2, "stalled_pending_events": 3}]
+    db._claim_rows = [{
+        "pending_count": 4,
+        "dead_letter_backlog": 2,
+        "expired_lease_count": 3,
+        "oldest_pending_age_seconds": 61.5,
+        "oldest_expired_lease_age_seconds": 12.25,
+    }]
 
     # The health query is not the claim query, so provide its aggregate result.
     async def execute(statement, params=None):
@@ -155,8 +175,11 @@ async def test_health_reports_only_aggregate_backlog_counts():
 
     db.execute = execute
     assert await get_outbox_health(db) == {
+        "pending_count": 4,
         "dead_letter_backlog": 2,
-        "stalled_pending_events": 3,
+        "expired_lease_count": 3,
+        "oldest_pending_age_seconds": 61.5,
+        "oldest_expired_lease_age_seconds": 12.25,
     }
 
 
@@ -173,7 +196,7 @@ async def test_forever_worker_survives_batch_failure_and_stops_on_signal():
 
     attempts = 0
 
-    async def batch(_db):
+    async def batch(_db, **_kwargs):
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -182,7 +205,7 @@ async def test_forever_worker_survives_batch_failure_and_stops_on_signal():
 
     with patch("app.services.audit_outbox_processor.process_outbox_batch", side_effect=batch):
         await run_outbox_processor_forever(
-            lambda: SessionContext(), poll_interval_seconds=0, shutdown_event=shutdown,
+            lambda: SessionContext(), poll_interval_seconds=0.001, shutdown_event=shutdown,
         )
 
     assert attempts == 2

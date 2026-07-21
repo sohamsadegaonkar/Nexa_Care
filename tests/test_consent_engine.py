@@ -66,7 +66,7 @@ class _FakeResult:
 
 
 def make_audit_503_mock(events):
-    async def _mock(*, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
+    async def _mock(*, audit_context, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
         events.append(f"AUDIT_503:{event_type}")
     return AsyncMock(side_effect=_mock)
 

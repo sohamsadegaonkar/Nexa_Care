@@ -1,8 +1,10 @@
+from app.security.audit_context import AuditDomain, current_audit_context
 import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
@@ -25,9 +27,11 @@ logger = logging.getLogger("nexa_security")
 router = APIRouter(prefix="/api/v2/patient", tags=["policy"])
 
 class PolicyUpdateRequest(BaseModel):
-    consent_assurance_policy: str
+    model_config = ConfigDict(extra="forbid")
+
+    consent_assurance_policy: Literal["standard", "push_approved", "push_biometric", "biometric_confirmed"]
     idempotency_key: str
-    expected_version: int
+    expected_version: int = Field(ge=0)
 
 ALLOWED_POLICY_ROLES = {"clinician", "admin"}
 
@@ -45,6 +49,7 @@ async def get_patient_policy(
     roles = set(provider.affiliation.roles or [])
     if not roles & ALLOWED_POLICY_ROLES:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.POLICY),
             actor_uid=provider.actor_uid,
             event_type="PATIENT_POLICY_READ_DENIED",
             target_id=str(patient_uuid),
@@ -62,6 +67,7 @@ async def get_patient_policy(
     policy = policy_row.consent_assurance_policy if policy_row else "standard"
     version = policy_row.version if policy_row else 0
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.POLICY),
         actor_uid=provider.actor_uid,
         event_type="PATIENT_POLICY_READ_SUCCESS",
         target_id=str(patient_uuid),
@@ -105,6 +111,7 @@ async def update_patient_policy(
     # Authorization: Only certain roles can change patient consent policy
     if not roles & ALLOWED_POLICY_ROLES:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.POLICY),
             actor_uid=provider.actor_uid,
             event_type="PATIENT_POLICY_UPDATE_DENIED",
             target_id=str(patient_uuid),

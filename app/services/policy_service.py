@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -25,6 +26,7 @@ _CAS_UPDATE_SQL = text(
         last_idempotency_key = :idempotency_key
     WHERE
         patient_uuid = :patient_uuid
+        AND tenant_id = :tenant_id
         AND version = :expected_version
     RETURNING version, consent_assurance_policy
     """
@@ -33,11 +35,42 @@ _CAS_UPDATE_SQL = text(
 _FIRST_WRITE_INSERT_SQL = text(
     """
     INSERT INTO patient_policies
-        (patient_uuid, consent_assurance_policy, updated_at, version, last_idempotency_key)
+        (patient_uuid, tenant_id, consent_assurance_policy, updated_at, version, last_idempotency_key)
     VALUES
-        (:patient_uuid, :new_policy, :now, 1, :idempotency_key)
-    ON CONFLICT (patient_uuid) DO NOTHING
+        (:patient_uuid, :tenant_id, :new_policy, :now, 1, :idempotency_key)
+    ON CONFLICT (tenant_id, patient_uuid) DO NOTHING
     RETURNING version, consent_assurance_policy
+    """
+)
+
+_IDEMPOTENCY_SELECT_SQL = text(
+    """
+    SELECT request_hash, response_status, response_payload, resulting_resource_version
+    FROM public.mutation_idempotency
+    WHERE tenant_id = :tenant_id AND operation = :operation AND idempotency_key = :idempotency_key
+    """
+)
+
+_IDEMPOTENCY_RESERVE_SQL = text(
+    """
+    INSERT INTO public.mutation_idempotency
+        (tenant_id, actor_id, operation, resource_id, idempotency_key, request_hash,
+         created_at, retention_expires_at)
+    VALUES
+        (:tenant_id, :actor_id, :operation, :resource_id, :idempotency_key, :request_hash,
+         now(), now() + interval '90 days')
+    ON CONFLICT (tenant_id, operation, idempotency_key) DO NOTHING
+    RETURNING id
+    """
+)
+
+_IDEMPOTENCY_COMPLETE_SQL = text(
+    """
+    UPDATE public.mutation_idempotency
+    SET response_status = 200,
+        response_payload = CAST(:response_payload AS JSONB),
+        resulting_resource_version = :version
+    WHERE tenant_id = :tenant_id AND operation = :operation AND idempotency_key = :idempotency_key
     """
 )
 
@@ -92,6 +125,39 @@ def _outbox_payload(*, patient_uuid: str, old_policy: str | None, new_policy: st
         },
         sort_keys=True,
         separators=(",", ":"),
+    )
+
+
+def _canonical_request_hash(
+    *, tenant_id: str, patient_uuid: UUID, actor_id: str, operation: str,
+    new_policy: str, expected_version: int,
+) -> str:
+    canonical = json.dumps(
+        {
+            "actor_id": actor_id,
+            "expected_version": expected_version,
+            "operation": operation,
+            "patient_uuid": str(patient_uuid),
+            "requested_policy": new_policy,
+            "tenant_id": tenant_id,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _replay_result(row, patient_uuid: UUID, request_hash: str) -> PolicyUpdateResult:
+    if row.request_hash != request_hash:
+        raise PolicyIdempotencyKeyReused("The idempotency key was already used with a different request.")
+    payload = row.response_payload
+    if not isinstance(payload, dict) or row.response_status != 200:
+        raise PolicyValidationError("The prior idempotent mutation has no completed safe response.")
+    return PolicyUpdateResult(
+        patient_uuid=str(patient_uuid),
+        consent_assurance_policy=str(payload["consent_assurance_policy"]),
+        version=int(row.resulting_resource_version),
+        idempotent_replay=True,
     )
 
 
@@ -151,19 +217,40 @@ class PolicyService:
             raise PolicyValidationError("A trusted tenant context is required for policy audit events.")
         chain_partition = f"tenant:{tenant_id}:policy"
 
-        existing = await self.get_policy_row(patient_uuid)
-
-        if existing is not None and existing.last_idempotency_key == idempotency_key:
-            if existing.consent_assurance_policy == new_policy:
-                return PolicyUpdateResult(
-                    patient_uuid=str(patient_uuid),
-                    consent_assurance_policy=existing.consent_assurance_policy,
-                    version=existing.version,
-                    idempotent_replay=True,
-                )
-            raise PolicyIdempotencyKeyReused(
-                f"idempotency_key {idempotency_key!r} was already used with a different payload."
+        operation = "patient_policy_update"
+        request_hash = _canonical_request_hash(
+            tenant_id=tenant_id, patient_uuid=patient_uuid, actor_id=actor_id,
+            operation=operation, new_policy=new_policy, expected_version=expected_version,
+        )
+        existing_idempotency = (
+            await self.db.execute(
+                _IDEMPOTENCY_SELECT_SQL,
+                {"tenant_id": tenant_id, "operation": operation, "idempotency_key": idempotency_key},
             )
+        ).first()
+        if existing_idempotency is not None:
+            return _replay_result(existing_idempotency, patient_uuid, request_hash)
+
+        reservation = await self.db.execute(
+            _IDEMPOTENCY_RESERVE_SQL,
+            {
+                "tenant_id": tenant_id, "actor_id": actor_id, "operation": operation,
+                "resource_id": str(patient_uuid), "idempotency_key": idempotency_key,
+                "request_hash": request_hash,
+            },
+        )
+        if reservation.first() is None:
+            concurrent = (
+                await self.db.execute(
+                    _IDEMPOTENCY_SELECT_SQL,
+                    {"tenant_id": tenant_id, "operation": operation, "idempotency_key": idempotency_key},
+                )
+            ).first()
+            if concurrent is None:
+                raise PolicyValidationError("Could not resolve the concurrent idempotent mutation.")
+            return _replay_result(concurrent, patient_uuid, request_hash)
+
+        existing = await self.get_policy_row(patient_uuid)
 
         # Captured now, before any UPDATE executes -- never read back off
         # `existing` after the mutation, since that risks returning the
@@ -182,6 +269,7 @@ class PolicyService:
                     "new_policy": new_policy,
                     "now": now,
                     "idempotency_key": idempotency_key,
+                    "tenant_id": tenant_id,
                 },
             )
             row = result.first()
@@ -199,6 +287,7 @@ class PolicyService:
                     "idempotency_key": idempotency_key,
                     "patient_uuid": patient_uuid,
                     "expected_version": expected_version,
+                    "tenant_id": tenant_id,
                 },
             )
             row = result.first()
@@ -225,6 +314,22 @@ class PolicyService:
                     actor_id=actor_id,
                     version=new_version,
                 ),
+            },
+        )
+
+        safe_response = {
+            "patient_uuid": str(patient_uuid),
+            "consent_assurance_policy": stored_policy,
+            "version": new_version,
+        }
+        await self.db.execute(
+            _IDEMPOTENCY_COMPLETE_SQL,
+            {
+                "tenant_id": tenant_id,
+                "operation": operation,
+                "idempotency_key": idempotency_key,
+                "response_payload": json.dumps(safe_response, sort_keys=True, separators=(",", ":")),
+                "version": new_version,
             },
         )
 

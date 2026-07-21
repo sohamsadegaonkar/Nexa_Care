@@ -306,6 +306,7 @@ def test_db(mock_db):
 
 @pytest.fixture(autouse=True)
 def override_deps(request, mock_db, mock_redis):
+    from app.security.audit_context import bind_trusted_audit_tenant, reset_trusted_audit_scope
     from app.core.database import get_db_session
     from app.api.v2.patient_routes import get_kms_provider
     from app.services.consent_engine import get_consent_redis_client
@@ -340,7 +341,6 @@ def override_deps(request, mock_db, mock_redis):
          patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None),
          patch("app.core.supabase.get_supabase_client", return_value=mock_supabase),
          patch("app.services.consent_engine.get_consent_redis_client", return_value=mock_redis),
-         patch("app.services.biometric_signature_verifier.get_supabase_client", return_value=mock_supabase),
          patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None),
          patch("app.observability.audit_ledger.append_audit_log", return_value=True),
          patch("app.services.consent_engine.append_audit_log_or_503", return_value=None),
@@ -351,9 +351,13 @@ def override_deps(request, mock_db, mock_redis):
         patches.append(patch("app.api.v2.assurance_routes.push_limiter.check_and_acquire", return_value=None))
         patches.append(patch("app.api.v2.assurance_routes.push_limiter.release", return_value=None))
 
-    with ExitStack() as stack:
-        for p in patches:
-            stack.enter_context(p)
-        yield
+    audit_token = bind_trusted_audit_tenant("test-tenant")
+    try:
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            yield
+    finally:
+        reset_trusted_audit_scope(audit_token)
 
     app.dependency_overrides.clear()

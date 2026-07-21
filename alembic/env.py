@@ -1,5 +1,6 @@
 """Alembic environment for async SQLAlchemy migrations."""
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -31,7 +32,7 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     """Load the async database URL from the application config."""
-    return get_database_config().url
+    return os.getenv("TEST_DATABASE_URL") or get_database_config().url
 
 
 def run_migrations_offline() -> None:

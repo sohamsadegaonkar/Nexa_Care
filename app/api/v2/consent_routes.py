@@ -7,6 +7,12 @@ ConsentEngine so the v2 consent surface has a single authority.
 
 from __future__ import annotations
 
+from app.security.audit_context import (
+    AuditDomain,
+    bind_trusted_audit_hospital,
+    current_audit_context,
+)
+
 import hashlib
 import inspect
 import json
@@ -293,6 +299,7 @@ async def issue_break_glass_consent_route(
             )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider.actor_uid,
             event_type="BREAK_GLASS_GOVERNANCE_APPROVED",
             target_id=payload.patient_id,
@@ -344,6 +351,7 @@ async def issue_break_glass_consent_route(
         else:
             notification_status = "unavailable"
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider.actor_uid,
             event_type="BREAK_GLASS_PATIENT_NOTIFICATION",
             target_id=payload.patient_id,
@@ -387,6 +395,7 @@ async def revoke_break_glass_consent_route(
 
     # Hard-audit revocation attempt
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=provider.actor_uid,
         event_type="BREAK_GLASS_REVOKE_ATTEMPT",
         target_id=token_hash,
@@ -414,6 +423,7 @@ async def revoke_break_glass_consent_route(
 
     # Hard-audit success
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=provider.actor_uid,
         event_type="BREAK_GLASS_REVOKE_SUCCESS",
         target_id=token_hash,
@@ -528,6 +538,7 @@ async def _deliver_consent_notification(
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     data = json.loads(raw)
+
     data["delivery_status"] = "sent" if result.success else "failed"
     data["delivery_error"] = None if result.success else "PUSH_DELIVERY_FAILED"
     data["delivery_completed_at"] = datetime.now(timezone.utc).isoformat()
@@ -588,6 +599,7 @@ async def create_consent_request(
     # ── IDOR guard: reject if caller supplied provider_id that doesn't match session ──
     if payload.provider_id is not None and str(payload.provider_id) != str(provider.actor_uid):
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider.actor_uid,
             event_type="CONSENT_REQUEST_IDOR_REJECTED",
             target_id=payload.patient_id,
@@ -673,6 +685,7 @@ async def create_consent_request(
         ) from exc
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=provider.actor_uid,
         event_type="CONSENT_REQUEST_CREATED",
         target_id=request_id,
@@ -728,6 +741,13 @@ async def approve_signed_consent(
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     data = json.loads(raw)
+
+    trusted_hospital_id = data.get("hospital_id")
+    if isinstance(trusted_hospital_id, str) and trusted_hospital_id:
+        # This value was persisted by the server when it created the challenge.
+        # Legacy challenges without it receive no partition fallback; any audit
+        # still requires another authenticated trusted scope and fails closed.
+        bind_trusted_audit_hospital(trusted_hospital_id)
 
     if str(data.get("patient_id")) != str(patient_id):
         raise HTTPException(
@@ -829,6 +849,7 @@ async def approve_signed_consent(
         await _redis_call(redis.set, f"assurance_evidence:{payload.request_id}", json.dumps(evidence_data), ex=120)
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
             event_type="CONSENT_APPROVED_SIGNED",
             target_id=payload.request_id,
@@ -870,6 +891,7 @@ async def approve_signed_consent(
         logger.error("Denied consent push lock cleanup failed", extra={"error_type": type(exc).__name__})
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=patient_id,
         event_type="CONSENT_DENIED_SIGNED",
         target_id=payload.request_id,
@@ -1005,6 +1027,7 @@ async def claim_approved_access(
         db.add(grant_row)
         await db.commit()
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider.actor_uid,
             event_type="CONSENT_ACCESS_CLAIMED",
             target_id=request_id,
@@ -1101,6 +1124,7 @@ async def cancel_consent_request(
     await _redis_call(redis.set, f"consent_request:{request_id}", json.dumps(data), ex=300)
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=provider.actor_uid,
         event_type="CONSENT_REQUEST_CANCELLED",
         target_id=request_id,

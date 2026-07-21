@@ -32,7 +32,7 @@ def test_push_respond_route_is_retired():
     """Responding to a push request requires an authenticated patient session.
 
     Biometric signature verification happens inside this same call (see
-    BiometricSignatureVerifier.verify_signature in assurance_routes.py), so
+    SignedApprovalVerifier in the canonical consent approval route), so
     an unauthenticated caller never even reaches that check -- the session
     guard (get_scoped_session) rejects first.
     """

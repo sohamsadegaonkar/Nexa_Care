@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import inspect
 import hashlib
 import hmac
@@ -432,6 +434,7 @@ async def provider_login(
     if result.failure is ProviderAuthFailure.MFA_REQUIRED:
         assert result.mfa_pending_token is not None
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_LOGIN",
             event_type="PROVIDER_MFA_REQUIRED",
             target_id=identifier_hash,
@@ -445,6 +448,7 @@ async def provider_login(
     if result.context is None:
         assert result.failure is not None
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_LOGIN",
             event_type="PROVIDER_LOGIN_FAILED",
             target_id=identifier_hash,
@@ -463,6 +467,7 @@ async def provider_login(
     user_agent = request.headers.get("user-agent")
     response = await _issue_login_response(result.context, user_agent, client_ip)
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=result.context.actor_uid,
         event_type="PROVIDER_LOGIN_SUCCEEDED",
         target_id=str(result.context.hospital.hospital_id),
@@ -512,6 +517,7 @@ async def provider_mfa_verify(
         # back to the client in the HTTP response.
         is_binding_mismatch = result.failure is ProviderAuthFailure.SESSION_BINDING_MISMATCH
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_MFA",
             event_type=(
                 "PROVIDER_MFA_SESSION_BINDING_MISMATCH"
@@ -533,6 +539,7 @@ async def provider_mfa_verify(
         mfa_verified_at=datetime.now(timezone.utc),
     )
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=result.context.actor_uid,
         event_type="PROVIDER_LOGIN_SUCCEEDED",
         target_id=str(result.context.hospital.hospital_id),
@@ -624,6 +631,7 @@ async def provider_web_logout(
         await delete_provider_session_token(session_token)
     _clear_web_auth_cookies(response)
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid, event_type="PROVIDER_LOGOUT",
         target_id=str(provider.provider.provider_id), status="SUCCESS",
     )
@@ -697,6 +705,7 @@ async def provider_mfa_setup(
     await db.commit()
 
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="PROVIDER_MFA_SETUP_INIT",
         target_id=str(provider.provider.provider_id),
@@ -740,6 +749,7 @@ async def provider_mfa_setup_verify(
     from app.services.provider_auth_service import verify_totp_code_once
     if not await verify_totp_code_once(provider.provider.provider_id, secret, payload.totp_code, redis_client=get_async_redis_client()):
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid=provider.actor_uid,
             event_type="PROVIDER_MFA_SETUP_VERIFY_FAILED",
             target_id=str(provider.provider.provider_id),
@@ -754,6 +764,7 @@ async def provider_mfa_setup_verify(
     await db.commit()
 
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="PROVIDER_MFA_SETUP_SUCCESS",
         target_id=str(provider.provider.provider_id),
@@ -772,6 +783,7 @@ async def provider_logout(
 
     await delete_provider_session_token(credentials.credentials)
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="PROVIDER_LOGOUT",
         target_id=str(provider.provider.provider_id),
@@ -804,6 +816,7 @@ async def provider_refresh(
         )
 
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="PROVIDER_SESSION_REFRESH",
         target_id=str(provider.provider.provider_id),
@@ -852,6 +865,7 @@ async def create_merge_challenge(
     await _maybe_await(redis.setex(key, _MERGE_CHALLENGE_TTL_SECONDS, json.dumps(payload)))
 
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="MERGE_CHALLENGE_CREATED",
         target_id=hashlib.sha256(challenge_token.encode("utf-8")).hexdigest(),
@@ -974,6 +988,7 @@ async def verify_merge_challenge(
     await _maybe_await(redis.setex(key, remaining_ttl, json.dumps(challenge_data, sort_keys=True)))
 
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="MERGE_CHALLENGE_VERIFIED",
         target_id=hashlib.sha256(payload.challenge_token.encode("utf-8")).hexdigest(),

@@ -6,6 +6,8 @@ Key Encryption Key (KEK). Supports versioning and rotation.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import base64
 import asyncio
 import os
@@ -435,6 +437,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
             # claim application access is blocked -- never more than that.
             await db.commit()
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.ERASURE),
                 actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_ACCESS_BLOCKED",
                 target_id=patient_id, status="SUCCESS",
                 metadata={"assurance_level": "active_access_blocked", "wrapping_key_type": "shared"},
@@ -452,6 +455,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
         await db.commit()
 
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.ERASURE),
             actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_DESTROYED",
             target_id=patient_id, status="SUCCESS",
             metadata={"assurance_level": "patient_key_destroyed", "wrapping_key_type": "patient"},
@@ -661,6 +665,7 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             # assurance at access-blocked, exactly like the local provider.
             await db.commit()
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.ERASURE),
                 actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_ACCESS_BLOCKED",
                 target_id=patient_id, status="SUCCESS",
                 metadata={"assurance_level": "active_access_blocked", "wrapping_key_type": "shared"},
@@ -699,6 +704,7 @@ class AWSKMSProvider(LocalEnvelopeProvider):
 
         if operator_action_needed:
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.ERASURE),
                 actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_DESTRUCTION_NEEDS_OPERATOR",
                 target_id=patient_id, status="FAILED",
                 metadata={"wrapping_key_type": "patient"},
@@ -712,6 +718,7 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         # the tombstone to PATIENT_KEY_DESTROYED once AWS confirms the key
         # is actually gone.
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.ERASURE),
             actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_DELETION_SCHEDULED",
             target_id=patient_id, status="SUCCESS",
             metadata={"assurance_level": "patient_key_deletion_scheduled", "wrapping_key_type": "patient"},

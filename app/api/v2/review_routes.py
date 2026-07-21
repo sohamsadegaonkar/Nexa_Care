@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import json
 import logging
 from datetime import datetime
@@ -38,6 +40,7 @@ async def _audit_best_effort(actor_uid: str, event_type: str, target_id: str, st
     instead of raising -- matching the convention in app/api/routes.py.
     """
     success = await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=actor_uid, event_type=event_type, target_id=target_id, status=status_,
     )
     if not success:
@@ -146,6 +149,7 @@ async def reject_review(
     review = await _load_owned_pending_review(db, review_id, provider.actor_uid)
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=provider.actor_uid,
         event_type="DOCUMENT_REVIEW_REJECTION_ATTEMPT",
         target_id=str(review.id),
@@ -170,6 +174,7 @@ async def reject_review(
         raise
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=provider.actor_uid,
         event_type="DOCUMENT_REVIEW_REJECTED",
         target_id=str(review.id),

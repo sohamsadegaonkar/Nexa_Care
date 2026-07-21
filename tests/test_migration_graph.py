@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260719_security_runtime"
+EXPECTED_HEAD = "20260720_final_runtime_fix"
 
 
 def _scripts() -> ScriptDirectory:
@@ -33,6 +33,16 @@ def test_migration_revision_ids_fit_alembic_version_column() -> None:
         if len(revision.revision) > 32
     ]
     assert not too_long
+
+
+def test_final_runtime_fix_repairs_uuid_head_and_adds_recovery_schema() -> None:
+    source = (ROOT / "alembic" / "versions" / "20260720_final_runtime_fix.py").read_text()
+    assert 'revision: str = "20260720_final_runtime_fix"' in source
+    assert 'down_revision: Union[str, None] = "20260719_security_runtime"' in source
+    assert 'type_=postgresql.UUID(as_uuid=True)' in source
+    assert 'fk_audit_chain_heads_head_event' in source
+    assert 'lease_expires_at' in source
+    assert 'mutation_idempotency' in source
 
 
 def test_cleanup_sql_guards_absent_tables() -> None:

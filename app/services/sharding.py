@@ -3,6 +3,8 @@
 """
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import json
 import logging
 
@@ -89,6 +91,7 @@ async def decrypt_vault_field(
             
             from app.observability.audit_ledger import append_audit_log
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
                 actor_uid="SYSTEM_AUTO_MIGRATE",
                 event_type="PII_ENCRYPTION_MIGRATED",
                 target_id=patient_id,

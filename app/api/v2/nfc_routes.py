@@ -7,6 +7,8 @@ caller still needs a separate consent grant to read the patient record.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -106,6 +108,7 @@ async def resolve_nfc_card(
         raise
     except TombstoneIntegrityError as exc:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.NFC),
             actor_uid=provider.actor_uid,
             event_type="TOMBSTONE_INTEGRITY_VIOLATION",
             target_id=payload.card_uid,
@@ -124,6 +127,7 @@ async def resolve_nfc_card(
 
     # Audit every NFC resolution attempt
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.NFC),
         actor_uid=provider.actor_uid,
         event_type="NFC_CARD_RESOLVED",
         target_id=str(patient_id),

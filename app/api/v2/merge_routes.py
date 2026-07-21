@@ -1,3 +1,4 @@
+from app.security.audit_context import AuditDomain, current_audit_context
 """
 Patient Merge (Alias & Tombstone) Workflow
 Implements Section 9 of the Nexa Care v1.0 Architecture
@@ -117,6 +118,7 @@ async def merge_patients(
         )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.MERGE),
             actor_uid=provider.actor_uid,
             event_type="MERGE_EXECUTED",
             target_id=str(payload.old_patient_uuid),
@@ -131,6 +133,7 @@ async def merge_patients(
         )
     except ValueError as e:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.MERGE),
             actor_uid=provider.actor_uid,
             event_type="MERGE_REJECTED",
             target_id=str(payload.old_patient_uuid),

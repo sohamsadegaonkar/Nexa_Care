@@ -5,6 +5,8 @@ Refactored for asynchronous approval flow (Sprint 2).
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import inspect
 import json
 import uuid
@@ -116,6 +118,7 @@ class AssuranceService:
         )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider_id,
             event_type="PUSH_REQUEST_CREATED",
             target_id=patient_id,
@@ -248,6 +251,7 @@ class AssuranceService:
             await db.rollback()
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
             event_type="PUSH_RESPONSE_RECEIVED",
             target_id=request_id,
@@ -302,6 +306,7 @@ class AssuranceService:
                         await db.commit()
                         
                         await append_audit_log(
+                            audit_context=current_audit_context(AuditDomain.CONSENT),
                             actor_uid="SYSTEM",
                             event_type="PUSH_REQUEST_TIMEOUT",
                             target_id=request_id,

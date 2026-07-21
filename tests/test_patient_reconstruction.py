@@ -152,7 +152,7 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
             patch("app.api.v2.patient_routes.consent_engine.consume", new_callable=AsyncMock) as mock_consume,
             patch("app.services.consent_gated_crypto.append_audit_log_or_503", new_callable=AsyncMock) as mock_audit,
        ):
-            async def audit_side_effect(*, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
+            async def audit_side_effect(*, audit_context, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
                 events.append(f"audit:{event_type}")
 
             mock_validate.side_effect = validate_side_effect

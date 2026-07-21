@@ -14,6 +14,8 @@ This eliminates the patient_id spoofing vector described in threat-model.md T-06
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 from collections.abc import Callable
 from typing import Any
@@ -66,6 +68,7 @@ async def validate_consent_for_patient(
 
     if not x_consent_token or not patient_id:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=actor_uid,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=target_id,
@@ -97,6 +100,7 @@ async def validate_consent_for_patient(
             )
     except (ConsentEngineUnavailable, ApprovedAccessStoreUnavailable) as exc:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=actor_uid,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=target_id,
@@ -110,6 +114,7 @@ async def validate_consent_for_patient(
 
     if capability is None:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=actor_uid,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=target_id,
@@ -127,6 +132,7 @@ async def validate_consent_for_patient(
         # against the dedicated emergency-summary endpoint -- never any
         # routine require_consent()-gated view (summary, timeline, record).
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=actor_uid,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=target_id,
@@ -151,6 +157,7 @@ async def validate_consent_for_patient(
         "is_break_glass": capability.is_break_glass,
     }
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=actor_uid,
         event_type="CONSENT_GATED_DECRYPT_STARTED",
         target_id=target_id,
@@ -159,6 +166,7 @@ async def validate_consent_for_patient(
     )
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_READ_SUCCESS",
         target_id=target_id,
@@ -226,6 +234,7 @@ def require_self_patient_access() -> Callable[[Request, str], Any]:
 
         if target_id and str(target_id) != str(session_patient_id):
             await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.CONSENT),
                 actor_uid=str(session_patient_id),
                 event_type="SESSION_VALIDATION_FAILED",
                 target_id=str(target_id),
@@ -237,6 +246,7 @@ def require_self_patient_access() -> Callable[[Request, str], Any]:
             )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=str(session_patient_id),
             event_type="PATIENT_RECORD_READ_SUCCESS",
             target_id=str(session_patient_id),

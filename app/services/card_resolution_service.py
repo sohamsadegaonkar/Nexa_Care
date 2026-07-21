@@ -8,6 +8,8 @@ Resolution fails closed: only cards whose lifecycle state is exactly
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import json
 import logging
 from typing import Annotated
@@ -138,6 +140,7 @@ class CardResolutionService:
             )
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.NFC),
             actor_uid=str(request.reported_by),
             event_type="NFC_CARD_REPORTED_LOST",
             target_id=str(row.patient_id),
@@ -156,6 +159,7 @@ class CardResolutionService:
             ) from exc
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.NFC),
             actor_uid=str(request.reported_by),
             event_type="NFC_CARD_REPORTED_LOST",
             target_id=str(row.patient_id),

@@ -50,6 +50,8 @@ AUDIT-FAILURE-HANDLING FIX (this revision) — BIOMETRIC_HANDSHAKE_SUCCESS
 """
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import hashlib
 import hmac
 import json
@@ -111,6 +113,7 @@ async def process_biometric_handshake(
 
     try:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="HANDSHAKE_PROV",
             event_type="BIOMETRIC_HANDSHAKE_STARTED",
             target_id=device_ref,
@@ -123,6 +126,7 @@ async def process_biometric_handshake(
             or not isinstance(bio_seed, str) or not bio_seed.strip()
         ):
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.AUTH),
                 actor_uid="HANDSHAKE_PROV",
                 event_type="BIOMETRIC_HANDSHAKE_DENIED",
                 target_id=device_ref,
@@ -138,6 +142,7 @@ async def process_biometric_handshake(
             scoped_patient_id = str(uuid.UUID(str(masked_internal_id)))
         except (ValueError, AttributeError, TypeError):
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.AUTH),
                 actor_uid="HANDSHAKE_PROV",
                 event_type="BIOMETRIC_HANDSHAKE_DENIED",
                 target_id=device_ref,
@@ -159,6 +164,7 @@ async def process_biometric_handshake(
         )
         if not binding_valid:
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.AUTH),
                 actor_uid="HANDSHAKE_PROV",
                 event_type="BIOMETRIC_HANDSHAKE_DENIED",
                 target_id=scoped_patient_id,
@@ -205,6 +211,7 @@ async def process_biometric_handshake(
         # swallowed into a generic 401).
         try:
             await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.AUTH),
                 actor_uid="HANDSHAKE_PROV",
                 event_type="BIOMETRIC_HANDSHAKE_SUCCESS",
                 target_id=scoped_patient_id,
@@ -232,6 +239,7 @@ async def process_biometric_handshake(
         raise
     except Exception:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="HANDSHAKE_PROV",
             event_type="BIOMETRIC_HANDSHAKE_FAILED",
             target_id=device_ref,

@@ -7,6 +7,8 @@ provenance enforcement, idempotency per job, and hard-auditing.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -203,6 +205,7 @@ async def ingest_extracted_fields(
 
         # Hard-audit EXTRACTED_DATA_INGESTED
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PIPELINE),
             actor_uid=str(patient_id),
             event_type="EXTRACTED_DATA_INGESTED",
             target_id=str(field.field_id),

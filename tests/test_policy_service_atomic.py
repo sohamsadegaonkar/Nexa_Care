@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import uuid
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -37,6 +39,7 @@ class _FakeDB:
     def __init__(self, existing: _FakeRow | None):
         self.row = existing
         self.outbox: list[dict] = []
+        self.idempotency: dict[tuple[str, str, str], dict] = {}
         self.commits = 0
         self.rollbacks = 0
 
@@ -45,12 +48,37 @@ class _FakeDB:
 
     async def execute(self, statement, params=None):
         sql = str(statement)
+        if "SELECT request_hash" in sql and "mutation_idempotency" in sql:
+            key = (params["tenant_id"], params["operation"], params["idempotency_key"])
+            value = self.idempotency.get(key)
+            return _Result(SimpleNamespace(**value) if value else None)
+        if "INSERT INTO public.mutation_idempotency" in sql:
+            key = (params["tenant_id"], params["operation"], params["idempotency_key"])
+            if key in self.idempotency:
+                return _Result(None)
+            self.idempotency[key] = {
+                "request_hash": params["request_hash"], "response_status": None,
+                "response_payload": None, "resulting_resource_version": None,
+            }
+            return _Result((uuid.uuid4(),))
+        if "UPDATE public.mutation_idempotency" in sql:
+            key = (params["tenant_id"], params["operation"], params["idempotency_key"])
+            self.idempotency[key].update({
+                "response_status": 200,
+                "response_payload": json.loads(params["response_payload"]),
+                "resulting_resource_version": params["version"],
+            })
+            return _Result()
         if "UPDATE patient_policies" in sql:
-            if self.row is None or self.row.version != params["expected_version"]:
+            if (
+                self.row is None or self.row.version != params["expected_version"]
+                or getattr(self.row, "tenant_id", params["tenant_id"]) != params["tenant_id"]
+            ):
                 return _Result(None)
             self.row.consent_assurance_policy = params["new_policy"]
             self.row.version += 1
             self.row.last_idempotency_key = params["idempotency_key"]
+            self.row.tenant_id = params["tenant_id"]
             return _Result((self.row.version, self.row.consent_assurance_policy))
         if "INSERT INTO public.audit_outbox" in sql:
             self.outbox.append(dict(params))
@@ -59,6 +87,7 @@ class _FakeDB:
             if self.row is not None:
                 return _Result(None)  # ON CONFLICT DO NOTHING: row already exists
             self.row = _FakeRow(params["patient_uuid"], params["new_policy"], 1, params["idempotency_key"])
+            self.row.tenant_id = params["tenant_id"]
             return _Result((1, params["new_policy"]))
         raise AssertionError(f"unexpected SQL in fake DB: {sql}")
 
@@ -163,30 +192,64 @@ async def test_two_concurrent_updates_only_one_succeeds():
 @pytest.mark.asyncio
 async def test_same_idempotency_key_same_payload_replays_without_new_outbox_event():
     patient_uuid = uuid.uuid4()
-    db = _FakeDB(existing=_FakeRow(patient_uuid, "push_approved", 2, last_idempotency_key="req-replay-004"))
+    db = _FakeDB(existing=_FakeRow(patient_uuid, "standard", 1))
     service = PolicyService(db)
 
+    first = await service.set_policy_atomic(
+        patient_uuid, "push_approved", expected_version=1, idempotency_key="req-replay-004",
+        actor_id="doctor-1", tenant_id="hosp-1",
+    )
     result = await service.set_policy_atomic(
-        patient_uuid, "push_approved",  # same payload as what that key already produced
-        expected_version=2, idempotency_key="req-replay-004",
+        patient_uuid, "push_approved", expected_version=1, idempotency_key="req-replay-004",
         actor_id="doctor-1", tenant_id="hosp-1",
     )
 
     assert result.idempotent_replay is True
-    assert result.version == 2
-    assert len(db.outbox) == 0  # replay must not create a second audit event
-    assert db.commits == 0
+    assert result.version == first.version == 2
+    assert len(db.outbox) == 1
+    assert db.commits == 1
 
 
 @pytest.mark.asyncio
 async def test_same_idempotency_key_different_payload_is_rejected():
     patient_uuid = uuid.uuid4()
-    db = _FakeDB(existing=_FakeRow(patient_uuid, "push_approved", 2, last_idempotency_key="req-reuse-005"))
+    db = _FakeDB(existing=_FakeRow(patient_uuid, "standard", 1))
     service = PolicyService(db)
+
+    await service.set_policy_atomic(
+        patient_uuid, "push_approved", expected_version=1,
+        idempotency_key="req-reuse-005", actor_id="doctor-1", tenant_id="hosp-1",
+    )
 
     with pytest.raises(PolicyIdempotencyKeyReused):
         await service.set_policy_atomic(
-            patient_uuid, "biometric_confirmed",  # different payload, same key -- must fail
-            expected_version=2, idempotency_key="req-reuse-005",
+            patient_uuid, "biometric_confirmed", expected_version=2, idempotency_key="req-reuse-005",
             actor_id="doctor-1", tenant_id="hosp-1",
         )
+
+
+@pytest.mark.asyncio
+async def test_historical_retry_returns_original_result_without_reverting_newer_policy():
+    patient_uuid = uuid.uuid4()
+    db = _FakeDB(existing=_FakeRow(patient_uuid, "standard", 1))
+    service = PolicyService(db)
+
+    result_a = await service.set_policy_atomic(
+        patient_uuid, "push_approved", expected_version=1,
+        idempotency_key="historical-a-001", actor_id="doctor-1", tenant_id="hosp-1",
+    )
+    result_b = await service.set_policy_atomic(
+        patient_uuid, "biometric_confirmed", expected_version=2,
+        idempotency_key="historical-b-001", actor_id="doctor-1", tenant_id="hosp-1",
+    )
+    replay_a = await service.set_policy_atomic(
+        patient_uuid, "push_approved", expected_version=1,
+        idempotency_key="historical-a-001", actor_id="doctor-1", tenant_id="hosp-1",
+    )
+
+    assert result_a.version == replay_a.version == 2
+    assert replay_a.idempotent_replay is True
+    assert result_b.version == 3
+    assert db.row.consent_assurance_policy == "biometric_confirmed"
+    assert db.row.version == 3
+    assert len(db.outbox) == 2

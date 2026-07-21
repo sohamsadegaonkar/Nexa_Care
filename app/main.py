@@ -345,9 +345,21 @@ async def health_check() -> dict:
         checks["postgres"] = "ok"
         async with get_session_factory()() as db:
             outbox_health = await get_outbox_health(db)
+        checks["audit_outbox_pending_count"] = str(outbox_health["pending_count"])
         checks["audit_outbox_dead_letter_backlog"] = str(outbox_health["dead_letter_backlog"])
-        checks["audit_outbox_stalled_pending_events"] = str(outbox_health["stalled_pending_events"])
-        if any(outbox_health.values()):
+        checks["audit_outbox_expired_lease_count"] = str(outbox_health["expired_lease_count"])
+        checks["audit_outbox_oldest_pending_age_seconds"] = str(round(outbox_health["oldest_pending_age_seconds"], 3))
+        checks["audit_outbox_oldest_expired_lease_age_seconds"] = str(
+            round(outbox_health["oldest_expired_lease_age_seconds"], 3)
+        )
+        dead_letter_limit = int(os.getenv("AUDIT_OUTBOX_MAX_DEAD_LETTERS", "0"))
+        expired_lease_limit = int(os.getenv("AUDIT_OUTBOX_MAX_EXPIRED_LEASES", "0"))
+        oldest_pending_limit = int(os.getenv("AUDIT_OUTBOX_MAX_PENDING_AGE_SECONDS", "300"))
+        if (
+            outbox_health["dead_letter_backlog"] > dead_letter_limit
+            or outbox_health["expired_lease_count"] > expired_lease_limit
+            or outbox_health["oldest_pending_age_seconds"] > oldest_pending_limit
+        ):
             checks["audit_outbox_backlog"] = "unhealthy"
         else:
             checks["audit_outbox_backlog"] = "ok"

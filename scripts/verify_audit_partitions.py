@@ -13,7 +13,7 @@ For each chain_partition:
   - compare the calculated tip against audit_chain_heads: head_hash,
     head_event_id, sequence_number
 
-On any mismatch, marks the partition unhealthy (audit_chain_heads.healthy
+On any mismatch, marks the partition unhealthy (audit_chain_heads.is_healthy
 = FALSE) -- which makes the runtime append path fail closed for that
 partition until an operator resolves it -- and emits a safe security
 alert (no raw exception text, no PII).
@@ -53,10 +53,10 @@ _SELECT_PARTITION_EVENTS_SQL = text(
     """
 )
 _SELECT_HEAD_SQL = text(
-    "SELECT head_event_id, head_hash, sequence_number, healthy FROM public.audit_chain_heads WHERE chain_partition = :chain_partition"
+    "SELECT head_event_id, head_hash, sequence_number, is_healthy FROM public.audit_chain_heads WHERE chain_partition = :chain_partition"
 )
 _MARK_UNHEALTHY_SQL = text(
-    "UPDATE public.audit_chain_heads SET healthy = FALSE, updated_at = now() WHERE chain_partition = :chain_partition"
+    "UPDATE public.audit_chain_heads SET is_healthy = FALSE, updated_at = now() WHERE chain_partition = :chain_partition"
 )
 
 

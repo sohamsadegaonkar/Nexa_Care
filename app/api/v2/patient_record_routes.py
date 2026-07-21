@@ -7,6 +7,8 @@ audit-before-write guarantee.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -546,6 +548,7 @@ async def append_vitals(
     _validate_provenance(payload.source, payload.confidence, payload.risk_level, payload.source_document_id)
     actor_uid = provider.actor_uid if provider else "UNKNOWN"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_ATTEMPT",
         target_id=id,
@@ -586,6 +589,7 @@ async def append_vitals(
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_SUCCESS",
         target_id=id,
@@ -614,6 +618,7 @@ async def append_medications(
     _validate_provenance(payload.source, payload.confidence, payload.risk_level, payload.source_document_id)
     actor_uid = provider.actor_uid if provider else "UNKNOWN"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_ATTEMPT",
         target_id=id,
@@ -654,6 +659,7 @@ async def append_medications(
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_SUCCESS",
         target_id=id,
@@ -682,6 +688,7 @@ async def append_labs(
     _validate_provenance(payload.source, payload.confidence, payload.risk_level, payload.source_document_id)
     actor_uid = provider.actor_uid if provider else "UNKNOWN"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_ATTEMPT",
         target_id=id,
@@ -724,6 +731,7 @@ async def append_labs(
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_SUCCESS",
         target_id=id,
@@ -755,6 +763,7 @@ async def append_allergies(
 
     actor_uid = provider.actor_uid if provider else "UNKNOWN"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_ATTEMPT",
         target_id=id,
@@ -793,6 +802,7 @@ async def append_allergies(
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_SUCCESS",
         target_id=id,
@@ -821,6 +831,7 @@ async def append_documents(
     _validate_provenance(payload.source, payload.confidence, payload.risk_level, payload.source_document_id)
     actor_uid = provider.actor_uid if provider else "UNKNOWN"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_ATTEMPT",
         target_id=id,
@@ -858,6 +869,7 @@ async def append_documents(
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid,
         event_type="PATIENT_RECORD_APPEND_SUCCESS",
         target_id=id,

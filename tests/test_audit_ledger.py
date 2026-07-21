@@ -14,6 +14,13 @@ from app.observability.audit_ledger import (
     append_audit_log,
     append_audit_log_or_503,
 )
+from app.security.audit_context import AuditContext, AuditDomain
+
+
+PLATFORM_CONTEXT = AuditContext.platform(domain=AuditDomain.PLATFORM)
+HOSPITAL_A_CONTEXT = AuditContext.for_hospital(hospital_id="hospital-a", domain=AuditDomain.CONSENT)
+HOSPITAL_B_CONTEXT = AuditContext.for_hospital(hospital_id="hospital-b", domain=AuditDomain.CONSENT)
+PLATFORM_PARTITION = "platform:platform"
 
 
 class ScalarResult:
@@ -84,13 +91,13 @@ class Connection:
                 "head_hash": params["head_hash"],
                 "sequence_number": params["sequence_number"],
                 "protocol_version": params["protocol_version"],
-                "healthy": True,
+                "is_healthy": True,
             }
             return ScalarResult()
-        if "UPDATE public.audit_chain_heads" in sql and "healthy = FALSE" in sql:
+        if "UPDATE public.audit_chain_heads" in sql and "is_healthy = FALSE" in sql:
             head = self.store.heads.get(params["chain_partition"])
             if head is not None:
-                head["healthy"] = False
+                head["is_healthy"] = False
             return ScalarResult()
         if "UPDATE public.audit_chain_heads" in sql:
             head = self.store.heads[params["chain_partition"]]
@@ -135,8 +142,8 @@ async def test_first_and_second_events_form_genesis_chain():
     token = trace_id_var.set("trace-test")
     try:
         with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
-            assert await append_audit_log("actor-1", "FIRST", "target", "SUCCESS")
-            assert await append_audit_log("actor-2", "SECOND", "target", "SUCCESS")
+            assert await append_audit_log(audit_context=PLATFORM_CONTEXT, actor_uid="actor-1", event_type="FIRST", target_id="target", status="SUCCESS")
+            assert await append_audit_log(audit_context=PLATFORM_CONTEXT, actor_uid="actor-2", event_type="SECOND", target_id="target", status="SUCCESS")
     finally:
         trace_id_var.reset(token)
 
@@ -147,8 +154,8 @@ async def test_first_and_second_events_form_genesis_chain():
     assert store.rows[1]["sequence_number"] == 2
     for row in store.rows:
         assert row["record_hash"] == _calculate_hash(row["payload"], row["previous_hash"])
-    assert store.heads["global"]["head_hash"] == store.rows[-1]["record_hash"]
-    assert store.heads["global"]["sequence_number"] == 2
+    assert store.heads[PLATFORM_PARTITION]["head_hash"] == store.rows[-1]["record_hash"]
+    assert store.heads[PLATFORM_PARTITION]["sequence_number"] == 2
 
 
 @pytest.mark.asyncio
@@ -156,7 +163,7 @@ async def test_concurrent_writers_do_not_fork_chain():
     store = AuditStore()
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
         results = await asyncio.gather(
-            *(append_audit_log(f"actor-{i}", "EVENT", f"target-{i}", "SUCCESS") for i in range(10))
+            *(append_audit_log(audit_context=PLATFORM_CONTEXT, actor_uid=f"actor-{i}", event_type="EVENT", target_id=f"target-{i}", status="SUCCESS") for i in range(10))
         )
 
     assert all(results)
@@ -166,19 +173,19 @@ async def test_concurrent_writers_do_not_fork_chain():
     assert {row["sequence_number"] for row in store.rows} == set(range(1, 11))
     for previous, current in zip(store.rows, store.rows[1:]):
         assert current["previous_hash"] == previous["record_hash"]
-    assert store.heads["global"]["sequence_number"] == 10
+    assert store.heads[PLATFORM_PARTITION]["sequence_number"] == 10
 
 
 @pytest.mark.asyncio
 async def test_two_partitions_never_block_or_interleave_sequences():
     store = AuditStore()
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
-        assert await append_audit_log("actor-a", "EVENT", "target-a", "SUCCESS", chain_partition="hospital-a")
-        assert await append_audit_log("actor-b", "EVENT", "target-b", "SUCCESS", chain_partition="hospital-b")
-        assert await append_audit_log("actor-a2", "EVENT", "target-a2", "SUCCESS", chain_partition="hospital-a")
+        assert await append_audit_log(audit_context=HOSPITAL_A_CONTEXT, actor_uid="actor-a", event_type="EVENT", target_id="target-a", status="SUCCESS")
+        assert await append_audit_log(audit_context=HOSPITAL_B_CONTEXT, actor_uid="actor-b", event_type="EVENT", target_id="target-b", status="SUCCESS")
+        assert await append_audit_log(audit_context=HOSPITAL_A_CONTEXT, actor_uid="actor-a2", event_type="EVENT", target_id="target-a2", status="SUCCESS")
 
-    a_rows = [r for r in store.rows if r["chain_scope"] == "hospital-a"]
-    b_rows = [r for r in store.rows if r["chain_scope"] == "hospital-b"]
+    a_rows = [r for r in store.rows if r["chain_scope"] == "hospital:hospital-a:consent"]
+    b_rows = [r for r in store.rows if r["chain_scope"] == "hospital:hospital-b:consent"]
     assert [r["sequence_number"] for r in a_rows] == [1, 2]
     assert [r["sequence_number"] for r in b_rows] == [1]
     assert a_rows[1]["previous_hash"] == a_rows[0]["record_hash"]
@@ -188,14 +195,14 @@ async def test_two_partitions_never_block_or_interleave_sequences():
 @pytest.mark.asyncio
 async def test_unhealthy_partition_fails_closed_without_scanning_history():
     store = AuditStore()
-    store.heads["global"] = {
-        "chain_partition": "global", "head_event_id": 1, "head_hash": "deadbeef" * 8,
-        "sequence_number": 1, "protocol_version": 2, "healthy": False,
+    store.heads[PLATFORM_PARTITION] = {
+        "chain_partition": PLATFORM_PARTITION, "head_event_id": 1, "head_hash": "deadbeef" * 8,
+        "sequence_number": 1, "protocol_version": 2, "is_healthy": False,
     }
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)), patch(
         "app.observability.audit_ledger.AUDIT_LEDGER_INTEGRITY_FAILURES"
     ) as metric:
-        assert await append_audit_log("actor", "AFTER_MARK_UNHEALTHY", "target", "SUCCESS") is False
+        assert await append_audit_log(audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="AFTER_MARK_UNHEALTHY", target_id="target", status="SUCCESS") is False
     metric.labels.assert_called_once()
     assert len(store.rows) == 0
 
@@ -204,9 +211,9 @@ async def test_unhealthy_partition_fails_closed_without_scanning_history():
 async def test_verifier_marking_partition_unhealthy_blocks_subsequent_appends():
     store = AuditStore()
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
-        assert await append_audit_log("actor", "OK_EVENT", "target", "SUCCESS")
-        store.heads["global"]["healthy"] = False
-        assert await append_audit_log("actor", "SHOULD_BE_REJECTED", "target", "SUCCESS") is False
+        assert await append_audit_log(audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="OK_EVENT", target_id="target", status="SUCCESS")
+        store.heads[PLATFORM_PARTITION]["is_healthy"] = False
+        assert await append_audit_log(audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="SHOULD_BE_REJECTED", target_id="target", status="SUCCESS") is False
     assert len(store.rows) == 1
 
 
@@ -215,10 +222,12 @@ async def test_explicit_idempotency_key_does_not_duplicate_event():
     store = AuditStore()
     with patch("app.observability.audit_ledger.get_async_engine", return_value=Engine(store)):
         assert await append_audit_log(
-            "actor", "EVENT", "target", "SUCCESS", idempotency_key="request-123"
+            audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="EVENT",
+            target_id="target", status="SUCCESS", idempotency_key="request-123"
         )
         assert await append_audit_log(
-            "actor", "EVENT", "target", "SUCCESS", idempotency_key="request-123"
+            audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="EVENT",
+            target_id="target", status="SUCCESS", idempotency_key="request-123"
         )
     assert len(store.rows) == 1
 
@@ -232,10 +241,11 @@ async def test_unique_previous_hash_conflict_retries_with_same_payload_identity(
 
     with patch("app.observability.audit_ledger._append_once", append_once):
         assert await append_audit_log(
-            "actor",
-            "EVENT",
-            "target",
-            "SUCCESS",
+            audit_context=PLATFORM_CONTEXT,
+            actor_uid="actor",
+            event_type="EVENT",
+            target_id="target",
+            status="SUCCESS",
             event_timestamp="2026-07-13T12:00:00+00:00",
         )
 
@@ -244,7 +254,7 @@ async def test_unique_previous_hash_conflict_retries_with_same_payload_identity(
     second = append_once.await_args_list[1].kwargs
     assert first["timestamp"] == second["timestamp"]
     assert first["trace_id"] == second["trace_id"]
-    assert first["chain_partition"] == "global"
+    assert first["chain_partition"] == PLATFORM_PARTITION
 
 
 @pytest.mark.asyncio
@@ -253,7 +263,10 @@ async def test_database_failure_fails_closed():
         "app.observability.audit_ledger._append_once",
         new=AsyncMock(side_effect=ConnectionError("database unavailable")),
     ):
-        assert await append_audit_log("actor", "EVENT", "target", "SUCCESS") is False
+        assert await append_audit_log(
+            audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="EVENT",
+            target_id="target", status="SUCCESS",
+        ) is False
 
 
 @pytest.mark.asyncio
@@ -263,5 +276,8 @@ async def test_append_or_503_aborts_when_audit_fails():
         new=AsyncMock(return_value=False),
     ):
         with pytest.raises(HTTPException) as exc:
-            await append_audit_log_or_503("actor", "EVENT", "target", "SUCCESS")
+            await append_audit_log_or_503(
+                audit_context=PLATFORM_CONTEXT, actor_uid="actor", event_type="EVENT",
+                target_id="target", status="SUCCESS",
+            )
     assert exc.value.status_code == 503

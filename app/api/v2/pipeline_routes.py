@@ -18,6 +18,8 @@ grants access to the requested patient_id.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 import os
 import uuid
@@ -220,6 +222,7 @@ async def upload_pipeline_document(
         raise
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=provider.actor_uid,
         event_type="DOCUMENT_UPLOADED",
         target_id=str(doc_uuid),
@@ -457,6 +460,7 @@ async def review_extracted_field(
 
     ev_type = "FIELD_APPROVED" if new_st == "approved" else ("FIELD_REJECTED" if new_st == "rejected" else "FIELD_EDITED")
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=provider.actor_uid,
         event_type=ev_type,
         target_id=field_id,
@@ -648,6 +652,7 @@ async def commit_extraction_job(
     cnt = len(approved_models)
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=provider.actor_uid,
         event_type="JOB_COMMITTED",
         target_id=job_id,

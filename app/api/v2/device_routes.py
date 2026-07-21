@@ -6,6 +6,8 @@ Never stores private keys server-side.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import base64
 import hashlib
 import logging
@@ -76,6 +78,7 @@ async def enroll_device(
         pub_key = serialization.load_der_public_key(raw_key)
     except (ValueError, UnsupportedAlgorithm, Exception) as exc:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PLATFORM),
             actor_uid=patient_id,
             event_type="DEVICE_KEY_ENROLLED",
             target_id=patient_id,
@@ -92,6 +95,7 @@ async def enroll_device(
         and isinstance(pub_key.curve, ec.SECP256R1)
     ):
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PLATFORM),
             actor_uid=patient_id,
             event_type="DEVICE_KEY_ENROLLED",
             target_id=patient_id,
@@ -163,6 +167,7 @@ async def enroll_device(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Device enrollment token was already consumed.")
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PLATFORM),
         actor_uid=patient_id,
         event_type="DEVICE_KEY_ENROLLED",
         target_id=device_id,
@@ -247,6 +252,7 @@ async def revoke_device(
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PLATFORM),
         actor_uid=patient_id,
         event_type="DEVICE_KEY_REVOKED",
         target_id=device_id,

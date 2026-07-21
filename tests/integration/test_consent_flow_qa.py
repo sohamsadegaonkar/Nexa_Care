@@ -285,9 +285,6 @@ def _patch_stack(fake_redis, fake_sync_redis):
         patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
     )
     stack.enter_context(
-        patch("app.services.biometric_signature_verifier.get_supabase_client", return_value=mock_supabase)
-    )
-    stack.enter_context(
         patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None)
     )
     stack.enter_context(

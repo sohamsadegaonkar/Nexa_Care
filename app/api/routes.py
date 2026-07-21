@@ -58,6 +58,8 @@ AUDIT-CONSISTENCY FIX — the architecture's stated rule is "if the audit
 """
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import json
 import logging
 
@@ -114,6 +116,7 @@ async def _audit_best_effort(actor_uid: str, event_type: str, target_id: str, st
     failure instead of raising.
     """
     success = await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=actor_uid, event_type=event_type, target_id=target_id, status=status_,
     )
     if not success:
@@ -209,6 +212,7 @@ async def register_patient(
     KMS Integration: Generates a per-patient DEK atomically.
     """
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="PATIENT_REGISTRATION_ATTEMPT",
         target_id="PENDING_GENERATION",
@@ -224,6 +228,7 @@ async def register_patient(
         dek_bundle = await kms.generate_dek(patient_id_str, db)
         
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
             actor_uid=provider.actor_uid,
             event_type="PATIENT_DEK_GENERATED",
             target_id=patient_id_str,
@@ -294,6 +299,7 @@ async def register_patient(
         await db.commit()
 
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
             actor_uid=provider.actor_uid,
             event_type="PATIENT_REGISTRATION_SUCCESS",
             target_id=patient_id_str,
@@ -516,6 +522,7 @@ async def view_record_clinical(
     clinical = clinical_rows[0]
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid="CONSENT_VIEWER",
         event_type="CLINICAL_VIEW_SUCCESS",
         target_id=masked_internal_id,

@@ -6,6 +6,8 @@ Enforces fixed-time verification to prevent timing side-channels between
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import asyncio
 import base64
 import hashlib
@@ -115,6 +117,7 @@ class SignedApprovalVerifier:
             raw_sig = base64.b64decode(signature_b64, validate=True)
         except Exception:
             await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.CONSENT),
                 actor_uid=patient_id,
                 event_type="SIGNATURE_VERIFICATION_FAILED",
                 target_id=request_id,
@@ -139,6 +142,7 @@ class SignedApprovalVerifier:
 
         if not keys:
             await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.CONSENT),
                 actor_uid=patient_id,
                 event_type="SIGNATURE_VERIFICATION_FAILED",
                 target_id=request_id,
@@ -168,6 +172,7 @@ class SignedApprovalVerifier:
 
         if not matched_device_id:
             await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.CONSENT),
                 actor_uid=patient_id,
                 event_type="SIGNATURE_VERIFICATION_FAILED",
                 target_id=request_id,

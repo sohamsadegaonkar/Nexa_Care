@@ -38,7 +38,10 @@ def test_health_accepts_testserver_and_rejects_untrusted_host() -> None:
         "app.main.get_async_engine", return_value=engine
     ), patch(
         "app.main.get_outbox_health",
-        new=AsyncMock(return_value={"dead_letter_backlog": 0, "stalled_pending_events": 0}),
+        new=AsyncMock(return_value={
+            "pending_count": 0, "dead_letter_backlog": 0, "expired_lease_count": 0,
+            "oldest_pending_age_seconds": 0.0, "oldest_expired_lease_age_seconds": 0.0,
+        }),
     ):
         client = TestClient(app)
         assert client.get("/health").status_code == 200

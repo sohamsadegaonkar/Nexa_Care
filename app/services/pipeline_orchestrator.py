@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditContext, AuditDomain
+
 import logging
 import re
 import secrets
@@ -80,6 +82,10 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
     )).scalar_one_or_none()
     if job is None:
         return {"status": "extraction_failed_terminal", "error_code": "JOB_NOT_FOUND"}
+    audit_context = AuditContext.for_tenant(
+        tenant_id=str(job.tenant_id),
+        domain=AuditDomain.PIPELINE,
+    )
     if job.status in {"extracted", "validation_pending", "review_pending", "ready_for_commit", "committed"}:
         return {"job_id": str(job.id), "status": job.status, "idempotent": True}
     now = datetime.now(timezone.utc)
@@ -98,6 +104,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
     await db.commit()
 
     await append_audit_log_or_503(
+        audit_context=audit_context,
         actor_uid=job.uploader_id or "SYSTEM_PIPELINE",
         event_type="EXTRACTION_JOB_STARTED",
         target_id=str(job.id),
@@ -188,6 +195,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job.completed_at = datetime.now(timezone.utc)
         await db.commit()
         await append_audit_log_or_503(
+            audit_context=audit_context,
             actor_uid=job.uploader_id or "SYSTEM_PIPELINE",
             event_type="EXTRACTION_JOB_VALIDATED",
             target_id=str(job.id), status="SUCCESS",
@@ -232,6 +240,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
     job.completed_at = datetime.now(timezone.utc)
     await db.commit()
     await append_audit_log_or_503(
+        audit_context=audit_context,
         actor_uid=job.uploader_id or "SYSTEM_PIPELINE",
         event_type="EXTRACTION_JOB_FAILED", target_id=str(job.id), status="FAILED",
         metadata={"patient_id": str(job.patient_id), "tenant_id": str(job.tenant_id) if job.tenant_id else None,

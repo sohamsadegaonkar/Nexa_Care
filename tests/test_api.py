@@ -363,7 +363,10 @@ class TestNexaCareLifecycle(unittest.TestCase):
             patch("app.main.get_async_engine", return_value=FakeAsyncEngine()),
             patch(
                 "app.main.get_outbox_health",
-                new=AsyncMock(return_value={"dead_letter_backlog": 0, "stalled_pending_events": 0}),
+                new=AsyncMock(return_value={
+                    "pending_count": 0, "dead_letter_backlog": 0, "expired_lease_count": 0,
+                    "oldest_pending_age_seconds": 0.0, "oldest_expired_lease_age_seconds": 0.0,
+                }),
             ),
         ]
         for p in cls._patches:
@@ -405,7 +408,7 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(data["postgres"], "ok")
         self.assertEqual(data["audit_outbox_worker"], "ok")
         self.assertEqual(data["audit_outbox_dead_letter_backlog"], "0")
-        self.assertEqual(data["audit_outbox_stalled_pending_events"], "0")
+        self.assertEqual(data["audit_outbox_expired_lease_count"], "0")
 
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 

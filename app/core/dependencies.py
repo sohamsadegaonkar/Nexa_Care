@@ -18,6 +18,12 @@ Two distinct trust models live in this module — do not conflate them:
 
 from __future__ import annotations
 
+from app.security.audit_context import (
+    AuditDomain,
+    bind_trusted_audit_hospital,
+    current_audit_context,
+)
+
 import json
 import logging
 from uuid import UUID
@@ -53,6 +59,7 @@ logger = logging.getLogger("nexa_logger")
 async def get_scoped_session(authorization: str | None = Header(default=None)) -> str:
     if not authorization:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
             target_id="UNKNOWN",
@@ -67,6 +74,7 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
     session_context = await validate_session_context(authorization)
     if not session_context:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
             target_id="UNKNOWN",
@@ -77,6 +85,7 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
     masked_internal_id = session_context.get("masked_internal_id")
     if not masked_internal_id:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="SESSION_GUARD",
             event_type="SESSION_VALIDATION_FAILED",
             target_id="UNKNOWN",
@@ -200,6 +209,7 @@ async def get_provider_context(
         )
     else:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_GUARD",
             event_type="PROVIDER_AUTH_FAILED",
             target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -208,6 +218,7 @@ async def get_provider_context(
         raise HTTPException(status_code=401, detail="Missing provider credentials")
 
     if result.context is not None:
+        bind_trusted_audit_hospital(str(result.context.hospital.hospital_id))
         if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
             logger.warning(json.dumps({
                 "event": "SESSION_IP_ROTATION_DETECTED",
@@ -220,6 +231,7 @@ async def get_provider_context(
 
     assert result.failure is not None
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid="PROVIDER_GUARD",
         event_type="PROVIDER_AUTH_FAILED",
         target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -254,6 +266,7 @@ async def get_current_provider(
     session_token = credentials.credentials if credentials is not None and credentials.credentials else cookie_token
     if not session_token:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.AUTH),
             actor_uid="PROVIDER_GUARD",
             event_type="PROVIDER_AUTH_FAILED",
             target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -269,6 +282,7 @@ async def get_current_provider(
         client_ip=client_ip,
     )
     if result.context is not None:
+        bind_trusted_audit_hospital(str(result.context.hospital.hospital_id))
         if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
             logger.warning(json.dumps({
                 "event": "SESSION_IP_ROTATION_DETECTED",
@@ -280,6 +294,7 @@ async def get_current_provider(
 
     assert result.failure is not None
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid="PROVIDER_GUARD",
         event_type="PROVIDER_AUTH_FAILED",
         target_id=str(hospital_id) if hospital_id else "UNKNOWN",
@@ -301,6 +316,7 @@ def require_role(required_role: str):
         roles = provider.affiliation.roles or []
         if required_role not in roles:
             await append_audit_log(
+                audit_context=current_audit_context(AuditDomain.AUTH),
                 actor_uid=provider.actor_uid,
                 event_type="PROVIDER_ROLE_DENIED",
                 target_id=str(provider.provider.provider_id),

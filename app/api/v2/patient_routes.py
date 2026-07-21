@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import json
 import logging
 from typing import Any
@@ -253,6 +255,7 @@ async def get_emergency_summary(
         )
 
     audit_success = await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED",
         target_id=str(patient_id),
@@ -308,6 +311,7 @@ async def erase_patient_data(
     
     # 1. Audit Request
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="CRYPTOGRAPHIC_ERASURE_REQUESTED",
         target_id=patient_id_str,
@@ -329,6 +333,7 @@ async def erase_patient_data(
 
     # 4. Audit Completion
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="CRYPTOGRAPHIC_ERASURE_COMPLETED",
         target_id=patient_id_str,

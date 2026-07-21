@@ -321,7 +321,6 @@ def test_consent_action_audited_on_approve(
         mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
         mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
         stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
-        stack.enter_context(patch("app.services.biometric_signature_verifier.get_supabase_client", return_value=mock_supabase))
 
         # Capture consent route audit
         audit_mock = stack.enter_context(

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import logging
 from typing import Any, Protocol, List, Dict
 
@@ -106,6 +108,7 @@ async def consent_gated_decrypt(
 
     # Step 2: Hard-audit Decrypt Started
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=provider_id,
         event_type="CONSENT_GATED_DECRYPT_STARTED",
         target_id=patient_id,
@@ -167,6 +170,7 @@ async def consent_gated_decrypt(
 
         # Step 6: Hard-audit Decrypt Completed
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider_id,
             event_type="CONSENT_GATED_DECRYPT_COMPLETED",
             target_id=patient_id,
@@ -180,6 +184,7 @@ async def consent_gated_decrypt(
         # Even if decryption fails, the access attempt happened.
         # Record it and consume the token as required.
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=provider_id,
             event_type="CONSENT_GATED_DECRYPT_FAILED",
             target_id=patient_id,

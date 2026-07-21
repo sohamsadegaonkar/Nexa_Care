@@ -1,3 +1,4 @@
+from app.security.audit_context import AuditDomain, current_audit_context
 """Step-up MFA verification for privileged actions."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -46,6 +47,7 @@ async def verify_action_mfa(
     ):
         raise HTTPException(status_code=401, detail={"error_code": "PROVIDER_SESSION_INVALID"})
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,
         event_type="PROVIDER_STEP_UP_MFA_VERIFIED",
         target_id=str(provider.provider.provider_id),

@@ -23,6 +23,8 @@ it) so they audit best-effort rather than hard-failing the caller.
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import hashlib
 import json
 import logging
@@ -239,6 +241,7 @@ async def issue(
 
     if not assurance_result.verified:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="ASSURANCE_VERIFICATION_FAILED",
             target_id=patient_id,
@@ -257,6 +260,7 @@ async def issue(
 
     target_id = f"{patient_id}:{clinician_id}:{purpose}"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=clinician_id,
         event_type="CONSENT_GRANT_ATTEMPT",
         target_id=target_id,
@@ -311,6 +315,7 @@ async def issue(
     except Exception as exc:
         await db.rollback()
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="CONSENT_GRANT_FAILED",
             target_id=target_id,
@@ -352,6 +357,7 @@ async def issue(
         except Exception:
             await db.rollback()
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="CONSENT_GRANT_FAILED",
             target_id=target_id,
@@ -360,6 +366,7 @@ async def issue(
         raise ConsentEngineUnavailable("Consent capability could not be made live.") from exc
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=clinician_id,
         event_type="CONSENT_GRANT_SUCCESS",
         target_id=target_id,
@@ -399,6 +406,7 @@ async def issue_routine(
 
     target_id = f"{patient_id}:{clinician_id}:{purpose.value}"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=clinician_id,
         event_type="ROUTINE_CONSENT_GRANT_ATTEMPT",
         target_id=target_id,
@@ -421,6 +429,7 @@ async def issue_routine(
         )
     except Exception as exc:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="ROUTINE_CONSENT_GRANT_FAILED",
             target_id=target_id,
@@ -430,6 +439,7 @@ async def issue_routine(
         raise
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=clinician_id,
         event_type="ROUTINE_CONSENT_GRANT_SUCCESS",
         target_id=target_id,
@@ -472,6 +482,7 @@ async def issue_break_glass(
 
     target_id = f"{patient_id}:{clinician_id}:BREAK_GLASS"
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=clinician_id,
         event_type="BREAK_GLASS_GRANT_ATTEMPT",
         target_id=target_id,
@@ -498,6 +509,7 @@ async def issue_break_glass(
         )
     except Exception as exc:
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="BREAK_GLASS_GRANT_FAILED",
             target_id=target_id,
@@ -507,6 +519,7 @@ async def issue_break_glass(
         raise
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=clinician_id,
         event_type="BREAK_GLASS_GRANT_SUCCESS",
         target_id=target_id,
@@ -581,6 +594,7 @@ async def consume(
             row.consumed_at = datetime.now(timezone.utc)
             await db.commit()
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="CONSENT_CONSUMED",
             target_id=target_id,
@@ -589,6 +603,7 @@ async def consume(
     except Exception:
         await db.rollback()
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
             event_type="CONSENT_CONSUMED",
             target_id=target_id,
@@ -606,6 +621,7 @@ async def revoke(*, db: AsyncSession, token: str, reason: str = "manual_revocati
     """
     token_hash = _token_hash(token)
     await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid="SYSTEM_CONSENT",
         event_type="BREAK_GLASS_REVOKE_ATTEMPT",
         target_id=token_hash,
@@ -632,6 +648,7 @@ async def revoke(*, db: AsyncSession, token: str, reason: str = "manual_revocati
             await db.commit()
 
         await append_audit_log(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid="SYSTEM_CONSENT",
             event_type="BREAK_GLASS_REVOKE_SUCCESS",
             target_id=token_hash,

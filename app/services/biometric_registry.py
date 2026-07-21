@@ -64,6 +64,8 @@ TIMING SIDE-CHANNEL FIX (this revision) — verify_biometric_binding() was
 
 from __future__ import annotations
 
+from app.security.audit_context import AuditDomain, current_audit_context
+
 import asyncio
 import hashlib
 import hmac
@@ -330,6 +332,7 @@ async def enroll_biometric_binding_with_audit(
     trail.
     """
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PLATFORM),
         actor_uid="PROVIDER_FACILITY",
         event_type="BIOMETRIC_ENROLLMENT_ATTEMPT",
         target_id=masked_internal_id,
@@ -346,6 +349,7 @@ async def enroll_biometric_binding_with_audit(
 
     if not enrolled:
         await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.PLATFORM),
             actor_uid="PROVIDER_FACILITY",
             event_type="BIOMETRIC_ENROLLMENT_FAILED",
             target_id=masked_internal_id,
@@ -358,6 +362,7 @@ async def enroll_biometric_binding_with_audit(
         )
 
     await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PLATFORM),
         actor_uid="PROVIDER_FACILITY",
         event_type="BIOMETRIC_ENROLLMENT_SUCCESS",
         target_id=masked_internal_id,
