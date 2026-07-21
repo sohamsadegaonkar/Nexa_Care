@@ -84,19 +84,23 @@ class FakeDBSession:
         stmt_text = str(stmt)
         self.calls.append(stmt_text)
         if "nexa_vault" in stmt_text:
-            return FakeExecuteResult(SimpleNamespace(
-                raw_pii={"patient_name": "Jane Doe", "phone": "9999999999"},
-                patient_name=ENCRYPTED_TEST_FIELD,
-                phone=None,
-                aadhaar_abha_id=None,
-            ))
+            return FakeExecuteResult(
+                SimpleNamespace(
+                    raw_pii={"patient_name": "Jane Doe", "phone": "9999999999"},
+                    patient_name=ENCRYPTED_TEST_FIELD,
+                    phone=None,
+                    aadhaar_abha_id=None,
+                )
+            )
         if "nexa_clinical" in stmt_text:
-            return FakeExecuteResult(SimpleNamespace(
-                clinical_data={},
-                diagnoses=ENCRYPTED_TEST_FIELD,
-                lab_results=None,
-                prescriptions=None,
-            ))
+            return FakeExecuteResult(
+                SimpleNamespace(
+                    clinical_data={},
+                    diagnoses=ENCRYPTED_TEST_FIELD,
+                    lab_results=None,
+                    prescriptions=None,
+                )
+            )
         raise AssertionError(f"unexpected query: {stmt_text}")
 
 
@@ -148,11 +152,30 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
 
     try:
         with (
-            patch("app.api.v2.patient_routes.consent_engine.validate", new_callable=AsyncMock) as mock_validate,
-            patch("app.api.v2.patient_routes.consent_engine.consume", new_callable=AsyncMock) as mock_consume,
-            patch("app.services.consent_gated_crypto.append_audit_log_or_503", new_callable=AsyncMock) as mock_audit,
-       ):
-            async def audit_side_effect(*, audit_context, actor_uid, event_type, target_id, status, metadata=None, event_timestamp=None):
+            patch(
+                "app.api.v2.patient_routes.consent_engine.validate",
+                new_callable=AsyncMock,
+            ) as mock_validate,
+            patch(
+                "app.api.v2.patient_routes.consent_engine.consume",
+                new_callable=AsyncMock,
+            ) as mock_consume,
+            patch(
+                "app.services.consent_gated_crypto.append_audit_log_or_503",
+                new_callable=AsyncMock,
+            ) as mock_audit,
+        ):
+
+            async def audit_side_effect(
+                *,
+                audit_context,
+                actor_uid,
+                event_type,
+                target_id,
+                status,
+                metadata=None,
+                event_timestamp=None,
+            ):
                 events.append(f"audit:{event_type}")
 
             mock_validate.side_effect = validate_side_effect

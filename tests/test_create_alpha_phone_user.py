@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import base64
 import json
@@ -18,12 +18,22 @@ from scripts.create_alpha_phone_user import (
 
 
 def _jwt(role: str) -> str:
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode()).decode().rstrip("=")
-    payload = base64.urlsafe_b64encode(json.dumps({"role": role}).encode()).decode().rstrip("=")
+    header = (
+        base64.urlsafe_b64encode(json.dumps({"alg": "HS256"}).encode())
+        .decode()
+        .rstrip("=")
+    )
+    payload = (
+        base64.urlsafe_b64encode(json.dumps({"role": role}).encode())
+        .decode()
+        .rstrip("=")
+    )
     return f"{header}.{payload}.signature"
 
 
-def test_env_loading_overrides_stale_process_values(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_loading_overrides_stale_process_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("SUPABASE_URL", "https://stale.example")
     monkeypatch.setenv("SUPABASE_SERVICE_ROLE_KEY", "stale")
 
@@ -63,7 +73,9 @@ def test_admin_headers_distinguish_modern_secret_from_legacy_jwt() -> None:
     assert legacy["Content-Type"] == "application/json"
 
 
-def test_modern_secret_key_uses_admin_http_endpoint_without_sdk_jwt_validation() -> None:
+def test_modern_secret_key_uses_admin_http_endpoint_without_sdk_jwt_validation() -> (
+    None
+):
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

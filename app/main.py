@@ -34,6 +34,7 @@ Fixes applied in this file:
           Same root cause and same fix shape as app/api/routes.py F-17
           and app/services/biometric_registry.py F-16.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -90,7 +91,11 @@ from app.core.database import get_async_engine, get_db_session, get_session_fact
 from app.core.redis import get_async_redis_client
 from app.core.client_ip import trusted_proxy_networks
 from app.observability.safe_exceptions import log_safe_exception
-from app.services.audit_outbox_processor import get_outbox_health, run_outbox_processor_forever
+from app.services.audit_outbox_processor import (
+    get_outbox_health,
+    run_outbox_processor_forever,
+)
+
 # Deprecated test-patch seam; runtime code uses get_async_redis_client.
 get_redis_client = get_async_redis_client
 
@@ -99,7 +104,9 @@ load_dotenv()
 logger = logging.getLogger("nexa_logger")
 
 # ── F-14: Hard upload / body size cap ────────────────────────────────────────
-_MAX_UPLOAD_BYTES: int = int(os.environ.get("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))  # 20 MB
+_MAX_UPLOAD_BYTES: int = int(
+    os.environ.get("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))
+)  # 20 MB
 
 
 class ContentSizeLimitMiddleware(BaseHTTPMiddleware):
@@ -139,7 +146,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+        response.headers["Permissions-Policy"] = (
+            "geolocation=(), microphone=(), camera=()"
+        )
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
             "script-src 'self'; "
@@ -153,7 +162,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "object-src 'none';"
         )
         if get_runtime_environment().is_production_like:
-            response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
         return response
 
 
@@ -165,16 +176,34 @@ class CookieCsrfMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         cookie_session = request.cookies.get("nexa_provider_session")
-        if cookie_session and request.method not in self._SAFE_METHODS and request.url.path not in self._LOGIN_EXEMPT:
+        if (
+            cookie_session
+            and request.method not in self._SAFE_METHODS
+            and request.url.path not in self._LOGIN_EXEMPT
+        ):
             origin = request.headers.get("origin")
-            configured = {o.strip().rstrip("/") for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()}
-            same_origin = f"{request.url.scheme}://{request.headers.get('host', '')}".rstrip("/")
+            configured = {
+                o.strip().rstrip("/")
+                for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",")
+                if o.strip()
+            }
+            same_origin = (
+                f"{request.url.scheme}://{request.headers.get('host', '')}".rstrip("/")
+            )
             if not origin or origin.rstrip("/") not in configured | {same_origin}:
-                return JSONResponse(status_code=403, content={"error_code": "CSRF_ORIGIN_REJECTED"})
+                return JSONResponse(
+                    status_code=403, content={"error_code": "CSRF_ORIGIN_REJECTED"}
+                )
             cookie_token = request.cookies.get("nexa_csrf", "")
             header_token = request.headers.get("x-csrf-token", "")
-            if not cookie_token or not header_token or not secrets.compare_digest(cookie_token, header_token):
-                return JSONResponse(status_code=403, content={"error_code": "CSRF_TOKEN_REJECTED"})
+            if (
+                not cookie_token
+                or not header_token
+                or not secrets.compare_digest(cookie_token, header_token)
+            ):
+                return JSONResponse(
+                    status_code=403, content={"error_code": "CSRF_TOKEN_REJECTED"}
+                )
         return await call_next(request)
 
 
@@ -193,7 +222,8 @@ async def lifespan(application: FastAPI):
     outbox_shutdown_event = asyncio.Event()
     outbox_task = asyncio.create_task(
         run_outbox_processor_forever(
-            get_session_factory(), shutdown_event=outbox_shutdown_event,
+            get_session_factory(),
+            shutdown_event=outbox_shutdown_event,
         )
     )
     application.state.audit_outbox_task = outbox_task
@@ -207,7 +237,9 @@ async def lifespan(application: FastAPI):
         engine = get_async_engine()
         await engine.dispose()
     except Exception as exc:
-        log_safe_exception(logger, exc, subsystem="database", operation="shutdown_dispose")
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="shutdown_dispose"
+        )
 
     try:
         redis_client = get_async_redis_client()
@@ -222,16 +254,28 @@ app.add_middleware(ContentSizeLimitMiddleware)
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(CookieCsrfMiddleware)
 
-_cors_origins = [o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+_cors_origins = [
+    o.strip() for o in os.getenv("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
-    allow_headers=["Authorization", "Content-Type", "X-Hospital-Id", "X-Consent-Token", "X-Consent-Purpose", "X-CSRF-Token", "Idempotency-Key"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Hospital-Id",
+        "X-Consent-Token",
+        "X-Consent-Purpose",
+        "X-CSRF-Token",
+        "Idempotency-Key",
+    ],
 )
 
-_trusted_hosts = [h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()] or ["*"]
+_trusted_hosts = [
+    h.strip() for h in os.getenv("TRUSTED_HOSTS", "*").split(",") if h.strip()
+] or ["*"]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts)
 
 app.add_middleware(GlobalLoggingMiddleware)
@@ -272,7 +316,9 @@ async def patient_data_erased_handler(request: Request, exc: PatientDataErased):
 
 
 @app.exception_handler(ErasureRegistryUnavailable)
-async def erasure_registry_unavailable_handler(request: Request, exc: ErasureRegistryUnavailable):
+async def erasure_registry_unavailable_handler(
+    request: Request, exc: ErasureRegistryUnavailable
+):
     """A registry query failure is never treated as 'not erased' -- fail
     closed with a 503 rather than silently permitting decryption."""
     return JSONResponse(
@@ -328,7 +374,9 @@ async def health_check() -> dict:
 
     checks: dict[str, str] = {}
     outbox_task = getattr(app.state, "audit_outbox_task", None)
-    checks["audit_outbox_worker"] = "ok" if outbox_task is not None and not outbox_task.done() else "unavailable"
+    checks["audit_outbox_worker"] = (
+        "ok" if outbox_task is not None and not outbox_task.done() else "unavailable"
+    )
 
     try:
         redis = get_async_redis_client()
@@ -345,15 +393,23 @@ async def health_check() -> dict:
         async with get_session_factory()() as db:
             outbox_health = await get_outbox_health(db)
         checks["audit_outbox_pending_count"] = str(outbox_health["pending_count"])
-        checks["audit_outbox_dead_letter_backlog"] = str(outbox_health["dead_letter_backlog"])
-        checks["audit_outbox_expired_lease_count"] = str(outbox_health["expired_lease_count"])
-        checks["audit_outbox_oldest_pending_age_seconds"] = str(round(outbox_health["oldest_pending_age_seconds"], 3))
+        checks["audit_outbox_dead_letter_backlog"] = str(
+            outbox_health["dead_letter_backlog"]
+        )
+        checks["audit_outbox_expired_lease_count"] = str(
+            outbox_health["expired_lease_count"]
+        )
+        checks["audit_outbox_oldest_pending_age_seconds"] = str(
+            round(outbox_health["oldest_pending_age_seconds"], 3)
+        )
         checks["audit_outbox_oldest_expired_lease_age_seconds"] = str(
             round(outbox_health["oldest_expired_lease_age_seconds"], 3)
         )
         dead_letter_limit = int(os.getenv("AUDIT_OUTBOX_MAX_DEAD_LETTERS", "0"))
         expired_lease_limit = int(os.getenv("AUDIT_OUTBOX_MAX_EXPIRED_LEASES", "0"))
-        oldest_pending_limit = int(os.getenv("AUDIT_OUTBOX_MAX_PENDING_AGE_SECONDS", "300"))
+        oldest_pending_limit = int(
+            os.getenv("AUDIT_OUTBOX_MAX_PENDING_AGE_SECONDS", "300")
+        )
         if (
             outbox_health["dead_letter_backlog"] > dead_letter_limit
             or outbox_health["expired_lease_count"] > expired_lease_limit
@@ -365,7 +421,12 @@ async def health_check() -> dict:
     except Exception as exc:
         checks["postgres"] = f"unavailable: {type(exc).__name__}"
 
-    readiness_checks = ("audit_outbox_worker", "redis", "postgres", "audit_outbox_backlog")
+    readiness_checks = (
+        "audit_outbox_worker",
+        "redis",
+        "postgres",
+        "audit_outbox_backlog",
+    )
     if all(checks.get(name) == "ok" for name in readiness_checks):
         return {"status": "ok", **checks}
 
@@ -377,8 +438,7 @@ async def health_check() -> dict:
 
 @app.post("/api/v1/process-document", tags=["documents"])
 async def process_document(
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db_session)
+    file: UploadFile = File(...), db: AsyncSession = Depends(get_db_session)
 ) -> dict:
     """Retired legacy ingestion path; use the reviewed v2 pipeline."""
     raise HTTPException(

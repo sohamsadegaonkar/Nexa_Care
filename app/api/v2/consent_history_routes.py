@@ -30,13 +30,24 @@ def _serialize_history(rows: list[ConsentGrantLog]) -> list[ConsentHistoryItem]:
     now = datetime.now(timezone.utc)
     result: list[ConsentHistoryItem] = []
     for row in rows:
-        status_value = "revoked" if row.revoked_at else ("expired" if row.expires_at <= now else "active")
-        result.append(ConsentHistoryItem(
-            id=str(row.id), patient_id=row.patient_id, purpose=row.purpose,
-            status=status_value, scope=list(row.scope), issued_at=row.issued_at,
-            expires_at=row.expires_at, revoked_at=row.revoked_at,
-            type="break-glass" if row.is_break_glass else "routine",
-        ))
+        status_value = (
+            "revoked"
+            if row.revoked_at
+            else ("expired" if row.expires_at <= now else "active")
+        )
+        result.append(
+            ConsentHistoryItem(
+                id=str(row.id),
+                patient_id=row.patient_id,
+                purpose=row.purpose,
+                status=status_value,
+                scope=list(row.scope),
+                issued_at=row.issued_at,
+                expires_at=row.expires_at,
+                revoked_at=row.revoked_at,
+                type="break-glass" if row.is_break_glass else "routine",
+            )
+        )
     return result
 
 
@@ -48,11 +59,20 @@ async def get_self_consent_history(
     try:
         canonical_id = str(UUID(patient_id))
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
-    rows = (await db.execute(
-        select(ConsentGrantLog).where(ConsentGrantLog.patient_id == canonical_id)
-        .order_by(ConsentGrantLog.issued_at.desc())
-    )).scalars().all()
+        raise HTTPException(
+            status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
+        ) from exc
+    rows = (
+        (
+            await db.execute(
+                select(ConsentGrantLog)
+                .where(ConsentGrantLog.patient_id == canonical_id)
+                .order_by(ConsentGrantLog.issued_at.desc())
+            )
+        )
+        .scalars()
+        .all()
+    )
     return _serialize_history(rows)
 
 
@@ -67,5 +87,9 @@ async def get_consent_history(
     )
     if not roles.intersection({"admin", "privacy_officer", "auditor"}):
         stmt = stmt.where(ConsentGrantLog.clinician_id == provider.actor_uid)
-    rows = (await db.execute(stmt.order_by(ConsentGrantLog.issued_at.desc()))).scalars().all()
+    rows = (
+        (await db.execute(stmt.order_by(ConsentGrantLog.issued_at.desc())))
+        .scalars()
+        .all()
+    )
     return _serialize_history(rows)

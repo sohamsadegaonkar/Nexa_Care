@@ -28,6 +28,7 @@ Verifies:
 25.  Conflicts force has_conflict=True on all involved fields.
 26.  BP with mmHg and without normalise to the same value (no false conflict).
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -110,7 +111,9 @@ def test_medication_complete():
     """
     res = validate_field("medication", "Metformin 500mg twice daily")
     assert res.is_valid is True
-    assert any(c["check_name"] == "medication_fuzzy_match" and c["passed"] for c in res.checks)
+    assert any(
+        c["check_name"] == "medication_fuzzy_match" and c["passed"] for c in res.checks
+    )
 
 
 def test_medication_bare_drug_name_fails():
@@ -283,7 +286,10 @@ def test_lab_without_unit_fails():
     """A lab value without a recognised unit fails validation."""
     res = validate_field("lab_result", "just a number")
     assert res.is_valid is False
-    assert any("Missing numeric lab value or recognized unit" in e for e in res.validation_errors)
+    assert any(
+        "Missing numeric lab value or recognized unit" in e
+        for e in res.validation_errors
+    )
 
 
 # ── 20–21. Sugar Discrepancy Conflict Detection ──────────────────────────────
@@ -292,12 +298,20 @@ def test_lab_without_unit_fails():
 def test_sugar_discrepancy_conflict():
     """Two sugar readings far apart produce a VALUE_DISCREPANCY conflict."""
     f1 = ExtractedField(
-        field_id="s1", job_id="j1", field_name="sugar",
-        raw_value="105 mg/dL", confidence=0.98, risk_level="LOW_RISK",
+        field_id="s1",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="105 mg/dL",
+        confidence=0.98,
+        risk_level="LOW_RISK",
     )
     f2 = ExtractedField(
-        field_id="s2", job_id="j1", field_name="sugar",
-        raw_value="280 mg/dL", confidence=0.98, risk_level="HIGH_RISK",
+        field_id="s2",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="280 mg/dL",
+        confidence=0.98,
+        risk_level="HIGH_RISK",
     )
 
     conflicts = detect_conflicts([f1, f2])
@@ -311,12 +325,18 @@ def test_sugar_discrepancy_conflict():
 def test_close_sugar_no_conflict():
     """Two close sugar readings do NOT produce a conflict."""
     f1 = ExtractedField(
-        field_id="s1", job_id="j1", field_name="sugar",
-        raw_value="95 mg/dL", confidence=0.95,
+        field_id="s1",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="95 mg/dL",
+        confidence=0.95,
     )
     f2 = ExtractedField(
-        field_id="s2", job_id="j1", field_name="sugar",
-        raw_value="100 mg/dL", confidence=0.95,
+        field_id="s2",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="100 mg/dL",
+        confidence=0.95,
     )
 
     conflicts = detect_conflicts([f1, f2])
@@ -331,12 +351,20 @@ def test_close_sugar_no_conflict():
 def test_allergy_vs_medication_conflict():
     """Penicillin allergy + Amoxicillin prescription → CONTRAINDICATION."""
     f_alg = ExtractedField(
-        field_id="a1", job_id="j1", field_name="allergy",
-        raw_value="Penicillin", confidence=0.99, risk_level="HIGH_RISK",
+        field_id="a1",
+        job_id="j1",
+        field_name="allergy",
+        raw_value="Penicillin",
+        confidence=0.99,
+        risk_level="HIGH_RISK",
     )
     f_med = ExtractedField(
-        field_id="m1", job_id="j1", field_name="medication",
-        raw_value="Amoxicillin 500mg twice daily", confidence=0.95, risk_level="HIGH_RISK",
+        field_id="m1",
+        job_id="j1",
+        field_name="medication",
+        raw_value="Amoxicillin 500mg twice daily",
+        confidence=0.95,
+        risk_level="HIGH_RISK",
     )
 
     conflicts = detect_conflicts([f_alg, f_med])
@@ -349,12 +377,18 @@ def test_allergy_vs_medication_conflict():
 def test_allergy_direct_match_conflict():
     """Allergy to a drug that also appears as a direct prescription."""
     f_alg = ExtractedField(
-        field_id="a2", job_id="j1", field_name="allergy",
-        raw_value="Ibuprofen", confidence=0.99,
+        field_id="a2",
+        job_id="j1",
+        field_name="allergy",
+        raw_value="Ibuprofen",
+        confidence=0.99,
     )
     f_med = ExtractedField(
-        field_id="m2", job_id="j1", field_name="medication",
-        raw_value="Ibuprofen 400mg daily", confidence=0.95,
+        field_id="m2",
+        job_id="j1",
+        field_name="medication",
+        raw_value="Ibuprofen 400mg daily",
+        confidence=0.95,
     )
 
     conflicts = detect_conflicts([f_alg, f_med])
@@ -365,12 +399,18 @@ def test_allergy_direct_match_conflict():
 def test_unrelated_allergy_no_conflict():
     """An allergy that doesn't match any medication produces no conflict."""
     f_alg = ExtractedField(
-        field_id="a3", job_id="j1", field_name="allergy",
-        raw_value="Peanuts", confidence=0.99,
+        field_id="a3",
+        job_id="j1",
+        field_name="allergy",
+        raw_value="Peanuts",
+        confidence=0.99,
     )
     f_med = ExtractedField(
-        field_id="m3", job_id="j1", field_name="medication",
-        raw_value="Metformin 500mg twice daily", confidence=0.95,
+        field_id="m3",
+        job_id="j1",
+        field_name="medication",
+        raw_value="Metformin 500mg twice daily",
+        confidence=0.95,
     )
 
     conflicts = detect_conflicts([f_alg, f_med])
@@ -383,12 +423,18 @@ def test_unrelated_allergy_no_conflict():
 def test_same_bp_no_conflict():
     """Identical BP readings produce no conflict."""
     f1 = ExtractedField(
-        field_id="b1", job_id="j1", field_name="bp",
-        raw_value="120/80 mmHg", confidence=0.97,
+        field_id="b1",
+        job_id="j1",
+        field_name="bp",
+        raw_value="120/80 mmHg",
+        confidence=0.97,
     )
     f2 = ExtractedField(
-        field_id="b2", job_id="j1", field_name="bp",
-        raw_value="120/80", confidence=0.97,
+        field_id="b2",
+        job_id="j1",
+        field_name="bp",
+        raw_value="120/80",
+        confidence=0.97,
     )
 
     conflicts = detect_conflicts([f1, f2])
@@ -400,12 +446,18 @@ def test_same_bp_no_conflict():
 def test_different_bp_conflict():
     """Materially different BP readings produce a VALUE_DISCREPANCY conflict."""
     f1 = ExtractedField(
-        field_id="b1", job_id="j1", field_name="bp",
-        raw_value="120/80", confidence=0.97,
+        field_id="b1",
+        job_id="j1",
+        field_name="bp",
+        raw_value="120/80",
+        confidence=0.97,
     )
     f2 = ExtractedField(
-        field_id="b2", job_id="j1", field_name="bp",
-        raw_value="140/90", confidence=0.97,
+        field_id="b2",
+        job_id="j1",
+        field_name="bp",
+        raw_value="140/90",
+        confidence=0.97,
     )
 
     conflicts = detect_conflicts([f1, f2])
@@ -418,12 +470,18 @@ def test_different_bp_conflict():
 def test_bp_mmhg_normalisation_no_false_conflict():
     """'120/80' and '120/80 mmHg' normalise to the same value → no conflict."""
     f1 = ExtractedField(
-        field_id="b1", job_id="j1", field_name="bp",
-        raw_value="120/80", confidence=0.97,
+        field_id="b1",
+        job_id="j1",
+        field_name="bp",
+        raw_value="120/80",
+        confidence=0.97,
     )
     f2 = ExtractedField(
-        field_id="b2", job_id="j1", field_name="bp",
-        raw_value="120/80 mmHg", confidence=0.97,
+        field_id="b2",
+        job_id="j1",
+        field_name="bp",
+        raw_value="120/80 mmHg",
+        confidence=0.97,
     )
 
     conflicts = detect_conflicts([f1, f2])
@@ -436,12 +494,20 @@ def test_bp_mmhg_normalisation_no_false_conflict():
 def test_conflict_forces_review_flag():
     """Every field involved in a conflict has has_conflict=True."""
     f1 = ExtractedField(
-        field_id="s1", job_id="j1", field_name="sugar",
-        raw_value="90 mg/dL", confidence=0.99, risk_level="LOW_RISK",
+        field_id="s1",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="90 mg/dL",
+        confidence=0.99,
+        risk_level="LOW_RISK",
     )
     f2 = ExtractedField(
-        field_id="s2", job_id="j1", field_name="sugar",
-        raw_value="250 mg/dL", confidence=0.95, risk_level="HIGH_RISK",
+        field_id="s2",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="250 mg/dL",
+        confidence=0.95,
+        risk_level="HIGH_RISK",
     )
 
     detect_conflicts([f1, f2])
@@ -455,12 +521,18 @@ def test_conflict_sets_validation_result_flag():
     from app.models.extracted_field import ValidationResult
 
     f1 = ExtractedField(
-        field_id="s1", job_id="j1", field_name="sugar",
-        raw_value="90 mg/dL", validation_result=ValidationResult(is_valid=True),
+        field_id="s1",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="90 mg/dL",
+        validation_result=ValidationResult(is_valid=True),
     )
     f2 = ExtractedField(
-        field_id="s2", job_id="j1", field_name="sugar",
-        raw_value="250 mg/dL", validation_result=ValidationResult(is_valid=True),
+        field_id="s2",
+        job_id="j1",
+        field_name="sugar",
+        raw_value="250 mg/dL",
+        validation_result=ValidationResult(is_valid=True),
     )
 
     detect_conflicts([f1, f2])
@@ -478,7 +550,9 @@ def test_no_fields_no_conflicts():
 
 def test_single_field_no_conflicts():
     """A single field cannot conflict with anything."""
-    f = ExtractedField(field_id="x", job_id="j", field_name="sugar", raw_value="90 mg/dL")
+    f = ExtractedField(
+        field_id="x", job_id="j", field_name="sugar", raw_value="90 mg/dL"
+    )
     assert detect_conflicts([f]) == []
 
 
@@ -564,7 +638,12 @@ def test_heart_rate_discrepancy_conflict():
 
 def test_close_heart_rate_no_conflict():
     """Small heart-rate variance is not treated as a conflict."""
-    assert detect_conflicts([_field("hr1", "heart_rate", "78 bpm"), _field("hr2", "pulse", "82 bpm")]) == []
+    assert (
+        detect_conflicts(
+            [_field("hr1", "heart_rate", "78 bpm"), _field("hr2", "pulse", "82 bpm")]
+        )
+        == []
+    )
 
 
 def test_spo2_discrepancy_conflict():
@@ -607,5 +686,7 @@ def test_generic_lab_incompatible_units_conflict():
 
 def test_unrelated_numeric_fields_do_not_conflict():
     """Different clinical categories are not compared to each other."""
-    conflicts = detect_conflicts([_field("x1", "hba1c", "7.2 %"), _field("x2", "heart_rate", "140 bpm")])
+    conflicts = detect_conflicts(
+        [_field("x1", "hba1c", "7.2 %"), _field("x2", "heart_rate", "140 bpm")]
+    )
     assert conflicts == []

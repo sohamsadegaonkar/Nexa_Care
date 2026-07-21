@@ -12,7 +12,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,8 +34,12 @@ class DocumentStorage(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "document_storage"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    tenant_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
     uploader_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     storage_ref: Mapped[str] = mapped_column(String(256), nullable=False)
     content_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -36,10 +49,17 @@ class DocumentStorage(Base, UUIDPrimaryKeyMixin):
     upload_purpose: Mapped[str | None] = mapped_column(String(64), nullable=True)
     consent_session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_system: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    uploaded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    uploaded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "patient_id", "content_hash", name="uq_document_tenant_patient_hash"),
+        UniqueConstraint(
+            "tenant_id",
+            "patient_id",
+            "content_hash",
+            name="uq_document_tenant_patient_hash",
+        ),
         Index("ix_document_storage_hash", "content_hash"),
     )
 
@@ -49,24 +69,39 @@ class ExtractionJob(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "extraction_jobs"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    tenant_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
     uploader_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     document_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("document_storage.id", ondelete="CASCADE"), nullable=False, index=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     document_type: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="queued")
-    request_id: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
+    request_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True
+    )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     retryable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     extractor_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    processing_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ExtractedFieldRecord(Base, UUIDPrimaryKeyMixin):
@@ -79,9 +114,14 @@ class ExtractedFieldRecord(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "extracted_fields"
 
     job_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("extraction_jobs.id", ondelete="CASCADE"), nullable=False, index=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    patient_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True, index=True)
+    patient_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
     field_name: Mapped[str] = mapped_column(String(128), nullable=False)
     raw_value: Mapped[str] = mapped_column(String(512), nullable=False)
     normalized_value: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -91,18 +131,22 @@ class ExtractedFieldRecord(Base, UUIDPrimaryKeyMixin):
     validation_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     source_page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     source_bbox: Mapped[list | None] = mapped_column(JSONB, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="needs_review")
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="needs_review"
+    )
     corrected_value: Mapped[str | None] = mapped_column(String(512), nullable=True)
     review_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     extractor_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    source_document_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_document_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    committed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     committed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    __table_args__ = (
-        Index("ix_extracted_fields_job_status", "job_id", "status"),
-    )
+    __table_args__ = (Index("ix_extracted_fields_job_status", "job_id", "status"),)
 
 
 class PipelineCommit(Base, UUIDPrimaryKeyMixin):
@@ -110,9 +154,15 @@ class PipelineCommit(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "pipeline_commits"
 
-    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, unique=True, index=True)
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, unique=True, index=True
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
+    committed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     committed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     ingested_count: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -122,15 +172,24 @@ class ReviewQueueItem(Base, UUIDPrimaryKeyMixin):
 
     __tablename__ = "review_queue_items"
 
-    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
-    field_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("extracted_fields.id", ondelete="CASCADE"), nullable=False, index=True
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
     )
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    field_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extracted_fields.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     adjudicated_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    adjudicated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    adjudicated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     notes: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     __table_args__ = (
@@ -144,12 +203,19 @@ class FieldCorrection(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "field_corrections"
 
     field_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), ForeignKey("extracted_fields.id", ondelete="CASCADE"), nullable=False, index=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("extracted_fields.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
-    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, index=True)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, index=True
+    )
     field_name: Mapped[str] = mapped_column(String(128), nullable=False)
     original_value: Mapped[str] = mapped_column(String(512), nullable=False)
     corrected_value: Mapped[str] = mapped_column(String(512), nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     corrected_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    corrected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    corrected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )

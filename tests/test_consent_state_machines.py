@@ -37,6 +37,7 @@ def test_routine_issue_binds_patient_clinician_purpose_scope_and_ttl(
     mock_get_redis, mock_audit, mock_audit_503
 ) -> None:
     from app.models.assurance import AssuranceLevel
+
     redis = AsyncMock()
     mock_get_redis.return_value = redis
     fake_db = make_fake_db()
@@ -130,6 +131,7 @@ def test_break_glass_issue_uses_break_glass_ttl_and_notifies_compliance_queue(
     mock_get_redis, mock_audit, mock_audit_503
 ) -> None:
     from app.models.assurance import AssuranceLevel
+
     redis = AsyncMock()
     mock_get_redis.return_value = redis
     fake_db = make_fake_db()

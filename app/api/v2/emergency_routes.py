@@ -36,7 +36,12 @@ class EmergencySnapshotResponse(BaseModel):
     model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
     patient_id: UUID
-    snapshot_status: Literal["available", "no_known_medical_data", "records_exist_but_snapshot_unavailable", "error"]
+    snapshot_status: Literal[
+        "available",
+        "no_known_medical_data",
+        "records_exist_but_snapshot_unavailable",
+        "error",
+    ]
     message: str | None = None
     snapshot: dict[str, JsonValue] = Field(default_factory=dict)
     retrieved_at: datetime

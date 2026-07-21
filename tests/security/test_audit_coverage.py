@@ -76,7 +76,9 @@ def _make_capability(patient_id: str) -> ConsentCapability:
 def _db_result(*, scalar_one_or_none=None, scalars_all=None, scalar=None):
     if scalars_all is not None:
         return MagicMock(
-            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=scalars_all))),
+            scalars=MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=scalars_all))
+            ),
         )
     if scalar is not None:
         return MagicMock(scalar=MagicMock(return_value=scalar))
@@ -140,7 +142,11 @@ def overrides():
 
 
 def test_consent_access_produces_audit(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-07a: Successful consent-gated access produces ≥1 audit call.
 
@@ -159,17 +165,35 @@ def test_consent_access_produces_audit(
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch("app.core.consent_gate.validate_consent_capability",
-                  new_callable=AsyncMock, return_value=capability)
+            patch(
+                "app.core.consent_gate.validate_consent_capability",
+                new_callable=AsyncMock,
+                return_value=capability,
+            )
         )
         # Patch Redis but CAPTURE audit calls
-        stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-        stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
+        stack.enter_context(
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+        )
+        stack.enter_context(
+            patch(
+                "app.services.consent_engine.get_consent_redis_client",
+                return_value=fake_redis,
+            )
+        )
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
-        stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+        mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[]
+        )
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+            MagicMock()
+        )
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+            data={}
+        )
+        stack.enter_context(
+            patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+        )
 
         # Track audit calls in consent_gate
         audit_mock = stack.enter_context(
@@ -181,9 +205,15 @@ def test_consent_access_produces_audit(
             "app.api.v2.patient_record_routes",
             "app.services.consent_engine",
         ):
-            stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-        stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-        stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
+            stack.enter_context(
+                patch(f"{mod}.append_audit_log_or_503", return_value=None)
+            )
+        stack.enter_context(
+            patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+        )
+        stack.enter_context(
+            patch("app.services.consent_engine.append_audit_log", return_value=None)
+        )
 
         _reset_mock_db(mock_db)
         client.get(
@@ -196,7 +226,11 @@ def test_consent_access_produces_audit(
 
 
 def test_consent_failure_produces_audit(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-07b: Failed consent access (missing token) produces audit with FORBIDDEN status."""
     patient_id = str(uuid.uuid4())
@@ -209,11 +243,22 @@ def test_consent_failure_produces_audit(
     app.dependency_overrides[get_current_provider] = _provider_dep
 
     with ExitStack() as stack:
-        stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-        stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
+        stack.enter_context(
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+        )
+        stack.enter_context(
+            patch(
+                "app.services.consent_engine.get_consent_redis_client",
+                return_value=fake_redis,
+            )
+        )
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-        stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+        mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[]
+        )
+        stack.enter_context(
+            patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+        )
 
         audit_mock = stack.enter_context(
             patch("app.core.consent_gate.append_audit_log_or_503", return_value=None)
@@ -223,9 +268,15 @@ def test_consent_failure_produces_audit(
             "app.api.v2.patient_record_routes",
             "app.services.consent_engine",
         ):
-            stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-        stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-        stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
+            stack.enter_context(
+                patch(f"{mod}.append_audit_log_or_503", return_value=None)
+            )
+        stack.enter_context(
+            patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+        )
+        stack.enter_context(
+            patch("app.services.consent_engine.append_audit_log", return_value=None)
+        )
 
         _reset_mock_db(mock_db)
         # No X-Consent-Token → 403
@@ -237,12 +288,19 @@ def test_consent_failure_produces_audit(
 
 
 def test_pipeline_commit_produces_audit(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-07c: Pipeline commit produces JOB_COMMITTED audit event."""
     from pathlib import Path
-    source = (Path(__file__).resolve().parents[2] / "app/api/v2/pipeline_routes.py").read_text(encoding="utf-8")
-    commit = source[source.index("async def commit_extraction_job"):]
+
+    source = (
+        Path(__file__).resolve().parents[2] / "app/api/v2/pipeline_routes.py"
+    ).read_text(encoding="utf-8")
+    commit = source[source.index("async def commit_extraction_job") :]
     assert 'event_type="JOB_COMMITTED"' in commit
     assert "await append_audit_log_or_503" in commit
 
@@ -273,7 +331,11 @@ def test_audit_hash_chain_detects_tampering():
 
 
 def test_consent_action_audited_on_approve(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-07e: Consent approval produces CONSENT_APPROVED_SIGNED audit event."""
     import base64
@@ -312,19 +374,46 @@ def test_consent_action_audited_on_approve(
 
     with ExitStack() as stack:
         # Patch Redis
-        stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-        stack.enter_context(patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis))
-        stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
-        stack.enter_context(patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis))
+        stack.enter_context(
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.consent_engine.get_consent_redis_client",
+                return_value=fake_redis,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.provider_auth_service.get_redis_client",
+                return_value=fake_sync_redis,
+            )
+        )
         mock_supabase = MagicMock()
-        mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-        mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
-        stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+        mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+            data=[]
+        )
+        mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+            MagicMock()
+        )
+        mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+            data={}
+        )
+        stack.enter_context(
+            patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+        )
 
         # Capture consent route audit
         audit_mock = stack.enter_context(
-            patch("app.api.v2.consent_routes.append_audit_log_or_503", return_value=None)
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503", return_value=None
+            )
         )
         for mod in (
             "app.observability.audit_ledger",
@@ -333,31 +422,57 @@ def test_consent_action_audited_on_approve(
             "app.services.signed_approval_verifier",
             "app.api.v2.device_routes",
         ):
-            stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-        stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-        stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
-        stack.enter_context(patch("app.api.v2.consent_routes._break_glass_limiter", return_value=None))
-        stack.enter_context(patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None))
+            stack.enter_context(
+                patch(f"{mod}.append_audit_log_or_503", return_value=None)
+            )
+        stack.enter_context(
+            patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+        )
+        stack.enter_context(
+            patch("app.services.consent_engine.append_audit_log", return_value=None)
+        )
+        stack.enter_context(
+            patch("app.api.v2.consent_routes._break_glass_limiter", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.assurance_routes.push_service.send_approval_request",
+                return_value=None,
+            )
+        )
 
         # Enroll device
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar=0),
-            _db_result(scalar_one_or_none=None),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar=0),
+                _db_result(scalar_one_or_none=None),
+            ]
+        )
         client.post(
             "/api/v2/patient/devices/enroll",
-            json={"device_public_key": der_b64, "device_label": "Audit Device", "platform": "ios"},
+            json={
+                "device_public_key": der_b64,
+                "device_label": "Audit Device",
+                "platform": "ios",
+            },
         )
 
         # Request consent
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=device_row),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=device_row),
+            ]
+        )
         req_resp = client.post(
             "/api/v2/consent/request",
-            json={"patient_id": patient_id_val, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+            json={
+                "patient_id": patient_id_val,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
         )
         assert req_resp.status_code == 201
         request_id = req_resp.json()["request_id"]
@@ -370,22 +485,34 @@ def test_consent_action_audited_on_approve(
             f"{request_id}|{patient_id_val}|{provider_id}|{challenge_nonce}|approved|"
             f"clinical|checkup|{challenge_data['access_duration']}|{challenge_data['expires_at']}"
         )
-        raw_sig = private_key.sign(signing_input.encode("utf-8"), ec.ECDSA(
-            __import__("cryptography.hazmat.primitives.hashes", fromlist=["SHA256"]).SHA256()
-        ))
+        raw_sig = private_key.sign(
+            signing_input.encode("utf-8"),
+            ec.ECDSA(
+                __import__(
+                    "cryptography.hazmat.primitives.hashes", fromlist=["SHA256"]
+                ).SHA256()
+            ),
+        )
         sig_b64 = base64.b64encode(raw_sig).decode("ascii")
 
         # Approve
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=device_row),
-            _db_result(scalars_all=[device_row]),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=device_row),
+                _db_result(scalars_all=[device_row]),
+            ]
+        )
         client.post(
             "/api/v2/consent/approve-signed",
-            json={"request_id": request_id, "patient_id": patient_id_val,
-                  "decision": "approved", "challenge_nonce": challenge_nonce,
-                  "signature": sig_b64, "device_id": device_id},
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id_val,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": sig_b64,
+                "device_id": device_id,
+            },
         )
 
         # Verify audit was called during the consent flow

@@ -7,30 +7,39 @@ from pathlib import Path
 from app.main import app
 from app.core.dependencies import get_current_provider, get_db_session
 
+
 @pytest.fixture
 def client():
     return TestClient(app)
+
 
 @pytest.fixture
 def mock_redis():
     class FakeRedis:
         def __init__(self):
             self.data = {}
+
         async def set(self, key, value, nx=False, ex=None):
             if nx and key in self.data:
                 return False
             self.data[key] = value
             return True
+
         async def setex(self, key, ttl, value):
             self.data[key] = value
             return True
+
         async def get(self, key):
             return self.data.get(key)
+
         async def ttl(self, key):
             return 90 if key in self.data else -2
+
         async def delete(self, key):
             return self.data.pop(key, None) is not None
+
     return FakeRedis()
+
 
 @pytest.fixture
 def mock_db():
@@ -43,19 +52,42 @@ def mock_db():
     db.execute = AsyncMock(return_value=res)
     return db
 
+
 @pytest.fixture(autouse=True)
 def mock_audit():
-    with patch("app.api.v2.assurance_routes.append_audit_log_or_503", new_callable=AsyncMock, return_value=None), \
-         patch("app.services.assurance_service.append_audit_log_or_503", new_callable=AsyncMock, return_value=None):
+    with (
+        patch(
+            "app.api.v2.assurance_routes.append_audit_log_or_503",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.services.assurance_service.append_audit_log_or_503",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
         yield
+
 
 @pytest.mark.asyncio
 async def test_initiate_request_creates_pending_record(client, mock_redis, mock_db):
-    app.dependency_overrides[get_current_provider] = lambda: MagicMock(actor_uid=str(uuid.uuid4()))
+    app.dependency_overrides[get_current_provider] = lambda: MagicMock(
+        actor_uid=str(uuid.uuid4())
+    )
     app.dependency_overrides[get_db_session] = lambda: mock_db
     with patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis):
-        payload = {"patient_id": str(uuid.uuid4()), "provider_id": str(uuid.uuid4()), "purpose": "t", "scope": "s"}
-        response = client.post("/api/v2/push/request", json=payload, headers={"Authorization": "Bearer doc"})
+        payload = {
+            "patient_id": str(uuid.uuid4()),
+            "provider_id": str(uuid.uuid4()),
+            "purpose": "t",
+            "scope": "s",
+        }
+        response = client.post(
+            "/api/v2/push/request",
+            json=payload,
+            headers={"Authorization": "Bearer doc"},
+        )
         assert response.status_code == 201
         body = response.json()
         assert body["status"] == "pending"
@@ -64,6 +96,7 @@ async def test_initiate_request_creates_pending_record(client, mock_redis, mock_
         assert body["delivery_status"] == "unavailable"
         assert "notification_sent" not in body
     app.dependency_overrides.clear()
+
 
 @pytest.mark.asyncio
 async def test_respond_approves(client, mock_redis, mock_db):
@@ -86,7 +119,9 @@ async def test_delivery_result_updates_status_metadata(mock_redis, mock_db):
         purpose="t",
         scope="s",
     )
-    await service.mark_delivery_result(mock_redis, created["request_id"], success=False, error="Expo down")
+    await service.mark_delivery_result(
+        mock_redis, created["request_id"], success=False, error="Expo down"
+    )
     status = await service.get_push_status(mock_redis, mock_db, created["request_id"])
 
     assert status["status"] == "pending"
@@ -138,10 +173,24 @@ async def test_push_websocket_exception_logs_without_secondary_type_error(mock_d
 
     websocket = FakeWebSocket()
 
-    with patch.object(assurance_routes, "PUSH_STATUS_TRANSPORT", "websocket"), \
-         patch("app.api.v2.assurance_routes.resolve_provider_session_context", new_callable=AsyncMock, return_value={"sub": "doctor-1"}), \
-         patch("app.services.consent_engine.get_consent_redis_client", return_value=FakeRedis()), \
-         patch.object(assurance_routes.service, "get_push_status", new_callable=AsyncMock, return_value={"status": "pending"}):
+    with (
+        patch.object(assurance_routes, "PUSH_STATUS_TRANSPORT", "websocket"),
+        patch(
+            "app.api.v2.assurance_routes.resolve_provider_session_context",
+            new_callable=AsyncMock,
+            return_value={"sub": "doctor-1"},
+        ),
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=FakeRedis(),
+        ),
+        patch.object(
+            assurance_routes.service,
+            "get_push_status",
+            new_callable=AsyncMock,
+            return_value={"status": "pending"},
+        ),
+    ):
         await assurance_routes.push_status_websocket(
             websocket,
             request_id="request-1",

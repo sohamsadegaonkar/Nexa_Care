@@ -19,6 +19,7 @@ Verifies:
 15. Per-field accuracy computed correctly.
 16. render_markdown produces valid Markdown.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -129,7 +130,9 @@ def test_failed_validation_blocks_auto_approval():
         raw_value="invalid",
         confidence=0.99,
         risk_level="LOW_RISK",
-        validation_result=ValidationResult(is_valid=False, validation_errors=["Bad format"]),
+        validation_result=ValidationResult(
+            is_valid=False, validation_errors=["Bad format"]
+        ),
     )
     decision = should_auto_approve(field)
     assert decision.auto_approve is False
@@ -144,7 +147,9 @@ def test_validation_errors_block_auto_approval():
         raw_value="120/80",
         confidence=0.98,
         risk_level="LOW_RISK",
-        validation_result=ValidationResult(is_valid=True, validation_errors=["suspicious"]),
+        validation_result=ValidationResult(
+            is_valid=True, validation_errors=["suspicious"]
+        ),
     )
     decision = should_auto_approve(field)
     assert decision.auto_approve is False
@@ -259,16 +264,24 @@ def test_rejection_reason_describes_why():
     """Rejection reasons describe the specific failure cause."""
     # HIGH_RISK rejection
     field = ExtractedField(
-        field_id="f-why1", job_id="j1", field_name="medication",
-        raw_value="Metformin", confidence=0.99, risk_level="HIGH_RISK",
+        field_id="f-why1",
+        job_id="j1",
+        field_name="medication",
+        raw_value="Metformin",
+        confidence=0.99,
+        risk_level="HIGH_RISK",
     )
     decision = should_auto_approve(field)
     assert "HIGH_RISK" in decision.reason
 
     # Confidence below threshold
     field = ExtractedField(
-        field_id="f-why2", job_id="j1", field_name="bp",
-        raw_value="120/80", confidence=0.90, risk_level="LOW_RISK",
+        field_id="f-why2",
+        job_id="j1",
+        field_name="bp",
+        raw_value="120/80",
+        confidence=0.90,
+        risk_level="LOW_RISK",
     )
     decision = should_auto_approve(field)
     assert "below threshold" in decision.reason
@@ -408,7 +421,10 @@ async def test_export_corrections_returns_records():
 
 def test_compute_metrics_demo_data():
     """compute_metrics returns correct rates for the demo dataset."""
-    from scripts.extraction_accuracy_report import _get_demo_corrections, _get_demo_fields
+    from scripts.extraction_accuracy_report import (
+        _get_demo_corrections,
+        _get_demo_fields,
+    )
 
     fields = _get_demo_fields()
     corrections = _get_demo_corrections()
@@ -455,9 +471,9 @@ def test_per_field_accuracy_computed_correctly():
     fields = [
         {"field_name": "sugar", "status": "auto_approved", "field_id": "s1"},
         {"field_name": "sugar", "status": "auto_approved", "field_id": "s2"},
-        {"field_name": "sugar", "status": "approved",      "field_id": "s3"},
-        {"field_name": "bp",    "status": "auto_approved", "field_id": "b1"},
-        {"field_name": "bp",    "status": "approved",      "field_id": "b2"},
+        {"field_name": "sugar", "status": "approved", "field_id": "s3"},
+        {"field_name": "bp", "status": "auto_approved", "field_id": "b1"},
+        {"field_name": "bp", "status": "approved", "field_id": "b2"},
     ]
     corrections = [
         {"field_id": "s1", "field_name": "sugar"},
@@ -473,10 +489,10 @@ def test_human_correction_rate():
     """Human-correction rate = edited / reviewed fields."""
     fields = [
         {"field_name": "sugar", "status": "needs_review", "field_id": "f1"},
-        {"field_name": "sugar", "status": "approved",      "field_id": "f2"},
-        {"field_name": "sugar", "status": "edited",         "field_id": "f3"},
-        {"field_name": "sugar", "status": "rejected",       "field_id": "f4"},
-        {"field_name": "sugar", "status": "auto_approved",  "field_id": "f5"},
+        {"field_name": "sugar", "status": "approved", "field_id": "f2"},
+        {"field_name": "sugar", "status": "edited", "field_id": "f3"},
+        {"field_name": "sugar", "status": "rejected", "field_id": "f4"},
+        {"field_name": "sugar", "status": "auto_approved", "field_id": "f5"},
     ]
     corrections = []
     m = compute_metrics(fields, corrections)
@@ -495,7 +511,7 @@ def test_render_markdown_produces_valid_report():
     m = compute_metrics(
         [
             {"field_name": "bp", "status": "auto_approved", "field_id": "f1"},
-            {"field_name": "bp", "status": "needs_review",  "field_id": "f2"},
+            {"field_name": "bp", "status": "needs_review", "field_id": "f2"},
         ],
         [],
     )

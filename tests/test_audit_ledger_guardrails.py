@@ -24,7 +24,9 @@ def test_no_source_references_retired_system_audit_table():
 
 
 def test_patient_record_routes_use_canonical_audit_service_only():
-    source = (ROOT / "app" / "api" / "v2" / "patient_record_routes.py").read_text(encoding="utf-8")
+    source = (ROOT / "app" / "api" / "v2" / "patient_record_routes.py").read_text(
+        encoding="utf-8"
+    )
     assert "read_audit_events" in source
     assert "append_audit_log_or_503" in source
     assert ".table(" not in source

@@ -42,19 +42,32 @@ def test_live_audit_calls_always_supply_typed_context() -> None:
                 continue
             if not any(keyword.arg == "audit_context" for keyword in node.keywords):
                 violations.append(f"{path.relative_to(APP_ROOT)}:{node.lineno}")
-    assert not violations, "Audit calls missing audit_context=: " + ", ".join(violations)
+    assert not violations, "Audit calls missing audit_context=: " + ", ".join(
+        violations
+    )
 
 
 def test_partition_derivation_is_explicit_and_never_implicit_global() -> None:
-    assert derive_audit_partition(
-        AuditContext.for_tenant(tenant_id="tenant-1", domain=AuditDomain.PATIENT_RECORD)
-    ) == "tenant:tenant-1:patient_record"
-    assert derive_audit_partition(
-        AuditContext.for_hospital(hospital_id="hospital-1", domain=AuditDomain.CONSENT)
-    ) == "hospital:hospital-1:consent"
-    assert derive_audit_partition(
-        AuditContext.platform(domain=AuditDomain.PLATFORM)
-    ) == "platform:platform"
+    assert (
+        derive_audit_partition(
+            AuditContext.for_tenant(
+                tenant_id="tenant-1", domain=AuditDomain.PATIENT_RECORD
+            )
+        )
+        == "tenant:tenant-1:patient_record"
+    )
+    assert (
+        derive_audit_partition(
+            AuditContext.for_hospital(
+                hospital_id="hospital-1", domain=AuditDomain.CONSENT
+            )
+        )
+        == "hospital:hospital-1:consent"
+    )
+    assert (
+        derive_audit_partition(AuditContext.platform(domain=AuditDomain.PLATFORM))
+        == "platform:platform"
+    )
 
     with pytest.raises(
         AuditContextMissing,

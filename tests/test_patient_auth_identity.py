@@ -23,7 +23,9 @@ def test_model_prohibits_duplicate_provider_subject_and_indexes_patient() -> Non
         if isinstance(constraint, UniqueConstraint)
     }
     assert ("provider", "provider_subject") in unique_columns
-    assert "ix_patient_auth_identities_patient_id" in {index.name for index in table.indexes}
+    assert "ix_patient_auth_identities_patient_id" in {
+        index.name for index in table.indexes
+    }
     foreign_key = next(iter(table.c.patient_id.foreign_keys))
     assert foreign_key.target_fullname == "patients.patient_uuid"
     assert foreign_key.ondelete == "RESTRICT"
@@ -34,7 +36,10 @@ async def test_cli_provisions_mapping_and_audits() -> None:
     patient_id = uuid4()
     session = AsyncMock()
     session.add = MagicMock()
-    session.scalar.side_effect = [SimpleNamespace(patient_uuid=patient_id, is_deleted=False), None]
+    session.scalar.side_effect = [
+        SimpleNamespace(patient_uuid=patient_id, is_deleted=False),
+        None,
+    ]
     with patch(
         "scripts.link_patient_auth_identity.append_audit_log",
         new=AsyncMock(return_value=True),
@@ -102,7 +107,10 @@ async def test_cli_rolls_back_mapping_when_audit_write_fails() -> None:
     patient_id = uuid4()
     session = AsyncMock()
     session.add = MagicMock()
-    session.scalar.side_effect = [SimpleNamespace(patient_uuid=patient_id, is_deleted=False), None]
+    session.scalar.side_effect = [
+        SimpleNamespace(patient_uuid=patient_id, is_deleted=False),
+        None,
+    ]
 
     with patch(
         "scripts.link_patient_auth_identity.append_audit_log",

@@ -78,7 +78,9 @@ def _make_capability(patient_id: str) -> ConsentCapability:
 def _db_result(*, scalar_one_or_none=None, scalars_all=None, scalar=None):
     if scalars_all is not None:
         return MagicMock(
-            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=scalars_all))),
+            scalars=MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=scalars_all))
+            ),
         )
     if scalar is not None:
         return MagicMock(scalar=MagicMock(return_value=scalar))
@@ -153,9 +155,9 @@ def test_critical_risk_never_auto_approved():
         status="auto_approved",  # model allows but engine must override
     )
     decision = should_auto_approve(field)
-    assert not decision.auto_approve, (
-        f"CRITICAL_RISK must never be auto-approved, but got: {decision.reason}"
-    )
+    assert (
+        not decision.auto_approve
+    ), f"CRITICAL_RISK must never be auto-approved, but got: {decision.reason}"
     assert "CRITICAL_RISK" in decision.reason or "HIGH_RISK" in decision.reason
 
 
@@ -169,9 +171,9 @@ def test_high_risk_never_auto_approved():
         status="auto_approved",
     )
     decision = should_auto_approve(field)
-    assert not decision.auto_approve, (
-        f"HIGH_RISK must never be auto-approved, but got: {decision.reason}"
-    )
+    assert (
+        not decision.auto_approve
+    ), f"HIGH_RISK must never be auto-approved, but got: {decision.reason}"
 
 
 def test_allergy_always_to_review():
@@ -184,13 +186,11 @@ def test_allergy_always_to_review():
         status="auto_approved",
     )
     decision = should_auto_approve(field)
-    assert not decision.auto_approve, (
-        "Allergy fields must never be auto-approved"
-    )
+    assert not decision.auto_approve, "Allergy fields must never be auto-approved"
     # The engine must force risk_level to HIGH_RISK
-    assert field.risk_level == "HIGH_RISK", (
-        "Allergy fields must be forced to HIGH_RISK by the auto-approval engine"
-    )
+    assert (
+        field.risk_level == "HIGH_RISK"
+    ), "Allergy fields must be forced to HIGH_RISK by the auto-approval engine"
 
 
 def test_allergen_always_to_review():
@@ -217,10 +217,13 @@ def test_low_confidence_forces_needs_review():
         status="auto_approved",
     )
     decision = should_auto_approve(field)
-    assert not decision.auto_approve, (
-        f"Low-confidence field must not be auto-approved, got: {decision.reason}"
+    assert (
+        not decision.auto_approve
+    ), f"Low-confidence field must not be auto-approved, got: {decision.reason}"
+    assert (
+        "below threshold" in decision.reason.lower()
+        or "confidence" in decision.reason.lower()
     )
-    assert "below threshold" in decision.reason.lower() or "confidence" in decision.reason.lower()
 
 
 def test_medium_risk_below_threshold_forces_review():
@@ -270,11 +273,9 @@ def test_missing_confidence_forces_review():
         risk_level="LOW_RISK",
     )
     decision = should_auto_approve(field)
-    assert not decision.auto_approve, (
-        "Field without confidence must not be auto-approved"
-    )
-
-
+    assert (
+        not decision.auto_approve
+    ), "Field without confidence must not be auto-approved"
 
 
 def test_unknown_reference_lab_never_auto_approved():
@@ -298,7 +299,11 @@ def test_unknown_reference_lab_never_auto_approved():
 
 
 def test_commit_rejects_high_risk_auto_approved_field(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-08j: Pipeline commit rejects a field with status=auto_approved + risk_level=HIGH_RISK.
 
@@ -326,8 +331,11 @@ def test_commit_rejects_high_risk_auto_approved_field(
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch("app.core.consent_gate.validate_consent_capability",
-                  new_callable=AsyncMock, return_value=capability)
+            patch(
+                "app.core.consent_gate.validate_consent_capability",
+                new_callable=AsyncMock,
+                return_value=capability,
+            )
         )
         for mod in (
             "app.core.consent_gate",
@@ -336,33 +344,53 @@ def test_commit_rejects_high_risk_auto_approved_field(
             "app.services.record_ingestion",
             "app.services.pipeline_orchestrator",
         ):
-            stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-        stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-        stack.enter_context(patch("app.api.v2.pipeline_routes.process_extraction_job", return_value=None))
-        stack.enter_context(patch("app.services.pipeline_orchestrator.process_extraction_job", return_value=None))
+            stack.enter_context(
+                patch(f"{mod}.append_audit_log_or_503", return_value=None)
+            )
         stack.enter_context(
-            patch("app.api.v2.pipeline_routes.ingest_extracted_fields",
-                  new_callable=AsyncMock, return_value=None)
+            patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.pipeline_routes.process_extraction_job", return_value=None
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.pipeline_orchestrator.process_extraction_job",
+                return_value=None,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.pipeline_routes.ingest_extracted_fields",
+                new_callable=AsyncMock,
+                return_value=None,
+            )
         )
 
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=job),
-            _db_result(scalars_all=[]),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=job),
+                _db_result(scalars_all=[]),
+            ]
+        )
         resp = client.post(
             f"/api/v2/pipeline/jobs/{job_id}/commit",
             json={
                 "patient_id": patient_id,
-                "fields": [{
-                    "field_id": str(uuid.uuid4()),
-                    "field_name": "medication_interaction",
-                    "raw_value": "Warfarin",
-                    "normalized_value": "Warfarin",
-                    "confidence": 0.92,
-                    "risk_level": "HIGH_RISK",
-                    "status": "auto_approved",  # Should NOT be allowed
-                }],
+                "fields": [
+                    {
+                        "field_id": str(uuid.uuid4()),
+                        "field_name": "medication_interaction",
+                        "raw_value": "Warfarin",
+                        "normalized_value": "Warfarin",
+                        "confidence": 0.92,
+                        "risk_level": "HIGH_RISK",
+                        "status": "auto_approved",  # Should NOT be allowed
+                    }
+                ],
             },
             headers={"X-Consent-Token": "t"},
         )
@@ -374,7 +402,11 @@ def test_commit_rejects_high_risk_auto_approved_field(
 
 
 def test_commit_rejects_critical_risk_auto_approved_field(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-08k: Pipeline commit rejects auto_approved CRITICAL_RISK field."""
     patient_id = str(uuid.uuid4())
@@ -395,8 +427,11 @@ def test_commit_rejects_critical_risk_auto_approved_field(
 
     with ExitStack() as stack:
         stack.enter_context(
-            patch("app.core.consent_gate.validate_consent_capability",
-                  new_callable=AsyncMock, return_value=capability)
+            patch(
+                "app.core.consent_gate.validate_consent_capability",
+                new_callable=AsyncMock,
+                return_value=capability,
+            )
         )
         for mod in (
             "app.core.consent_gate",
@@ -405,33 +440,53 @@ def test_commit_rejects_critical_risk_auto_approved_field(
             "app.services.record_ingestion",
             "app.services.pipeline_orchestrator",
         ):
-            stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-        stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-        stack.enter_context(patch("app.api.v2.pipeline_routes.process_extraction_job", return_value=None))
-        stack.enter_context(patch("app.services.pipeline_orchestrator.process_extraction_job", return_value=None))
+            stack.enter_context(
+                patch(f"{mod}.append_audit_log_or_503", return_value=None)
+            )
         stack.enter_context(
-            patch("app.api.v2.pipeline_routes.ingest_extracted_fields",
-                  new_callable=AsyncMock, return_value=None)
+            patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.pipeline_routes.process_extraction_job", return_value=None
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.services.pipeline_orchestrator.process_extraction_job",
+                return_value=None,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.pipeline_routes.ingest_extracted_fields",
+                new_callable=AsyncMock,
+                return_value=None,
+            )
         )
 
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=job),
-            _db_result(scalars_all=[]),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=job),
+                _db_result(scalars_all=[]),
+            ]
+        )
         resp = client.post(
             f"/api/v2/pipeline/jobs/{job_id}/commit",
             json={
                 "patient_id": patient_id,
-                "fields": [{
-                    "field_id": str(uuid.uuid4()),
-                    "field_name": "critical_allergy",
-                    "raw_value": "Penicillin",
-                    "normalized_value": "Penicillin",
-                    "confidence": 0.88,
-                    "risk_level": "CRITICAL_RISK",
-                    "status": "auto_approved",  # Must NOT be allowed
-                }],
+                "fields": [
+                    {
+                        "field_id": str(uuid.uuid4()),
+                        "field_name": "critical_allergy",
+                        "raw_value": "Penicillin",
+                        "normalized_value": "Penicillin",
+                        "confidence": 0.88,
+                        "risk_level": "CRITICAL_RISK",
+                        "status": "auto_approved",  # Must NOT be allowed
+                    }
+                ],
             },
             headers={"X-Consent-Token": "t"},
         )

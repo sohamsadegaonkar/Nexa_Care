@@ -42,7 +42,10 @@ def _parse_uuid(value: str) -> uuid.UUID:
         return uuid.uuid5(uuid.NAMESPACE_DNS, str(value))
 
 
-def _job_for(patient_id: str = "11111111-1111-4111-8111-111111111111", job_id: str | uuid.UUID | None = None):
+def _job_for(
+    patient_id: str = "11111111-1111-4111-8111-111111111111",
+    job_id: str | uuid.UUID | None = None,
+):
     return SimpleNamespace(
         id=_parse_uuid(str(job_id or uuid.uuid4())),
         patient_id=_parse_uuid(patient_id),
@@ -54,6 +57,7 @@ def _job_for(patient_id: str = "11111111-1111-4111-8111-111111111111", job_id: s
 @pytest.fixture(autouse=True)
 def auth_override(admin_context):
     from app.core.dependencies import get_current_provider
+
     app.dependency_overrides[get_current_provider] = lambda: admin_context
     yield
     app.dependency_overrides.pop(get_current_provider, None)
@@ -70,7 +74,9 @@ def test_ai_extracted_vitals_without_confidence_fails(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap):
+    with patch(
+        "app.core.consent_gate.validate_consent_capability", return_value=mock_cap
+    ):
         payload = {
             "encounter_id": "enc-101",
             "systolic_bp": 120,
@@ -104,7 +110,9 @@ def test_ai_extracted_medication_without_source_document_id_fails(admin_headers)
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap):
+    with patch(
+        "app.core.consent_gate.validate_consent_capability", return_value=mock_cap
+    ):
         payload = {
             "name": "Metformin",
             "strength": "500mg",
@@ -121,7 +129,10 @@ def test_ai_extracted_medication_without_source_document_id_fails(admin_headers)
             json=payload,
         )
         assert res.status_code == 400
-        assert "AI-extracted field must have numeric confidence, risk_level, and source_document_id" in res.json()["detail"]
+        assert (
+            "AI-extracted field must have numeric confidence, risk_level, and source_document_id"
+            in res.json()["detail"]
+        )
 
 
 def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
@@ -139,7 +150,9 @@ def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap):
+    with patch(
+        "app.core.consent_gate.validate_consent_capability", return_value=mock_cap
+    ):
         # Passing LOW_RISK on an allergy must fail API validation
         payload = {
             "allergen": "Penicillin",
@@ -167,7 +180,9 @@ def test_timeline_event_created_when_lab_result_committed(admin_headers):
         reason_code=None,
         issued_at="2026-07-07T16:00:00Z",
     )
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap):
+    with patch(
+        "app.core.consent_gate.validate_consent_capability", return_value=mock_cap
+    ):
         payload = {
             "test_name": "HbA1c",
             "value": "6.8",
@@ -202,7 +217,10 @@ def test_timeline_event_created_when_lab_result_committed(admin_headers):
 def test_patient_record_read_requires_valid_consent(admin_headers):
     """Test 5: Doctor attempting patient record read without valid X-Consent-Token gets 403 Forbidden."""
     with patch("app.core.consent_gate.validate_consent_capability", return_value=None):
-        res = client.get("/api/v2/patient/11111111-1111-4111-8111-111111111111/summary", headers=admin_headers)
+        res = client.get(
+            "/api/v2/patient/11111111-1111-4111-8111-111111111111/summary",
+            headers=admin_headers,
+        )
         assert res.status_code == 403
         assert "Active consent token required" in res.json()["detail"]
 
@@ -220,29 +238,43 @@ def test_break_glass_capability_rejected_at_summary_endpoint(admin_headers):
         issued_at="2026-07-18T00:00:00+00:00",
         expires_at="2026-07-18T00:15:00+00:00",
     )
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=break_glass_capability):
+    with patch(
+        "app.core.consent_gate.validate_consent_capability",
+        return_value=break_glass_capability,
+    ):
         res = client.get(
             "/api/v2/patient/11111111-1111-4111-8111-111111111111/summary",
             headers={**admin_headers, "X-Consent-Token": "tok"},
         )
         assert res.status_code == 403
-        assert res.json()["detail"]["error_code"] == "BREAK_GLASS_CAPABILITY_NOT_VALID_HERE"
+        assert (
+            res.json()["detail"]["error_code"]
+            == "BREAK_GLASS_CAPABILITY_NOT_VALID_HERE"
+        )
 
 
 def test_patient_self_view_does_not_require_doctor_consent_token():
     """Test 6: Patient accessing own record/devices via self-session does not require doctor consent token."""
     from app.core.dependencies import get_scoped_session
-    app.dependency_overrides[get_scoped_session] = lambda: "11111111-1111-4111-8111-111111111111"
+
+    app.dependency_overrides[get_scoped_session] = (
+        lambda: "11111111-1111-4111-8111-111111111111"
+    )
     try:
         # Patient calls self-access endpoint (e.g. list devices) with only their session bearer token
-        res = client.get("/api/v2/patient/devices", headers={"Authorization": "Bearer pat-101-session"})
+        res = client.get(
+            "/api/v2/patient/devices",
+            headers={"Authorization": "Bearer pat-101-session"},
+        )
         assert res.status_code == 200
         assert res.json()["patient_id"] == "11111111-1111-4111-8111-111111111111"
     finally:
         app.dependency_overrides.pop(get_scoped_session, None)
 
 
-def test_pipeline_commit_rejects_client_supplied_extracted_fields(admin_headers, mock_db):
+def test_pipeline_commit_rejects_client_supplied_extracted_fields(
+    admin_headers, mock_db
+):
     mock_cap = ConsentCapability(
         patient_id="11111111-1111-4111-8111-111111111111",
         clinician_id="doc-202",
@@ -259,8 +291,14 @@ def test_pipeline_commit_rejects_client_supplied_extracted_fields(admin_headers,
     mock_db.add = MagicMock()
     mock_db.commit = AsyncMock()
 
-    with patch("app.core.consent_gate.validate_consent_capability", return_value=mock_cap), \
-         patch("app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock) as mock_ingest:
+    with (
+        patch(
+            "app.core.consent_gate.validate_consent_capability", return_value=mock_cap
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.ingest_extracted_fields", new_callable=AsyncMock
+        ) as mock_ingest,
+    ):
         commit_payload = {
             "patient_id": "11111111-1111-4111-8111-111111111111",
             "fields": [
@@ -280,5 +318,8 @@ def test_pipeline_commit_rejects_client_supplied_extracted_fields(admin_headers,
             json=commit_payload,
         )
         assert res.status_code == 400
-        assert res.json()["detail"]["error_code"] == "CLIENT_SUPPLIED_COMMIT_FIELDS_FORBIDDEN"
+        assert (
+            res.json()["detail"]["error_code"]
+            == "CLIENT_SUPPLIED_COMMIT_FIELDS_FORBIDDEN"
+        )
         mock_ingest.assert_not_awaited()

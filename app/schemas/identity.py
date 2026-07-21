@@ -11,7 +11,9 @@ class PatientCreate(BaseModel):
     phone: Optional[str] = None
     email: Optional[str] = None
     abha_id: Optional[str] = None
-    consent_assurance_policy: Literal["STANDARD", "PUSH_APPROVAL", "BIOMETRIC"] = "STANDARD"
+    consent_assurance_policy: Literal["STANDARD", "PUSH_APPROVAL", "BIOMETRIC"] = (
+        "STANDARD"
+    )
 
 
 class PatientResponse(BaseModel):

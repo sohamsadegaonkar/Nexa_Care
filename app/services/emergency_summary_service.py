@@ -21,7 +21,14 @@ from pydantic import JsonValue
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.patient_records import Allergy, DocumentReference, LabResult, Medication, TimelineEvent, Vitals
+from app.models.patient_records import (
+    Allergy,
+    DocumentReference,
+    LabResult,
+    Medication,
+    TimelineEvent,
+    Vitals,
+)
 from app.security.clinical_categories import ClinicalCategory
 
 
@@ -61,7 +68,10 @@ async def _scalars_all(db_session: AsyncSession, stmt) -> list[object]:
 
 async def _build_allergies(patient_id: UUID, db: AsyncSession) -> dict[str, JsonValue]:
     rows = await _scalars_all(
-        db, select(Allergy).where(Allergy.patient_id == patient_id).order_by(Allergy.severity.desc())
+        db,
+        select(Allergy)
+        .where(Allergy.patient_id == patient_id)
+        .order_by(Allergy.severity.desc()),
     )
     return {
         "category": ClinicalCategory.ALLERGIES.value,
@@ -73,10 +83,14 @@ async def _build_allergies(patient_id: UUID, db: AsyncSession) -> dict[str, Json
     }
 
 
-async def _build_active_medications(patient_id: UUID, db: AsyncSession) -> dict[str, JsonValue]:
+async def _build_active_medications(
+    patient_id: UUID, db: AsyncSession
+) -> dict[str, JsonValue]:
     rows = await _scalars_all(
         db,
-        select(Medication).where(Medication.patient_id == patient_id).order_by(Medication.prescribed_at.desc()),
+        select(Medication)
+        .where(Medication.patient_id == patient_id)
+        .order_by(Medication.prescribed_at.desc()),
     )
     return {
         "category": ClinicalCategory.ACTIVE_MEDICATIONS.value,
@@ -97,7 +111,10 @@ async def _build_active_medications(patient_id: UUID, db: AsyncSession) -> dict[
 async def _build_vitals(patient_id: UUID, db: AsyncSession) -> dict[str, JsonValue]:
     rows = await _scalars_all(
         db,
-        select(Vitals).where(Vitals.patient_id == patient_id).order_by(Vitals.recorded_at.desc()).limit(5),
+        select(Vitals)
+        .where(Vitals.patient_id == patient_id)
+        .order_by(Vitals.recorded_at.desc())
+        .limit(5),
     )
     return {
         "category": ClinicalCategory.VITALS.value,
@@ -115,10 +132,14 @@ async def _build_vitals(patient_id: UUID, db: AsyncSession) -> dict[str, JsonVal
     }
 
 
-async def _build_lab_results(patient_id: UUID, db: AsyncSession) -> dict[str, JsonValue]:
+async def _build_lab_results(
+    patient_id: UUID, db: AsyncSession
+) -> dict[str, JsonValue]:
     rows = await _scalars_all(
         db,
-        select(LabResult).where(LabResult.patient_id == patient_id).order_by(LabResult.recorded_at.desc()),
+        select(LabResult)
+        .where(LabResult.patient_id == patient_id)
+        .order_by(LabResult.recorded_at.desc()),
     )
     return {
         "category": ClinicalCategory.LAB_RESULTS.value,
@@ -171,7 +192,9 @@ async def _build_diagnoses(patient_id: UUID, db: AsyncSession) -> dict[str, Json
     }
 
 
-async def _build_blood_group(patient_id: UUID, db: AsyncSession) -> dict[str, JsonValue]:
+async def _build_blood_group(
+    patient_id: UUID, db: AsyncSession
+) -> dict[str, JsonValue]:
     """There is no verified blood-group source in this repository yet.
 
     Per Defect 2, an unverified or default blood-group value must never be
@@ -188,7 +211,9 @@ async def _build_blood_group(patient_id: UUID, db: AsyncSession) -> dict[str, Js
     }
 
 
-async def _build_document_references(patient_id: UUID, db: AsyncSession) -> dict[str, JsonValue]:
+async def _build_document_references(
+    patient_id: UUID, db: AsyncSession
+) -> dict[str, JsonValue]:
     rows = await _scalars_all(
         db,
         select(DocumentReference)
@@ -251,7 +276,9 @@ async def build_emergency_summary(
             # Defensive: should be unreachable because ClinicalCategory is
             # exhaustively mapped above, but fail closed rather than
             # silently omitting a category that should have had data.
-            raise ValueError(f"No emergency-summary builder registered for {category!r}")
+            raise ValueError(
+                f"No emergency-summary builder registered for {category!r}"
+            )
         result[category.value] = await builder(patient_id, db)
 
     return EmergencySummary(

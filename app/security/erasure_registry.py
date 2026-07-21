@@ -51,15 +51,23 @@ async def check_erasure_registry(patient_ref: str, db: AsyncSession) -> None:
 
     try:
         result = await db.execute(
-            select(PatientErasureTombstone.status).where(PatientErasureTombstone.patient_ref == str(patient_ref))
+            select(PatientErasureTombstone.status).where(
+                PatientErasureTombstone.patient_ref == str(patient_ref)
+            )
         )
         status = result.scalar_one_or_none()
     except Exception as exc:
         log_safe_exception(
-            logger, logging.ERROR, "erasure_registry_query_failed", exc,
-            subsystem="database", operation="check_erasure_registry",
+            logger,
+            logging.ERROR,
+            "erasure_registry_query_failed",
+            exc,
+            subsystem="database",
+            operation="check_erasure_registry",
         )
-        raise ErasureRegistryUnavailable("Erasure registry query failed; failing closed.") from exc
+        raise ErasureRegistryUnavailable(
+            "Erasure registry query failed; failing closed."
+        ) from exc
 
     if status is None:
         return  # No tombstone on record -- access proceeds.
@@ -67,7 +75,9 @@ async def check_erasure_registry(patient_ref: str, db: AsyncSession) -> None:
     if status not in _ACTIVE_TOMBSTONE_STATUSES:
         # Defensive: an unrecognized status value is malformed data, not
         # "no tombstone". Fail closed rather than guessing.
-        raise ErasureRegistryUnavailable(f"Erasure registry returned an unrecognized status: {status!r}")
+        raise ErasureRegistryUnavailable(
+            f"Erasure registry returned an unrecognized status: {status!r}"
+        )
 
     raise _PatientErasedSignal(patient_ref)
 
@@ -79,15 +89,23 @@ class _PatientErasedSignal(RuntimeError):
 
 
 async def create_tombstone(
-    db: AsyncSession, *, patient_ref: str, tenant_id: str | None,
-    wrapping_key_type: str, patient_wrapping_key_id: str | None = None,
+    db: AsyncSession,
+    *,
+    patient_ref: str,
+    tenant_id: str | None,
+    wrapping_key_type: str,
+    patient_wrapping_key_id: str | None = None,
 ) -> PatientErasureTombstone:
     existing = await db.execute(
-        select(PatientErasureTombstone).where(PatientErasureTombstone.patient_ref == str(patient_ref))
+        select(PatientErasureTombstone).where(
+            PatientErasureTombstone.patient_ref == str(patient_ref)
+        )
     )
     row = existing.scalar_one_or_none()
     if row is not None:
-        return row  # Idempotent: repeated erasure requests return the existing tombstone.
+        return (
+            row  # Idempotent: repeated erasure requests return the existing tombstone.
+        )
 
     row = PatientErasureTombstone(
         tenant_id=tenant_id,
@@ -105,7 +123,9 @@ async def create_tombstone(
     return row
 
 
-async def mark_access_blocked(db: AsyncSession, tombstone: PatientErasureTombstone) -> None:
+async def mark_access_blocked(
+    db: AsyncSession, tombstone: PatientErasureTombstone
+) -> None:
     tombstone.status = ErasureStatus.ACCESS_BLOCKED.value
     tombstone.assurance_level = "active_access_blocked"
     tombstone.effective_at = datetime.now(timezone.utc)
@@ -113,7 +133,9 @@ async def mark_access_blocked(db: AsyncSession, tombstone: PatientErasureTombsto
     await db.flush()
 
 
-async def mark_key_disabled(db: AsyncSession, tombstone: PatientErasureTombstone, kms_state: str | None) -> None:
+async def mark_key_disabled(
+    db: AsyncSession, tombstone: PatientErasureTombstone, kms_state: str | None
+) -> None:
     tombstone.status = ErasureStatus.KEY_DISABLED.value
     tombstone.kms_state = kms_state
     tombstone.updated_at = datetime.now(timezone.utc)
@@ -121,7 +143,9 @@ async def mark_key_disabled(db: AsyncSession, tombstone: PatientErasureTombstone
 
 
 async def mark_deletion_scheduled(
-    db: AsyncSession, tombstone: PatientErasureTombstone, scheduled_deletion_date: datetime,
+    db: AsyncSession,
+    tombstone: PatientErasureTombstone,
+    scheduled_deletion_date: datetime,
 ) -> None:
     tombstone.status = ErasureStatus.DELETION_SCHEDULED.value
     tombstone.assurance_level = "patient_key_deletion_scheduled"
@@ -139,7 +163,11 @@ async def mark_destroyed(db: AsyncSession, tombstone: PatientErasureTombstone) -
 
 
 async def mark_operator_action_required(
-    db: AsyncSession, tombstone: PatientErasureTombstone, *, failure_code: str, retry_required: bool = True,
+    db: AsyncSession,
+    tombstone: PatientErasureTombstone,
+    *,
+    failure_code: str,
+    retry_required: bool = True,
 ) -> None:
     """KMS disable/schedule-deletion failed. The tombstone is preserved,
     application access stays blocked (status is NOT reverted), and this is

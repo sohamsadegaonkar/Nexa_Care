@@ -47,18 +47,38 @@ class PatientErasureTombstone(Base, UUIDPrimaryKeyMixin):
 
     tenant_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     patient_ref: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default=ErasureStatus.REQUESTED.value)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=ErasureStatus.REQUESTED.value
+    )
     assurance_level: Mapped[str] = mapped_column(String(64), nullable=False)
     wrapping_key_type: Mapped[str] = mapped_column(String(16), nullable=False)
-    patient_wrapping_key_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    patient_wrapping_key_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
     kms_state: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    scheduled_deletion_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    completion_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    effective_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    scheduled_deletion_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completion_date: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     failure_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    operator_action_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    operator_action_required: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
     retry_required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    audit_event_id: Mapped[uuid.UUID | None] = mapped_column(PG_UUID(as_uuid=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    audit_event_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )

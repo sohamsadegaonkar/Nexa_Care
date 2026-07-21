@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
-
 import logging
 from typing import Any
 from uuid import UUID
@@ -24,13 +22,18 @@ from app.services.consent_gated_crypto import consent_gated_decrypt, EncryptionP
 from app.services.consent_engine import get_consent_redis_client
 from app.services.crypto_kms import get_encryption_provider
 from app.services.emergency_summary_service import build_emergency_summary
-from app.security.clinical_categories import UnsupportedClinicalCategoryError, parse_clinical_categories
+from app.security.clinical_categories import (
+    UnsupportedClinicalCategoryError,
+    parse_clinical_categories,
+)
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.observability.safe_exceptions import log_safe_exception
+from app.security.audit_context import AuditDomain, current_audit_context
 
 logger = logging.getLogger("nexa_logger")
-from app.observability.safe_exceptions import log_safe_exception
 
 router = APIRouter(prefix="/api/v2/patient", tags=["patient"])
+
 
 async def get_kms_provider() -> EncryptionProvider:
     """Resolve the same configured envelope-encryption provider used elsewhere."""
@@ -51,7 +54,9 @@ class ErasureResponse(BaseModel):
     historical_backup_irrecoverability_proven: bool
 
 
-def _merge_non_null_fields(base: dict[str, Any], values: dict[str, Any]) -> dict[str, Any]:
+def _merge_non_null_fields(
+    base: dict[str, Any], values: dict[str, Any]
+) -> dict[str, Any]:
     """Return a copy containing only non-null shard fields."""
 
     merged = dict(base)
@@ -96,7 +101,9 @@ async def _fetch_pii_shard(patient_id: str, db: AsyncSession) -> dict[str, Any]:
             select(NexaVault).where(NexaVault.masked_internal_id == patient_id).limit(1)
         )
     except SQLAlchemyError as exc:
-        log_safe_exception(logger, exc, subsystem="database", operation="patient_vault_fetch")
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="patient_vault_fetch"
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Patient identity shard is temporarily unavailable.",
@@ -104,13 +111,19 @@ async def _fetch_pii_shard(patient_id: str, db: AsyncSession) -> dict[str, Any]:
 
     row = result.scalars().first()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found."
+        )
 
     # Sprint 2: Transparent decryption with auto-migration
     return {
-        "patient_name": await decrypt_vault_field(patient_id, "patient_name", row.patient_name, db),
+        "patient_name": await decrypt_vault_field(
+            patient_id, "patient_name", row.patient_name, db
+        ),
         "phone": await decrypt_vault_field(patient_id, "phone", row.phone, db),
-        "aadhaar_abha_id": await decrypt_vault_field(patient_id, "aadhaar_abha_id", row.aadhaar_abha_id, db),
+        "aadhaar_abha_id": await decrypt_vault_field(
+            patient_id, "aadhaar_abha_id", row.aadhaar_abha_id, db
+        ),
     }
 
 
@@ -119,10 +132,14 @@ async def _fetch_clinical_shard(patient_id: str, db: AsyncSession) -> dict[str, 
 
     try:
         result = await db.execute(
-            select(NexaClinical).where(NexaClinical.masked_internal_id == patient_id).limit(1)
+            select(NexaClinical)
+            .where(NexaClinical.masked_internal_id == patient_id)
+            .limit(1)
         )
     except SQLAlchemyError as exc:
-        log_safe_exception(logger, exc, subsystem="database", operation="patient_clinical_fetch")
+        log_safe_exception(
+            logger, exc, subsystem="database", operation="patient_clinical_fetch"
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Patient clinical shard is temporarily unavailable.",
@@ -130,7 +147,9 @@ async def _fetch_clinical_shard(patient_id: str, db: AsyncSession) -> dict[str, 
 
     row = result.scalars().first()
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Patient record not found."
+        )
 
     return _clinical_payload(row)
 
@@ -299,7 +318,7 @@ async def erase_patient_data(
     """
     patient_id_str = str(patient_id)
     expected_conf = f"ERASE-{patient_id_str}"
-    
+
     if payload.confirmation != expected_conf:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -307,7 +326,7 @@ async def erase_patient_data(
         )
 
     from app.observability.audit_ledger import append_audit_log_or_503
-    
+
     # 1. Audit Request
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
@@ -315,7 +334,7 @@ async def erase_patient_data(
         event_type="CRYPTOGRAPHIC_ERASURE_REQUESTED",
         target_id=patient_id_str,
         status="STARTED",
-        metadata={"reason": payload.reason}
+        metadata={"reason": payload.reason},
     )
 
     # 2. Execute Cryptographic Erasure
@@ -327,7 +346,11 @@ async def erase_patient_data(
     from app.models.erasure_tombstone import PatientErasureTombstone
 
     tombstone = (
-        await db.execute(_select(PatientErasureTombstone).where(PatientErasureTombstone.patient_ref == patient_id_str))
+        await db.execute(
+            _select(PatientErasureTombstone).where(
+                PatientErasureTombstone.patient_ref == patient_id_str
+            )
+        )
     ).scalar_one_or_none()
 
     # 4. Audit Completion
@@ -362,6 +385,7 @@ async def erase_patient_data(
         # shared-key patient (access-blocked only) or an AWS key still in
         # its mandatory pending-deletion window never does.
         historical_backup_irrecoverability_proven=(
-            tombstone.wrapping_key_type == "patient" and tombstone.assurance_level == "patient_key_destroyed"
+            tombstone.wrapping_key_type == "patient"
+            and tombstone.assurance_level == "patient_key_destroyed"
         ),
     )

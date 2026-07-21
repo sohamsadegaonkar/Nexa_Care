@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from types import SimpleNamespace
@@ -36,7 +36,9 @@ class FakeRedis:
     def get(self, key: str):
         return self.values.get(key)
 
-    def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool:
+    def set(
+        self, key: str, value: str, *, nx: bool = False, ex: int | None = None
+    ) -> bool:
         if nx and key in self.values:
             return False
         self.values[key] = value
@@ -67,7 +69,9 @@ def test_invalid_phone_rejected(raw: str) -> None:
         normalize_indian_phone(raw)
 
 
-def test_patient_jwt_claims_and_tamper_rejection(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_patient_jwt_claims_and_tamper_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("PATIENT_JWT_SECRET", JWT_SECRET)
     token, _ = issue_patient_access_token("patient-1", "supabase-user-1")
     claims = decode_patient_access_token(token)
@@ -81,7 +85,13 @@ def test_patient_jwt_claims_and_tamper_rejection(monkeypatch: pytest.MonkeyPatch
 def test_expired_patient_jwt_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PATIENT_JWT_SECRET", JWT_SECRET)
     expired = jwt.encode(
-        {"sub": "p", "patient_id": "p", "actor_type": "patient", "auth_method": "phone_otp", "exp": 1},
+        {
+            "sub": "p",
+            "patient_id": "p",
+            "actor_type": "patient",
+            "auth_method": "phone_otp",
+            "exp": 1,
+        },
         JWT_SECRET,
         algorithm="HS256",
     )
@@ -91,9 +101,13 @@ def test_expired_patient_jwt_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.asyncio
 async def test_enrollment_token_scope_binding_expiry_and_replay() -> None:
     redis = FakeRedis()
-    with patch("app.services.patient_auth_service.get_redis_client", return_value=redis):
+    with patch(
+        "app.services.patient_auth_service.get_redis_client", return_value=redis
+    ):
         token = await issue_device_enrollment_token("patient-1", "auth-session-1")
-        stored = next(value for key, value in redis.values.items() if "claim" not in key)
+        stored = next(
+            value for key, value in redis.values.items() if "claim" not in key
+        )
         assert json.loads(stored)["scope"] == "device_enrollment"
         assert await claim_device_enrollment_token(token, "patient-2") is None
 
@@ -108,19 +122,25 @@ async def test_enrollment_token_scope_binding_expiry_and_replay() -> None:
 
 
 def _allow_rate_limits():
-    return patch("app.api.v2.auth_routes._otp_rate_limiter.check", new=AsyncMock(return_value=None))
+    return patch(
+        "app.api.v2.auth_routes._otp_rate_limiter.check",
+        new=AsyncMock(return_value=None),
+    )
 
 
 def test_otp_send_is_generic_and_disables_user_creation() -> None:
     auth = MagicMock()
     supabase = SimpleNamespace(auth=auth)
     check = AsyncMock(return_value=None)
-    with patch("app.api.v2.auth_routes._otp_rate_limiter.check", new=check), patch(
-        "app.api.v2.auth_routes.get_supabase_client", return_value=supabase
+    with (
+        patch("app.api.v2.auth_routes._otp_rate_limiter.check", new=check),
+        patch("app.api.v2.auth_routes.get_supabase_client", return_value=supabase),
     ):
         response = client.post("/api/v2/auth/otp/send", json={"phone": "8000000001"})
     assert response.status_code == 200
-    assert response.json() == {"message": "If this phone is registered, an OTP will be sent."}
+    assert response.json() == {
+        "message": "If this phone is registered, an OTP will be sent."
+    }
     auth.sign_in_with_otp.assert_called_once_with(
         {"phone": "+918000000001", "options": {"should_create_user": False}}
     )
@@ -151,7 +171,13 @@ def test_otp_send_unknown_phone_remains_generic() -> None:
     error.status = 400
     auth = MagicMock()
     auth.sign_in_with_otp.side_effect = error
-    with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
+    with (
+        _allow_rate_limits(),
+        patch(
+            "app.api.v2.auth_routes.get_supabase_client",
+            return_value=SimpleNamespace(auth=auth),
+        ),
+    ):
         response = client.post("/api/v2/auth/otp/send", json={"phone": "8000000001"})
     assert response.status_code == 200
     assert "registered" in response.json()["message"]
@@ -170,9 +196,17 @@ def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
-        with _allow_rate_limits(), \
-             patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)), \
-             patch("app.api.v2.auth_routes.issue_device_enrollment_token", new=AsyncMock(return_value="enroll-token")):
+        with (
+            _allow_rate_limits(),
+            patch(
+                "app.api.v2.auth_routes.get_supabase_client",
+                return_value=SimpleNamespace(auth=auth),
+            ),
+            patch(
+                "app.api.v2.auth_routes.issue_device_enrollment_token",
+                new=AsyncMock(return_value="enroll-token"),
+            ),
+        ):
             response = client.post(
                 "/api/v2/auth/otp/verify",
                 json={"phone": "8000000001", "otp": "123456"},
@@ -183,7 +217,10 @@ def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
     body = response.json()
     assert body["patient_id"] == str(patient.patient_uuid)
     assert body["device_enrollment_token"] == "enroll-token"
-    assert decode_patient_access_token(body["access_token"])["patient_id"] == body["patient_id"]
+    assert (
+        decode_patient_access_token(body["access_token"])["patient_id"]
+        == body["patient_id"]
+    )
     compiled_queries = " ".join(str(call.args[0]) for call in db.scalar.call_args_list)
     assert "patient_auth_identities.provider_subject" in compiled_queries
     assert "WHERE patients.phone" not in compiled_queries
@@ -195,7 +232,13 @@ def test_invalid_or_expired_otp(status_code: int) -> None:
     error.status = status_code
     auth = MagicMock()
     auth.verify_otp.side_effect = error
-    with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
+    with (
+        _allow_rate_limits(),
+        patch(
+            "app.api.v2.auth_routes.get_supabase_client",
+            return_value=SimpleNamespace(auth=auth),
+        ),
+    ):
         response = client.post(
             "/api/v2/auth/otp/verify",
             json={"phone": "8000000001", "otp": "123456"},
@@ -214,7 +257,13 @@ def test_matching_phone_without_identity_mapping_is_rejected() -> None:
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
-        with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
+        with (
+            _allow_rate_limits(),
+            patch(
+                "app.api.v2.auth_routes.get_supabase_client",
+                return_value=SimpleNamespace(auth=auth),
+            ),
+        ):
             response = client.post(
                 "/api/v2/auth/otp/verify",
                 json={"phone": "8000000001", "otp": "123456"},
@@ -235,7 +284,13 @@ def test_revoked_identity_mapping_is_rejected() -> None:
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
-        with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
+        with (
+            _allow_rate_limits(),
+            patch(
+                "app.api.v2.auth_routes.get_supabase_client",
+                return_value=SimpleNamespace(auth=auth),
+            ),
+        ):
             response = client.post(
                 "/api/v2/auth/otp/verify",
                 json={"phone": "8000000001", "otp": "123456"},
@@ -249,7 +304,10 @@ def test_revoked_identity_mapping_is_rejected() -> None:
 def test_deleted_or_missing_mapped_patient_is_rejected() -> None:
     patient_id = UUID("123e4567-e89b-12d3-a456-426614174001")
     db = AsyncMock()
-    db.scalar.side_effect = [SimpleNamespace(patient_id=patient_id, revoked_at=None), None]
+    db.scalar.side_effect = [
+        SimpleNamespace(patient_id=patient_id, revoked_at=None),
+        None,
+    ]
     app.dependency_overrides[get_db_session] = lambda: db
     auth = MagicMock()
     auth.verify_otp.return_value = SimpleNamespace(
@@ -257,7 +315,13 @@ def test_deleted_or_missing_mapped_patient_is_rejected() -> None:
         session=SimpleNamespace(access_token="supabase-session-token"),
     )
     try:
-        with _allow_rate_limits(), patch("app.api.v2.auth_routes.get_supabase_client", return_value=SimpleNamespace(auth=auth)):
+        with (
+            _allow_rate_limits(),
+            patch(
+                "app.api.v2.auth_routes.get_supabase_client",
+                return_value=SimpleNamespace(auth=auth),
+            ),
+        ):
             response = client.post(
                 "/api/v2/auth/otp/verify",
                 json={"phone": "8000000001", "otp": "123456"},

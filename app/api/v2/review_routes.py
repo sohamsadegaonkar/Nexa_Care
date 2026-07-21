@@ -26,7 +26,9 @@ logger = logging.getLogger("nexa_logger")
 router = APIRouter(prefix="/api/v2/reviews", tags=["reviews"])
 
 
-async def _audit_best_effort(actor_uid: str, event_type: str, target_id: str, status_: str) -> None:
+async def _audit_best_effort(
+    actor_uid: str, event_type: str, target_id: str, status_: str
+) -> None:
     """Best-effort audit write for failure-path logging.
 
     Hard-failing (append_audit_log_or_503) is correct for the pre-mutation
@@ -41,14 +43,21 @@ async def _audit_best_effort(actor_uid: str, event_type: str, target_id: str, st
     """
     success = await append_audit_log(
         audit_context=current_audit_context(AuditDomain.PIPELINE),
-        actor_uid=actor_uid, event_type=event_type, target_id=target_id, status=status_,
+        actor_uid=actor_uid,
+        event_type=event_type,
+        target_id=target_id,
+        status=status_,
     )
     if not success:
-        logger.critical(json.dumps({
-            "event": "audit_log_write_failed_best_effort",
-            "context": event_type,
-            "target_id": target_id,
-        }))
+        logger.critical(
+            json.dumps(
+                {
+                    "event": "audit_log_write_failed_best_effort",
+                    "context": event_type,
+                    "target_id": target_id,
+                }
+            )
+        )
 
 
 class DocumentReviewItem(BaseModel):

@@ -52,7 +52,9 @@ class AuditContext:
     def platform(cls, *, domain: AuditDomain) -> "AuditContext":
         if domain not in {AuditDomain.AUTH, AuditDomain.PLATFORM}:
             raise AuditContextMissing("Only approved platform domains may be global.")
-        return cls(tenant_id=None, hospital_id=None, domain=domain, platform_global=True)
+        return cls(
+            tenant_id=None, hospital_id=None, domain=domain, platform_global=True
+        )
 
 
 def derive_audit_partition(context: AuditContext) -> str:
@@ -60,7 +62,10 @@ def derive_audit_partition(context: AuditContext) -> str:
         return f"tenant:{context.tenant_id}:{context.domain.value}"
     if context.hospital_id:
         return f"hospital:{context.hospital_id}:{context.domain.value}"
-    if context.platform_global and context.domain in {AuditDomain.AUTH, AuditDomain.PLATFORM}:
+    if context.platform_global and context.domain in {
+        AuditDomain.AUTH,
+        AuditDomain.PLATFORM,
+    }:
         return f"platform:{context.domain.value}"
     raise AuditContextMissing(
         "Tenant-sensitive audit event requires trusted tenant or hospital context."

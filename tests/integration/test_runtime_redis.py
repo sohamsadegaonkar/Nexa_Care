@@ -71,8 +71,12 @@ async def test_signed_challenge_is_consumed_atomically_once(real_redis):
     resolved = {"status": "approved", "challenge_nonce": nonce}
     await real_redis.set(request_key, json.dumps(pending), ex=30)
     try:
-        first = await _resolve_signed_approval_atomic(real_redis, request_id, nonce, resolved, 30)
-        replay = await _resolve_signed_approval_atomic(real_redis, request_id, nonce, resolved, 30)
+        first = await _resolve_signed_approval_atomic(
+            real_redis, request_id, nonce, resolved, 30
+        )
+        replay = await _resolve_signed_approval_atomic(
+            real_redis, request_id, nonce, resolved, 30
+        )
         assert first is True
         assert replay is False
         assert await real_redis.exists(nonce_key) == 1
@@ -84,6 +88,13 @@ async def test_signed_challenge_is_consumed_atomically_once(real_redis):
 async def test_expired_challenge_fails_closed(real_redis):
     request_id = str(uuid.uuid4())
     nonce = uuid.uuid4().hex
-    assert await _resolve_signed_approval_atomic(
-        real_redis, request_id, nonce, {"status": "approved", "challenge_nonce": nonce}, 30,
-    ) is False
+    assert (
+        await _resolve_signed_approval_atomic(
+            real_redis,
+            request_id,
+            nonce,
+            {"status": "approved", "challenge_nonce": nonce},
+            30,
+        )
+        is False
+    )

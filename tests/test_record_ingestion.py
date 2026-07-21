@@ -28,25 +28,38 @@ def db():
 
 def field(**overrides):
     data = {
-        "field_id": str(uuid.uuid4()), "job_id": JOB_ID,
-        "field_name": "blood_pressure", "raw_value": "120 over 80",
-        "units": "mmHg", "confidence": 0.91, "risk_level": "MEDIUM_RISK",
-        "source_document_id": str(uuid.uuid4()), "status": "approved",
+        "field_id": str(uuid.uuid4()),
+        "job_id": JOB_ID,
+        "field_name": "blood_pressure",
+        "raw_value": "120 over 80",
+        "units": "mmHg",
+        "confidence": 0.91,
+        "risk_level": "MEDIUM_RISK",
+        "source_document_id": str(uuid.uuid4()),
+        "status": "approved",
     }
     data.update(overrides)
     return ExtractedField(**data)
 
 
 async def ingest(db, value):
-    with patch("app.services.record_ingestion.append_audit_log_or_503", new=AsyncMock()):
-        return await ingest_extracted_fields(PATIENT_ID, JOB_ID, [value], db, PROVIDER_ID)
+    with patch(
+        "app.services.record_ingestion.append_audit_log_or_503", new=AsyncMock()
+    ):
+        return await ingest_extracted_fields(
+            PATIENT_ID, JOB_ID, [value], db, PROVIDER_ID
+        )
 
 
 @pytest.mark.asyncio
 async def test_approved_vital_with_units_is_ingested(db):
     result = await ingest(db, field())
     assert result.vitals_created == 1 and result.ingested_count == 1
-    commit = next(item for item in db.add.call_args_list if isinstance(item.args[0], PipelineCommit)).args[0]
+    commit = next(
+        item
+        for item in db.add.call_args_list
+        if isinstance(item.args[0], PipelineCommit)
+    ).args[0]
     assert commit.committed_by == PROVIDER_ID
 
 
@@ -83,7 +96,10 @@ async def test_unstructured_high_risk_types_are_rejected(db, name):
 @pytest.mark.asyncio
 async def test_lab_requires_reference_range(db):
     with pytest.raises(HTTPException) as exc:
-        await ingest(db, field(field_name="hba1c", units="%", validation_result=ValidationResult()))
+        await ingest(
+            db,
+            field(field_name="hba1c", units="%", validation_result=ValidationResult()),
+        )
     assert exc.value.status_code == 409
 
 
@@ -96,7 +112,11 @@ async def test_unsupported_field_type_is_rejected(db):
 
 @pytest.mark.asyncio
 async def test_invalid_patient_or_job_identifier_is_rejected_before_write(db):
-    with patch("app.services.record_ingestion.append_audit_log_or_503", new=AsyncMock()):
+    with patch(
+        "app.services.record_ingestion.append_audit_log_or_503", new=AsyncMock()
+    ):
         with pytest.raises(HTTPException) as exc:
-            await ingest_extracted_fields("not-a-uuid", JOB_ID, [field()], db, PROVIDER_ID)
+            await ingest_extracted_fields(
+                "not-a-uuid", JOB_ID, [field()], db, PROVIDER_ID
+            )
     assert exc.value.status_code == 422

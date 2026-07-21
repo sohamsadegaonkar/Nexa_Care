@@ -22,7 +22,11 @@ from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
 
-from app.core.dependencies import get_current_provider, get_scoped_session, require_role as deps_require_role
+from app.core.dependencies import (
+    get_current_provider,
+    get_scoped_session,
+    require_role as deps_require_role,
+)
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.consent_engine import (
@@ -180,7 +184,9 @@ async def validate_consent_for_patient(
 # ── FastAPI dependency factories ────────────────────────────────────────────
 
 
-def require_consent(purpose: str) -> Callable[[Request, ProviderContext, str | None], Any]:
+def require_consent(
+    purpose: str,
+) -> Callable[[Request, ProviderContext, str | None], Any]:
     """FastAPI dependency factory enforcing live consent for provider access to patient data.
 
     Discovers patient_id from the request (path params, query params, headers,
@@ -195,7 +201,9 @@ def require_consent(purpose: str) -> Callable[[Request, ProviderContext, str | N
         provider: ProviderContext = Depends(get_current_provider),
         x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     ) -> ConsentCapability:
-        patient_id = request.path_params.get("patient_id") or request.path_params.get("id")
+        patient_id = request.path_params.get("patient_id") or request.path_params.get(
+            "id"
+        )
         if not patient_id:
             patient_id = request.query_params.get("patient_id")
         if not patient_id:
@@ -228,7 +236,9 @@ def require_self_patient_access() -> Callable[[Request, str], Any]:
         request: Request,
         session_patient_id: str = Depends(get_scoped_session),
     ) -> str:
-        target_id = request.path_params.get("patient_id") or request.path_params.get("id")
+        target_id = request.path_params.get("patient_id") or request.path_params.get(
+            "id"
+        )
         if not target_id:
             target_id = request.query_params.get("patient_id")
 

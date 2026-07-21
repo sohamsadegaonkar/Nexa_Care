@@ -117,14 +117,20 @@ class RuntimeEnvironment(str, Enum):
 
 
 _LEGACY_ENVIRONMENT_ALIASES = {"alpha-demo": "alpha"}
-_SAFE_DEMO_ENVIRONMENTS = frozenset(env.value for env in RuntimeEnvironment if env.is_demo_allowed)
-_PRODUCTION_LIKE_ENVIRONMENTS = frozenset(env.value for env in RuntimeEnvironment if env.is_production_like)
+_SAFE_DEMO_ENVIRONMENTS = frozenset(
+    env.value for env in RuntimeEnvironment if env.is_demo_allowed
+)
+_PRODUCTION_LIKE_ENVIRONMENTS = frozenset(
+    env.value for env in RuntimeEnvironment if env.is_production_like
+)
 
 
 def _normalize_environment(raw: str) -> str:
     normalized = raw.strip().lower()
     if normalized in _LEGACY_ENVIRONMENT_ALIASES:
-        logger.warning("Deprecated runtime environment name used; migrate to canonical ENVIRONMENT value")
+        logger.warning(
+            "Deprecated runtime environment name used; migrate to canonical ENVIRONMENT value"
+        )
         return _LEGACY_ENVIRONMENT_ALIASES[normalized]
     return normalized
 
@@ -138,14 +144,18 @@ def get_runtime_environment() -> RuntimeEnvironment:
         if canonical != legacy:
             raise ConfigError("ENVIRONMENT and legacy ENV disagree")
         value = canonical
-        logger.warning("Legacy ENV is deprecated; remove it after migration to ENVIRONMENT")
+        logger.warning(
+            "Legacy ENV is deprecated; remove it after migration to ENVIRONMENT"
+        )
     elif canonical_raw:
         value = _normalize_environment(canonical_raw)
     elif legacy_raw:
         value = _normalize_environment(legacy_raw)
         logger.warning("Legacy ENV is deprecated; configure ENVIRONMENT instead")
     else:
-        raise ConfigError("ENVIRONMENT must explicitly identify the runtime environment")
+        raise ConfigError(
+            "ENVIRONMENT must explicitly identify the runtime environment"
+        )
     try:
         return RuntimeEnvironment(value)
     except ValueError as exc:
@@ -172,26 +182,38 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
 
     environment = runtime_environment()
     if not environment:
-        raise ConfigError("ENVIRONMENT (or ENV) must explicitly identify the runtime environment")
+        raise ConfigError(
+            "ENVIRONMENT (or ENV) must explicitly identify the runtime environment"
+        )
     provider = _require_env("DOCUMENT_EXTRACTION_PROVIDER").strip().lower()
     if provider not in {"remote", "demo"}:
         raise ConfigError("DOCUMENT_EXTRACTION_PROVIDER must be 'remote' or 'demo'")
     if provider == "demo":
         if environment not in _SAFE_DEMO_ENVIRONMENTS:
-            raise ConfigError(f"Demo document extraction is forbidden in environment '{environment}'")
+            raise ConfigError(
+                f"Demo document extraction is forbidden in environment '{environment}'"
+            )
         return DocumentExtractionConfig(provider=provider, environment=environment)
 
     api_url = _require_env("DOCUMENT_AI_API_URL").strip()
     api_key = _require_env("DOCUMENT_AI_API_KEY").strip()
-    if environment in _PRODUCTION_LIKE_ENVIRONMENTS and not api_url.lower().startswith("https://"):
-        raise ConfigError("DOCUMENT_AI_API_URL must use HTTPS in production-like environments")
+    if environment in _PRODUCTION_LIKE_ENVIRONMENTS and not api_url.lower().startswith(
+        "https://"
+    ):
+        raise ConfigError(
+            "DOCUMENT_AI_API_URL must use HTTPS in production-like environments"
+        )
     try:
         timeout_seconds = float(os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "30"))
         max_attempts = int(os.getenv("DOCUMENT_AI_MAX_ATTEMPTS", "3"))
     except ValueError as exc:
-        raise ConfigError("Document extraction timeout/retry configuration is invalid") from exc
+        raise ConfigError(
+            "Document extraction timeout/retry configuration is invalid"
+        ) from exc
     if timeout_seconds <= 0 or not 1 <= max_attempts <= 5:
-        raise ConfigError("Document extraction timeout must be positive and max attempts must be 1..5")
+        raise ConfigError(
+            "Document extraction timeout must be positive and max attempts must be 1..5"
+        )
     return DocumentExtractionConfig(
         provider=provider,
         environment=environment,
@@ -205,14 +227,23 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
 def get_document_storage_config() -> DocumentStorageConfig:
     environment = runtime_environment()
     if not environment:
-        raise ConfigError("ENVIRONMENT (or ENV) must explicitly identify the runtime environment")
+        raise ConfigError(
+            "ENVIRONMENT (or ENV) must explicitly identify the runtime environment"
+        )
     provider = _require_env("DOCUMENT_STORAGE_PROVIDER").strip().lower()
     if provider == "local":
         if environment not in _SAFE_DEMO_ENVIRONMENTS:
-            raise ConfigError(f"Local document storage is forbidden in environment '{environment}'")
+            raise ConfigError(
+                f"Local document storage is forbidden in environment '{environment}'"
+            )
         root = Path(_require_env("DOCUMENT_STORAGE_LOCAL_ROOT")).expanduser().resolve()
         key = _require_env("DOCUMENT_STORAGE_ENCRYPTION_KEY")
-        return DocumentStorageConfig(provider=provider, environment=environment, local_root=root, encryption_key=key)
+        return DocumentStorageConfig(
+            provider=provider,
+            environment=environment,
+            local_root=root,
+            encryption_key=key,
+        )
     if provider == "s3":
         return DocumentStorageConfig(
             provider=provider,

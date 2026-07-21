@@ -9,7 +9,9 @@ from collections.abc import Iterable
 from fastapi import Request
 
 
-def trusted_proxy_networks(raw: str | None = None) -> tuple[ipaddress._BaseNetwork, ...]:
+def trusted_proxy_networks(
+    raw: str | None = None,
+) -> tuple[ipaddress._BaseNetwork, ...]:
     value = os.getenv("TRUSTED_PROXY_NETWORKS", "") if raw is None else raw
     networks = []
     for item in value.split(","):
@@ -20,11 +22,18 @@ def trusted_proxy_networks(raw: str | None = None) -> tuple[ipaddress._BaseNetwo
     return tuple(networks)
 
 
-def _is_trusted(address: ipaddress._BaseAddress, networks: Iterable[ipaddress._BaseNetwork]) -> bool:
-    return any(address.version == network.version and address in network for network in networks)
+def _is_trusted(
+    address: ipaddress._BaseAddress, networks: Iterable[ipaddress._BaseNetwork]
+) -> bool:
+    return any(
+        address.version == network.version and address in network
+        for network in networks
+    )
 
 
-def resolve_client_ip(request: Request, networks: Iterable[ipaddress._BaseNetwork] | None = None) -> str:
+def resolve_client_ip(
+    request: Request, networks: Iterable[ipaddress._BaseNetwork] | None = None
+) -> str:
     """Resolve a client IP only through a fully validated trusted proxy chain."""
 
     client = getattr(request, "client", None)

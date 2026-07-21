@@ -8,7 +8,9 @@ REVIEW = (ROOT / "app/api/v2/review_routes.py").read_text(encoding="utf-8")
 
 
 def test_every_extracted_field_is_queued_for_review():
-    orchestrator = (ROOT / "app/services/pipeline_orchestrator.py").read_text(encoding="utf-8")
+    orchestrator = (ROOT / "app/services/pipeline_orchestrator.py").read_text(
+        encoding="utf-8"
+    )
     assert 'status="needs_review"' in orchestrator
     assert "ReviewQueueItem(" in orchestrator
 
@@ -19,7 +21,8 @@ def test_pipeline_review_requires_role_and_tenant():
 
 
 def test_pipeline_review_uses_row_lock():
-    assert "ExtractedFieldRecord.id == f_uuid).with_for_update()" in PIPELINE
+    assert ".where(ExtractedFieldRecord.id == f_uuid)" in PIPELINE
+    assert ".with_for_update()" in PIPELINE
 
 
 def test_legacy_review_service_rolls_back_on_write_failure():

@@ -1,6 +1,7 @@
 """Splits OCR/extraction model output into the PII vault shard and the
 "de-identified" clinical shard.
 """
+
 from __future__ import annotations
 
 from app.security.audit_context import AuditDomain, current_audit_context
@@ -10,7 +11,12 @@ import logging
 
 from app.core.security import decrypt_pii_field
 from app.observability.redactor import SENSITIVE_FIELDS as PII_FIELD_NAMES
-from app.services.crypto_kms import get_encryption_provider, EncryptedField, LegacyFernetError, EncryptionProvider
+from app.services.crypto_kms import (
+    get_encryption_provider,
+    EncryptedField,
+    LegacyFernetError,
+    EncryptionProvider,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import update
 from app.models.shards import NexaVault
@@ -29,7 +35,7 @@ async def encrypt_vault_payload(
     vault_payload: dict,
     patient_id: str,
     db: AsyncSession,
-    provider: EncryptionProvider | None = None
+    provider: EncryptionProvider | None = None,
 ) -> dict[str, str | None]:
     """Map a PII vault payload to the encrypted column set using KMS.
 
@@ -53,7 +59,7 @@ async def decrypt_vault_field(
     field_name: str,
     serialized_data: str | None,
     db: AsyncSession,
-    provider: EncryptionProvider | None = None
+    provider: EncryptionProvider | None = None,
 ) -> str | None:
     """Decrypt a single vault field with transparent auto-migration from Fernet."""
     if not serialized_data:
@@ -71,16 +77,22 @@ async def decrypt_vault_field(
 
         # 2. Re-encrypt with per-patient DEK
         # This is the "auto-migration on first read" (Sprint 2 Requirement)
-        logger.info(json.dumps({
-            "event": "pii_auto_migration_on_read",
-            "patient_id": patient_id,
-            "field": field_name
-        }))
-        
+        logger.info(
+            json.dumps(
+                {
+                    "event": "pii_auto_migration_on_read",
+                    "patient_id": patient_id,
+                    "field": field_name,
+                }
+            )
+        )
+
         try:
-            new_encrypted = await kms.encrypt_field(patient_id, field_name, plaintext, db)
+            new_encrypted = await kms.encrypt_field(
+                patient_id, field_name, plaintext, db
+            )
             serialized = new_encrypted.serialize()
-            
+
             # 3. Write back to DB
             stmt = (
                 update(NexaVault)
@@ -88,22 +100,23 @@ async def decrypt_vault_field(
                 .values({field_name: serialized})
             )
             await db.execute(stmt)
-            
+
             from app.observability.audit_ledger import append_audit_log
+
             await append_audit_log(
                 audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
                 actor_uid="SYSTEM_AUTO_MIGRATE",
                 event_type="PII_ENCRYPTION_MIGRATED",
                 target_id=patient_id,
                 status="SUCCESS",
-                metadata={"field": field_name, "mechanism": "read_trigger"}
+                metadata={"field": field_name, "mechanism": "read_trigger"},
             )
         except Exception as exc:
             logger.error(
                 "Failed to write back auto-migrated field",
                 extra={"error_type": type(exc).__name__},
             )
-            
+
         return plaintext
 
 

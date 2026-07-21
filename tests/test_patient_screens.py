@@ -9,6 +9,7 @@ These tests verify:
 - Alpha labels are present where crypto claims are scaffolded only
 - Core rendering and interaction flows work
 """
+
 from __future__ import annotations
 
 import re
@@ -21,7 +22,9 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 FEATURES_DIR = ROOT / "nexa-client" / "packages" / "app" / "features" / "patient"
 API_CLIENT_PATH = ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClient.ts"
-OTP_SERVICE_PATH = ROOT / "nexa-client" / "packages" / "app" / "services" / "patientOtp.ts"
+OTP_SERVICE_PATH = (
+    ROOT / "nexa-client" / "packages" / "app" / "services" / "patientOtp.ts"
+)
 
 SCREENS = [
     "PatientLoginScreen",
@@ -36,6 +39,7 @@ SCREENS = [
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 
 def _read_screen(name: str) -> str:
     path = FEATURES_DIR / f"{name}.tsx"
@@ -80,6 +84,7 @@ def _normalize_ws(text: str) -> str:
 # 1. Shared apiClient enforcement
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestApiClientEnforcement:
     """Every screen must use shared apiClient — no raw fetch/axios/localhost."""
 
@@ -103,9 +108,7 @@ class TestApiClientEnforcement:
             "PatientLoginScreen",
         }
         if screen in api_using_screens:
-            assert "apiClient" in code, (
-                f"{screen} does not import apiClient"
-            )
+            assert "apiClient" in code, f"{screen} does not import apiClient"
         elif screen in service_delegating_screens:
             # These screens delegate to a service that uses apiClient
             assert (
@@ -114,73 +117,72 @@ class TestApiClientEnforcement:
                 or "patientOtp" in code
                 or "currentDeviceEnrollment" in code
                 or "apiClient" in code
-            ), (
-                f"{screen} must import from a service that uses apiClient"
-            )
+            ), f"{screen} must import from a service that uses apiClient"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_raw_fetch(self, screen: str) -> None:
         """No direct fetch() calls — only apiClient."""
         code = _read_screen(screen)
         # Allow fetch only inside apiClient.ts itself
-        assert not re.search(r"\bfetch\s*\(", code), (
-            f"{screen} uses raw fetch() — use apiClient instead"
-        )
+        assert not re.search(
+            r"\bfetch\s*\(", code
+        ), f"{screen} uses raw fetch() — use apiClient instead"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_axios(self, screen: str) -> None:
         """No axios imports or calls."""
         code = _read_screen(screen)
-        assert "axios" not in code.lower(), (
-            f"{screen} uses axios — use apiClient instead"
-        )
+        assert (
+            "axios" not in code.lower()
+        ), f"{screen} uses axios — use apiClient instead"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_localhost(self, screen: str) -> None:
         """No localhost URLs."""
         code = _read_screen(screen)
-        assert "localhost" not in code.lower(), (
-            f"{screen} contains 'localhost' — use apiClient which reads API_URL from env"
-        )
+        assert (
+            "localhost" not in code.lower()
+        ), f"{screen} contains 'localhost' — use apiClient which reads API_URL from env"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_hardcoded_provider_id(self, screen: str) -> None:
         """No hardcoded provider_id values in code (comments excluded)."""
         code = _read_screen(screen)
         code_no_comments = _strip_comments(code)
-        assert "provider_id" not in code_no_comments, (
-            f"{screen} contains 'provider_id' — must come from JWT or API response"
-        )
+        assert (
+            "provider_id" not in code_no_comments
+        ), f"{screen} contains 'provider_id' — must come from JWT or API response"
 
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_no_hardcoded_patient_id(self, screen: str) -> None:
         """No hardcoded patient_id values in code (comments excluded)."""
         code = _read_screen(screen)
         code_no_comments = _strip_comments(code)
-        assert "patient_id" not in code_no_comments, (
-            f"{screen} contains 'patient_id' — must come from JWT or API response"
-        )
+        assert (
+            "patient_id" not in code_no_comments
+        ), f"{screen} contains 'patient_id' — must come from JWT or API response"
 
     def test_api_client_no_localhost_in_code(self) -> None:
         """apiClient.ts must not contain localhost in runtime code."""
         code = _read_api_client()
         code_no_comments = _strip_comments(code)
-        assert "localhost" not in code_no_comments, (
-            "apiClient.ts contains 'localhost' in runtime code"
-        )
+        assert (
+            "localhost" not in code_no_comments
+        ), "apiClient.ts contains 'localhost' in runtime code"
 
     def test_api_client_no_axios_in_code(self) -> None:
         """apiClient.ts uses only platform fetch, not axios."""
         code = _read_api_client()
         code_no_comments = _strip_comments(code)
-        assert "axios" not in code_no_comments.lower(), (
-            "apiClient.ts uses axios in runtime code — must use platform fetch only"
-        )
+        assert (
+            "axios" not in code_no_comments.lower()
+        ), "apiClient.ts uses axios in runtime code — must use platform fetch only"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 2. Tamagui-only components
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestTamaguiOnly:
     """All screens must use Tamagui components, no plain HTML."""
@@ -210,13 +212,16 @@ class TestTamaguiOnly:
 # 3. Alpha honesty labels
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestAlphaHonesty:
     """Crypto-scaffolded screens must honestly label themselves as alpha."""
 
     def test_secure_device_labels_alpha(self) -> None:
         code = _read_screen("SecureDeviceScreen")
         code_norm = _normalize_ws(code)
-        assert "ALPHA" in code_norm, "SecureDeviceScreen must label key generation as ALPHA"
+        assert (
+            "ALPHA" in code_norm
+        ), "SecureDeviceScreen must label key generation as ALPHA"
         # Must use precise honest phrasing (whitespace-normalized for JSX wrapping)
         assert (
             "P-256 keypair generated client-side" in code_norm
@@ -226,7 +231,10 @@ class TestAlphaHonesty:
             "'P-256 keypair generated client-side and private key stored "
             "in platform secure storage'"
         )
-        assert "Not yet" in code_norm and "hardware-backed non-exportable signing key" in code_norm, (
+        assert (
+            "Not yet" in code_norm
+            and "hardware-backed non-exportable signing key" in code_norm
+        ), (
             "SecureDeviceScreen must state not-yet: hardware-backed non-exportable "
             "signing key with biometric-gated key usage"
         )
@@ -239,9 +247,7 @@ class TestAlphaHonesty:
         assert (
             "P-256 keypair generated client-side" in code_norm
             or "private key stored in platform secure storage" in code_norm
-        ), (
-            "BiometricApprovalScreen must honestly describe key storage"
-        )
+        ), "BiometricApprovalScreen must honestly describe key storage"
 
     def test_device_enrolled_labels_alpha(self) -> None:
         code = _read_screen("DeviceEnrolledScreen")
@@ -252,14 +258,15 @@ class TestAlphaHonesty:
         for screen in SCREENS:
             code = _read_screen(screen)
             code_no_comments = _strip_comments(code)
-            assert "hospital-grade" not in code_no_comments.lower(), (
-                f"{screen} must not claim hospital-grade biometric signing"
-            )
+            assert (
+                "hospital-grade" not in code_no_comments.lower()
+            ), f"{screen} must not claim hospital-grade biometric signing"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 4. Screen-specific rendering checks
 # ═══════════════════════════════════════════════════════════════════════════════
+
 
 class TestPatientLoginScreen:
     def test_renders_phone_otp_flow(self) -> None:
@@ -280,8 +287,12 @@ class TestPatientLoginScreen:
     def test_checks_enrollment_state_after_login(self) -> None:
         code = _read_screen("PatientLoginScreen")
         assert "ensureCurrentDeviceEnrollment" in code
-        assert "devices.some" not in code, "Any active patient device must not satisfy this installation"
-        assert "/api/v2/devices/status" not in code, "Must not call the nonexistent device status route"
+        assert (
+            "devices.some" not in code
+        ), "Any active patient device must not satisfy this installation"
+        assert (
+            "/api/v2/devices/status" not in code
+        ), "Must not call the nonexistent device status route"
 
     def test_uses_final_token_contract_and_real_routes(self) -> None:
         code = _read_screen("PatientLoginScreen")
@@ -296,18 +307,18 @@ class TestSecureDeviceScreen:
     def test_uses_device_enrollment_service(self) -> None:
         """Screen delegates to installation-specific enrollment reconciliation."""
         code = _read_screen("SecureDeviceScreen")
-        assert "currentDeviceEnrollment" in code, (
-            "Must import current-device enrollment service"
-        )
-        assert "ensureCurrentDeviceEnrollment" in code, (
-            "Must reconcile and enroll the exact installation"
-        )
+        assert (
+            "currentDeviceEnrollment" in code
+        ), "Must import current-device enrollment service"
+        assert (
+            "ensureCurrentDeviceEnrollment" in code
+        ), "Must reconcile and enroll the exact installation"
 
     def test_generates_keypair(self) -> None:
         code = _read_screen("SecureDeviceScreen")
-        assert "generateDeviceKeypair" in code or "keypair" in code.lower(), (
-            "Must generate device keypair"
-        )
+        assert (
+            "generateDeviceKeypair" in code or "keypair" in code.lower()
+        ), "Must generate device keypair"
 
     def test_alpha_honest_crypto_labels(self) -> None:
         """Must label as ALPHA with honest limitations about key generation."""
@@ -315,43 +326,51 @@ class TestSecureDeviceScreen:
         code_norm = _normalize_ws(code)
         assert "ALPHA" in code_norm, "Must label key generation as ALPHA"
         # Must use precise honest phrasing (whitespace-normalized for JSX wrapping)
-        assert "P-256 keypair generated client-side" in code_norm, (
-            "Must state: P-256 keypair generated client-side"
-        )
-        assert "private key stored in platform secure storage" in code_norm, (
-            "Must state: private key stored in platform secure storage"
-        )
-        assert "Not yet" in code_norm, "Must state 'Not yet' for unimplemented capability"
-        assert "hardware-backed non-exportable signing key" in code_norm, (
-            "Must state not-yet: hardware-backed non-exportable signing key"
-        )
-        assert "biometric-gated key usage" in code_norm, (
-            "Must state not-yet: biometric-gated key usage"
-        )
+        assert (
+            "P-256 keypair generated client-side" in code_norm
+        ), "Must state: P-256 keypair generated client-side"
+        assert (
+            "private key stored in platform secure storage" in code_norm
+        ), "Must state: private key stored in platform secure storage"
+        assert (
+            "Not yet" in code_norm
+        ), "Must state 'Not yet' for unimplemented capability"
+        assert (
+            "hardware-backed non-exportable signing key" in code_norm
+        ), "Must state not-yet: hardware-backed non-exportable signing key"
+        assert (
+            "biometric-gated key usage" in code_norm
+        ), "Must state not-yet: biometric-gated key usage"
 
 
 class TestConsentRequestScreen:
     def test_displays_provider_scope_duration(self) -> None:
         code = _read_screen("ConsentRequestScreen")
-        assert "providerName" in code or "provider_name" in code, "Must display provider name"
+        assert (
+            "providerName" in code or "provider_name" in code
+        ), "Must display provider name"
         assert "scope" in code, "Must display data scope"
-        assert "expiresAt" in code or "expires" in code.lower() or "countdown" in code.lower(), (
-            "Must display access duration or countdown"
-        )
+        assert (
+            "expiresAt" in code
+            or "expires" in code.lower()
+            or "countdown" in code.lower()
+        ), "Must display access duration or countdown"
 
     def test_has_approve_and_deny_buttons(self) -> None:
         code = _read_screen("ConsentRequestScreen")
         assert "Approve" in code, "Must have Approve button"
         assert "Deny" in code, "Must have Deny button"
         # Approve should be green, Deny should be red
-        assert "$green9" in code or "green" in code.lower(), "Approve must use green color"
+        assert (
+            "$green9" in code or "green" in code.lower()
+        ), "Approve must use green color"
         assert "$red9" in code or "red" in code.lower(), "Deny must use red color"
 
     def test_fetches_challenge_from_api(self) -> None:
         code = _read_screen("ConsentRequestScreen")
-        assert "/api/v2/consent/challenge/" in code or "fetchChallenge" in code, (
-            "Must fetch challenge details from API"
-        )
+        assert (
+            "/api/v2/consent/challenge/" in code or "fetchChallenge" in code
+        ), "Must fetch challenge details from API"
 
     def test_handles_expired_requests(self) -> None:
         code = _read_screen("ConsentRequestScreen")
@@ -360,13 +379,13 @@ class TestConsentRequestScreen:
 
     def test_shows_countdown_timer(self) -> None:
         code = _read_screen("ConsentRequestScreen")
-        assert "countdown" in code.lower() or "setInterval" in code, "Must show countdown timer"
+        assert (
+            "countdown" in code.lower() or "setInterval" in code
+        ), "Must show countdown timer"
 
     def test_uses_consent_signing_service(self) -> None:
         code = _read_screen("ConsentRequestScreen")
-        assert "consentSigning" in code, (
-            "Must import from consentSigning service"
-        )
+        assert "consentSigning" in code, "Must import from consentSigning service"
 
 
 class TestBiometricApprovalScreen:
@@ -374,42 +393,47 @@ class TestBiometricApprovalScreen:
         code = _read_screen("BiometricApprovalScreen")
         # Must have error state that blocks approval
         assert "error" in code.lower(), "Must handle signing failure"
-        assert "Try Again" in code or "Go Back" in code, (
-            "Must provide recovery from failed signing"
-        )
+        assert (
+            "Try Again" in code or "Go Back" in code
+        ), "Must provide recovery from failed signing"
 
     def test_sends_signed_approval_to_api(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
         # Must submit to approve-signed endpoint (directly or via service)
-        assert "/api/v2/consent/approve-signed" in code or "approveWithBiometric" in code, (
-            "Must send signed approval to approve-signed endpoint"
-        )
+        assert (
+            "/api/v2/consent/approve-signed" in code or "approveWithBiometric" in code
+        ), "Must send signed approval to approve-signed endpoint"
         # The screen delegates to approveWithBiometric which handles
         # signing and submission — verify the service has "signature"
-        signing_service = (Path(__file__).resolve().parents[1] / "nexa-client" / "packages" / "app" / "services" / "consentSigning.ts")
+        signing_service = (
+            Path(__file__).resolve().parents[1]
+            / "nexa-client"
+            / "packages"
+            / "app"
+            / "services"
+            / "consentSigning.ts"
+        )
         if signing_service.exists():
             signing_code = signing_service.read_text(encoding="utf-8")
-            assert "signature" in signing_code, (
-                "consentSigning service must include signature in approval payload"
-            )
+            assert (
+                "signature" in signing_code
+            ), "consentSigning service must include signature in approval payload"
 
     def test_navigates_to_result_on_success(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
-        assert "/patient/approval-result" in code, (
-            "Must navigate to result screen on success"
-        )
+        assert (
+            "/patient/approval-result" in code
+        ), "Must navigate to result screen on success"
 
     def test_uses_consent_signing_service(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
-        assert "consentSigning" in code, (
-            "Must import from consentSigning service"
-        )
+        assert "consentSigning" in code, "Must import from consentSigning service"
 
     def test_biometric_gates_private_key_access(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
-        assert "authenticateWithBiometrics" in code or "approveWithBiometric" in code, (
-            "Must gate private key access behind biometric authentication"
-        )
+        assert (
+            "authenticateWithBiometrics" in code or "approveWithBiometric" in code
+        ), "Must gate private key access behind biometric authentication"
 
     def test_handles_expired_challenge(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
@@ -419,7 +443,9 @@ class TestBiometricApprovalScreen:
 class TestApprovalResultScreen:
     def test_shows_expiry_and_revoke_action(self) -> None:
         code = _read_screen("ApprovalResultScreen")
-        assert "Expires In" in code or "remaining" in code or "countdown" in code.lower(), "Must show expiry"
+        assert (
+            "Expires In" in code or "remaining" in code or "countdown" in code.lower()
+        ), "Must show expiry"
         assert "Revoke" in code, "Must show revoke button"
 
     def test_calls_revoke_api(self) -> None:
@@ -438,17 +464,17 @@ class TestApprovalResultScreen:
 
     def test_shows_expired_state(self) -> None:
         code = _read_screen("ApprovalResultScreen")
-        assert "expired" in code.lower() or "Request Expired" in code, (
-            "Must handle expired state"
-        )
+        assert (
+            "expired" in code.lower() or "Request Expired" in code
+        ), "Must handle expired state"
 
 
 class TestAccessHistoryScreen:
     def test_renders_empty_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
-        assert "No one has accessed your records yet" in code, (
-            "Must render empty state: 'No one has accessed your records yet.'"
-        )
+        assert (
+            "No one has accessed your records yet" in code
+        ), "Must render empty state: 'No one has accessed your records yet.'"
 
     def test_renders_loading_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -466,9 +492,7 @@ class TestAccessHistoryScreen:
 
     def test_fetches_via_get_access_history(self) -> None:
         code = _read_screen("AccessHistoryScreen")
-        assert "access-history" in code, (
-            "Must fetch access history via apiClient"
-        )
+        assert "access-history" in code, "Must fetch access history via apiClient"
 
     def test_flags_break_glass_accesses(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -493,9 +517,9 @@ class TestAccessHistoryScreen:
 
     def test_shows_timestamp(self) -> None:
         code = _read_screen("AccessHistoryScreen")
-        assert "accessed_at" in code or "formatTimestamp" in code, (
-            "Must display timestamp of access"
-        )
+        assert (
+            "accessed_at" in code or "formatTimestamp" in code
+        ), "Must display timestamp of access"
 
 
 class TestPatientTimelineScreen:
@@ -517,14 +541,19 @@ class TestPatientTimelineScreen:
 
     def test_fetches_via_get_my_timeline(self) -> None:
         code = _read_screen("PatientTimelineScreen")
-        assert "timeline" in code, (
-            "Must fetch timeline via apiClient"
-        )
+        assert "timeline" in code, "Must fetch timeline via apiClient"
 
     def test_handles_all_categories(self) -> None:
         code = _read_screen("PatientTimelineScreen")
         # Backend event_type values are UPPERCASE
-        for cat in ["VITALS", "MEDICATION", "LAB_RESULT", "ALLERGY", "DOCUMENT", "ENCOUNTER"]:
+        for cat in [
+            "VITALS",
+            "MEDICATION",
+            "LAB_RESULT",
+            "ALLERGY",
+            "DOCUMENT",
+            "ENCOUNTER",
+        ]:
             assert cat in code, f"Must handle {cat} category"
 
     def test_shows_provenance_with_source_badge(self) -> None:
@@ -544,9 +573,20 @@ class TestPatientTimelineScreen:
     def test_distinguishes_manual_vs_ai(self) -> None:
         # The screen uses event.source which is typed in the screen or badges
         # Check type def, badge component, and screen passes source prop
-        badge_code = (Path(__file__).resolve().parents[1] / "nexa-client" / "packages" / "app" / "features" / "patient" / "badges" / "SourceBadge.tsx").read_text(encoding="utf-8")
+        badge_code = (
+            Path(__file__).resolve().parents[1]
+            / "nexa-client"
+            / "packages"
+            / "app"
+            / "features"
+            / "patient"
+            / "badges"
+            / "SourceBadge.tsx"
+        ).read_text(encoding="utf-8")
         assert "manual" in badge_code, "SourceBadge must handle manual source"
-        assert "ai_extracted" in badge_code, "SourceBadge must handle ai_extracted source"
+        assert (
+            "ai_extracted" in badge_code
+        ), "SourceBadge must handle ai_extracted source"
 
     def test_imports_badge_components(self) -> None:
         code = _read_screen("PatientTimelineScreen")
@@ -587,19 +627,39 @@ def test_patient_error_messages_use_explicit_jsx_branches(screen_name: str) -> N
 # 5. Route and deep-link verification
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
 class TestRoutesAndDeepLinks:
     """Expo routes and deep-link config exist and match screens."""
 
-    @pytest.mark.parametrize("screen_file", [
-        "login", "secure-device", "enrolled", "consent-request",
-        "biometric-approval", "approval-result", "access-history", "timeline",
-    ])
+    @pytest.mark.parametrize(
+        "screen_file",
+        [
+            "login",
+            "secure-device",
+            "enrolled",
+            "consent-request",
+            "biometric-approval",
+            "approval-result",
+            "access-history",
+            "timeline",
+        ],
+    )
     def test_expo_route_exists(self, screen_file: str) -> None:
-        route_path = ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / f"{screen_file}.tsx"
+        route_path = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "expo"
+            / "app"
+            / "patient"
+            / f"{screen_file}.tsx"
+        )
         assert route_path.exists(), f"Expo route missing: {route_path}"
 
     def test_layout_exists(self) -> None:
-        layout_path = ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
+        layout_path = (
+            ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
+        )
         assert layout_path.exists(), "Patient layout file missing"
 
     def test_app_json_has_nexacare_scheme(self) -> None:
@@ -613,18 +673,34 @@ class TestRoutesAndDeepLinks:
         content = app_json_path.read_text(encoding="utf-8")
         # With Expo Router (file-based routing), deep links are handled
         # automatically via the route files. The scheme is registered in app.json.
-        assert "nexacare" in content, (
-            "app.json must have nexacare scheme for deep linking"
-        )
+        assert (
+            "nexacare" in content
+        ), "app.json must have nexacare scheme for deep linking"
         # Verify the consent route file exists (this is what enables the deep link)
-        consent_route = ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "consent-request.tsx"
-        assert consent_route.exists(), (
-            "Consent request route file must exist for deep linking"
+        consent_route = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "expo"
+            / "app"
+            / "patient"
+            / "consent-request.tsx"
         )
+        assert (
+            consent_route.exists()
+        ), "Consent request route file must exist for deep linking"
 
     def test_next_review_route_exists(self) -> None:
         """Doctor/admin review queue route in Next.js web app."""
-        review_path = ROOT / "nexa-client" / "apps" / "next" / "app" / "doctor" / "pipeline" / "review-queue" / "page.tsx"
-        assert review_path.exists(), (
-            "Next.js review queue route missing at nexa-client/apps/next/app/doctor/pipeline/review-queue/page.tsx"
+        review_path = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "next"
+            / "app"
+            / "doctor"
+            / "pipeline"
+            / "review-queue"
+            / "page.tsx"
         )
+        assert review_path.exists(), "Next.js review queue route missing at nexa-client/apps/next/app/doctor/pipeline/review-queue/page.tsx"

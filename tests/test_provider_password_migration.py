@@ -13,7 +13,9 @@ MIGRATION = ROOT / "alembic" / "versions" / "20260717_provider_password_canonica
 
 
 def load_migration():
-    spec = importlib.util.spec_from_file_location("provider_password_migration", MIGRATION)
+    spec = importlib.util.spec_from_file_location(
+        "provider_password_migration", MIGRATION
+    )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -37,7 +39,9 @@ def test_migration_is_ordered_after_current_audit_head():
         (" canonical ", None, "canonical"),
     ],
 )
-def test_hash_resolution_covers_canonical_legacy_and_equal_rows(canonical, legacy, expected):
+def test_hash_resolution_covers_canonical_legacy_and_equal_rows(
+    canonical, legacy, expected
+):
     assert load_migration().resolve_canonical_hash(canonical, legacy) == expected
 
 

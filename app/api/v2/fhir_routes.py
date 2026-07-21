@@ -14,7 +14,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import require_active_consent
-from app.models.patient_records import Allergy, LabResult, Medication, TimelineEvent, Vitals
+from app.models.patient_records import (
+    Allergy,
+    LabResult,
+    Medication,
+    TimelineEvent,
+    Vitals,
+)
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.fhir_converter import generate_fhir_bundle
@@ -43,7 +49,9 @@ def _common_provenance(row: object) -> dict:
         "source": getattr(row, "source", None),
         "confidence": getattr(row, "confidence", None),
         "risk_level": getattr(row, "risk_level", None),
-        "source_document_id": str(getattr(row, "source_document_id", None)) if getattr(row, "source_document_id", None) else None,
+        "source_document_id": str(getattr(row, "source_document_id", None))
+        if getattr(row, "source_document_id", None)
+        else None,
     }
 
 
@@ -51,11 +59,37 @@ async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[d
     """Read current structured clinical rows for FHIR export."""
 
     pid = UUID(patient_id)
-    vitals = await _scalars_all(db, select(Vitals).where(Vitals.patient_id == pid).order_by(Vitals.recorded_at.desc()))
-    medications = await _scalars_all(db, select(Medication).where(Medication.patient_id == pid).order_by(Medication.prescribed_at.desc()))
-    labs = await _scalars_all(db, select(LabResult).where(LabResult.patient_id == pid).order_by(LabResult.recorded_at.desc()))
-    allergies = await _scalars_all(db, select(Allergy).where(Allergy.patient_id == pid).order_by(Allergy.severity.desc()))
-    timeline = await _scalars_all(db, select(TimelineEvent).where(TimelineEvent.patient_id == pid).order_by(TimelineEvent.occurred_at.desc()).limit(50))
+    vitals = await _scalars_all(
+        db,
+        select(Vitals)
+        .where(Vitals.patient_id == pid)
+        .order_by(Vitals.recorded_at.desc()),
+    )
+    medications = await _scalars_all(
+        db,
+        select(Medication)
+        .where(Medication.patient_id == pid)
+        .order_by(Medication.prescribed_at.desc()),
+    )
+    labs = await _scalars_all(
+        db,
+        select(LabResult)
+        .where(LabResult.patient_id == pid)
+        .order_by(LabResult.recorded_at.desc()),
+    )
+    allergies = await _scalars_all(
+        db,
+        select(Allergy)
+        .where(Allergy.patient_id == pid)
+        .order_by(Allergy.severity.desc()),
+    )
+    timeline = await _scalars_all(
+        db,
+        select(TimelineEvent)
+        .where(TimelineEvent.patient_id == pid)
+        .order_by(TimelineEvent.occurred_at.desc())
+        .limit(50),
+    )
 
     records: list[dict] = []
     records.extend(
@@ -109,12 +143,17 @@ async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[d
             "occurred_at": row.occurred_at.isoformat(),
         }
         for row in timeline
-        if any(term in row.summary.lower() for term in ("diagnosis", "diabetes", "hypertension", "condition"))
+        if any(
+            term in row.summary.lower()
+            for term in ("diagnosis", "diabetes", "hypertension", "condition")
+        )
     )
     return records
 
 
-async def _fetch_legacy_clinical_records(patient_id: str, db: AsyncSession) -> list[dict]:
+async def _fetch_legacy_clinical_records(
+    patient_id: str, db: AsyncSession
+) -> list[dict]:
     """Read deprecated clinical shard rows as a backward-compatible fallback."""
 
     result = await db.execute(
@@ -163,7 +202,9 @@ async def export_fhir_bundle(
                 "hospital_id": str(provider.hospital.hospital_id),
                 "exported_at": exported_at,
                 "resource_count": len(bundle.get("entry", [])),
-                "source": "structured_patient_records" if clinical_records and clinical_records[0].get("record_type") else "legacy_nexa_clinical_fallback",
+                "source": "structured_patient_records"
+                if clinical_records and clinical_records[0].get("record_type")
+                else "legacy_nexa_clinical_fallback",
             },
             event_timestamp=exported_at,
         )

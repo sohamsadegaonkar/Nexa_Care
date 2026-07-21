@@ -82,9 +82,16 @@ class AppendAllergyRequest(BaseModel):
     source_document_id: str | None = None
 
 
-def _validate_provenance(source: str, confidence: float | None, risk_level: str, source_doc: str | None) -> None:
+def _validate_provenance(
+    source: str, confidence: float | None, risk_level: str, source_doc: str | None
+) -> None:
     if source == "ai_extracted":
-        if confidence is None or not (0.0 <= confidence <= 1.0) or not risk_level or not source_doc:
+        if (
+            confidence is None
+            or not (0.0 <= confidence <= 1.0)
+            or not risk_level
+            or not source_doc
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="AI-extracted field must have numeric confidence, risk_level, and source_document_id",

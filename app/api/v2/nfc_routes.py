@@ -20,7 +20,10 @@ from app.core.rate_limiter import atomic_fixed_window
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.card_resolution_service import CardResolutionService
-from app.services.card_redirect_service import CardRedirectService, TombstoneIntegrityError
+from app.services.card_redirect_service import (
+    CardRedirectService,
+    TombstoneIntegrityError,
+)
 
 router = APIRouter(prefix="/api/v2/nfc", tags=["nfc"])
 
@@ -77,7 +80,10 @@ async def resolve_nfc_card(
         if current > 30:
             raise HTTPException(
                 status_code=429,
-                detail={"error_code": "NFC_RATE_LIMITED", "retry_after_seconds": retry_after},
+                detail={
+                    "error_code": "NFC_RATE_LIMITED",
+                    "retry_after_seconds": retry_after,
+                },
                 headers={"Retry-After": str(max(1, retry_after))},
             )
     except HTTPException:
@@ -85,7 +91,10 @@ async def resolve_nfc_card(
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail={"error_code": "NFC_SECURITY_CONTROL_UNAVAILABLE", "retryable": True},
+            detail={
+                "error_code": "NFC_SECURITY_CONTROL_UNAVAILABLE",
+                "retryable": True,
+            },
         ) from exc
 
     resolver = CardResolutionService(db)
@@ -95,7 +104,9 @@ async def resolve_nfc_card(
         patient_id = await resolver.resolve_card(payload.card_uid)
 
         # Tombstone redirect check (Section 9)
-        redirect_result = await redirect_service.resolve_card_with_redirect(payload.card_uid)
+        redirect_result = await redirect_service.resolve_card_with_redirect(
+            payload.card_uid
+        )
 
         if redirect_result.get("is_redirected"):
             return NFCResolveResponse(
@@ -134,8 +145,8 @@ async def resolve_nfc_card(
         status="SUCCESS",
         metadata={
             "card_uid": payload.card_uid[:8] + "...",  # partial for privacy
-            "is_redirected": redirect_result.get("is_redirected", False)
-        }
+            "is_redirected": redirect_result.get("is_redirected", False),
+        },
     )
 
     return NFCResolveResponse(patient_id=patient_id, is_redirected=False)

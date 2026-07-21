@@ -34,16 +34,16 @@ def _is_dek_destroyed(row) -> bool:
 @dataclass(frozen=True)
 class DEKBundle:
     patient_id: str
-    wrapped_dek: bytes       # DEK encrypted by KEK
+    wrapped_dek: bytes  # DEK encrypted by KEK
     dek_version: int
-    algorithm: str           # e.g., "AES-256-GCM"
+    algorithm: str  # e.g., "AES-256-GCM"
     created_at: datetime
 
 
 @dataclass(frozen=True)
 class EncryptedField:
     ciphertext: bytes
-    iv: bytes                 # initialization vector
+    iv: bytes  # initialization vector
     field_name: str
     dek_version: int
     algorithm: str
@@ -72,8 +72,8 @@ class EncryptedField:
             b64_data = parts[0]
             version = int(parts[1])
             raw_data = base64.b64decode(b64_data)
-            if len(raw_data) < 13: # 12 bytes IV + at least 1 byte ciphertext
-                 raise EncryptionError("Ciphertext too short")
+            if len(raw_data) < 13:  # 12 bytes IV + at least 1 byte ciphertext
+                raise EncryptionError("Ciphertext too short")
             iv = raw_data[:12]
             ciphertext = raw_data[12:]
             return cls(
@@ -81,7 +81,7 @@ class EncryptedField:
                 iv=iv,
                 field_name=field_name,
                 dek_version=version,
-                algorithm="AES-256-GCM"
+                algorithm="AES-256-GCM",
             )
         except Exception as exc:
             if isinstance(exc, EncryptionError):
@@ -106,7 +106,11 @@ class EncryptionProvider(ABC):
         """DEFECT 7: fail-closed gate shared by every decrypt path (local and
         AWS), called before returning ANY DEK -- cached or freshly unwrapped.
         A registry error is never treated as "not erased"."""
-        from app.security.erasure_registry import ErasureRegistryUnavailable, _PatientErasedSignal, check_erasure_registry
+        from app.security.erasure_registry import (
+            ErasureRegistryUnavailable,
+            _PatientErasedSignal,
+            check_erasure_registry,
+        )
 
         try:
             await check_erasure_registry(patient_id, db)
@@ -120,11 +124,19 @@ class EncryptionProvider(ABC):
         """Generate a new Data Encryption Key for a patient."""
 
     @abstractmethod
-    async def encrypt_field(self, patient_id: str, field_name: str, plaintext: str, db: AsyncSession) -> EncryptedField:
+    async def encrypt_field(
+        self, patient_id: str, field_name: str, plaintext: str, db: AsyncSession
+    ) -> EncryptedField:
         """Encrypt a single field using the patient's DEK."""
 
     @abstractmethod
-    async def decrypt_field(self, patient_id: str, field_name: str, encrypted: EncryptedField, db: AsyncSession) -> str:
+    async def decrypt_field(
+        self,
+        patient_id: str,
+        field_name: str,
+        encrypted: EncryptedField,
+        db: AsyncSession,
+    ) -> str:
         """Decrypt a single field using the patient's DEK."""
 
     @abstractmethod
@@ -136,7 +148,9 @@ class EncryptionProvider(ABC):
         """Cryptographic erasure: permanently delete all of the patient's DEKs."""
 
     @abstractmethod
-    async def get_dek_metadata(self, patient_id: str, db: AsyncSession) -> List[DEKMetadata]:
+    async def get_dek_metadata(
+        self, patient_id: str, db: AsyncSession
+    ) -> List[DEKMetadata]:
         """Return metadata about all the patient's DEKs."""
 
 
@@ -145,15 +159,19 @@ class LocalEnvelopeProvider(EncryptionProvider):
 
     def __init__(self):
         self._kek: Optional[bytes] = None
-        self._cache: Dict[str, tuple[bytes, datetime]] = {} # (patient_id, version) -> (plaintext_dek, cached_at)
+        self._cache: Dict[
+            str, tuple[bytes, datetime]
+        ] = {}  # (patient_id, version) -> (plaintext_dek, cached_at)
         self._cache_max_size = 100
-        self._cache_ttl_seconds = 300 # 5 minutes
+        self._cache_ttl_seconds = 300  # 5 minutes
 
     def _get_kek(self) -> bytes:
         if self._kek is None:
             config = get_kms_config()
             if not config.kek_root_secret:
-                raise ConfigError("KEK_ROOT_SECRET is required to unwrap legacy local DEKs")
+                raise ConfigError(
+                    "KEK_ROOT_SECRET is required to unwrap legacy local DEKs"
+                )
             hkdf = HKDF(
                 algorithm=hashes.SHA256(),
                 length=32,
@@ -175,12 +193,16 @@ class LocalEnvelopeProvider(EncryptionProvider):
         it."""
         config = get_kms_config()
         if not config.kek_root_secret:
-            raise ConfigError("KEK_ROOT_SECRET is required to derive patient wrapping keys")
+            raise ConfigError(
+                "KEK_ROOT_SECRET is required to derive patient wrapping keys"
+            )
         hkdf = HKDF(
             algorithm=hashes.SHA256(),
             length=32,
             salt=None,
-            info=f"nexa-care-patient-kek-v1:{patient_id}:{patient_key_epoch}".encode("utf-8"),
+            info=f"nexa-care-patient-kek-v1:{patient_id}:{patient_key_epoch}".encode(
+                "utf-8"
+            ),
         )
         return hkdf.derive(config.kek_root_secret.encode("utf-8"))
 
@@ -193,7 +215,9 @@ class LocalEnvelopeProvider(EncryptionProvider):
         if wrapping_key_type == "patient":
             epoch = getattr(row, "patient_wrapping_key_id", None)
             if not epoch:
-                raise EncryptionError("Patient-wrapped DEK row is missing its wrapping-key epoch.")
+                raise EncryptionError(
+                    "Patient-wrapped DEK row is missing its wrapping-key epoch."
+                )
             return self._derive_patient_kek(str(row.patient_id), epoch)
         return self._get_kek()
 
@@ -201,7 +225,9 @@ class LocalEnvelopeProvider(EncryptionProvider):
         cache_key = f"{patient_id}:{version}"
         if cache_key in self._cache:
             dek, cached_at = self._cache[cache_key]
-            if (datetime.now(timezone.utc) - cached_at).total_seconds() < self._cache_ttl_seconds:
+            if (
+                datetime.now(timezone.utc) - cached_at
+            ).total_seconds() < self._cache_ttl_seconds:
                 return dek
             else:
                 del self._cache[cache_key]
@@ -213,7 +239,9 @@ class LocalEnvelopeProvider(EncryptionProvider):
         cache_key = f"{patient_id}:{version}"
         self._cache[cache_key] = (dek, datetime.now(timezone.utc))
 
-    async def _get_plaintext_dek(self, patient_id: str, version: int, db: AsyncSession) -> bytes:
+    async def _get_plaintext_dek(
+        self, patient_id: str, version: int, db: AsyncSession
+    ) -> bytes:
         await self._check_erasure_registry(patient_id, db)
 
         cached = self._get_cached_dek(patient_id, version)
@@ -230,7 +258,9 @@ class LocalEnvelopeProvider(EncryptionProvider):
         row = result.scalar_one_or_none()
 
         if row is None:
-            raise EncryptionError(f"DEK v{version} not found or destroyed for patient {patient_id}")
+            raise EncryptionError(
+                f"DEK v{version} not found or destroyed for patient {patient_id}"
+            )
 
         backend = getattr(row, "wrapping_backend", None)
         # Rows created before the wrapping_backend migration are local-wrapped.
@@ -289,10 +319,12 @@ class LocalEnvelopeProvider(EncryptionProvider):
             wrapped_dek=wrapped_dek,
             dek_version=1,
             algorithm="AES-256-GCM",
-            created_at=now
+            created_at=now,
         )
 
-    async def encrypt_field(self, patient_id: str, field_name: str, plaintext: str, db: AsyncSession) -> EncryptedField:
+    async def encrypt_field(
+        self, patient_id: str, field_name: str, plaintext: str, db: AsyncSession
+    ) -> EncryptedField:
         # Fetch active DEK version
         stmt = select(PatientDEKStore).where(
             and_(
@@ -318,11 +350,19 @@ class LocalEnvelopeProvider(EncryptionProvider):
             iv=iv,
             field_name=field_name,
             dek_version=row.dek_version,
-            algorithm="AES-256-GCM"
+            algorithm="AES-256-GCM",
         )
 
-    async def decrypt_field(self, patient_id: str, field_name: str, encrypted: EncryptedField, db: AsyncSession) -> str:
-        plaintext_dek = await self._get_plaintext_dek(patient_id, encrypted.dek_version, db)
+    async def decrypt_field(
+        self,
+        patient_id: str,
+        field_name: str,
+        encrypted: EncryptedField,
+        db: AsyncSession,
+    ) -> str:
+        plaintext_dek = await self._get_plaintext_dek(
+            patient_id, encrypted.dek_version, db
+        )
         aesgcm = AESGCM(plaintext_dek)
         try:
             plaintext = aesgcm.decrypt(encrypted.iv, encrypted.ciphertext, None)
@@ -333,13 +373,16 @@ class LocalEnvelopeProvider(EncryptionProvider):
     async def rotate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
         pid = uuid.UUID(patient_id)
         # 1. Deactivate current active DEK
-        stmt = update(PatientDEKStore).where(
-            and_(PatientDEKStore.patient_id == pid, PatientDEKStore.is_active)
-        ).values(is_active=False).returning(PatientDEKStore.dek_version)
+        stmt = (
+            update(PatientDEKStore)
+            .where(and_(PatientDEKStore.patient_id == pid, PatientDEKStore.is_active))
+            .values(is_active=False)
+            .returning(PatientDEKStore.dek_version)
+        )
         result = await db.execute(stmt)
         old_version = result.scalar()
         if old_version is None:
-             old_version = 0
+            old_version = 0
 
         # 2. Generate new DEK
         new_version = old_version + 1
@@ -372,7 +415,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
             wrapped_dek=wrapped_dek,
             dek_version=new_version,
             algorithm="AES-256-GCM",
-            created_at=now
+            created_at=now,
         )
 
     async def destroy_dek(self, patient_id: str, db: AsyncSession) -> bool:
@@ -391,10 +434,17 @@ class LocalEnvelopeProvider(EncryptionProvider):
         pid = uuid.UUID(patient_id)
 
         existing_tombstone = (
-            await db.execute(_select(PatientErasureTombstone).where(PatientErasureTombstone.patient_ref == patient_id))
+            await db.execute(
+                _select(PatientErasureTombstone).where(
+                    PatientErasureTombstone.patient_ref == patient_id
+                )
+            )
         ).scalar_one_or_none()
         if existing_tombstone is not None and existing_tombstone.status in {
-            "destroyed", "deletion_scheduled", "key_disabled", "access_blocked",
+            "destroyed",
+            "deletion_scheduled",
+            "key_disabled",
+            "access_blocked",
         }:
             return True  # Idempotent: repeated erasure requests do not redo the work.
 
@@ -402,14 +452,22 @@ class LocalEnvelopeProvider(EncryptionProvider):
         for k in keys_to_del:
             del self._cache[k]
 
-        result = await db.execute(select(PatientDEKStore).where(PatientDEKStore.patient_id == pid))
+        result = await db.execute(
+            select(PatientDEKStore).where(PatientDEKStore.patient_id == pid)
+        )
         rows = result.scalars().all()
 
-        has_shared_row = any((getattr(r, "wrapping_key_type", None) or "shared") == "shared" for r in rows)
+        has_shared_row = any(
+            (getattr(r, "wrapping_key_type", None) or "shared") == "shared"
+            for r in rows
+        )
         wrapping_key_type = "shared" if (has_shared_row or not rows) else "patient"
 
         tombstone = existing_tombstone or await create_tombstone(
-            db, patient_ref=patient_id, tenant_id=None, wrapping_key_type=wrapping_key_type,
+            db,
+            patient_ref=patient_id,
+            tenant_id=None,
+            wrapping_key_type=wrapping_key_type,
         )
 
         if not rows:
@@ -429,7 +487,9 @@ class LocalEnvelopeProvider(EncryptionProvider):
 
         await mark_access_blocked(db, tombstone)
 
-        await db.execute(delete(PatientDEKStore).where(PatientDEKStore.patient_id == pid))
+        await db.execute(
+            delete(PatientDEKStore).where(PatientDEKStore.patient_id == pid)
+        )
 
         if wrapping_key_type == "shared":
             # Legacy shared-key patient: the wrapping KEK is still live for
@@ -438,9 +498,14 @@ class LocalEnvelopeProvider(EncryptionProvider):
             await db.commit()
             await append_audit_log(
                 audit_context=current_audit_context(AuditDomain.ERASURE),
-                actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_ACCESS_BLOCKED",
-                target_id=patient_id, status="SUCCESS",
-                metadata={"assurance_level": "active_access_blocked", "wrapping_key_type": "shared"},
+                actor_uid="SYSTEM_KMS",
+                event_type="PATIENT_DEK_ACCESS_BLOCKED",
+                target_id=patient_id,
+                status="SUCCESS",
+                metadata={
+                    "assurance_level": "active_access_blocked",
+                    "wrapping_key_type": "shared",
+                },
             )
             return True
 
@@ -456,14 +521,23 @@ class LocalEnvelopeProvider(EncryptionProvider):
 
         await append_audit_log(
             audit_context=current_audit_context(AuditDomain.ERASURE),
-            actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_DESTROYED",
-            target_id=patient_id, status="SUCCESS",
-            metadata={"assurance_level": "patient_key_destroyed", "wrapping_key_type": "patient"},
+            actor_uid="SYSTEM_KMS",
+            event_type="PATIENT_DEK_DESTROYED",
+            target_id=patient_id,
+            status="SUCCESS",
+            metadata={
+                "assurance_level": "patient_key_destroyed",
+                "wrapping_key_type": "patient",
+            },
         )
         return True
 
-    async def get_dek_metadata(self, patient_id: str, db: AsyncSession) -> List[DEKMetadata]:
-        stmt = select(PatientDEKStore).where(PatientDEKStore.patient_id == uuid.UUID(patient_id))
+    async def get_dek_metadata(
+        self, patient_id: str, db: AsyncSession
+    ) -> List[DEKMetadata]:
+        stmt = select(PatientDEKStore).where(
+            PatientDEKStore.patient_id == uuid.UUID(patient_id)
+        )
         result = await db.execute(stmt)
         rows = result.scalars().all()
 
@@ -473,7 +547,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
                 dek_version=row.dek_version,
                 algorithm=row.algorithm,
                 created_at=row.created_at,
-                is_active=row.is_active and not _is_dek_destroyed(row)
+                is_active=row.is_active and not _is_dek_destroyed(row),
             )
             for row in rows
         ]
@@ -488,12 +562,17 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         if not config.kms_key_id or not config.aws_region:
             raise ConfigError("AWS KMS configuration is incomplete")
         import boto3
+
         self._kms_key_id = config.kms_key_id
         self._kms = boto3.client("kms", region_name=config.aws_region)
 
     @staticmethod
     def _context(patient_id: str, version: int) -> dict[str, str]:
-        return {"application": "nexa-care", "patient_id": patient_id, "dek_version": str(version)}
+        return {
+            "application": "nexa-care",
+            "patient_id": patient_id,
+            "dek_version": str(version),
+        }
 
     @staticmethod
     def _patient_specific_keys_enabled() -> bool:
@@ -501,7 +580,10 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         # account-quota implications, so it is opt-in rather than the
         # default -- unlike the local provider, where per-patient
         # derivation is free.
-        return os.environ.get("AWS_PATIENT_SPECIFIC_KMS_KEYS", "false").strip().lower() == "true"
+        return (
+            os.environ.get("AWS_PATIENT_SPECIFIC_KMS_KEYS", "false").strip().lower()
+            == "true"
+        )
 
     async def _provision_patient_kms_key(self, patient_id: str) -> str:
         """Create a dedicated CMK for one patient. No PII in the alias,
@@ -516,12 +598,18 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             )
             key_id = created["KeyMetadata"]["KeyId"]
             alias_name = f"alias/nexa-care-patient-key-{uuid.uuid5(uuid.NAMESPACE_URL, patient_id).hex}"
-            await asyncio.to_thread(self._kms.create_alias, AliasName=alias_name, TargetKeyId=key_id)
+            await asyncio.to_thread(
+                self._kms.create_alias, AliasName=alias_name, TargetKeyId=key_id
+            )
             return key_id
         except Exception as exc:
-            raise EncryptionError("Failed to provision patient-specific KMS key") from exc
+            raise EncryptionError(
+                "Failed to provision patient-specific KMS key"
+            ) from exc
 
-    async def _generate_wrapped_key(self, patient_id: str, version: int, key_id: str | None = None) -> tuple[bytes, bytes]:
+    async def _generate_wrapped_key(
+        self, patient_id: str, version: int, key_id: str | None = None
+    ) -> tuple[bytes, bytes]:
         try:
             response = await asyncio.to_thread(
                 self._kms.generate_data_key,
@@ -533,19 +621,27 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         except Exception as exc:
             raise EncryptionError("KMS data-key generation failed") from exc
 
-    async def _get_plaintext_dek(self, patient_id: str, version: int, db: AsyncSession) -> bytes:
+    async def _get_plaintext_dek(
+        self, patient_id: str, version: int, db: AsyncSession
+    ) -> bytes:
         await self._check_erasure_registry(patient_id, db)
 
         cached = self._get_cached_dek(patient_id, version)
         if cached:
             return cached
-        result = await db.execute(select(PatientDEKStore).where(and_(
-            PatientDEKStore.patient_id == uuid.UUID(patient_id),
-            PatientDEKStore.dek_version == version,
-        )))
+        result = await db.execute(
+            select(PatientDEKStore).where(
+                and_(
+                    PatientDEKStore.patient_id == uuid.UUID(patient_id),
+                    PatientDEKStore.dek_version == version,
+                )
+            )
+        )
         row = result.scalar_one_or_none()
         if row is None:
-            raise EncryptionError(f"DEK v{version} not found or destroyed for patient {patient_id}")
+            raise EncryptionError(
+                f"DEK v{version} not found or destroyed for patient {patient_id}"
+            )
         if _is_dek_destroyed(row):
             raise PatientDataErased(patient_id)
         backend = getattr(row, "wrapping_backend", "local-aes-gcm")
@@ -558,8 +654,11 @@ class AWSKMSProvider(LocalEnvelopeProvider):
                 self._kms.decrypt,
                 CiphertextBlob=row.wrapped_dek,
                 EncryptionContext=self._context(patient_id, version),
-                KeyId=(row.patient_wrapping_key_id if getattr(row, "wrapping_key_type", None) == "patient"
-                       else self._kms_key_id),
+                KeyId=(
+                    row.patient_wrapping_key_id
+                    if getattr(row, "wrapping_key_type", None) == "patient"
+                    else self._kms_key_id
+                ),
             )
             plaintext = bytes(response["Plaintext"])
         except Exception as exc:
@@ -567,23 +666,37 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         self._set_cached_dek(patient_id, version, plaintext)
         return plaintext
 
-    async def _persist_generated_dek(self, patient_id: str, version: int, db: AsyncSession) -> DEKBundle:
+    async def _persist_generated_dek(
+        self, patient_id: str, version: int, db: AsyncSession
+    ) -> DEKBundle:
         patient_key_id: str | None = None
         if self._patient_specific_keys_enabled():
             patient_key_id = await self._provision_patient_kms_key(patient_id)
-        plaintext, wrapped = await self._generate_wrapped_key(patient_id, version, key_id=patient_key_id)
+        plaintext, wrapped = await self._generate_wrapped_key(
+            patient_id, version, key_id=patient_key_id
+        )
         del plaintext
         now = datetime.now(timezone.utc)
-        db.add(PatientDEKStore(
-            patient_id=uuid.UUID(patient_id), wrapped_dek=wrapped, dek_iv=b"",
-            dek_version=version, algorithm="AES-256-GCM", wrapping_backend="aws-kms",
-            is_active=True, created_at=now,
-            wrapping_key_type=("patient" if patient_key_id else "shared"),
-            patient_wrapping_key_id=patient_key_id,
-        ))
+        db.add(
+            PatientDEKStore(
+                patient_id=uuid.UUID(patient_id),
+                wrapped_dek=wrapped,
+                dek_iv=b"",
+                dek_version=version,
+                algorithm="AES-256-GCM",
+                wrapping_backend="aws-kms",
+                is_active=True,
+                created_at=now,
+                wrapping_key_type=("patient" if patient_key_id else "shared"),
+                patient_wrapping_key_id=patient_key_id,
+            )
+        )
         return DEKBundle(
-            patient_id=patient_id, wrapped_dek=wrapped, dek_version=version,
-            algorithm="AES-256-GCM", created_at=now,
+            patient_id=patient_id,
+            wrapped_dek=wrapped,
+            dek_version=version,
+            algorithm="AES-256-GCM",
+            created_at=now,
         )
 
     async def generate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
@@ -596,15 +709,22 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         result = await db.execute(
             select(PatientDEKStore.dek_version)
             .where(PatientDEKStore.patient_id == pid)
-            .order_by(PatientDEKStore.dek_version.desc()).limit(1)
+            .order_by(PatientDEKStore.dek_version.desc())
+            .limit(1)
         )
         latest = result.scalar_one_or_none() or 0
         bundle = await self._persist_generated_dek(patient_id, latest + 1, db)
-        await db.execute(update(PatientDEKStore).where(and_(
-            PatientDEKStore.patient_id == pid,
-            PatientDEKStore.dek_version != latest + 1,
-            PatientDEKStore.is_active,
-        )).values(is_active=False))
+        await db.execute(
+            update(PatientDEKStore)
+            .where(
+                and_(
+                    PatientDEKStore.patient_id == pid,
+                    PatientDEKStore.dek_version != latest + 1,
+                    PatientDEKStore.is_active,
+                )
+            )
+            .values(is_active=False)
+        )
         await db.commit()
         return bundle
 
@@ -625,10 +745,17 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         pid = uuid.UUID(patient_id)
 
         existing_tombstone = (
-            await db.execute(_select(PatientErasureTombstone).where(PatientErasureTombstone.patient_ref == patient_id))
+            await db.execute(
+                _select(PatientErasureTombstone).where(
+                    PatientErasureTombstone.patient_ref == patient_id
+                )
+            )
         ).scalar_one_or_none()
         if existing_tombstone is not None and existing_tombstone.status in {
-            "destroyed", "deletion_scheduled", "key_disabled", "access_blocked",
+            "destroyed",
+            "deletion_scheduled",
+            "key_disabled",
+            "access_blocked",
         }:
             return True  # Idempotent.
 
@@ -636,18 +763,36 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         for k in keys_to_del:
             del self._cache[k]
 
-        rows = (await db.execute(select(PatientDEKStore).where(PatientDEKStore.patient_id == pid))).scalars().all()
+        rows = (
+            (
+                await db.execute(
+                    select(PatientDEKStore).where(PatientDEKStore.patient_id == pid)
+                )
+            )
+            .scalars()
+            .all()
+        )
 
-        aws_wrapped_rows = [r for r in rows if getattr(r, "wrapping_backend", None) == "aws-kms"]
+        aws_wrapped_rows = [
+            r for r in rows if getattr(r, "wrapping_backend", None) == "aws-kms"
+        ]
         patient_key_ids = {
-            r.patient_wrapping_key_id for r in aws_wrapped_rows
-            if getattr(r, "wrapping_key_type", None) == "patient" and r.patient_wrapping_key_id
+            r.patient_wrapping_key_id
+            for r in aws_wrapped_rows
+            if getattr(r, "wrapping_key_type", None) == "patient"
+            and r.patient_wrapping_key_id
         }
-        has_shared_row = any((getattr(r, "wrapping_key_type", None) or "shared") == "shared" for r in rows)
+        has_shared_row = any(
+            (getattr(r, "wrapping_key_type", None) or "shared") == "shared"
+            for r in rows
+        )
         wrapping_key_type = "shared" if (has_shared_row or not rows) else "patient"
 
         tombstone = existing_tombstone or await create_tombstone(
-            db, patient_ref=patient_id, tenant_id=None, wrapping_key_type=wrapping_key_type,
+            db,
+            patient_ref=patient_id,
+            tenant_id=None,
+            wrapping_key_type=wrapping_key_type,
         )
 
         if not rows:
@@ -656,7 +801,9 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             await db.commit()
             return True
 
-        await db.execute(delete(PatientDEKStore).where(PatientDEKStore.patient_id == pid))
+        await db.execute(
+            delete(PatientDEKStore).where(PatientDEKStore.patient_id == pid)
+        )
         await mark_access_blocked(db, tombstone)
 
         if wrapping_key_type == "shared" or not patient_key_ids:
@@ -666,9 +813,14 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             await db.commit()
             await append_audit_log(
                 audit_context=current_audit_context(AuditDomain.ERASURE),
-                actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_ACCESS_BLOCKED",
-                target_id=patient_id, status="SUCCESS",
-                metadata={"assurance_level": "active_access_blocked", "wrapping_key_type": "shared"},
+                actor_uid="SYSTEM_KMS",
+                event_type="PATIENT_DEK_ACCESS_BLOCKED",
+                target_id=patient_id,
+                status="SUCCESS",
+                metadata={
+                    "assurance_level": "active_access_blocked",
+                    "wrapping_key_type": "shared",
+                },
             )
             return True
 
@@ -678,25 +830,37 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         for key_id in patient_key_ids:
             try:
                 await asyncio.to_thread(self._kms.disable_key, KeyId=key_id)
-                description = await asyncio.to_thread(self._kms.describe_key, KeyId=key_id)
+                description = await asyncio.to_thread(
+                    self._kms.describe_key, KeyId=key_id
+                )
                 kms_state = description["KeyMetadata"].get("KeyState")
             except Exception as exc:
                 await mark_operator_action_required(
-                    db, tombstone, failure_code=f"disable_key_failed:{type(exc).__name__}",
+                    db,
+                    tombstone,
+                    failure_code=f"disable_key_failed:{type(exc).__name__}",
                 )
                 operator_action_needed = True
                 continue
 
             try:
                 deletion = await asyncio.to_thread(
-                    self._kms.schedule_key_deletion, KeyId=key_id, PendingWindowInDays=7,
+                    self._kms.schedule_key_deletion,
+                    KeyId=key_id,
+                    PendingWindowInDays=7,
                 )
                 await mark_key_disabled(db, tombstone, kms_state=kms_state)
-                scheduled_date = deletion.get("DeletionDate") or (datetime.now(timezone.utc))
-                await mark_deletion_scheduled(db, tombstone, scheduled_deletion_date=scheduled_date)
+                scheduled_date = deletion.get("DeletionDate") or (
+                    datetime.now(timezone.utc)
+                )
+                await mark_deletion_scheduled(
+                    db, tombstone, scheduled_deletion_date=scheduled_date
+                )
             except Exception as exc:
                 await mark_operator_action_required(
-                    db, tombstone, failure_code=f"schedule_key_deletion_failed:{type(exc).__name__}",
+                    db,
+                    tombstone,
+                    failure_code=f"schedule_key_deletion_failed:{type(exc).__name__}",
                 )
                 operator_action_needed = True
 
@@ -705,8 +869,10 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         if operator_action_needed:
             await append_audit_log(
                 audit_context=current_audit_context(AuditDomain.ERASURE),
-                actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_DESTRUCTION_NEEDS_OPERATOR",
-                target_id=patient_id, status="FAILED",
+                actor_uid="SYSTEM_KMS",
+                event_type="PATIENT_DEK_DESTRUCTION_NEEDS_OPERATOR",
+                target_id=patient_id,
+                status="FAILED",
                 metadata={"wrapping_key_type": "patient"},
             )
             return False
@@ -719,9 +885,14 @@ class AWSKMSProvider(LocalEnvelopeProvider):
         # is actually gone.
         await append_audit_log(
             audit_context=current_audit_context(AuditDomain.ERASURE),
-            actor_uid="SYSTEM_KMS", event_type="PATIENT_DEK_DELETION_SCHEDULED",
-            target_id=patient_id, status="SUCCESS",
-            metadata={"assurance_level": "patient_key_deletion_scheduled", "wrapping_key_type": "patient"},
+            actor_uid="SYSTEM_KMS",
+            event_type="PATIENT_DEK_DELETION_SCHEDULED",
+            target_id=patient_id,
+            status="SUCCESS",
+            metadata={
+                "assurance_level": "patient_key_deletion_scheduled",
+                "wrapping_key_type": "patient",
+            },
         )
         return True
 
@@ -732,13 +903,17 @@ class EncryptionError(RuntimeError):
 
 class PatientDataErased(EncryptionError):
     """Raised when decryption fails because the patient's keys were destroyed."""
+
     def __init__(self, patient_id: str):
         self.patient_id = patient_id
-        super().__init__(f"Patient data for {patient_id} has been cryptographically erased.")
+        super().__init__(
+            f"Patient data for {patient_id} has been cryptographically erased."
+        )
 
 
 class LegacyFernetError(EncryptionError):
     """Raised when legacy Fernet data is detected."""
+
     def __init__(self, data: str):
         self.data = data
         super().__init__("Legacy Fernet data detected")
@@ -750,7 +925,9 @@ def get_encryption_provider() -> EncryptionProvider:
     if config.encryption_backend == "local":
         environment = get_runtime_environment()
         if not environment.is_demo_allowed:
-            raise ConfigError("Local envelope encryption is forbidden in this environment")
+            raise ConfigError(
+                "Local envelope encryption is forbidden in this environment"
+            )
         return LocalEnvelopeProvider()
     elif config.encryption_backend == "kms":
         return AWSKMSProvider()

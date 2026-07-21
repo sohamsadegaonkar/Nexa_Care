@@ -26,7 +26,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, Header, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    Form,
+    Header,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -36,7 +46,13 @@ from app.core.database import get_db_session, get_session_factory
 from app.core.dependencies import get_current_provider
 from app.models.extracted_field import ExtractedField
 from app.models.patient_records import TimelineEvent
-from app.models.pipeline import DocumentStorage, ExtractedFieldRecord, ExtractionJob, FieldCorrection, ReviewQueueItem
+from app.models.pipeline import (
+    DocumentStorage,
+    ExtractedFieldRecord,
+    ExtractionJob,
+    FieldCorrection,
+    ReviewQueueItem,
+)
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.pipeline_orchestrator import process_extraction_job
@@ -78,7 +94,10 @@ def _parse_uuid(id_str: str) -> uuid.UUID:
     except (TypeError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error_code": "INVALID_UUID", "message": "identifier must be a valid UUID"},
+            detail={
+                "error_code": "INVALID_UUID",
+                "message": "identifier must be a valid UUID",
+            },
         ) from exc
 
 
@@ -87,14 +106,23 @@ ALLOWED_COMMIT_STATUSES = {"approved", "edited"}
 
 
 def _validate_commit_field_metadata(field: dict[str, Any]) -> None:
-    if "confidence" not in field or "risk_level" not in field or field.get("confidence") is None or not field.get("risk_level"):
+    if (
+        "confidence" not in field
+        or "risk_level" not in field
+        or field.get("confidence") is None
+        or not field.get("risk_level")
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No extracted medical field may be saved without confidence and risk_level metadata.",
         )
 
     confidence = field["confidence"]
-    if isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not (0.0 <= confidence <= 1.0)
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid confidence score.",
@@ -110,7 +138,9 @@ def _validate_commit_field_metadata(field: dict[str, Any]) -> None:
 # ── Upload (client provides patient_id — new entity) ────────────────────────
 
 
-def _validated_upload_type(filename: str, content_type: str, data: bytes) -> tuple[str, str]:
+def _validated_upload_type(
+    filename: str, content_type: str, data: bytes
+) -> tuple[str, str]:
     safe_name = os.path.basename(filename.replace("\\", "/"))[:255]
     ext = os.path.splitext(safe_name)[1].lower()
     allowed = {
@@ -120,10 +150,14 @@ def _validated_upload_type(filename: str, content_type: str, data: bytes) -> tup
         ".jpeg": ("image/jpeg", lambda b: b.startswith(b"\xff\xd8\xff")),
     }
     if ext not in allowed:
-        raise HTTPException(status_code=415, detail={"error_code": "UNSUPPORTED_DOCUMENT_TYPE"})
+        raise HTTPException(
+            status_code=415, detail={"error_code": "UNSUPPORTED_DOCUMENT_TYPE"}
+        )
     expected, check = allowed[ext]
     if content_type != expected or not check(data):
-        raise HTTPException(status_code=415, detail={"error_code": "DOCUMENT_TYPE_MISMATCH"})
+        raise HTTPException(
+            status_code=415, detail={"error_code": "DOCUMENT_TYPE_MISMATCH"}
+        )
     return safe_name, expected
 
 
@@ -145,8 +179,10 @@ async def upload_pipeline_document(
 ):
     """Store an authorized, explicitly patient-bound document before queuing extraction."""
     capability = await validate_consent_for_patient(
-        patient_id=str(patient_id), purpose="ai_document_ingestion",
-        provider=provider, x_consent_token=x_consent_token,
+        patient_id=str(patient_id),
+        purpose="ai_document_ingestion",
+        provider=provider,
+        x_consent_token=x_consent_token,
     )
     max_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
     data = await file.read(max_bytes + 1)
@@ -154,8 +190,12 @@ async def upload_pipeline_document(
     if not data:
         raise HTTPException(status_code=400, detail={"error_code": "EMPTY_DOCUMENT"})
     if len(data) > max_bytes:
-        raise HTTPException(status_code=413, detail={"error_code": "DOCUMENT_TOO_LARGE"})
-    fname, mime_type = _validated_upload_type(file.filename or "", file.content_type or "", data)
+        raise HTTPException(
+            status_code=413, detail={"error_code": "DOCUMENT_TOO_LARGE"}
+        )
+    fname, mime_type = _validated_upload_type(
+        file.filename or "", file.content_type or "", data
+    )
 
     pid_uuid = patient_id
     doc_uuid = uuid.uuid4()
@@ -166,25 +206,44 @@ async def upload_pipeline_document(
     storage = get_document_storage()
     try:
         stored = await storage.put_document(
-            data, tenant_id=str(tenant_id), patient_id=str(pid_uuid), mime_type=mime_type
+            data,
+            tenant_id=str(tenant_id),
+            patient_id=str(pid_uuid),
+            mime_type=mime_type,
         )
     finally:
         del data
 
-    existing = (await db.execute(select(DocumentStorage).where(
-        DocumentStorage.tenant_id == tenant_id,
-        DocumentStorage.patient_id == pid_uuid,
-        DocumentStorage.content_hash == stored.content_hash,
-    ))).scalar_one_or_none()
+    existing = (
+        await db.execute(
+            select(DocumentStorage).where(
+                DocumentStorage.tenant_id == tenant_id,
+                DocumentStorage.patient_id == pid_uuid,
+                DocumentStorage.content_hash == stored.content_hash,
+            )
+        )
+    ).scalar_one_or_none()
     if existing is not None:
-        await storage.delete_document(stored.storage_ref, tenant_id=str(tenant_id), patient_id=str(pid_uuid))
-        existing_job = (await db.execute(select(ExtractionJob).where(
-            ExtractionJob.document_id == existing.id
-        ).order_by(ExtractionJob.created_at.desc()))).scalars().first()
+        await storage.delete_document(
+            stored.storage_ref, tenant_id=str(tenant_id), patient_id=str(pid_uuid)
+        )
+        existing_job = (
+            (
+                await db.execute(
+                    select(ExtractionJob)
+                    .where(ExtractionJob.document_id == existing.id)
+                    .order_by(ExtractionJob.created_at.desc())
+                )
+            )
+            .scalars()
+            .first()
+        )
         return {
             "job_id": str(existing_job.id) if existing_job else None,
-            "patient_id": str(pid_uuid), "filename": fname,
-            "status": existing_job.status if existing_job else "uploaded", "duplicate": True,
+            "patient_id": str(pid_uuid),
+            "filename": fname,
+            "status": existing_job.status if existing_job else "uploaded",
+            "duplicate": True,
         }
     ds = DocumentStorage(
         id=doc_uuid,
@@ -218,7 +277,9 @@ async def upload_pipeline_document(
         await db.commit()
     except Exception:
         await db.rollback()
-        await storage.delete_document(stored.storage_ref, tenant_id=str(tenant_id), patient_id=str(pid_uuid))
+        await storage.delete_document(
+            stored.storage_ref, tenant_id=str(tenant_id), patient_id=str(pid_uuid)
+        )
         raise
 
     await append_audit_log_or_503(
@@ -227,9 +288,15 @@ async def upload_pipeline_document(
         event_type="DOCUMENT_UPLOADED",
         target_id=str(doc_uuid),
         status="SUCCESS",
-        metadata={"job_id": str(job_uuid), "patient_id": str(pid_uuid),
-                  "tenant_id": str(tenant_id), "request_id": request_id,
-                  "document_hash": stored.content_hash, "size": stored.size, "mime_type": mime_type},
+        metadata={
+            "job_id": str(job_uuid),
+            "patient_id": str(pid_uuid),
+            "tenant_id": str(tenant_id),
+            "request_id": request_id,
+            "document_hash": stored.content_hash,
+            "size": stored.size,
+            "mime_type": mime_type,
+        },
     )
     background_tasks.add_task(_run_extraction_job, str(job_uuid))
 
@@ -270,7 +337,9 @@ async def get_extraction_job(
             detail="Extraction job not found.",
         )
     if job.tenant_id is not None and job.tenant_id != provider.hospital.hospital_id:
-        raise HTTPException(status_code=403, detail={"error_code": "CROSS_TENANT_JOB_ACCESS"})
+        raise HTTPException(
+            status_code=403, detail={"error_code": "CROSS_TENANT_JOB_ACCESS"}
+        )
 
     # ALPHA: Derive patient_id server-side from the job entity
     capability = await validate_consent_for_patient(
@@ -286,20 +355,20 @@ async def get_extraction_job(
     f_rows = res_f.scalars().all()
 
     fields = [
-            {
-                "field_id": str(f.id),
-                "job_id": job_id,
-                "field_name": f.field_name,
-                "raw_value": f.raw_value,
-                "normalized_value": f.normalized_value,
-                "confidence": f.confidence,
-                "risk_level": f.risk_level,
-                "validation_result": f.validation_result,
-                "source_page": f.source_page,
-                "source_bbox": f.source_bbox,
-                "status": f.status,
-                "corrected_value": f.corrected_value,
-            }
+        {
+            "field_id": str(f.id),
+            "job_id": job_id,
+            "field_name": f.field_name,
+            "raw_value": f.raw_value,
+            "normalized_value": f.normalized_value,
+            "confidence": f.confidence,
+            "risk_level": f.risk_level,
+            "validation_result": f.validation_result,
+            "source_page": f.source_page,
+            "source_bbox": f.source_bbox,
+            "status": f.status,
+            "corrected_value": f.corrected_value,
+        }
         for f in f_rows
     ]
     auto_cnt = sum(1 for f in f_rows if f.status == "auto_approved")
@@ -333,20 +402,22 @@ async def get_review_queue(
     pid = patient_id or capability.patient_id
     pid_uuid = _parse_uuid(pid)
 
-    stmt_q = select(ReviewQueueItem).where(ReviewQueueItem.status == "pending", ReviewQueueItem.patient_id == pid_uuid)
+    stmt_q = select(ReviewQueueItem).where(
+        ReviewQueueItem.status == "pending", ReviewQueueItem.patient_id == pid_uuid
+    )
     res_q = await db.execute(stmt_q)
     q_items = res_q.scalars().all()
 
     items = [
-            {
-                "review_item_id": str(qi.id),
-                "job_id": str(qi.job_id),
-                "patient_id": pid,
-                "document_title": "Clinical document review",
-                "flagged_fields_count": 1,
-                "highest_risk_level": "MEDIUM_RISK",
-                "queued_at": qi.queued_at.isoformat(),
-            }
+        {
+            "review_item_id": str(qi.id),
+            "job_id": str(qi.job_id),
+            "patient_id": pid,
+            "document_title": "Clinical document review",
+            "flagged_fields_count": 1,
+            "highest_risk_level": "MEDIUM_RISK",
+            "queued_at": qi.queued_at.isoformat(),
+        }
         for qi in q_items
     ]
     return {"items": items}
@@ -377,7 +448,11 @@ async def review_extracted_field(
         )
 
     f_uuid = _parse_uuid(field_id)
-    stmt_f = select(ExtractedFieldRecord).where(ExtractedFieldRecord.id == f_uuid).with_for_update()
+    stmt_f = (
+        select(ExtractedFieldRecord)
+        .where(ExtractedFieldRecord.id == f_uuid)
+        .with_for_update()
+    )
     res_f = await db.execute(stmt_f)
     field = res_f.scalar_one_or_none()
 
@@ -389,8 +464,13 @@ async def review_extracted_field(
         job = res_j.scalar_one_or_none()
         if job:
             server_patient_id = str(job.patient_id)
-            if job.tenant_id is not None and job.tenant_id != provider.hospital.hospital_id:
-                raise HTTPException(status_code=403, detail={"error_code": "CROSS_TENANT_JOB_ACCESS"})
+            if (
+                job.tenant_id is not None
+                and job.tenant_id != provider.hospital.hospital_id
+            ):
+                raise HTTPException(
+                    status_code=403, detail={"error_code": "CROSS_TENANT_JOB_ACCESS"}
+                )
     else:
         raise HTTPException(status_code=404, detail="Extracted field not found")
 
@@ -403,7 +483,10 @@ async def review_extracted_field(
     )
 
     if payload.action is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Adjudication action is required.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Adjudication action is required.",
+        )
 
     status_map = {
         "approve": "approved",
@@ -414,16 +497,27 @@ async def review_extracted_field(
         "edited": "edited",
     }
     if payload.action not in status_map:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid adjudication action.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid adjudication action.",
+        )
 
     new_st = status_map[payload.action]
 
-    if not set(provider.affiliation.roles or []).intersection({"clinician", "clinical_reviewer", "admin"}):
-        raise HTTPException(status_code=403, detail={"error_code": "REVIEW_ROLE_REQUIRED"})
+    if not set(provider.affiliation.roles or []).intersection(
+        {"clinician", "clinical_reviewer", "admin"}
+    ):
+        raise HTTPException(
+            status_code=403, detail={"error_code": "REVIEW_ROLE_REQUIRED"}
+        )
     if field.status != "needs_review":
-        raise HTTPException(status_code=409, detail={"error_code": "STALE_REVIEW_DECISION"})
+        raise HTTPException(
+            status_code=409, detail={"error_code": "STALE_REVIEW_DECISION"}
+        )
     if payload.version is not None and payload.version != field.review_version:
-        raise HTTPException(status_code=409, detail={"error_code": "STALE_REVIEW_VERSION"})
+        raise HTTPException(
+            status_code=409, detail={"error_code": "STALE_REVIEW_VERSION"}
+        )
 
     if field:
         field.status = new_st
@@ -447,7 +541,9 @@ async def review_extracted_field(
             )
             db.add(fc)
 
-        stmt_qi = select(ReviewQueueItem).where(ReviewQueueItem.field_id == f_uuid, ReviewQueueItem.status == "pending")
+        stmt_qi = select(ReviewQueueItem).where(
+            ReviewQueueItem.field_id == f_uuid, ReviewQueueItem.status == "pending"
+        )
         res_qi = await db.execute(stmt_qi)
         qi = res_qi.scalar_one_or_none()
         if qi:
@@ -458,7 +554,11 @@ async def review_extracted_field(
 
         await db.commit()
 
-    ev_type = "FIELD_APPROVED" if new_st == "approved" else ("FIELD_REJECTED" if new_st == "rejected" else "FIELD_EDITED")
+    ev_type = (
+        "FIELD_APPROVED"
+        if new_st == "approved"
+        else ("FIELD_REJECTED" if new_st == "rejected" else "FIELD_EDITED")
+    )
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.PIPELINE),
         actor_uid=provider.actor_uid,
@@ -473,7 +573,9 @@ async def review_extracted_field(
         "job_id": str(field.job_id),
         "previous_status": "needs_review",
         "new_status": new_st,
-        "final_value": payload.corrected_value or field.corrected_value or field.raw_value,
+        "final_value": payload.corrected_value
+        or field.corrected_value
+        or field.raw_value,
         "adjudicated_by": provider.actor_uid,
         "adjudicated_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -486,7 +588,9 @@ async def approve_extracted_field(
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await review_extracted_field(field_id, FieldReviewRequest(action="approve"), provider, x_consent_token, db)
+    return await review_extracted_field(
+        field_id, FieldReviewRequest(action="approve"), provider, x_consent_token, db
+    )
 
 
 @router.post("/fields/{field_id}/reject", status_code=status.HTTP_200_OK)
@@ -499,7 +603,9 @@ async def reject_extracted_field(
 ):
     return await review_extracted_field(
         field_id,
-        FieldReviewRequest(action="reject", review_notes=payload.reason if payload else None),
+        FieldReviewRequest(
+            action="reject", review_notes=payload.reason if payload else None
+        ),
         provider,
         x_consent_token,
         db,
@@ -516,7 +622,12 @@ async def edit_extracted_field(
 ):
     return await review_extracted_field(
         field_id,
-        FieldReviewRequest(action="edit", corrected_value=payload.corrected_value, units=payload.units, version=payload.version),
+        FieldReviewRequest(
+            action="edit",
+            corrected_value=payload.corrected_value,
+            units=payload.units,
+            version=payload.version,
+        ),
         provider,
         x_consent_token,
         db,
@@ -545,8 +656,10 @@ async def commit_extraction_job(
     if payload.fields is not None:
         raise HTTPException(
             status_code=400,
-            detail={"error_code": "CLIENT_SUPPLIED_COMMIT_FIELDS_FORBIDDEN",
-                    "message": "Commit fields are loaded from the reviewed server-side staging records."},
+            detail={
+                "error_code": "CLIENT_SUPPLIED_COMMIT_FIELDS_FORBIDDEN",
+                "message": "Commit fields are loaded from the reviewed server-side staging records.",
+            },
         )
     if payload.encounter_summary is not None:
         raise HTTPException(
@@ -558,7 +671,9 @@ async def commit_extraction_job(
         )
 
     # 1. Load the job first to derive patient_id server-side
-    stmt_job = select(ExtractionJob).where(ExtractionJob.id == job_uuid).with_for_update()
+    stmt_job = (
+        select(ExtractionJob).where(ExtractionJob.id == job_uuid).with_for_update()
+    )
     res_job = await db.execute(stmt_job)
     job = res_job.scalar_one_or_none()
     if not job:
@@ -567,11 +682,17 @@ async def commit_extraction_job(
             detail="Extraction job not found.",
         )
     if job.tenant_id is not None and job.tenant_id != provider.hospital.hospital_id:
-        raise HTTPException(status_code=403, detail={"error_code": "CROSS_TENANT_JOB_ACCESS"})
+        raise HTTPException(
+            status_code=403, detail={"error_code": "CROSS_TENANT_JOB_ACCESS"}
+        )
     if job.status == "committed":
-        raise HTTPException(status_code=409, detail={"error_code": "JOB_ALREADY_COMMITTED"})
+        raise HTTPException(
+            status_code=409, detail={"error_code": "JOB_ALREADY_COMMITTED"}
+        )
     if job.status not in {"review_pending", "ready_for_commit"}:
-        raise HTTPException(status_code=409, detail={"error_code": "JOB_NOT_READY_FOR_COMMIT"})
+        raise HTTPException(
+            status_code=409, detail={"error_code": "JOB_NOT_READY_FOR_COMMIT"}
+        )
 
     # 2. ALPHA: Validate consent using server-derived patient_id (raises on failure)
     await validate_consent_for_patient(
@@ -595,11 +716,17 @@ async def commit_extraction_job(
         )
 
     # 4. Check for unresolved fields
-    stmt_unres = select(ExtractedFieldRecord).where(ExtractedFieldRecord.job_id == job_uuid, ExtractedFieldRecord.status == "needs_review")
+    stmt_unres = select(ExtractedFieldRecord).where(
+        ExtractedFieldRecord.job_id == job_uuid,
+        ExtractedFieldRecord.status == "needs_review",
+    )
     res_unres = await db.execute(stmt_unres)
     unres_rows = res_unres.scalars().all()
     if isinstance(unres_rows, list) and len(unres_rows) > 0:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Review incomplete: job contains unresolved fields needing review.")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Review incomplete: job contains unresolved fields needing review.",
+        )
 
     approved_models = []
 

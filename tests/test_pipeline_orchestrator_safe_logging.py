@@ -86,16 +86,28 @@ def _make_job_and_document() -> tuple[ExtractionJob, DocumentStorageRecord]:
 
 
 @pytest.mark.asyncio
-async def test_internal_failure_log_never_leaks_exception_text(caplog: pytest.LogCaptureFixture) -> None:
+async def test_internal_failure_log_never_leaks_exception_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     job, document = _make_job_and_document()
     db = _FakeDB(job, document)
 
     fake_storage = AsyncMock()
-    fake_storage.get_document_bytes = AsyncMock(side_effect=RuntimeError(SENSITIVE_EXCEPTION_TEXT))
+    fake_storage.get_document_bytes = AsyncMock(
+        side_effect=RuntimeError(SENSITIVE_EXCEPTION_TEXT)
+    )
 
-    with patch("app.services.pipeline_orchestrator.get_document_storage", return_value=fake_storage), \
-         patch("app.services.pipeline_orchestrator.append_audit_log_or_503", AsyncMock(return_value=True)), \
-         caplog.at_level(logging.ERROR, logger="nexa_logger"):
+    with (
+        patch(
+            "app.services.pipeline_orchestrator.get_document_storage",
+            return_value=fake_storage,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.append_audit_log_or_503",
+            AsyncMock(return_value=True),
+        ),
+        caplog.at_level(logging.ERROR, logger="nexa_logger"),
+    ):
         result = await process_extraction_job(str(job.id), db)
 
     assert result["status"] == "extraction_failed_terminal"

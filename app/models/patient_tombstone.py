@@ -29,7 +29,9 @@ class PatientTombstone(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    old_patient_uuid: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    old_patient_uuid: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
     canonical_patient_uuid: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("patients.patient_uuid"),
@@ -45,5 +47,7 @@ class PatientTombstone(Base):
     evidence: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     __table_args__ = (
-        UniqueConstraint("old_patient_uuid", name="uq_patient_tombstones_old_patient_uuid"),
+        UniqueConstraint(
+            "old_patient_uuid", name="uq_patient_tombstones_old_patient_uuid"
+        ),
     )

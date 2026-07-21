@@ -66,9 +66,13 @@ class TestFHIRConverter(unittest.TestCase):
         self.assertEqual(bundle["resourceType"], "Bundle")
         self.assertEqual(bundle["type"], "collection")
         resources = [entry["resource"] for entry in bundle["entry"]]
-        self.assertEqual([resource["resourceType"] for resource in resources].count("Condition"), 2)
         self.assertEqual(
-            [resource["resourceType"] for resource in resources].count("MedicationRequest"),
+            [resource["resourceType"] for resource in resources].count("Condition"), 2
+        )
+        self.assertEqual(
+            [resource["resourceType"] for resource in resources].count(
+                "MedicationRequest"
+            ),
             1,
         )
         for resource in resources:
@@ -136,12 +140,54 @@ class TestFHIRStructuredExportRoute(unittest.TestCase):
         self.provider = sample_provider_context()
         self.patient_id = uuid.uuid4()
         now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        self.db = FakeFHIRDB({
-            "patient_vitals": [Vitals(patient_id=self.patient_id, type="BP", value="130/85", unit="mmHg", recorded_at=now, source="manual", risk_level="LOW_RISK")],
-            "patient_medications": [Medication(patient_id=self.patient_id, name="Metformin", strength="500mg", frequency="Twice daily", prescribed_at=now, source="manual", risk_level="MEDIUM_RISK")],
-            "patient_lab_results": [LabResult(patient_id=self.patient_id, test_name="HbA1c", value="7.2", unit="%", reference_range="4.0-5.6", is_abnormal=True, recorded_at=now, source="manual", risk_level="HIGH_RISK")],
-            "patient_allergies": [Allergy(patient_id=self.patient_id, allergen="Penicillin", severity="Severe", source="manual", risk_level="HIGH_RISK")],
-        })
+        self.db = FakeFHIRDB(
+            {
+                "patient_vitals": [
+                    Vitals(
+                        patient_id=self.patient_id,
+                        type="BP",
+                        value="130/85",
+                        unit="mmHg",
+                        recorded_at=now,
+                        source="manual",
+                        risk_level="LOW_RISK",
+                    )
+                ],
+                "patient_medications": [
+                    Medication(
+                        patient_id=self.patient_id,
+                        name="Metformin",
+                        strength="500mg",
+                        frequency="Twice daily",
+                        prescribed_at=now,
+                        source="manual",
+                        risk_level="MEDIUM_RISK",
+                    )
+                ],
+                "patient_lab_results": [
+                    LabResult(
+                        patient_id=self.patient_id,
+                        test_name="HbA1c",
+                        value="7.2",
+                        unit="%",
+                        reference_range="4.0-5.6",
+                        is_abnormal=True,
+                        recorded_at=now,
+                        source="manual",
+                        risk_level="HIGH_RISK",
+                    )
+                ],
+                "patient_allergies": [
+                    Allergy(
+                        patient_id=self.patient_id,
+                        allergen="Penicillin",
+                        severity="Severe",
+                        source="manual",
+                        risk_level="HIGH_RISK",
+                    )
+                ],
+            }
+        )
 
         async def override_provider() -> ProviderContext:
             return self.provider
@@ -158,7 +204,9 @@ class TestFHIRStructuredExportRoute(unittest.TestCase):
         app.dependency_overrides.pop(get_db_session, None)
 
     @patch("app.api.v2.fhir_routes.append_audit_log_or_503", new_callable=AsyncMock)
-    def test_export_uses_structured_records_without_legacy_clinical(self, mock_audit) -> None:
+    def test_export_uses_structured_records_without_legacy_clinical(
+        self, mock_audit
+    ) -> None:
         response = self.client.get(f"/api/v2/fhir/export/{self.patient_id}")
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -169,10 +217,15 @@ class TestFHIRStructuredExportRoute(unittest.TestCase):
         self.assertIn("AllergyIntolerance", resource_types)
         self.assertFalse(any("nexa_clinical" in stmt for stmt in self.db.executed))
         mock_audit.assert_awaited_once()
-        self.assertEqual(mock_audit.await_args.kwargs["metadata"]["source"], "structured_patient_records")
+        self.assertEqual(
+            mock_audit.await_args.kwargs["metadata"]["source"],
+            "structured_patient_records",
+        )
 
     @patch("app.api.v2.fhir_routes.append_audit_log_or_503", new_callable=AsyncMock)
-    def test_empty_bundle_only_when_structured_and_legacy_records_empty(self, _mock_audit) -> None:
+    def test_empty_bundle_only_when_structured_and_legacy_records_empty(
+        self, _mock_audit
+    ) -> None:
         self.db.structured = {}
         response = self.client.get(f"/api/v2/fhir/export/{self.patient_id}")
 

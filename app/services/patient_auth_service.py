@@ -1,4 +1,5 @@
 """Patient phone-OTP tokens and first-device enrollment grants."""
+
 from __future__ import annotations
 
 import hashlib
@@ -35,11 +36,15 @@ def normalize_indian_phone(value: str) -> str:
 def _jwt_secret() -> str:
     value = os.getenv("PATIENT_JWT_SECRET", "").strip()
     if len(value) < 32:
-        raise RuntimeError("PATIENT_JWT_SECRET must be configured with at least 32 characters")
+        raise RuntimeError(
+            "PATIENT_JWT_SECRET must be configured with at least 32 characters"
+        )
     return value
 
 
-def issue_patient_access_token(patient_id: str, supabase_user_id: str) -> tuple[str, datetime]:
+def issue_patient_access_token(
+    patient_id: str, supabase_user_id: str
+) -> tuple[str, datetime]:
     now = datetime.now(timezone.utc)
     expires = now + timedelta(seconds=PATIENT_ACCESS_TTL_SECONDS)
     claims = {
@@ -61,7 +66,10 @@ def decode_patient_access_token(token: str) -> dict[str, Any] | None:
         claims = jwt.decode(clean, _jwt_secret(), algorithms=["HS256"])
     except (jwt.PyJWTError, RuntimeError):
         return None
-    if claims.get("actor_type") != "patient" or claims.get("auth_method") != "phone_otp":
+    if (
+        claims.get("actor_type") != "patient"
+        or claims.get("auth_method") != "phone_otp"
+    ):
         return None
     if claims.get("sub") != claims.get("patient_id"):
         return None
@@ -78,12 +86,18 @@ async def _maybe_await(value):
 
 async def issue_device_enrollment_token(patient_id: str, auth_session_id: str) -> str:
     token = secrets.token_urlsafe(32)
-    payload = json.dumps({
-        "patient_id": patient_id,
-        "auth_session_id": auth_session_id,
-        "scope": "device_enrollment",
-    })
-    await _maybe_await(get_redis_client().setex(_token_key(token), DEVICE_ENROLLMENT_TTL_SECONDS, payload))
+    payload = json.dumps(
+        {
+            "patient_id": patient_id,
+            "auth_session_id": auth_session_id,
+            "scope": "device_enrollment",
+        }
+    )
+    await _maybe_await(
+        get_redis_client().setex(
+            _token_key(token), DEVICE_ENROLLMENT_TTL_SECONDS, payload
+        )
+    )
     return token
 
 
@@ -99,10 +113,15 @@ async def claim_device_enrollment_token(token: str, patient_id: str) -> str | No
         payload = json.loads(raw)
     except (TypeError, json.JSONDecodeError):
         return None
-    if payload.get("scope") != "device_enrollment" or payload.get("patient_id") != patient_id:
+    if (
+        payload.get("scope") != "device_enrollment"
+        or payload.get("patient_id") != patient_id
+    ):
         return None
     claim_id = secrets.token_urlsafe(24)
-    claimed = await _maybe_await(redis.set(_CLAIM_PREFIX + key, claim_id, nx=True, ex=60))
+    claimed = await _maybe_await(
+        redis.set(_CLAIM_PREFIX + key, claim_id, nx=True, ex=60)
+    )
     return claim_id if claimed else None
 
 

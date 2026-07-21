@@ -36,17 +36,23 @@ class SecureMergedRecord:
     def model_dump(self, *args: object, **kwargs: object) -> dict[str, Any]:
         """Disable Pydantic-style serialization for PHI safety."""
 
-        raise TypeError("SecureMergedRecord.model_dump() is disabled; use to_response(scope).")
+        raise TypeError(
+            "SecureMergedRecord.model_dump() is disabled; use to_response(scope)."
+        )
 
     def dict(self, *args: object, **kwargs: object) -> dict[str, Any]:
         """Disable legacy Pydantic-style serialization for PHI safety."""
 
-        raise TypeError("SecureMergedRecord.dict() is disabled; use to_response(scope).")
+        raise TypeError(
+            "SecureMergedRecord.dict() is disabled; use to_response(scope)."
+        )
 
     def json(self, *args: object, **kwargs: object) -> str:
         """Disable raw JSON serialization for PHI safety."""
 
-        raise TypeError("SecureMergedRecord.json() is disabled; use to_response(scope).")
+        raise TypeError(
+            "SecureMergedRecord.json() is disabled; use to_response(scope)."
+        )
 
     def to_response(self, scope: list[str]) -> dict[str, Any]:
         """Return only fields explicitly named by the consent capability scope.

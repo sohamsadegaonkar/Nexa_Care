@@ -7,8 +7,11 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.core.request_context import (
-    trace_id_var, request_id_var, span_id_var,
-    generate_trace_id, generate_span_id
+    trace_id_var,
+    request_id_var,
+    span_id_var,
+    generate_trace_id,
+    generate_span_id,
 )
 from app.observability.error_catalog import Catalog
 from app.observability.safe_exceptions import log_safe_exception, safe_error_response
@@ -59,13 +62,17 @@ class GlobalLoggingMiddleware(BaseHTTPMiddleware):
         span_id_var.set(span_id)
 
         # 2. Log request start
-        logger.info(json.dumps({
-            "event": "request_started",
-            "trace_id": trace_id,
-            "request_id": request_id,
-            "method": request.method,
-            "path": request.url.path,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "request_started",
+                    "trace_id": trace_id,
+                    "request_id": request_id,
+                    "method": request.method,
+                    "path": request.url.path,
+                }
+            )
+        )
 
         start_time = time.perf_counter()
 
@@ -92,7 +99,7 @@ class GlobalLoggingMiddleware(BaseHTTPMiddleware):
             )
 
             error_response = JSONResponse(
-                status_code=error_def.status_code,    # was: error_def.http_status (AttributeError)
+                status_code=error_def.status_code,  # was: error_def.http_status (AttributeError)
                 content=safe_error_response(safe_error, error_def.message),
             )
             error_response.headers["X-Trace-Id"] = trace_id
@@ -101,13 +108,17 @@ class GlobalLoggingMiddleware(BaseHTTPMiddleware):
 
         # 4. Log success
         latency = round((time.perf_counter() - start_time) * 1000, 2)
-        logger.info(json.dumps({
-            "event": "request_completed",
-            "trace_id": trace_id,
-            "request_id": request_id,
-            "status": response.status_code,
-            "latency_ms": latency,
-        }))
+        logger.info(
+            json.dumps(
+                {
+                    "event": "request_completed",
+                    "trace_id": trace_id,
+                    "request_id": request_id,
+                    "status": response.status_code,
+                    "latency_ms": latency,
+                }
+            )
+        )
 
         response.headers["X-Trace-Id"] = trace_id
         return response

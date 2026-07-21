@@ -18,7 +18,13 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.models.patient_records import Allergy, DocumentReference, LabResult, Medication, Vitals
+from app.models.patient_records import (
+    Allergy,
+    DocumentReference,
+    LabResult,
+    Medication,
+    Vitals,
+)
 from app.services.consent_engine import ConsentCapability
 from app.services.emergency_summary_service import build_emergency_summary
 from app.security.clinical_categories import ClinicalCategory
@@ -83,7 +89,9 @@ def sample_provider_context() -> ProviderContext:
     )
 
 
-def _break_glass_capability(provider: ProviderContext, patient_id: str, scope: list[str]) -> ConsentCapability:
+def _break_glass_capability(
+    provider: ProviderContext, patient_id: str, scope: list[str]
+) -> ConsentCapability:
     now = datetime.now(timezone.utc)
     return ConsentCapability(
         patient_id=patient_id,
@@ -107,7 +115,12 @@ class TestEmergencySummaryService(unittest.TestCase):
         db = FakeDB(
             structured={
                 "patient_allergies": [
-                    Allergy(patient_id=patient_id, allergen="Penicillin", severity="Severe", source="manual")
+                    Allergy(
+                        patient_id=patient_id,
+                        allergen="Penicillin",
+                        severity="Severe",
+                        source="manual",
+                    )
                 ],
                 "patient_medications": [
                     Medication(
@@ -122,18 +135,24 @@ class TestEmergencySummaryService(unittest.TestCase):
             }
         )
 
-        summary = run(build_emergency_summary(patient_id, [ClinicalCategory.ALLERGIES], db))
+        summary = run(
+            build_emergency_summary(patient_id, [ClinicalCategory.ALLERGIES], db)
+        )
 
         self.assertIn("allergies", summary.categories)
         self.assertNotIn("active_medications", summary.categories)
         self.assertTrue(summary.categories["allergies"]["available"])
-        self.assertEqual(summary.categories["allergies"]["items"][0]["allergen"], "Penicillin")
+        self.assertEqual(
+            summary.categories["allergies"]["items"][0]["allergen"], "Penicillin"
+        )
 
     def test_blood_group_never_returns_unverified_value(self) -> None:
         patient_id = uuid.uuid4()
         db = FakeDB()
 
-        summary = run(build_emergency_summary(patient_id, [ClinicalCategory.BLOOD_GROUP], db))
+        summary = run(
+            build_emergency_summary(patient_id, [ClinicalCategory.BLOOD_GROUP], db)
+        )
 
         blood_group = summary.categories["blood_group"]
         self.assertFalse(blood_group["available"])
@@ -155,7 +174,11 @@ class TestEmergencySummaryService(unittest.TestCase):
             }
         )
 
-        summary = run(build_emergency_summary(patient_id, [ClinicalCategory.DOCUMENT_REFERENCES], db))
+        summary = run(
+            build_emergency_summary(
+                patient_id, [ClinicalCategory.DOCUMENT_REFERENCES], db
+            )
+        )
 
         item = summary.categories["document_references"]["items"][0]
         self.assertNotIn("storage_ref", item)
@@ -192,7 +215,10 @@ class TestEmergencySummaryRoute(unittest.TestCase):
             session_binding=provider.session_binding,
         )
 
-        with patch("app.api.v2.patient_routes.consent_engine.validate", AsyncMock(return_value=capability)):
+        with patch(
+            "app.api.v2.patient_routes.consent_engine.validate",
+            AsyncMock(return_value=capability),
+        ):
             with self.assertRaises(HTTPException) as ctx:
                 run(
                     get_emergency_summary(
@@ -203,11 +229,16 @@ class TestEmergencySummaryRoute(unittest.TestCase):
                     )
                 )
         self.assertEqual(ctx.exception.status_code, 403)
-        self.assertEqual(ctx.exception.detail["error_code"], "BREAK_GLASS_CAPABILITY_REQUIRED")
+        self.assertEqual(
+            ctx.exception.detail["error_code"], "BREAK_GLASS_CAPABILITY_REQUIRED"
+        )
 
     def test_invalid_or_expired_capability_is_rejected(self) -> None:
         provider = sample_provider_context()
-        with patch("app.api.v2.patient_routes.consent_engine.validate", AsyncMock(return_value=None)):
+        with patch(
+            "app.api.v2.patient_routes.consent_engine.validate",
+            AsyncMock(return_value=None),
+        ):
             with self.assertRaises(HTTPException) as ctx:
                 run(
                     get_emergency_summary(
@@ -222,11 +253,18 @@ class TestEmergencySummaryRoute(unittest.TestCase):
     def test_valid_break_glass_capability_returns_only_granted_categories(self) -> None:
         provider = sample_provider_context()
         patient_id = uuid.uuid4()
-        capability = _break_glass_capability(provider, str(patient_id), ["allergies", "vitals"])
+        capability = _break_glass_capability(
+            provider, str(patient_id), ["allergies", "vitals"]
+        )
         db = FakeDB(
             structured={
                 "patient_allergies": [
-                    Allergy(patient_id=patient_id, allergen="Penicillin", severity="Severe", source="manual")
+                    Allergy(
+                        patient_id=patient_id,
+                        allergen="Penicillin",
+                        severity="Severe",
+                        source="manual",
+                    )
                 ],
                 "patient_vitals": [
                     Vitals(
@@ -254,8 +292,16 @@ class TestEmergencySummaryRoute(unittest.TestCase):
             }
         )
 
-        with patch("app.api.v2.patient_routes.consent_engine.validate", AsyncMock(return_value=capability)), \
-             patch("app.api.v2.patient_routes.append_audit_log_or_503", AsyncMock(return_value=True)) as mock_audit:
+        with (
+            patch(
+                "app.api.v2.patient_routes.consent_engine.validate",
+                AsyncMock(return_value=capability),
+            ),
+            patch(
+                "app.api.v2.patient_routes.append_audit_log_or_503",
+                AsyncMock(return_value=True),
+            ) as mock_audit,
+        ):
             result = run(
                 get_emergency_summary(
                     patient_id=patient_id,
@@ -270,7 +316,9 @@ class TestEmergencySummaryRoute(unittest.TestCase):
         self.assertNotIn("lab_results", result.categories)
         self.assertTrue(mock_audit.await_count == 1)
         audit_kwargs = mock_audit.await_args.kwargs
-        self.assertEqual(audit_kwargs["event_type"], "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED")
+        self.assertEqual(
+            audit_kwargs["event_type"], "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED"
+        )
         # Response must never carry the bearer token.
         self.assertNotIn("consent_token", result.model_dump())
         self.assertNotIn("tok", str(result.model_dump()))

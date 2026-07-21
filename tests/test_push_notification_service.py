@@ -9,7 +9,11 @@ from app.services.push_notification_service import PushNotificationService
 async def test_approval_notification_failure_returns_unavailable_without_type_error():
     service = PushNotificationService()
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=RuntimeError("expo down")):
+    with patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("expo down"),
+    ):
         result = await service.send_approval_request(
             patient_id="patient-1",
             request_id="request-1",
@@ -26,7 +30,11 @@ async def test_approval_notification_failure_returns_unavailable_without_type_er
 async def test_emergency_notification_failure_returns_unavailable_without_type_error():
     service = PushNotificationService()
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=RuntimeError("expo down")):
+    with patch(
+        "httpx.AsyncClient.post",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("expo down"),
+    ):
         result = await service.send_emergency_access_notice(
             patient_id="patient-1",
             event_id="event-1",

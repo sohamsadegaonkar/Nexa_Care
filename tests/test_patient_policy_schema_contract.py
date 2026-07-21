@@ -37,9 +37,9 @@ def test_patient_policy_orm_contract() -> None:
     assert not table.c.version.nullable
     assert table.c.tenant_id.type.length == 128
     assert table.c.last_idempotency_key.type.length == 128
-    assert {foreign_key.target_fullname for foreign_key in table.c.patient_uuid.foreign_keys} == {
-        "patients.patient_uuid"
-    }
+    assert {
+        foreign_key.target_fullname for foreign_key in table.c.patient_uuid.foreign_keys
+    } == {"patients.patient_uuid"}
     assert {constraint.name for constraint in table.constraints} >= {
         "uq_patient_policies_tenant_patient"
     }

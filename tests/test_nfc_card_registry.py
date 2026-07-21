@@ -90,7 +90,9 @@ class TestNFCCardRegistryModel(unittest.TestCase):
 
     def test_card_uid_unique_and_indexed(self) -> None:
         table = NFCCardRegistry.__table__
-        constraint_names = {constraint.name for constraint in table.constraints if constraint.name}
+        constraint_names = {
+            constraint.name for constraint in table.constraints if constraint.name
+        }
         index_names = {index.name for index in table.indexes}
 
         self.assertIn("uq_nfc_card_registry_card_uid", constraint_names)
@@ -107,7 +109,9 @@ class TestNFCCardRegistryModel(unittest.TestCase):
 class TestCardResolutionService(unittest.TestCase):
     def test_resolve_active_card_returns_patient_id(self) -> None:
         patient_id = uuid4()
-        service = CardResolutionService(FakeSession(row=make_card(patient_id=patient_id)))
+        service = CardResolutionService(
+            FakeSession(row=make_card(patient_id=patient_id))
+        )
 
         resolved = run(service.resolve_card("CARD-001"))
 
@@ -116,9 +120,13 @@ class TestCardResolutionService(unittest.TestCase):
 
     def test_resolve_reported_lost_card_raises_403_without_patient_id(self) -> None:
         patient_id = uuid4()
-        service = CardResolutionService(FakeSession(
-            row=make_card(status=NFCCardStatus.REPORTED_LOST.value, patient_id=patient_id),
-        ))
+        service = CardResolutionService(
+            FakeSession(
+                row=make_card(
+                    status=NFCCardStatus.REPORTED_LOST.value, patient_id=patient_id
+                ),
+            )
+        )
 
         with self.assertRaises(HTTPException) as cm:
             run(service.resolve_card("CARD-001"))
@@ -127,9 +135,11 @@ class TestCardResolutionService(unittest.TestCase):
         self.assertNotEqual(cm.exception.detail, str(patient_id))
 
     def test_resolve_revoked_card_raises_403(self) -> None:
-        service = CardResolutionService(FakeSession(
-            row=make_card(status=NFCCardStatus.REVOKED.value),
-        ))
+        service = CardResolutionService(
+            FakeSession(
+                row=make_card(status=NFCCardStatus.REVOKED.value),
+            )
+        )
 
         with self.assertRaises(HTTPException) as cm:
             run(service.resolve_card("CARD-001"))
@@ -145,7 +155,9 @@ class TestCardResolutionService(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 403)
 
     def test_resolve_db_error_raises_503(self) -> None:
-        service = CardResolutionService(FakeSession(execute_error=SQLAlchemyError("db down")))
+        service = CardResolutionService(
+            FakeSession(execute_error=SQLAlchemyError("db down"))
+        )
 
         with self.assertRaises(HTTPException) as cm:
             run(service.resolve_card("CARD-001"))
@@ -158,7 +170,10 @@ class TestCardResolutionService(unittest.TestCase):
         with self.assertRaises(ValidationError):
             run(service.resolve_card(""))
 
-    @patch("app.services.card_resolution_service.append_audit_log_or_503", new_callable=AsyncMock)
+    @patch(
+        "app.services.card_resolution_service.append_audit_log_or_503",
+        new_callable=AsyncMock,
+    )
     def test_report_lost_card_updates_status_and_audits(self, mock_audit) -> None:
         row = make_card(status=NFCCardStatus.ACTIVE.value)
         actor_id = uuid4()
@@ -169,10 +184,13 @@ class TestCardResolutionService(unittest.TestCase):
 
         self.assertTrue(session.committed)
         self.assertEqual(row.status, NFCCardStatus.REPORTED_LOST.value)
-        self.assertEqual(result, CardStatusUpdateResult(
-            patient_id=row.patient_id,
-            status=NFCCardStatus.REPORTED_LOST,
-        ))
+        self.assertEqual(
+            result,
+            CardStatusUpdateResult(
+                patient_id=row.patient_id,
+                status=NFCCardStatus.REPORTED_LOST,
+            ),
+        )
         self.assertEqual(mock_audit.await_count, 2)
         first_call, second_call = mock_audit.await_args_list
         self.assertEqual(first_call.kwargs["status"], "STARTED")
@@ -180,7 +198,10 @@ class TestCardResolutionService(unittest.TestCase):
         self.assertEqual(second_call.kwargs["target_id"], str(row.patient_id))
         self.assertEqual(second_call.kwargs["actor_uid"], str(actor_id))
 
-    @patch("app.services.card_resolution_service.append_audit_log_or_503", new_callable=AsyncMock)
+    @patch(
+        "app.services.card_resolution_service.append_audit_log_or_503",
+        new_callable=AsyncMock,
+    )
     def test_report_lost_audit_failure_aborts_before_commit(self, mock_audit) -> None:
         row = make_card(status=NFCCardStatus.ACTIVE.value)
         session = FakeSession(row=row)
@@ -194,9 +215,14 @@ class TestCardResolutionService(unittest.TestCase):
         self.assertFalse(session.committed)
         self.assertEqual(row.status, NFCCardStatus.ACTIVE.value)
 
-    @patch("app.services.card_resolution_service.append_audit_log_or_503", new_callable=AsyncMock)
+    @patch(
+        "app.services.card_resolution_service.append_audit_log_or_503",
+        new_callable=AsyncMock,
+    )
     def test_report_lost_commit_failure_rolls_back(self, mock_audit) -> None:
-        session = FakeSession(row=make_card(), commit_error=SQLAlchemyError("commit failed"))
+        session = FakeSession(
+            row=make_card(), commit_error=SQLAlchemyError("commit failed")
+        )
         service = CardResolutionService(session)
 
         with self.assertRaises(HTTPException) as cm:

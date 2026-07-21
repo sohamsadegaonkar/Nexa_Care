@@ -58,14 +58,24 @@ class ExtractionProvider(ABC):
             data = await asyncio.to_thread(path.read_bytes)
         except OSError as exc:
             raise InvalidDocumentError("Document could not be read") from exc
-        mime = "application/pdf" if path.suffix.lower() == ".pdf" else "application/octet-stream"
-        return await self.extract_bytes(data, mime_type=mime, request_id="legacy-file-adapter")
+        mime = (
+            "application/pdf"
+            if path.suffix.lower() == ".pdf"
+            else "application/octet-stream"
+        )
+        return await self.extract_bytes(
+            data, mime_type=mime, request_id="legacy-file-adapter"
+        )
 
 
 class RemoteExtractionProvider(ExtractionProvider):
-    def __init__(self, config: DocumentExtractionConfig, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self, config: DocumentExtractionConfig, client: httpx.AsyncClient | None = None
+    ) -> None:
         if config.provider != "remote" or not config.api_url or not config.api_key:
-            raise ValueError("Remote extraction requires validated remote configuration")
+            raise ValueError(
+                "Remote extraction requires validated remote configuration"
+            )
         self.config = config
         self._client = client
 
@@ -76,7 +86,9 @@ class RemoteExtractionProvider(ExtractionProvider):
         last_error: DocumentExtractionError | None = None
         for attempt in range(1, self.config.max_attempts + 1):
             try:
-                client = self._client or httpx.AsyncClient(timeout=self.config.timeout_seconds)
+                client = self._client or httpx.AsyncClient(
+                    timeout=self.config.timeout_seconds
+                )
                 should_close = self._client is None
                 try:
                     response = await client.post(
@@ -90,27 +102,40 @@ class RemoteExtractionProvider(ExtractionProvider):
                 finally:
                     if should_close:
                         await client.aclose()
-                if response.status_code in {408, 425, 429} or response.status_code >= 500:
+                if (
+                    response.status_code in {408, 425, 429}
+                    or response.status_code >= 500
+                ):
                     raise RetryableDocumentExtractionError(
-                        "Extraction provider temporarily unavailable", upstream_status=response.status_code
+                        "Extraction provider temporarily unavailable",
+                        upstream_status=response.status_code,
                     )
                 if response.status_code >= 400:
                     raise InvalidDocumentError(
-                        "Extraction provider rejected document", upstream_status=response.status_code
+                        "Extraction provider rejected document",
+                        upstream_status=response.status_code,
                     )
                 try:
                     result = ExtractedMedicalDocument.model_validate(response.json())
                 except (ValueError, ValidationError) as exc:
-                    raise InvalidDocumentError("Extraction response failed schema validation") from exc
-                logger.info(json.dumps({
-                    "event": "document_extraction_succeeded",
-                    "request_id": request_id,
-                    "attempt": attempt,
-                    "latency_ms": round((time.perf_counter() - started) * 1000),
-                }))
+                    raise InvalidDocumentError(
+                        "Extraction response failed schema validation"
+                    ) from exc
+                logger.info(
+                    json.dumps(
+                        {
+                            "event": "document_extraction_succeeded",
+                            "request_id": request_id,
+                            "attempt": attempt,
+                            "latency_ms": round((time.perf_counter() - started) * 1000),
+                        }
+                    )
+                )
                 return result
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
-                last_error = RetryableDocumentExtractionError("Extraction provider network failure")
+                last_error = RetryableDocumentExtractionError(
+                    "Extraction provider network failure"
+                )
                 last_error.__cause__ = exc
             except RetryableDocumentExtractionError as exc:
                 last_error = exc
@@ -122,14 +147,18 @@ class RemoteExtractionProvider(ExtractionProvider):
                 await asyncio.sleep(delay)
 
         assert last_error is not None
-        logger.warning(json.dumps({
-            "event": "document_extraction_retry_exhausted",
-            "request_id": request_id,
-            "attempt_count": self.config.max_attempts,
-            "error_code": last_error.error_code,
-            "upstream_status": last_error.upstream_status,
-            "latency_ms": round((time.perf_counter() - started) * 1000),
-        }))
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "document_extraction_retry_exhausted",
+                    "request_id": request_id,
+                    "attempt_count": self.config.max_attempts,
+                    "error_code": last_error.error_code,
+                    "upstream_status": last_error.upstream_status,
+                    "latency_ms": round((time.perf_counter() - started) * 1000),
+                }
+            )
+        )
         raise last_error
 
 
@@ -161,10 +190,17 @@ _extractor_fingerprint: tuple[Any, ...] | None = None
 def get_medical_document_extractor() -> ExtractionProvider:
     global _extractor_singleton, _extractor_fingerprint
     config = get_document_extraction_config()
-    fingerprint = (config.provider, config.environment, config.api_url, config.max_attempts)
+    fingerprint = (
+        config.provider,
+        config.environment,
+        config.api_url,
+        config.max_attempts,
+    )
     if _extractor_singleton is None or _extractor_fingerprint != fingerprint:
         _extractor_singleton = (
-            DemoExtractionProvider() if config.provider == "demo" else RemoteExtractionProvider(config)
+            DemoExtractionProvider()
+            if config.provider == "demo"
+            else RemoteExtractionProvider(config)
         )
         _extractor_fingerprint = fingerprint
     return _extractor_singleton

@@ -7,6 +7,7 @@ session_authorizes_patient is a pure function (dict in, bool out), so this
 needs no app, no Redis, no Supabase -- exactly the kind of cheap test that
 should exist for every security-relevant decision point.
 """
+
 from app.services.auth_service import session_authorizes_patient
 
 PATIENT_A = "11111111-1111-1111-1111-111111111111"

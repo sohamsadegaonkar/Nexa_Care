@@ -36,7 +36,9 @@ async def get_dashboard_metrics(
 
     hospital_id = provider.hospital.hospital_id
     total = await db.scalar(
-        select(func.count(distinct(ConsentGrantLog.patient_id))).where(ConsentGrantLog.hospital_id == hospital_id)
+        select(func.count(distinct(ConsentGrantLog.patient_id))).where(
+            ConsentGrantLog.hospital_id == hospital_id
+        )
     )
     active = await db.scalar(
         select(func.count(ConsentGrantLog.id)).where(
@@ -52,9 +54,9 @@ async def get_dashboard_metrics(
         )
     )
     backlog = await db.scalar(
-        select(func.count(ReviewQueueItem.id)).join(
-            ExtractionJob, ExtractionJob.id == ReviewQueueItem.job_id
-        ).where(
+        select(func.count(ReviewQueueItem.id))
+        .join(ExtractionJob, ExtractionJob.id == ReviewQueueItem.job_id)
+        .where(
             ReviewQueueItem.status == "pending",
             ExtractionJob.tenant_id == provider.hospital.hospital_id,
         )

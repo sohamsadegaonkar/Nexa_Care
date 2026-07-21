@@ -20,7 +20,12 @@ from fastapi.testclient import TestClient
 from app.main import app
 from app.core.dependencies import get_db_session, get_provider_context, require_role
 from app.models.provider import AffiliationType
-from app.models.provider_context import AffiliationContext, HospitalContext, ProviderContext, ProviderIdentityContext
+from app.models.provider_context import (
+    AffiliationContext,
+    HospitalContext,
+    ProviderContext,
+    ProviderIdentityContext,
+)
 from app.services import consent_engine
 
 
@@ -68,7 +73,11 @@ class FakeGrantLogDB:
     async def execute(self, stmt):
         result = MagicMock()
         token_hash = getattr(stmt, "_nexa_token_hash", None)
-        match = next((r for r in self.rows if r.token_hash == token_hash), None) if token_hash else None
+        match = (
+            next((r for r in self.rows if r.token_hash == token_hash), None)
+            if token_hash
+            else None
+        )
         result.scalar_one_or_none.return_value = match
         return result
 
@@ -89,11 +98,19 @@ def _fake_db() -> AsyncMock:
 
 def _provider() -> ProviderContext:
     return ProviderContext(
-        provider=ProviderIdentityContext(provider_id=uuid.uuid4(), display_name="Dr. Revoke", contact_email="r@ex.com"),
-        hospital=HospitalContext(hospital_id=uuid.uuid4(), facility_code="H", display_name="H"),
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(),
+            display_name="Dr. Revoke",
+            contact_email="r@ex.com",
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(), facility_code="H", display_name="H"
+        ),
         affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(), affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True, roles=["clinician"],
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            is_primary=True,
+            roles=["clinician"],
         ),
     )
 
@@ -107,10 +124,18 @@ async def test_issue_then_revoke_denies_immediate_subsequent_access():
     provider = _provider()
     patient_id = str(uuid.uuid4())
 
-    with patch("app.services.consent_engine.get_consent_redis_client", return_value=redis), \
-         patch("app.services.consent_engine.append_audit_log", AsyncMock(return_value=True)), \
-         patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock(return_value=None)):
-
+    with (
+        patch(
+            "app.services.consent_engine.get_consent_redis_client", return_value=redis
+        ),
+        patch(
+            "app.services.consent_engine.append_audit_log", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.services.consent_engine.append_audit_log_or_503",
+            AsyncMock(return_value=None),
+        ),
+    ):
         token = await consent_engine.issue_break_glass(
             patient_id=patient_id,
             clinician_id=provider.actor_uid,
@@ -125,8 +150,12 @@ async def test_issue_then_revoke_denies_immediate_subsequent_access():
 
         # Access succeeds before revocation.
         capability = await consent_engine.validate(
-            token=token, patient_id=patient_id, clinician_id=provider.actor_uid,
-            purpose="EMERGENCY", hospital_id=str(provider.hospital_id), session_binding="session-abc",
+            token=token,
+            patient_id=patient_id,
+            clinician_id=provider.actor_uid,
+            purpose="EMERGENCY",
+            hospital_id=str(provider.hospital_id),
+            session_binding="session-abc",
         )
         assert capability is not None
         assert capability.is_break_glass is True
@@ -135,8 +164,12 @@ async def test_issue_then_revoke_denies_immediate_subsequent_access():
 
         # Immediate denial after revocation.
         capability_after = await consent_engine.validate(
-            token=token, patient_id=patient_id, clinician_id=provider.actor_uid,
-            purpose="EMERGENCY", hospital_id=str(provider.hospital_id), session_binding="session-abc",
+            token=token,
+            patient_id=patient_id,
+            clinician_id=provider.actor_uid,
+            purpose="EMERGENCY",
+            hospital_id=str(provider.hospital_id),
+            session_binding="session-abc",
         )
         assert capability_after is None
 
@@ -148,15 +181,27 @@ async def test_repeated_revoke_is_idempotent():
     provider = _provider()
     patient_id = str(uuid.uuid4())
 
-    with patch("app.services.consent_engine.get_consent_redis_client", return_value=redis), \
-         patch("app.services.consent_engine.append_audit_log", AsyncMock(return_value=True)), \
-         patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock(return_value=None)):
-
+    with (
+        patch(
+            "app.services.consent_engine.get_consent_redis_client", return_value=redis
+        ),
+        patch(
+            "app.services.consent_engine.append_audit_log", AsyncMock(return_value=True)
+        ),
+        patch(
+            "app.services.consent_engine.append_audit_log_or_503",
+            AsyncMock(return_value=None),
+        ),
+    ):
         token = await consent_engine.issue_break_glass(
-            patient_id=patient_id, clinician_id=provider.actor_uid,
-            reason_code="LIFE_THREATENING_EMERGENCY", db=db,
-            hospital_id=str(provider.hospital_id), scope=["allergies"],
-            reason_code_version="v1", session_binding="session-abc",
+            patient_id=patient_id,
+            clinician_id=provider.actor_uid,
+            reason_code="LIFE_THREATENING_EMERGENCY",
+            db=db,
+            hospital_id=str(provider.hospital_id),
+            scope=["allergies"],
+            reason_code_version="v1",
+            session_binding="session-abc",
             mfa_verified_at=datetime.now(timezone.utc),
         )
 
@@ -166,7 +211,10 @@ async def test_repeated_revoke_is_idempotent():
         await consent_engine.revoke(db=db, token=token, reason="second revoke")
 
         capability = await consent_engine.validate(
-            token=token, patient_id=patient_id, clinician_id=provider.actor_uid, purpose="EMERGENCY",
+            token=token,
+            patient_id=patient_id,
+            clinician_id=provider.actor_uid,
+            purpose="EMERGENCY",
         )
         assert capability is None
 
@@ -198,8 +246,15 @@ async def test_revoke_route_rejects_non_break_glass_token():
     app.dependency_overrides[require_role("clinician")] = lambda: provider
 
     try:
-        with patch("app.api.v2.consent_routes.append_audit_log_or_503", AsyncMock(return_value=None)), \
-             patch("app.api.v2.consent_routes.consent_engine.revoke", AsyncMock()) as mock_revoke:
+        with (
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.api.v2.consent_routes.consent_engine.revoke", AsyncMock()
+            ) as mock_revoke,
+        ):
             client = TestClient(app)
             response = client.post(
                 "/api/v2/consent/break-glass/revoke",
@@ -230,12 +285,22 @@ async def test_revoke_forged_token_is_rejected():
     app.dependency_overrides[require_role("clinician")] = lambda: provider
 
     try:
-        with patch("app.api.v2.consent_routes.append_audit_log_or_503", AsyncMock(return_value=None)), \
-             patch("app.api.v2.consent_routes.consent_engine.revoke", AsyncMock()) as mock_revoke:
+        with (
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.api.v2.consent_routes.consent_engine.revoke", AsyncMock()
+            ) as mock_revoke,
+        ):
             client = TestClient(app)
             response = client.post(
                 "/api/v2/consent/break-glass/revoke",
-                json={"consent_token": "forged-token-123", "revocation_reason": "testing"},
+                json={
+                    "consent_token": "forged-token-123",
+                    "revocation_reason": "testing",
+                },
             )
             assert response.status_code in (400, 403, 404)
             mock_revoke.assert_not_called()
@@ -257,15 +322,25 @@ async def test_revoke_audit_events_are_recorded():
         recorded_events.append(event_type)
         return True
 
-    with patch("app.services.consent_engine.get_consent_redis_client", return_value=redis), \
-         patch("app.services.consent_engine.append_audit_log", fake_append_audit_log), \
-         patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock(return_value=None)):
-
+    with (
+        patch(
+            "app.services.consent_engine.get_consent_redis_client", return_value=redis
+        ),
+        patch("app.services.consent_engine.append_audit_log", fake_append_audit_log),
+        patch(
+            "app.services.consent_engine.append_audit_log_or_503",
+            AsyncMock(return_value=None),
+        ),
+    ):
         token = await consent_engine.issue_break_glass(
-            patient_id=patient_id, clinician_id=provider.actor_uid,
-            reason_code="LIFE_THREATENING_EMERGENCY", db=db,
-            hospital_id=str(provider.hospital_id), scope=["allergies"],
-            reason_code_version="v1", session_binding="session-abc",
+            patient_id=patient_id,
+            clinician_id=provider.actor_uid,
+            reason_code="LIFE_THREATENING_EMERGENCY",
+            db=db,
+            hospital_id=str(provider.hospital_id),
+            scope=["allergies"],
+            reason_code_version="v1",
+            session_binding="session-abc",
             mfa_verified_at=datetime.now(timezone.utc),
         )
         await consent_engine.revoke(db=db, token=token, reason="done")

@@ -11,16 +11,21 @@ from app.models.pipeline import ExtractedFieldRecord
 
 ROOT = Path(__file__).resolve().parents[2]
 ROUTES = (ROOT / "app/api/v2/pipeline_routes.py").read_text(encoding="utf-8")
-ORCHESTRATOR = (ROOT / "app/services/pipeline_orchestrator.py").read_text(encoding="utf-8")
+ORCHESTRATOR = (ROOT / "app/services/pipeline_orchestrator.py").read_text(
+    encoding="utf-8"
+)
 
 
 @pytest.mark.integration
-def test_upload_requires_real_multipart_document(test_client, admin_headers, admin_context):
+def test_upload_requires_real_multipart_document(
+    test_client, admin_headers, admin_context
+):
     app.dependency_overrides[get_current_provider] = lambda: admin_context
     try:
         response = test_client.post(
             "/api/v2/pipeline/documents/upload?patient_id=11111111-1111-4111-8111-111111111111",
-            json={}, headers=admin_headers,
+            json={},
+            headers=admin_headers,
         )
         assert response.status_code == 422
     finally:
@@ -48,5 +53,6 @@ def test_pipeline_derives_patient_and_tenant_from_locked_job():
 
 def test_orchestrator_has_identity_quarantine_and_retry_quarantine():
     assert 'job.status = "identity_mismatch"' in ORCHESTRATOR
-    assert '"quarantined" if exhausted' in ORCHESTRATOR
+    assert '"quarantined"' in ORCHESTRATOR
+    assert "if exhausted" in ORCHESTRATOR
     assert 'status="needs_review"' in ORCHESTRATOR

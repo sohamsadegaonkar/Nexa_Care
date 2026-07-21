@@ -24,6 +24,7 @@ class PushDeliveryResult:
     message_id: str | None = None
     error: str | None = None
 
+
 class PushNotificationService:
     """Delivers notifications to Expo/FCM/APNS."""
 
@@ -45,11 +46,11 @@ class PushNotificationService:
             "data": {
                 "type": "consent_approval",
                 "request_id": request_id,
-                "deep_link": f"nexacare://patient/consent-request?requestId={request_id}"
+                "deep_link": f"nexacare://patient/consent-request?requestId={request_id}",
             },
             "sound": "default",
             "priority": "high",
-            "channelId": "consent-requests"
+            "channelId": "consent-requests",
         }
 
         patient_ref = _safe_ref(patient_id)
@@ -58,7 +59,7 @@ class PushNotificationService:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.post(EXPO_PUSH_API_URL, json=payload)
-                
+
                 if response.status_code == 200:
                     result_data = response.json()
                     # A single message returns one ticket object; batch sends
@@ -67,17 +68,43 @@ class PushNotificationService:
                     ticket = (
                         raw_data[0]
                         if isinstance(raw_data, list) and raw_data
-                        else raw_data if isinstance(raw_data, dict) else {}
+                        else raw_data
+                        if isinstance(raw_data, dict)
+                        else {}
                     )
                     if ticket.get("status") == "ok":
-                        logger.info("push_notification_sent", extra={"patient_ref": patient_ref, "request_ref": request_ref})
-                        return PushDeliveryResult(success=True, message_id=ticket.get("id"))
+                        logger.info(
+                            "push_notification_sent",
+                            extra={
+                                "patient_ref": patient_ref,
+                                "request_ref": request_ref,
+                            },
+                        )
+                        return PushDeliveryResult(
+                            success=True, message_id=ticket.get("id")
+                        )
                     else:
-                        logger.error("push_notification_delivery_failed", extra={"patient_ref": patient_ref, "request_ref": request_ref})
-                        return PushDeliveryResult(success=False, error="PUSH_PROVIDER_REJECTED")
+                        logger.error(
+                            "push_notification_delivery_failed",
+                            extra={
+                                "patient_ref": patient_ref,
+                                "request_ref": request_ref,
+                            },
+                        )
+                        return PushDeliveryResult(
+                            success=False, error="PUSH_PROVIDER_REJECTED"
+                        )
                 else:
-                    logger.error("expo_push_api_error", extra={"request_ref": request_ref, "status_code": response.status_code})
-                    return PushDeliveryResult(success=False, error=f"HTTP {response.status_code}")
+                    logger.error(
+                        "expo_push_api_error",
+                        extra={
+                            "request_ref": request_ref,
+                            "status_code": response.status_code,
+                        },
+                    )
+                    return PushDeliveryResult(
+                        success=False, error=f"HTTP {response.status_code}"
+                    )
 
         except Exception as exc:
             log_safe_exception(

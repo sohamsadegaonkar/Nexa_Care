@@ -34,6 +34,7 @@ VALID_RISK_LEVELS = {"LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "CRITICAL_RISK"}
 
 class IngestionResult(BaseModel):
     """Result summary returned after ingesting a pipeline extraction job."""
+
     job_id: str
     patient_id: str
     ingested_count: int
@@ -48,7 +49,9 @@ def _parse_uuid(id_str: str) -> uuid.UUID:
     try:
         return uuid.UUID(str(id_str))
     except (TypeError, ValueError) as exc:
-        raise HTTPException(status_code=422, detail={"error_code": "INVALID_UUID"}) from exc
+        raise HTTPException(
+            status_code=422, detail={"error_code": "INVALID_UUID"}
+        ) from exc
 
 
 async def ingest_extracted_fields(
@@ -77,11 +80,15 @@ async def ingest_extracted_fields(
             timeline_events_created=0,
         )
 
-    stmt_existing = select(TimelineEvent).where(
-        TimelineEvent.patient_id == pid_uuid,
-        TimelineEvent.event_ref_id == job_uuid,
-        TimelineEvent.source == "ai_extracted",
-    ).limit(1)
+    stmt_existing = (
+        select(TimelineEvent)
+        .where(
+            TimelineEvent.patient_id == pid_uuid,
+            TimelineEvent.event_ref_id == job_uuid,
+            TimelineEvent.source == "ai_extracted",
+        )
+        .limit(1)
+    )
     res_existing = await db.execute(stmt_existing)
     if res_existing.scalar_one_or_none() is not None:
         return IngestionResult(
@@ -105,9 +112,15 @@ async def ingest_extracted_fields(
 
     for field in approved_fields:
         if field.field_id is None or field.job_id is None:
-            raise HTTPException(status_code=400, detail="Provenance error: field_id and job_id are required")
+            raise HTTPException(
+                status_code=400,
+                detail="Provenance error: field_id and job_id are required",
+            )
         if _parse_uuid(field.job_id) != job_uuid:
-            raise HTTPException(status_code=409, detail="Extracted field job_id does not match commit job")
+            raise HTTPException(
+                status_code=409,
+                detail="Extracted field job_id does not match commit job",
+            )
         # 2. Status adjudication enforcement: reject unreviewed or rejected AI output
         if str(field.status).lower() not in {"approved", "edited"}:
             raise HTTPException(
@@ -116,7 +129,11 @@ async def ingest_extracted_fields(
             )
 
         # 3. Provenance enforcement (Invariant 3)
-        if field.confidence is None or not isinstance(field.confidence, (int, float)) or not (0.0 <= field.confidence <= 1.0):
+        if (
+            field.confidence is None
+            or not isinstance(field.confidence, (int, float))
+            or not (0.0 <= field.confidence <= 1.0)
+        ):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Provenance error: field {field.field_name} lacks valid numeric confidence.",
@@ -133,7 +150,10 @@ async def ingest_extracted_fields(
             )
 
         if not field.source_document_id:
-            raise HTTPException(status_code=400, detail="Provenance error: source_document_id is required")
+            raise HTTPException(
+                status_code=400,
+                detail="Provenance error: source_document_id is required",
+            )
         doc_id_str = field.source_document_id
         doc_uuid = _parse_uuid(doc_id_str)
 
@@ -141,9 +161,23 @@ async def ingest_extracted_fields(
         val = field.corrected_value or field.normalized_value or field.raw_value or ""
 
         # Route by field_name
-        if fname in {"bp", "sugar", "heart_rate", "blood_pressure", "temp", "temperature", "spo2", "sp_o2", "systolic_bp", "diastolic_bp"}:
+        if fname in {
+            "bp",
+            "sugar",
+            "heart_rate",
+            "blood_pressure",
+            "temp",
+            "temperature",
+            "spo2",
+            "sp_o2",
+            "systolic_bp",
+            "diastolic_bp",
+        }:
             if not field.units:
-                raise HTTPException(status_code=409, detail="Clinically material vital units must be adjudicated before commit")
+                raise HTTPException(
+                    status_code=409,
+                    detail="Clinically material vital units must be adjudicated before commit",
+                )
             v = Vitals(
                 patient_id=pid_uuid,
                 type=field.field_name.upper(),
@@ -159,17 +193,29 @@ async def ingest_extracted_fields(
             vitals_cnt += 1
             target_model = "Vitals"
         elif fname in {"medication", "prescription", "drug", "rx"}:
-            raise HTTPException(status_code=409, detail="Medication extraction requires structured strength and frequency adjudication")
+            raise HTTPException(
+                status_code=409,
+                detail="Medication extraction requires structured strength and frequency adjudication",
+            )
         elif fname in {"allergy", "allergen"}:
-            raise HTTPException(status_code=409, detail="Allergy extraction requires structured allergen and severity adjudication")
+            raise HTTPException(
+                status_code=409,
+                detail="Allergy extraction requires structured allergen and severity adjudication",
+            )
         elif fname in {"lab_result", "hba1c", "glucose", "fasting_glucose"}:
             if not field.units:
-                raise HTTPException(status_code=409, detail="Clinically material lab units must be adjudicated before commit")
+                raise HTTPException(
+                    status_code=409,
+                    detail="Clinically material lab units must be adjudicated before commit",
+                )
             reference = None
             if field.validation_result is not None:
                 reference = getattr(field.validation_result, "reference_range", None)
             if reference is None:
-                raise HTTPException(status_code=409, detail="Lab reference range must be adjudicated before commit")
+                raise HTTPException(
+                    status_code=409,
+                    detail="Lab reference range must be adjudicated before commit",
+                )
             lab = LabResult(
                 patient_id=pid_uuid,
                 test_name=field.field_name,
@@ -187,7 +233,10 @@ async def ingest_extracted_fields(
             labs_cnt += 1
             target_model = "LabResult"
         else:
-            raise HTTPException(status_code=409, detail=f"Unsupported canonical field type: {field.field_name}")
+            raise HTTPException(
+                status_code=409,
+                detail=f"Unsupported canonical field type: {field.field_name}",
+            )
 
         # Create TimelineEvent for ingested field
         te = TimelineEvent(

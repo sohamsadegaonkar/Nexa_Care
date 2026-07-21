@@ -63,11 +63,17 @@ def _decode(raw: object) -> dict | None:
 def _scope_allows(scope: str, requested_category: str) -> bool:
     clinical_reads = {"clinical_summary", "timeline_view"}
     if scope == "full":
-        return requested_category in clinical_reads | {"full", "policy_read", "policy_update"}
+        return requested_category in clinical_reads | {
+            "full",
+            "policy_read",
+            "policy_update",
+        }
     return scope == "clinical" and requested_category in clinical_reads
 
 
-async def issue_from_approved_request(*, request_data: dict) -> tuple[str, ApprovedAccessCapability]:
+async def issue_from_approved_request(
+    *, request_data: dict
+) -> tuple[str, ApprovedAccessCapability]:
     """Rotate the request's capability so retries leave only one active grant."""
     now = datetime.now(timezone.utc)
     expires_at = datetime.fromisoformat(str(request_data["access_expires_at"]))
@@ -96,7 +102,9 @@ async def issue_from_approved_request(*, request_data: dict) -> tuple[str, Appro
         lock_key = f"{CLAIM_LOCK_PREFIX}{payload['request_id']}"
         lock_value = secrets.token_hex(16)
         if not await redis.set(lock_key, lock_value, nx=True, ex=5):
-            raise ApprovedAccessClaimInProgress("An access claim is already in progress")
+            raise ApprovedAccessClaimInProgress(
+                "An access claim is already in progress"
+            )
         try:
             prior_digest = await redis.get(_claim_key(payload["request_id"]))
             if isinstance(prior_digest, bytes):
@@ -108,12 +116,16 @@ async def issue_from_approved_request(*, request_data: dict) -> tuple[str, Appro
         finally:
             await redis.eval(
                 "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
-                1, lock_key, lock_value,
+                1,
+                lock_key,
+                lock_value,
             )
     except ApprovedAccessClaimInProgress:
         raise
     except Exception as exc:
-        raise ApprovedAccessStoreUnavailable("Approved access store is unavailable") from exc
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
 
     return token, ApprovedAccessCapability(
         patient_id=payload["patient_id"],
@@ -139,7 +151,9 @@ async def invalidate_request(request_id: str) -> None:
             await redis.delete(_capability_key(digest))
         await redis.delete(_claim_key(request_id))
     except Exception as exc:
-        raise ApprovedAccessStoreUnavailable("Approved access store is unavailable") from exc
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
 
 
 async def validate(
@@ -163,7 +177,9 @@ async def validate(
             active_digest = active_digest.decode("utf-8")
         request_data = _decode(await redis.get(f"consent_request:{request_id}"))
     except Exception as exc:
-        raise ApprovedAccessStoreUnavailable("Approved access store is unavailable") from exc
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
 
     now = datetime.now(timezone.utc)
     try:
@@ -178,13 +194,27 @@ async def validate(
         "hospital_id": hospital_id,
         "patient_id": patient_id,
     }
-    if active_digest != digest or request_data is None or request_data.get("status") != "approved":
+    if (
+        active_digest != digest
+        or request_data is None
+        or request_data.get("status") != "approved"
+    ):
         return None
-    if now >= expires_at or any(str(payload.get(k)) != str(v) for k, v in expected.items()):
+    if now >= expires_at or any(
+        str(payload.get(k)) != str(v) for k, v in expected.items()
+    ):
         return None
-    if any(str(request_data.get(k)) != str(payload.get(k)) for k in (
-        "request_id", "provider_id", "hospital_id", "patient_id", "purpose", "scope"
-    )):
+    if any(
+        str(request_data.get(k)) != str(payload.get(k))
+        for k in (
+            "request_id",
+            "provider_id",
+            "hospital_id",
+            "patient_id",
+            "purpose",
+            "scope",
+        )
+    ):
         return None
     if not _scope_allows(str(payload.get("scope")), requested_category):
         return None

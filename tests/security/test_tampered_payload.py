@@ -11,12 +11,17 @@ from app.models.extracted_field import ExtractedField
 ROOT = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.parametrize("metadata", [
-    {}, {"confidence": 0.9}, {"risk_level": "LOW_RISK"},
-    {"confidence": -1, "risk_level": "LOW_RISK"},
-    {"confidence": 2, "risk_level": "LOW_RISK"},
-    {"confidence": 0.9, "risk_level": "INJECTED"},
-])
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {},
+        {"confidence": 0.9},
+        {"risk_level": "LOW_RISK"},
+        {"confidence": -1, "risk_level": "LOW_RISK"},
+        {"confidence": 2, "risk_level": "LOW_RISK"},
+        {"confidence": 0.9, "risk_level": "INJECTED"},
+    ],
+)
 def test_tampered_extraction_metadata_is_rejected(metadata):
     with pytest.raises(HTTPException):
         _validate_commit_field_metadata(metadata)
@@ -43,7 +48,9 @@ def test_extracted_field_has_no_placeholder_identity_defaults():
 
 
 def test_signed_payload_has_no_delimiter_ambiguity():
-    backend = (ROOT / "app/services/signed_approval_verifier.py").read_text(encoding="utf-8")
+    backend = (ROOT / "app/services/signed_approval_verifier.py").read_text(
+        encoding="utf-8"
+    )
     assert "sort_keys=True" in backend
-    assert "separators=(\",\", \":\")" in backend
+    assert 'separators=(",", ":")' in backend
     assert "nexa-consent-v2" in backend

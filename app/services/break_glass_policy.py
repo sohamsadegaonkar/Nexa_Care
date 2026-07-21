@@ -40,9 +40,15 @@ class BreakGlassReasonCode(str, Enum):
 # authoritative data source. Emergency contacts are intentionally absent --
 # there is no encrypted, verified emergency-contact source in this
 # repository yet. Add it here only once one exists.
-BREAK_GLASS_CATEGORIES_BY_REASON: dict[BreakGlassReasonCode, frozenset[ClinicalCategory]] = {
+BREAK_GLASS_CATEGORIES_BY_REASON: dict[
+    BreakGlassReasonCode, frozenset[ClinicalCategory]
+] = {
     BreakGlassReasonCode.UNCONSCIOUS_PATIENT: frozenset(
-        {ClinicalCategory.ALLERGIES, ClinicalCategory.ACTIVE_MEDICATIONS, ClinicalCategory.VITALS}
+        {
+            ClinicalCategory.ALLERGIES,
+            ClinicalCategory.ACTIVE_MEDICATIONS,
+            ClinicalCategory.VITALS,
+        }
     ),
     BreakGlassReasonCode.LIFE_THREATENING_EMERGENCY: frozenset(
         {
@@ -55,7 +61,11 @@ BREAK_GLASS_CATEGORIES_BY_REASON: dict[BreakGlassReasonCode, frozenset[ClinicalC
         }
     ),
     BreakGlassReasonCode.PATIENT_UNABLE_TO_CONSENT: frozenset(
-        {ClinicalCategory.ALLERGIES, ClinicalCategory.ACTIVE_MEDICATIONS, ClinicalCategory.VITALS}
+        {
+            ClinicalCategory.ALLERGIES,
+            ClinicalCategory.ACTIVE_MEDICATIONS,
+            ClinicalCategory.VITALS,
+        }
     ),
     BreakGlassReasonCode.CARDIAC_ARREST: frozenset(
         {
@@ -68,7 +78,11 @@ BREAK_GLASS_CATEGORIES_BY_REASON: dict[BreakGlassReasonCode, frozenset[ClinicalC
         }
     ),
     BreakGlassReasonCode.ANAPHYLAXIS: frozenset(
-        {ClinicalCategory.ALLERGIES, ClinicalCategory.ACTIVE_MEDICATIONS, ClinicalCategory.VITALS}
+        {
+            ClinicalCategory.ALLERGIES,
+            ClinicalCategory.ACTIVE_MEDICATIONS,
+            ClinicalCategory.VITALS,
+        }
     ),
     BreakGlassReasonCode.SURGICAL_EMERGENCY: frozenset(
         {
@@ -81,13 +95,25 @@ BREAK_GLASS_CATEGORIES_BY_REASON: dict[BreakGlassReasonCode, frozenset[ClinicalC
         }
     ),
     BreakGlassReasonCode.PATIENT_INCAPACITATED: frozenset(
-        {ClinicalCategory.ALLERGIES, ClinicalCategory.ACTIVE_MEDICATIONS, ClinicalCategory.VITALS}
+        {
+            ClinicalCategory.ALLERGIES,
+            ClinicalCategory.ACTIVE_MEDICATIONS,
+            ClinicalCategory.VITALS,
+        }
     ),
     BreakGlassReasonCode.SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE: frozenset(
-        {ClinicalCategory.ALLERGIES, ClinicalCategory.ACTIVE_MEDICATIONS, ClinicalCategory.VITALS}
+        {
+            ClinicalCategory.ALLERGIES,
+            ClinicalCategory.ACTIVE_MEDICATIONS,
+            ClinicalCategory.VITALS,
+        }
     ),
     BreakGlassReasonCode.OTHER_CLINICALLY_JUSTIFIED_EMERGENCY: frozenset(
-        {ClinicalCategory.ALLERGIES, ClinicalCategory.ACTIVE_MEDICATIONS, ClinicalCategory.VITALS}
+        {
+            ClinicalCategory.ALLERGIES,
+            ClinicalCategory.ACTIVE_MEDICATIONS,
+            ClinicalCategory.VITALS,
+        }
     ),
 }
 
@@ -118,7 +144,9 @@ def approved_break_glass_scope(
 
     approved = BREAK_GLASS_CATEGORIES_BY_REASON.get(reason_code)
     if not approved:
-        raise ValueError("Break-glass reason is not mapped to an approved category set.")
+        raise ValueError(
+            "Break-glass reason is not mapped to an approved category set."
+        )
 
     categories = narrow_categories(approved, requested_scope)
     return [category.value for category in categories]

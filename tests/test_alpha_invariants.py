@@ -38,14 +38,20 @@ def test_legacy_push_decision_route_is_absent():
 
 
 def test_signed_approval_binds_canonical_v2_payload():
-    backend = (ROOT / "app/services/signed_approval_verifier.py").read_text(encoding="utf-8")
-    frontend = (ROOT / "nexa-client/packages/app/services/deviceKeys.ts").read_text(encoding="utf-8")
+    backend = (ROOT / "app/services/signed_approval_verifier.py").read_text(
+        encoding="utf-8"
+    )
+    frontend = (ROOT / "nexa-client/packages/app/services/deviceKeys.ts").read_text(
+        encoding="utf-8"
+    )
     assert "nexa-consent-v2" in backend and "nexa-consent-v2" in frontend
     assert "sort_keys=True" in backend
 
 
 def test_browser_provider_auth_has_no_javascript_token_storage():
-    code = (ROOT / "nexa-client/packages/app/features/doctor/ProviderAuthContext.tsx").read_text(encoding="utf-8")
+    code = (
+        ROOT / "nexa-client/packages/app/features/doctor/ProviderAuthContext.tsx"
+    ).read_text(encoding="utf-8")
     assert "sessionStorage" not in code and "localStorage" not in code
     assert "providerWebSession" in code and "providerWebLogout" in code
 

@@ -57,15 +57,37 @@ def _make_provider_context(provider_id=None) -> ProviderContext:
 
 def _patch_stack(fake_redis, fake_sync_redis):
     stack = ExitStack()
-    stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-    stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
-    stack.enter_context(patch("app.core.consent_gate.validate_approved_access", return_value=None))
-    stack.enter_context(patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis))
+    stack.enter_context(
+        patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+    )
+    stack.enter_context(
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=fake_redis,
+        )
+    )
+    stack.enter_context(
+        patch("app.core.consent_gate.validate_approved_access", return_value=None)
+    )
+    stack.enter_context(
+        patch(
+            "app.services.provider_auth_service.get_redis_client",
+            return_value=fake_sync_redis,
+        )
+    )
     mock_supabase = MagicMock()
-    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
-    stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+        MagicMock()
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={}
+    )
+    stack.enter_context(
+        patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+    )
     for mod in (
         "app.observability.audit_ledger",
         "app.core.consent_gate",
@@ -73,8 +95,12 @@ def _patch_stack(fake_redis, fake_sync_redis):
         "app.services.consent_engine",
     ):
         stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-    stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-    stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
+    stack.enter_context(
+        patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+    )
+    stack.enter_context(
+        patch("app.services.consent_engine.append_audit_log", return_value=None)
+    )
     return stack
 
 
@@ -120,32 +146,38 @@ def test_cross_doctor_consent_rejected_by_validate(fake_redis):
 
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
-    cap_data = json.dumps({
-        "patient_id": patient_id,
-        "clinician_id": doctor_a,  # bound to Doctor A
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_id,
+            "clinician_id": doctor_a,  # bound to Doctor A
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() + 3600
 
     # Doctor B tries to use Doctor A's token
-    result = asyncio.run(validate(
-        token=token_raw,
-        patient_id=patient_id,
-        clinician_id=doctor_b,  # WRONG clinician
-        purpose="TREATMENT",
-    ))
-    assert result is None, (
-        "Cross-doctor consent reuse must be rejected by validate()"
+    result = asyncio.run(
+        validate(
+            token=token_raw,
+            patient_id=patient_id,
+            clinician_id=doctor_b,  # WRONG clinician
+            purpose="TREATMENT",
+        )
     )
+    assert result is None, "Cross-doctor consent reuse must be rejected by validate()"
 
 
 def test_cross_doctor_consent_rejected_at_gate(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-04b: Doctor B uses Doctor A's consent token → 403 from require_consent."""
     patient_id = str(uuid.uuid4())
@@ -163,15 +195,17 @@ def test_cross_doctor_consent_rejected_at_gate(
     # Seed consent for Doctor A
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
-    cap_data = json.dumps({
-        "patient_id": patient_id,
-        "clinician_id": str(doctor_a),  # Doctor A
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_id,
+            "clinician_id": str(doctor_a),  # Doctor A
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() + 3600
 
@@ -181,9 +215,9 @@ def test_cross_doctor_consent_rejected_at_gate(
             f"/api/v2/patient/{patient_id}/summary",
             headers={"X-Consent-Token": token_raw},
         )
-        assert resp.status_code == 403, (
-            f"Cross-doctor consent reuse should return 403, got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Cross-doctor consent reuse should return 403, got {resp.status_code}"
 
 
 def test_consent_wrong_patient_rejected_by_validate(fake_redis):
@@ -198,32 +232,38 @@ def test_consent_wrong_patient_rejected_by_validate(fake_redis):
 
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
-    cap_data = json.dumps({
-        "patient_id": patient_a,  # bound to Patient A
-        "clinician_id": doctor,
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_a,  # bound to Patient A
+            "clinician_id": doctor,
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() + 3600
 
     # Try to validate for Patient B
-    result = asyncio.run(validate(
-        token=token_raw,
-        patient_id=patient_b,  # WRONG patient
-        clinician_id=doctor,
-        purpose="TREATMENT",
-    ))
-    assert result is None, (
-        "Consent for wrong patient must be rejected by validate()"
+    result = asyncio.run(
+        validate(
+            token=token_raw,
+            patient_id=patient_b,  # WRONG patient
+            clinician_id=doctor,
+            purpose="TREATMENT",
+        )
     )
+    assert result is None, "Consent for wrong patient must be rejected by validate()"
 
 
 def test_cross_doctor_reuse_audited(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-04d: Cross-doctor consent reuse attempt produces audit event.
 
@@ -245,15 +285,17 @@ def test_cross_doctor_reuse_audited(
 
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
-    cap_data = json.dumps({
-        "patient_id": patient_id,
-        "clinician_id": str(doctor_a),
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_id,
+            "clinician_id": str(doctor_a),
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() + 3600
 
@@ -263,6 +305,6 @@ def test_cross_doctor_reuse_audited(
             headers={"X-Consent-Token": token_raw},
         )
         # The rejection proves the defense worked; audit is best-effort
-        assert resp.status_code == 403, (
-            f"Cross-doctor consent should be rejected (403), got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Cross-doctor consent should be rejected (403), got {resp.status_code}"

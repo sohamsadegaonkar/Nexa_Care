@@ -33,9 +33,18 @@ SIGNED_APPROVAL_PROTOCOL_VERSION = "nexa-consent-v2"
 
 
 def canonical_signed_approval_payload(
-    *, request_id: str, patient_id: str, provider_id: str,
-    challenge_nonce: str, decision: str, purpose: str, scope: str,
-    issued_at: str, expires_at: str, access_duration: int, device_id: str,
+    *,
+    request_id: str,
+    patient_id: str,
+    provider_id: str,
+    challenge_nonce: str,
+    decision: str,
+    purpose: str,
+    scope: str,
+    issued_at: str,
+    expires_at: str,
+    access_duration: int,
+    device_id: str,
 ) -> bytes:
     """Serialize every security-relevant approval field as canonical JSON."""
     payload = {
@@ -52,7 +61,9 @@ def canonical_signed_approval_payload(
         "request_id": request_id,
         "scope": scope,
     }
-    return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,25 +102,41 @@ class SignedApprovalVerifier:
         try:
             pid_uuid = uuid.UUID(patient_id)
         except ValueError:
-            return await self._fail(start_time, patient_id, "Invalid patient identifier")
+            return await self._fail(
+                start_time, patient_id, "Invalid patient identifier"
+            )
 
         # 1. Check expiration timestamp
         try:
             exp_dt = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
             if exp_dt.tzinfo is None:
-                return await self._fail(start_time, patient_id, "Invalid challenge expiry")
+                return await self._fail(
+                    start_time, patient_id, "Invalid challenge expiry"
+                )
             if datetime.now(timezone.utc) > exp_dt:
                 return await self._fail(start_time, patient_id, "Challenge expired")
         except Exception:
             return await self._fail(start_time, patient_id, "Invalid challenge expiry")
 
-        if not all((provider_id, scope, purpose, issued_at, device_id)) or access_duration is None:
-            return await self._fail(start_time, patient_id, "Incomplete signed approval context")
+        if (
+            not all((provider_id, scope, purpose, issued_at, device_id))
+            or access_duration is None
+        ):
+            return await self._fail(
+                start_time, patient_id, "Incomplete signed approval context"
+            )
         signing_input = canonical_signed_approval_payload(
-            request_id=request_id, patient_id=patient_id, provider_id=provider_id,
-            challenge_nonce=challenge_nonce, decision=decision, purpose=purpose,
-            scope=scope, issued_at=issued_at, expires_at=expires_at,
-            access_duration=access_duration, device_id=device_id,
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision=decision,
+            purpose=purpose,
+            scope=scope,
+            issued_at=issued_at,
+            expires_at=expires_at,
+            access_duration=access_duration,
+            device_id=device_id,
         )
 
         # 3. Decode base64 signature
@@ -124,7 +151,9 @@ class SignedApprovalVerifier:
                 status="FAILED",
                 metadata={"reason": "invalid_base64_signature"},
             )
-            return await self._fail(start_time, patient_id, "Signature verification failed")
+            return await self._fail(
+                start_time, patient_id, "Signature verification failed"
+            )
 
         # 4. Fetch patient's active device public keys
         stmt = select(PatientDeviceKey).where(
@@ -136,7 +165,9 @@ class SignedApprovalVerifier:
             try:
                 stmt = stmt.where(PatientDeviceKey.id == uuid.UUID(device_id))
             except ValueError:
-                return await self._fail(start_time, patient_id, "Signature verification failed")
+                return await self._fail(
+                    start_time, patient_id, "Signature verification failed"
+                )
         res = await db.execute(stmt)
         keys = res.scalars().all()
 
@@ -149,7 +180,9 @@ class SignedApprovalVerifier:
                 status="FAILED",
                 metadata={"reason": "no_enrolled_active_devices"},
             )
-            return await self._fail(start_time, patient_id, "Signature verification failed")
+            return await self._fail(
+                start_time, patient_id, "Signature verification failed"
+            )
 
         # 5. Verify against each active key
         matched_device_id = None
@@ -179,12 +212,18 @@ class SignedApprovalVerifier:
                 status="FAILED",
                 metadata={"reason": "key_mismatch"},
             )
-            return await self._fail(start_time, patient_id, "Signature verification failed")
+            return await self._fail(
+                start_time, patient_id, "Signature verification failed"
+            )
 
         await self._pad_time(start_time)
-        return SignedApprovalResult(verified=True, patient_id=patient_id, matched_device_id=matched_device_id)
+        return SignedApprovalResult(
+            verified=True, patient_id=patient_id, matched_device_id=matched_device_id
+        )
 
-    async def _fail(self, start_time: float, patient_id: str, reason: str) -> SignedApprovalResult:
+    async def _fail(
+        self, start_time: float, patient_id: str, reason: str
+    ) -> SignedApprovalResult:
         await self._pad_time(start_time)
         return SignedApprovalResult(verified=False, patient_id=patient_id, error=reason)
 

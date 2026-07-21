@@ -2,6 +2,7 @@ from sqlalchemy import Column, ForeignKey, Integer, String, UniqueConstraint, te
 from sqlalchemy.dialects.postgresql import UUID
 from app.models.base import Base
 
+
 class PatientPolicy(Base):
     __tablename__ = "patient_policies"
     __table_args__ = (

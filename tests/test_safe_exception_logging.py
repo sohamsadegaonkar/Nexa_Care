@@ -26,11 +26,18 @@ class _Payload(BaseModel):
     patient_uuid: int
 
 
-@pytest.mark.parametrize("exception_class,subsystem,expected_code", [
-    (type("DatabaseError", (Exception,), {}), "database", "DATABASE_OPERATION_FAILED"),
-    (type("RedisError", (Exception,), {}), "redis", "REDIS_OPERATION_FAILED"),
-    (type("KMSFailure", (Exception,), {}), "kms", "KMS_OPERATION_FAILED"),
-])
+@pytest.mark.parametrize(
+    "exception_class,subsystem,expected_code",
+    [
+        (
+            type("DatabaseError", (Exception,), {}),
+            "database",
+            "DATABASE_OPERATION_FAILED",
+        ),
+        (type("RedisError", (Exception,), {}), "redis", "REDIS_OPERATION_FAILED"),
+        (type("KMSFailure", (Exception,), {}), "kms", "KMS_OPERATION_FAILED"),
+    ],
+)
 def test_final_log_record_never_contains_exception_values(
     caplog: pytest.LogCaptureFixture,
     exception_class: type[Exception],
@@ -53,7 +60,9 @@ def test_final_log_record_never_contains_exception_values(
         assert sensitive not in emitted
 
 
-def test_validation_log_has_only_safe_location_rule_and_message(caplog: pytest.LogCaptureFixture) -> None:
+def test_validation_log_has_only_safe_location_rule_and_message(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     with pytest.raises(ValidationError) as raised:
         _Payload(patient_uuid="access-token-secret")
     with caplog.at_level(logging.WARNING, logger="safe-validation-test"):
@@ -71,7 +80,9 @@ def test_validation_log_has_only_safe_location_rule_and_message(caplog: pytest.L
     assert "access-token-secret" not in caplog.records[-1].getMessage()
 
 
-def test_nested_chained_and_long_exception_text_is_not_emitted(caplog: pytest.LogCaptureFixture) -> None:
+def test_nested_chained_and_long_exception_text_is_not_emitted(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     attacker_text = "Asha Rao " + "access-token-secret" * 10000
     try:
         try:

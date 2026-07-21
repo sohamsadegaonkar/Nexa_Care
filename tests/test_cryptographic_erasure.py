@@ -16,10 +16,19 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.crypto_kms import LocalEnvelopeProvider, PatientDataErased, EncryptionError
+from app.services.crypto_kms import (
+    LocalEnvelopeProvider,
+    PatientDataErased,
+    EncryptionError,
+)
 from app.models.dek_store import PatientDEKStore
 from app.models.erasure_tombstone import PatientErasureTombstone
-from app.models.provider_context import ProviderContext, ProviderIdentityContext, HospitalContext, AffiliationContext
+from app.models.provider_context import (
+    ProviderContext,
+    ProviderIdentityContext,
+    HospitalContext,
+    AffiliationContext,
+)
 from app.core.dependencies import get_db_session, get_provider_context, require_role
 from app.api.v2.patient_routes import get_kms_provider
 from app.models.provider import AffiliationType
@@ -67,7 +76,9 @@ class FakeDB:
         for row in self._pending:
             if isinstance(row, PatientDEKStore) and row not in self.dek_rows:
                 self.dek_rows.append(row)
-            elif isinstance(row, PatientErasureTombstone) and row not in self.tombstones:
+            elif (
+                isinstance(row, PatientErasureTombstone) and row not in self.tombstones
+            ):
                 self.tombstones.append(row)
         self._pending.clear()
 
@@ -115,20 +126,24 @@ def mock_admin():
     pid = uuid.uuid4()
     hid = uuid.uuid4()
     return ProviderContext(
-        provider=ProviderIdentityContext(provider_id=pid, display_name="Admin", contact_email="a@ex.com"),
+        provider=ProviderIdentityContext(
+            provider_id=pid, display_name="Admin", contact_email="a@ex.com"
+        ),
         hospital=HospitalContext(hospital_id=hid, facility_code="H", display_name="H"),
         affiliation=AffiliationContext(
             affiliation_id=uuid.uuid4(),
             affiliation_type=AffiliationType.PERMANENT,
             is_primary=True,
-            roles=["admin"]
-        )
+            roles=["admin"],
+        ),
     )
 
 
 @pytest.fixture
 def env_setup():
-    with patch.dict(os.environ, {"KEK_ROOT_SECRET": "test-root-secret-long-enough-32-chars-!!"}):
+    with patch.dict(
+        os.environ, {"KEK_ROOT_SECRET": "test-root-secret-long-enough-32-chars-!!"}
+    ):
         yield
 
 
@@ -143,8 +158,18 @@ async def test_erasure_happy_path(client, mock_db, mock_admin, env_setup):
     app.dependency_overrides[require_role("admin")] = lambda: mock_admin
     app.dependency_overrides[get_kms_provider] = lambda: kms
 
-    with patch("app.observability.audit_ledger.append_audit_log_or_503", new_callable=AsyncMock, return_value=None), \
-         patch("app.api.v2.patient_routes.append_audit_log_or_503", new_callable=AsyncMock, return_value=None):
+    with (
+        patch(
+            "app.observability.audit_ledger.append_audit_log_or_503",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.api.v2.patient_routes.append_audit_log_or_503",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
         payload = {"confirmation": f"ERASE-{patient_id}", "reason": "Patient request"}
         response = client.post(f"/api/v2/patient/{patient_id}/erase", json=payload)
 
@@ -162,7 +187,9 @@ async def test_erasure_happy_path(client, mock_db, mock_admin, env_setup):
             destroyed_row = MagicMock(spec=PatientDEKStore)
             destroyed_row.destroyed_at = datetime.now()
             mock_db.dek_rows.append(destroyed_row)
-            await kms.decrypt_field(patient_id, "name", MagicMock(dek_version=1), mock_db)
+            await kms.decrypt_field(
+                patient_id, "name", MagicMock(dek_version=1), mock_db
+            )
     app.dependency_overrides.clear()
 
 
@@ -190,7 +217,10 @@ async def test_erasure_confirmation_mismatch(client, mock_db, mock_admin, env_se
     app.dependency_overrides[get_kms_provider] = lambda: kms
     app.dependency_overrides[get_db_session] = lambda: mock_db
 
-    response = client.post(f"/api/v2/patient/{patient_id}/erase", json={"confirmation": "WRONG", "reason": "test"})
+    response = client.post(
+        f"/api/v2/patient/{patient_id}/erase",
+        json={"confirmation": "WRONG", "reason": "test"},
+    )
     assert response.status_code == 400
     app.dependency_overrides.clear()
 
@@ -198,7 +228,10 @@ async def test_erasure_confirmation_mismatch(client, mock_db, mock_admin, env_se
 @pytest.mark.asyncio
 async def test_erasure_unauthorized(client, mock_db, env_setup):
     patient_id = str(uuid.uuid4())
-    response = client.post(f"/api/v2/patient/{patient_id}/erase", json={"confirmation": f"ERASE-{patient_id}", "reason": "test"})
+    response = client.post(
+        f"/api/v2/patient/{patient_id}/erase",
+        json={"confirmation": f"ERASE-{patient_id}", "reason": "test"},
+    )
     assert response.status_code == 401
 
 
@@ -211,14 +244,30 @@ async def test_erasure_idempotent(client, mock_db, mock_admin, env_setup):
     app.dependency_overrides[require_role("admin")] = lambda: mock_admin
     app.dependency_overrides[get_kms_provider] = lambda: kms
 
-    with patch("app.observability.audit_ledger.append_audit_log_or_503", new_callable=AsyncMock, return_value=None), \
-         patch("app.api.v2.patient_routes.append_audit_log_or_503", new_callable=AsyncMock, return_value=None):
-        response = client.post(f"/api/v2/patient/{patient_id}/erase", json={"confirmation": f"ERASE-{patient_id}", "reason": "test"})
+    with (
+        patch(
+            "app.observability.audit_ledger.append_audit_log_or_503",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "app.api.v2.patient_routes.append_audit_log_or_503",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+    ):
+        response = client.post(
+            f"/api/v2/patient/{patient_id}/erase",
+            json={"confirmation": f"ERASE-{patient_id}", "reason": "test"},
+        )
         assert response.status_code == 200, response.text
         first_status = response.json()["status"]
 
         # Repeated erasure request must be idempotent -- same result, no crash.
-        response2 = client.post(f"/api/v2/patient/{patient_id}/erase", json={"confirmation": f"ERASE-{patient_id}", "reason": "test"})
+        response2 = client.post(
+            f"/api/v2/patient/{patient_id}/erase",
+            json={"confirmation": f"ERASE-{patient_id}", "reason": "test"},
+        )
         assert response2.status_code == 200, response2.text
         assert response2.json()["status"] == first_status
     app.dependency_overrides.clear()

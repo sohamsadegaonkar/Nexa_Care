@@ -9,6 +9,7 @@ ensures the old consent families cannot re-enter the v2 production
 surface and that no new v2 route starts importing more than one consent
 authority.
 """
+
 from __future__ import annotations
 
 import ast
@@ -17,10 +18,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
+
 # The "production surface". Now scanning all files under app/ recursively.
 def _get_all_app_files() -> list[str]:
     app_path = REPO_ROOT / "app"
     return [str(p.relative_to(REPO_ROOT)) for p in app_path.rglob("*.py")]
+
 
 V2_SCANNED_FILES = _get_all_app_files()
 
@@ -91,7 +94,12 @@ class TestConsentSystemDrift(unittest.TestCase):
         """Must always pass. The old consent modules are gone; bringing
         them back into v2 routes is a regression."""
         found = _scan_all()
-        removed_families = {"consent_service", "routine", "break_glass", "nexa_consent_engine"}
+        removed_families = {
+            "consent_service",
+            "routine",
+            "break_glass",
+            "nexa_consent_engine",
+        }
         offenders = {
             path: families & removed_families
             for path, families in found.items()
@@ -108,14 +116,18 @@ class TestConsentSystemDrift(unittest.TestCase):
     def test_legacy_engine_file_is_absent(self):
         """Verify the physical deletion of the legacy engine."""
         legacy_path = REPO_ROOT / "app" / "services" / "nexa_consent_engine.py"
-        self.assertFalse(legacy_path.exists(), f"Legacy engine file still exists at {legacy_path}")
+        self.assertFalse(
+            legacy_path.exists(), f"Legacy engine file still exists at {legacy_path}"
+        )
 
     def test_v2_consent_surface_uses_at_most_one_family(self):
         """Must always pass. Tripwire against drift. A single v2 file
         should never import more than one consent family (e.g.
         ConsentEngine plus a resurrected old module)."""
         found = _scan_all()
-        multi_family = {path: families for path, families in found.items() if len(families) > 1}
+        multi_family = {
+            path: families for path, families in found.items() if len(families) > 1
+        }
 
         self.assertFalse(
             multi_family,
@@ -135,21 +147,39 @@ class TestAntiDriftGuardrails(unittest.TestCase):
         offenders = []
         for path in features_dir.rglob("*.tsx"):
             text = path.read_text(encoding="utf-8")
-            lines = [line.strip() for line in text.splitlines() if not line.strip().startswith("//")]
+            lines = [
+                line.strip()
+                for line in text.splitlines()
+                if not line.strip().startswith("//")
+            ]
             for idx, line in enumerate(lines, 1):
-                if "import axios" in line or "from 'axios'" in line or 'from "axios"' in line:
+                if (
+                    "import axios" in line
+                    or "from 'axios'" in line
+                    or 'from "axios"' in line
+                ):
                     offenders.append(f"{path.name}:{idx} imports axios")
                 if "fetch(" in line or "await fetch(" in line:
                     offenders.append(f"{path.name}:{idx} calls fetch directly")
         for path in features_dir.rglob("*.ts"):
             text = path.read_text(encoding="utf-8")
-            lines = [line.strip() for line in text.splitlines() if not line.strip().startswith("//")]
+            lines = [
+                line.strip()
+                for line in text.splitlines()
+                if not line.strip().startswith("//")
+            ]
             for idx, line in enumerate(lines, 1):
-                if "import axios" in line or "from 'axios'" in line or 'from "axios"' in line:
+                if (
+                    "import axios" in line
+                    or "from 'axios'" in line
+                    or 'from "axios"' in line
+                ):
                     offenders.append(f"{path.name}:{idx} imports axios")
                 if "fetch(" in line or "await fetch(" in line:
                     offenders.append(f"{path.name}:{idx} calls fetch directly")
-        self.assertEqual(offenders, [], f"Frontend feature files must use apiClient: {offenders}")
+        self.assertEqual(
+            offenders, [], f"Frontend feature files must use apiClient: {offenders}"
+        )
 
     def test_backend_patient_data_routes_require_consent(self):
         """AST guardrail: no backend patient-data route lacks require_consent dependency."""
@@ -158,14 +188,28 @@ class TestAntiDriftGuardrails(unittest.TestCase):
         for path in api_v2_dir.glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in tree.body:
-                if isinstance(node, ast.AsyncFunctionDef) or isinstance(node, ast.FunctionDef):
+                if isinstance(node, ast.AsyncFunctionDef) or isinstance(
+                    node, ast.FunctionDef
+                ):
                     route_dec = None
                     for dec in node.decorator_list:
-                        if isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute):
-                            if dec.func.attr in ("get", "post", "put", "patch", "delete"):
+                        if isinstance(dec, ast.Call) and isinstance(
+                            dec.func, ast.Attribute
+                        ):
+                            if dec.func.attr in (
+                                "get",
+                                "post",
+                                "put",
+                                "patch",
+                                "delete",
+                            ):
                                 if dec.args and isinstance(dec.args[0], ast.Constant):
                                     route_dec = dec.args[0].value
-                    if route_dec and ("/patient/" in route_dec or "/pipeline/" in route_dec or "record" in route_dec):
+                    if route_dec and (
+                        "/patient/" in route_dec
+                        or "/pipeline/" in route_dec
+                        or "record" in route_dec
+                    ):
                         func_text = ast.unparse(node)
                         has_gate = (
                             "require_consent" in func_text
@@ -175,8 +219,14 @@ class TestAntiDriftGuardrails(unittest.TestCase):
                             or "consent_gated_decrypt" in func_text
                         )
                         if not has_gate:
-                            offenders.append(f"{path.name}::{node.name} ({route_dec}) lacks consent/role gate")
-        self.assertEqual(offenders, [], f"Patient/pipeline endpoints must use consent/role gate: {offenders}")
+                            offenders.append(
+                                f"{path.name}::{node.name} ({route_dec}) lacks consent/role gate"
+                            )
+        self.assertEqual(
+            offenders,
+            [],
+            f"Patient/pipeline endpoints must use consent/role gate: {offenders}",
+        )
 
     def test_no_hardcoded_localhost(self):
         """Guardrail: no hardcoded localhost or 127.0.0.1 anywhere in app/ or nexa-client/ source files."""
@@ -194,15 +244,25 @@ class TestAntiDriftGuardrails(unittest.TestCase):
                         stripped = line.strip()
                         if stripped.startswith("#") or stripped.startswith("//"):
                             continue
-                        if "http://localhost" in line or "http://127.0.0.1" in line or "https://localhost" in line:
-                            offenders.append(f"{path.relative_to(REPO_ROOT)}:{idx} has hardcoded localhost")
+                        if (
+                            "http://localhost" in line
+                            or "http://127.0.0.1" in line
+                            or "https://localhost" in line
+                        ):
+                            offenders.append(
+                                f"{path.relative_to(REPO_ROOT)}:{idx} has hardcoded localhost"
+                            )
         self.assertEqual(offenders, [], f"Hardcoded localhost found: {offenders}")
 
     def test_no_hardcoded_provider_id_placeholders(self):
         """Guardrail: no hardcoded dummy provider_id placeholder strings."""
         scanned_dirs = [REPO_ROOT / "app"]
         offenders = []
-        dummy_strings = ["00000000-0000-0000-0000-000000000000", "test_provider_id", "dummy_provider"]
+        dummy_strings = [
+            "00000000-0000-0000-0000-000000000000",
+            "test_provider_id",
+            "dummy_provider",
+        ]
         for d in scanned_dirs:
             for path in d.rglob("*.py"):
                 if path.name.startswith("test_"):
@@ -214,15 +274,27 @@ class TestAntiDriftGuardrails(unittest.TestCase):
                         continue
                     for ds in dummy_strings:
                         if ds in line:
-                            offenders.append(f"{path.relative_to(REPO_ROOT)}:{idx} has dummy string '{ds}'")
-        self.assertEqual(offenders, [], f"Hardcoded provider_id placeholders found: {offenders}")
-
+                            offenders.append(
+                                f"{path.relative_to(REPO_ROOT)}:{idx} has dummy string '{ds}'"
+                            )
+        self.assertEqual(
+            offenders, [], f"Hardcoded provider_id placeholders found: {offenders}"
+        )
 
     def test_no_private_key_material_in_tracked_files(self):
         """Guardrail: no private key material or PEM private headers in source or documentation files."""
-        scanned_dirs = [REPO_ROOT / "app", REPO_ROOT / "docs", REPO_ROOT / "scripts", REPO_ROOT / "nexa-client" / "packages"]
+        scanned_dirs = [
+            REPO_ROOT / "app",
+            REPO_ROOT / "docs",
+            REPO_ROOT / "scripts",
+            REPO_ROOT / "nexa-client" / "packages",
+        ]
         offenders = []
-        private_headers = ["BEGIN PRIVATE KEY", "BEGIN RSA PRIVATE KEY", "BEGIN EC PRIVATE KEY"]
+        private_headers = [
+            "BEGIN PRIVATE KEY",
+            "BEGIN RSA PRIVATE KEY",
+            "BEGIN EC PRIVATE KEY",
+        ]
         for d in scanned_dirs:
             if not d.exists():
                 continue
@@ -232,8 +304,14 @@ class TestAntiDriftGuardrails(unittest.TestCase):
                     for idx, line in enumerate(text.splitlines(), 1):
                         for ph in private_headers:
                             if ph in line:
-                                offenders.append(f"{path.relative_to(REPO_ROOT)}:{idx} contains private key header '{ph}'")
-        self.assertEqual(offenders, [], f"Private key material detected in tracked source files: {offenders}")
+                                offenders.append(
+                                    f"{path.relative_to(REPO_ROOT)}:{idx} contains private key header '{ph}'"
+                                )
+        self.assertEqual(
+            offenders,
+            [],
+            f"Private key material detected in tracked source files: {offenders}",
+        )
 
 
 if __name__ == "__main__":

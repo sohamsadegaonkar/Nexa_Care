@@ -13,10 +13,20 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v2.patient_routes import _fetch_clinical_shard, get_kms_provider
-from app.core.dependencies import get_current_provider, get_db_session, get_provider_context, require_role
+from app.core.dependencies import (
+    get_current_provider,
+    get_db_session,
+    get_provider_context,
+    require_role,
+)
 from app.main import app
 from app.models.provider import AffiliationType
-from app.models.provider_context import AffiliationContext, HospitalContext, ProviderContext, ProviderIdentityContext
+from app.models.provider_context import (
+    AffiliationContext,
+    HospitalContext,
+    ProviderContext,
+    ProviderIdentityContext,
+)
 from app.models.shards import NexaClinical, NexaVault
 from app.services.consent_engine import ConsentPurpose, issue_routine
 from app.services.crypto_kms import LocalEnvelopeProvider, PatientDataErased
@@ -44,11 +54,17 @@ class MockRedis:
 
 def _provider() -> ProviderContext:
     return ProviderContext(
-        provider=ProviderIdentityContext(provider_id=uuid.uuid4(), display_name="Dr. Erase", contact_email="e@ex.com"),
-        hospital=HospitalContext(hospital_id=uuid.uuid4(), facility_code="H", display_name="H"),
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(), display_name="Dr. Erase", contact_email="e@ex.com"
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(), facility_code="H", display_name="H"
+        ),
         affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(), affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True, roles=["clinician", "admin"],
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            is_primary=True,
+            roles=["clinician", "admin"],
         ),
     )
 
@@ -93,7 +109,9 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
 
     db.execute = AsyncMock(side_effect=db_execute_default)
     encrypted_name = await kms.encrypt_field(patient_id, "patient_name", "Jane Doe", db)
-    vault_row = NexaVault(masked_internal_id=patient_id, patient_name=encrypted_name.serialize())
+    vault_row = NexaVault(
+        masked_internal_id=patient_id, patient_name=encrypted_name.serialize()
+    )
 
     async def db_execute_with_vault(stmt):
         stmt_str = str(stmt)
@@ -115,12 +133,20 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
 
     db.execute = AsyncMock(side_effect=db_execute_with_vault)
 
-    with patch("app.services.consent_engine.get_consent_redis_client", return_value=redis), \
-         patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock()), \
-         patch("app.services.consent_engine.append_audit_log", AsyncMock()):
+    with (
+        patch(
+            "app.services.consent_engine.get_consent_redis_client", return_value=redis
+        ),
+        patch("app.services.consent_engine.append_audit_log_or_503", AsyncMock()),
+        patch("app.services.consent_engine.append_audit_log", AsyncMock()),
+    ):
         token = await issue_routine(
-            patient_id=patient_id, clinician_id=provider.actor_uid, purpose=ConsentPurpose.TREATMENT,
-            scope=["pii.patient_name"], db=db, hospital_id=hospital_id,
+            patient_id=patient_id,
+            clinician_id=provider.actor_uid,
+            purpose=ConsentPurpose.TREATMENT,
+            scope=["pii.patient_name"],
+            db=db,
+            hospital_id=hospital_id,
         )
 
     app.dependency_overrides[get_db_session] = lambda: db
@@ -132,11 +158,19 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
     client = TestClient(app)
 
     try:
-        with patch("app.services.consent_engine.get_consent_redis_client", return_value=redis), \
-             patch("app.api.v2.patient_routes.get_consent_redis_client", return_value=redis), \
-             patch("app.services.consent_gated_crypto.append_audit_log_or_503", AsyncMock()), \
-             patch("app.services.consent_gated_crypto.append_audit_log", AsyncMock()):
-
+        with (
+            patch(
+                "app.services.consent_engine.get_consent_redis_client",
+                return_value=redis,
+            ),
+            patch(
+                "app.api.v2.patient_routes.get_consent_redis_client", return_value=redis
+            ),
+            patch(
+                "app.services.consent_gated_crypto.append_audit_log_or_503", AsyncMock()
+            ),
+            patch("app.services.consent_gated_crypto.append_audit_log", AsyncMock()),
+        ):
             # Read succeeds BEFORE erasure -- proves the setup is real, not
             # trivially erased-by-default.
             pre_erasure = client.get(
@@ -147,21 +181,35 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
             assert pre_erasure.json()["pii"]["patient_name"] == "Jane Doe"
 
             # 1. Erase.
-            with patch("app.api.v2.patient_routes.append_audit_log_or_503", AsyncMock()), \
-                 patch("app.observability.audit_ledger.append_audit_log", AsyncMock(return_value=True)):
+            with (
+                patch("app.api.v2.patient_routes.append_audit_log_or_503", AsyncMock()),
+                patch(
+                    "app.observability.audit_ledger.append_audit_log",
+                    AsyncMock(return_value=True),
+                ),
+            ):
                 erase_resp = client.post(
                     f"/api/v2/patient/{patient_id}/erase",
-                    json={"confirmation": f"ERASE-{patient_id}", "reason": "Request by patient"},
+                    json={
+                        "confirmation": f"ERASE-{patient_id}",
+                        "reason": "Request by patient",
+                    },
                 )
             assert erase_resp.status_code == 200, erase_resp.text
-            assert db.added_rows[-1] is not dek_row or dek_row not in db.added_rows  # sanity: destroy ran
+            assert (
+                db.added_rows[-1] is not dek_row or dek_row not in db.added_rows
+            )  # sanity: destroy ran
 
             # A fresh, un-expired routine token would still validate against
             # Redis, but the DEK backing it is now gone -- issue a second
             # token post-erasure to isolate "data erased" from "token expired".
             token2 = await issue_routine(
-                patient_id=patient_id, clinician_id=provider.actor_uid, purpose=ConsentPurpose.TREATMENT,
-                scope=["pii.patient_name"], db=db, hospital_id=hospital_id,
+                patient_id=patient_id,
+                clinician_id=provider.actor_uid,
+                purpose=ConsentPurpose.TREATMENT,
+                scope=["pii.patient_name"],
+                db=db,
+                hospital_id=hospital_id,
             )
 
             # 2. Attempt read after erasure.
@@ -174,6 +222,7 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
         assert "erased" in read_resp.text.lower()
     finally:
         app.dependency_overrides.clear()
+
 
 @pytest.mark.integration
 @pytest.mark.asyncio

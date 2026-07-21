@@ -24,7 +24,9 @@ class _Result:
 
 
 class _FakeRow:
-    def __init__(self, patient_uuid, consent_assurance_policy, version, last_idempotency_key=None):
+    def __init__(
+        self, patient_uuid, consent_assurance_policy, version, last_idempotency_key=None
+    ):
         self.patient_uuid = patient_uuid
         self.consent_assurance_policy = consent_assurance_policy
         self.version = version
@@ -57,22 +59,28 @@ class _FakeDB:
             if key in self.idempotency:
                 return _Result(None)
             self.idempotency[key] = {
-                "request_hash": params["request_hash"], "response_status": None,
-                "response_payload": None, "resulting_resource_version": None,
+                "request_hash": params["request_hash"],
+                "response_status": None,
+                "response_payload": None,
+                "resulting_resource_version": None,
             }
             return _Result((uuid.uuid4(),))
         if "UPDATE public.mutation_idempotency" in sql:
             key = (params["tenant_id"], params["operation"], params["idempotency_key"])
-            self.idempotency[key].update({
-                "response_status": 200,
-                "response_payload": json.loads(params["response_payload"]),
-                "resulting_resource_version": params["version"],
-            })
+            self.idempotency[key].update(
+                {
+                    "response_status": 200,
+                    "response_payload": json.loads(params["response_payload"]),
+                    "resulting_resource_version": params["version"],
+                }
+            )
             return _Result()
         if "UPDATE patient_policies" in sql:
             if (
-                self.row is None or self.row.version != params["expected_version"]
-                or getattr(self.row, "tenant_id", params["tenant_id"]) != params["tenant_id"]
+                self.row is None
+                or self.row.version != params["expected_version"]
+                or getattr(self.row, "tenant_id", params["tenant_id"])
+                != params["tenant_id"]
             ):
                 return _Result(None)
             self.row.consent_assurance_policy = params["new_policy"]
@@ -86,7 +94,12 @@ class _FakeDB:
         if "INSERT INTO patient_policies" in sql:
             if self.row is not None:
                 return _Result(None)  # ON CONFLICT DO NOTHING: row already exists
-            self.row = _FakeRow(params["patient_uuid"], params["new_policy"], 1, params["idempotency_key"])
+            self.row = _FakeRow(
+                params["patient_uuid"],
+                params["new_policy"],
+                1,
+                params["idempotency_key"],
+            )
             self.row.tenant_id = params["tenant_id"]
             return _Result((1, params["new_policy"]))
         raise AssertionError(f"unexpected SQL in fake DB: {sql}")
@@ -113,9 +126,12 @@ async def test_first_ever_policy_write_inserts_at_version_one():
     service = PolicyService(db)
 
     result = await service.set_policy_atomic(
-        patient_uuid, "push_approved",
-        expected_version=0, idempotency_key="req-first-write-001",
-        actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=0,
+        idempotency_key="req-first-write-001",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
 
     assert result.version == 1
@@ -134,9 +150,12 @@ async def test_cas_update_with_correct_expected_version_succeeds():
     service = PolicyService(db)
 
     result = await service.set_policy_atomic(
-        patient_uuid, "biometric_confirmed",
-        expected_version=3, idempotency_key="req-cas-002",
-        actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "biometric_confirmed",
+        expected_version=3,
+        idempotency_key="req-cas-002",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
 
     assert result.version == 4
@@ -155,10 +174,12 @@ async def test_cas_update_with_stale_expected_version_conflicts():
 
     with pytest.raises(PolicyVersionConflict):
         await service.set_policy_atomic(
-            patient_uuid, "push_approved",
+            patient_uuid,
+            "push_approved",
             expected_version=3,  # stale -- real version is 5
             idempotency_key="req-stale-003",
-            actor_id="doctor-1", tenant_id="hosp-1",
+            actor_id="doctor-1",
+            tenant_id="hosp-1",
         )
 
     assert db.rollbacks == 1
@@ -174,18 +195,23 @@ async def test_two_concurrent_updates_only_one_succeeds():
     service = PolicyService(db)
 
     first = await service.set_policy_atomic(
-        patient_uuid, "push_approved",
-        expected_version=1, idempotency_key="req-race-a",
-        actor_id="doctor-a", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=1,
+        idempotency_key="req-race-a",
+        actor_id="doctor-a",
+        tenant_id="hosp-1",
     )
     assert first.version == 2
 
     with pytest.raises(PolicyVersionConflict):
         await service.set_policy_atomic(
-            patient_uuid, "biometric_confirmed",
+            patient_uuid,
+            "biometric_confirmed",
             expected_version=1,  # both requests read version=1 before either wrote
             idempotency_key="req-race-b",
-            actor_id="doctor-b", tenant_id="hosp-1",
+            actor_id="doctor-b",
+            tenant_id="hosp-1",
         )
 
 
@@ -196,12 +222,20 @@ async def test_same_idempotency_key_same_payload_replays_without_new_outbox_even
     service = PolicyService(db)
 
     first = await service.set_policy_atomic(
-        patient_uuid, "push_approved", expected_version=1, idempotency_key="req-replay-004",
-        actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=1,
+        idempotency_key="req-replay-004",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
     result = await service.set_policy_atomic(
-        patient_uuid, "push_approved", expected_version=1, idempotency_key="req-replay-004",
-        actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=1,
+        idempotency_key="req-replay-004",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
 
     assert result.idempotent_replay is True
@@ -217,14 +251,22 @@ async def test_same_idempotency_key_different_payload_is_rejected():
     service = PolicyService(db)
 
     await service.set_policy_atomic(
-        patient_uuid, "push_approved", expected_version=1,
-        idempotency_key="req-reuse-005", actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=1,
+        idempotency_key="req-reuse-005",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
 
     with pytest.raises(PolicyIdempotencyKeyReused):
         await service.set_policy_atomic(
-            patient_uuid, "biometric_confirmed", expected_version=2, idempotency_key="req-reuse-005",
-            actor_id="doctor-1", tenant_id="hosp-1",
+            patient_uuid,
+            "biometric_confirmed",
+            expected_version=2,
+            idempotency_key="req-reuse-005",
+            actor_id="doctor-1",
+            tenant_id="hosp-1",
         )
 
 
@@ -235,16 +277,28 @@ async def test_historical_retry_returns_original_result_without_reverting_newer_
     service = PolicyService(db)
 
     result_a = await service.set_policy_atomic(
-        patient_uuid, "push_approved", expected_version=1,
-        idempotency_key="historical-a-001", actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=1,
+        idempotency_key="historical-a-001",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
     result_b = await service.set_policy_atomic(
-        patient_uuid, "biometric_confirmed", expected_version=2,
-        idempotency_key="historical-b-001", actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "biometric_confirmed",
+        expected_version=2,
+        idempotency_key="historical-b-001",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
     replay_a = await service.set_policy_atomic(
-        patient_uuid, "push_approved", expected_version=1,
-        idempotency_key="historical-a-001", actor_id="doctor-1", tenant_id="hosp-1",
+        patient_uuid,
+        "push_approved",
+        expected_version=1,
+        idempotency_key="historical-a-001",
+        actor_id="doctor-1",
+        tenant_id="hosp-1",
     )
 
     assert result_a.version == replay_a.version == 2

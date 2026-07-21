@@ -23,6 +23,7 @@ Rules (Alpha v2.0.0-alpha)
 |                 |               |             |            |  to HIGH_RISK)    |
 +-----------------+---------------+-------------+------------+-------------------+
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -40,10 +41,19 @@ class AutoApprovalDecision(BaseModel):
 
 
 # ── PII field names — values must be redacted in correction logs ────────────
-_PII_FIELD_NAMES = frozenset({
-    "patient_name", "phone", "aadhaar", "aadhaar_abha_id",
-    "email", "dob", "nfc_uid", "bio_seed", "derived_alpha",
-})
+_PII_FIELD_NAMES = frozenset(
+    {
+        "patient_name",
+        "phone",
+        "aadhaar",
+        "aadhaar_abha_id",
+        "email",
+        "dob",
+        "nfc_uid",
+        "bio_seed",
+        "derived_alpha",
+    }
+)
 
 # ── Allergy field names — forced to HIGH_RISK, never auto-approved ──────────
 _ALLERGY_FIELD_NAMES = frozenset({"allergy", "allergen"})
@@ -136,7 +146,9 @@ def should_auto_approve(field: ExtractedField) -> AutoApprovalDecision:
         )
 
     # ── 4. Validation result diagnostics ───────────────────────────────────
-    is_valid, vr_has_conflict, validation_errors, vr_requires_review = _extract_validation_diagnostics(field)
+    is_valid, vr_has_conflict, validation_errors, vr_requires_review = (
+        _extract_validation_diagnostics(field)
+    )
 
     if vr_has_conflict:
         return AutoApprovalDecision(
@@ -150,7 +162,11 @@ def should_auto_approve(field: ExtractedField) -> AutoApprovalDecision:
             reason="Validation failed",
         )
 
-    if validation_errors and isinstance(validation_errors, list) and len(validation_errors) > 0:
+    if (
+        validation_errors
+        and isinstance(validation_errors, list)
+        and len(validation_errors) > 0
+    ):
         return AutoApprovalDecision(
             auto_approve=False,
             reason=f"Validation errors: {', '.join(validation_errors[:3])}",

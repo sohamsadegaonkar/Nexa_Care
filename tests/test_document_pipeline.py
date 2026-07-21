@@ -1,7 +1,10 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.ai.pipeline import LegacyDocumentPipelineDisabled, process_medical_document_background
+from app.ai.pipeline import (
+    LegacyDocumentPipelineDisabled,
+    process_medical_document_background,
+)
 from app.main import app
 
 

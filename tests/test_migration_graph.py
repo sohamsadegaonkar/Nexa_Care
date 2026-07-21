@@ -36,17 +36,21 @@ def test_migration_revision_ids_fit_alembic_version_column() -> None:
 
 
 def test_final_runtime_fix_repairs_uuid_head_and_adds_recovery_schema() -> None:
-    source = (ROOT / "alembic" / "versions" / "20260720_final_runtime_fix.py").read_text()
+    source = (
+        ROOT / "alembic" / "versions" / "20260720_final_runtime_fix.py"
+    ).read_text()
     assert 'revision: str = "20260720_final_runtime_fix"' in source
     assert 'down_revision: Union[str, None] = "20260719_security_runtime"' in source
-    assert 'type_=postgresql.UUID(as_uuid=True)' in source
-    assert 'fk_audit_chain_heads_head_event' in source
-    assert 'lease_expires_at' in source
-    assert 'mutation_idempotency' in source
+    assert "type_=postgresql.UUID(as_uuid=True)" in source
+    assert "fk_audit_chain_heads_head_event" in source
+    assert "lease_expires_at" in source
+    assert "mutation_idempotency" in source
 
 
 def test_cleanup_sql_guards_absent_tables() -> None:
-    source = (ROOT / "alembic" / "versions" / "20260704_drop_raw_pii_from_vault.py").read_text()
+    source = (
+        ROOT / "alembic" / "versions" / "20260704_drop_raw_pii_from_vault.py"
+    ).read_text()
     assert "to_regclass('public.nexa_vault') IS NOT NULL" in source
     assert "to_regclass('public.nexa_clinical') IS NOT NULL" in source
     assert "information_schema.columns" in source
@@ -67,10 +71,12 @@ def test_device_timestamp_correction_descends_from_previous_head() -> None:
 
 
 def test_device_timestamp_correction_is_guarded_and_non_destructive() -> None:
-    source = (ROOT / "alembic" / "versions" / "20260713_add_patient_device_key_timestamps.py").read_text()
+    source = (
+        ROOT / "alembic" / "versions" / "20260713_add_patient_device_key_timestamps.py"
+    ).read_text()
     assert 'get_columns("patient_device_keys")' in source
     assert 'if "created_at" not in columns' in source
     assert 'if "updated_at" not in columns' in source
-    assert 'sa.DateTime(timezone=True)' in source
-    assert 'server_default=sa.func.now()' in source
+    assert "sa.DateTime(timezone=True)" in source
+    assert "server_default=sa.func.now()" in source
     assert "op.drop_column" not in source

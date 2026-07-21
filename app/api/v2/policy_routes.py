@@ -26,14 +26,19 @@ logger = logging.getLogger("nexa_security")
 
 router = APIRouter(prefix="/api/v2/patient", tags=["policy"])
 
+
 class PolicyUpdateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    consent_assurance_policy: Literal["standard", "push_approved", "push_biometric", "biometric_confirmed"]
+    consent_assurance_policy: Literal[
+        "standard", "push_approved", "push_biometric", "biometric_confirmed"
+    ]
     idempotency_key: str
     expected_version: int = Field(ge=0)
 
+
 ALLOWED_POLICY_ROLES = {"clinician", "admin"}
+
 
 # Non-dev/staging environments must never honor a simulator-tagged request,
 # regardless of what header the caller sends. This does NOT gate real
@@ -55,7 +60,9 @@ async def get_patient_policy(
             target_id=str(patient_uuid),
             status="FORBIDDEN_ROLE",
         )
-        raise HTTPException(status_code=403, detail="Patient policy access is not authorized.")
+        raise HTTPException(
+            status_code=403, detail="Patient policy access is not authorized."
+        )
     await validate_consent_for_patient(
         patient_id=str(patient_uuid),
         purpose="policy_read",
@@ -74,7 +81,12 @@ async def get_patient_policy(
         status="SUCCESS",
         metadata={"hospital_id": str(provider.hospital_id)},
     )
-    return {"patient_uuid": str(patient_uuid), "consent_assurance_policy": policy, "version": version}
+    return {
+        "patient_uuid": str(patient_uuid),
+        "consent_assurance_policy": policy,
+        "version": version,
+    }
+
 
 @router.put("/{patient_uuid}/policy")
 async def update_patient_policy(
@@ -138,7 +150,10 @@ async def update_patient_policy(
         if current > 10:
             raise HTTPException(
                 status_code=429,
-                detail={"error_code": "POLICY_RATE_LIMITED", "retry_after_seconds": retry_after},
+                detail={
+                    "error_code": "POLICY_RATE_LIMITED",
+                    "retry_after_seconds": retry_after,
+                },
                 headers={"Retry-After": str(max(1, retry_after))},
             )
     except HTTPException:
@@ -146,7 +161,10 @@ async def update_patient_policy(
     except Exception as exc:
         raise HTTPException(
             status_code=503,
-            detail={"error_code": "POLICY_SECURITY_CONTROL_UNAVAILABLE", "retryable": True},
+            detail={
+                "error_code": "POLICY_SECURITY_CONTROL_UNAVAILABLE",
+                "retryable": True,
+            },
         ) from exc
 
     service = PolicyService(db)
@@ -167,15 +185,18 @@ async def update_patient_policy(
         )
     except PolicyValidationError as err:
         raise HTTPException(
-            status_code=422, detail={"error_code": "POLICY_REQUEST_INVALID", "message": str(err)}
+            status_code=422,
+            detail={"error_code": "POLICY_REQUEST_INVALID", "message": str(err)},
         ) from err
     except PolicyVersionConflict as err:
         raise HTTPException(
-            status_code=409, detail={"error_code": "POLICY_VERSION_CONFLICT", "message": str(err)}
+            status_code=409,
+            detail={"error_code": "POLICY_VERSION_CONFLICT", "message": str(err)},
         ) from err
     except PolicyIdempotencyKeyReused as err:
         raise HTTPException(
-            status_code=409, detail={"error_code": "IDEMPOTENCY_KEY_REUSED", "message": str(err)}
+            status_code=409,
+            detail={"error_code": "IDEMPOTENCY_KEY_REUSED", "message": str(err)},
         ) from err
 
     updated = result.consent_assurance_policy

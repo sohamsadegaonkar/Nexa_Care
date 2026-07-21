@@ -58,49 +58,49 @@ class TestZodSchemaFile:
 
     def test_schema_file_exists(self) -> None:
         path = SCHEMAS_DIR / "authNfcSchemas.ts"
-        assert path.exists(), "nexa-client/packages/app/schemas/authNfcSchemas.ts must exist"
+        assert (
+            path.exists()
+        ), "nexa-client/packages/app/schemas/authNfcSchemas.ts must exist"
 
     def test_has_login_success_schema(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "ProviderLoginSuccessSchema" in code, (
-            "Must define ProviderLoginSuccessSchema"
-        )
+        assert (
+            "ProviderLoginSuccessSchema" in code
+        ), "Must define ProviderLoginSuccessSchema"
 
     def test_has_login_mfa_required_schema(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "ProviderLoginMfaRequiredSchema" in code, (
-            "Must define ProviderLoginMfaRequiredSchema"
-        )
+        assert (
+            "ProviderLoginMfaRequiredSchema" in code
+        ), "Must define ProviderLoginMfaRequiredSchema"
 
     def test_has_mfa_verify_success_schema(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "ProviderMfaVerifySuccessSchema" in code, (
-            "Must define ProviderMfaVerifySuccessSchema"
-        )
+        assert (
+            "ProviderMfaVerifySuccessSchema" in code
+        ), "Must define ProviderMfaVerifySuccessSchema"
 
     def test_has_nfc_resolve_response_schema(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "NfcResolveResponseSchema" in code, (
-            "Must define NfcResolveResponseSchema"
-        )
+        assert (
+            "NfcResolveResponseSchema" in code
+        ), "Must define NfcResolveResponseSchema"
 
     def test_has_schema_validation_error_class(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "SchemaValidationError" in code, (
-            "Must define SchemaValidationError class"
-        )
+        assert (
+            "SchemaValidationError" in code
+        ), "Must define SchemaValidationError class"
 
     def test_has_validate_or_throw_function(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "validateOrThrow" in code, (
-            "Must export validateOrThrow helper"
-        )
+        assert "validateOrThrow" in code, "Must export validateOrThrow helper"
 
     def test_has_validate_login_response_function(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "validateLoginResponse" in code, (
-            "Must export validateLoginResponse helper"
-        )
+        assert (
+            "validateLoginResponse" in code
+        ), "Must export validateLoginResponse helper"
 
     def test_imports_zod(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
@@ -144,10 +144,16 @@ class TestLoginSuccessContract:
         backend = _read(AUTH_ROUTES)
 
         # ProviderLoginResponse must have these fields
-        for field in ["access_token", "token_type", "expires_at", "provider_uid", "hospital_id"]:
-            assert field in backend, (
-                f"Backend ProviderLoginResponse must have {field} field"
-            )
+        for field in [
+            "access_token",
+            "token_type",
+            "expires_at",
+            "provider_uid",
+            "hospital_id",
+        ]:
+            assert (
+                field in backend
+            ), f"Backend ProviderLoginResponse must have {field} field"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -177,9 +183,9 @@ class TestMfaRequiredContract:
         """MFA verify endpoint returns the same shape as login success."""
         backend = _read(AUTH_ROUTES)
         # The mfa/verify endpoint has response_model=ProviderLoginResponse
-        assert "ProviderLoginResponse" in backend, (
-            "MFA verify must return ProviderLoginResponse shape"
-        )
+        assert (
+            "ProviderLoginResponse" in backend
+        ), "MFA verify must return ProviderLoginResponse shape"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -196,9 +202,9 @@ class TestNfcResolveContract:
 
     def test_schema_has_canonical_patient_id(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "canonical_patient_id" in code, (
-            "NFC schema must validate canonical_patient_id"
-        )
+        assert (
+            "canonical_patient_id" in code
+        ), "NFC schema must validate canonical_patient_id"
 
     def test_schema_has_is_redirected(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
@@ -208,24 +214,24 @@ class TestNfcResolveContract:
         """Backend NFCResolveResponse must have patient_id, canonical_patient_id, is_redirected."""
         backend = _read(NFC_ROUTES)
         for field in ["patient_id", "canonical_patient_id", "is_redirected"]:
-            assert field in backend, (
-                f"Backend NFCResolveResponse must have {field} field"
-            )
+            assert (
+                field in backend
+            ), f"Backend NFCResolveResponse must have {field} field"
 
     def test_backend_nfc_rate_limits(self) -> None:
         """Backend must enforce rate limiting on NFC resolve."""
         backend = _read(NFC_ROUTES)
         # The backend should have rate limiting
-        assert "429" in backend or "rate" in backend.lower(), (
-            "Backend NFC resolve must have rate limiting"
-        )
+        assert (
+            "429" in backend or "rate" in backend.lower()
+        ), "Backend NFC resolve must have rate limiting"
 
     def test_backend_nfc_audits(self) -> None:
         """Backend must audit NFC resolution attempts."""
         backend = _read(NFC_ROUTES)
-        assert "audit" in backend.lower() or "append_audit_log" in backend, (
-            "Backend must audit NFC resolution attempts"
-        )
+        assert (
+            "audit" in backend.lower() or "append_audit_log" in backend
+        ), "Backend must audit NFC resolution attempts"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -243,7 +249,9 @@ class TestAuthContextUsesZod:
 
     def test_imports_validate_or_throw_for_mfa(self) -> None:
         code = _read(API_CLIENT_PATH)
-        assert "validateOrThrow" in code and "ProviderWebAuthenticatedStateSchema" in code
+        assert (
+            "validateOrThrow" in code and "ProviderWebAuthenticatedStateSchema" in code
+        )
 
     def test_imports_schema_validation_error(self) -> None:
         code = _read(API_CLIENT_PATH)
@@ -261,9 +269,7 @@ class TestAuthContextUsesZod:
 
     def test_imports_from_schemas(self) -> None:
         code = _read(API_CLIENT_PATH)
-        assert "authNfcSchemas" in code, (
-            "Must import from authNfcSchemas schema module"
-        )
+        assert "authNfcSchemas" in code, "Must import from authNfcSchemas schema module"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -276,33 +282,31 @@ class TestNfcServiceUsesZod:
 
     def test_imports_validate_or_throw(self) -> None:
         code = _read(SERVICES_DIR / "nfcResolve.ts")
-        assert "validateOrThrow" in code, (
-            "Must import validateOrThrow for NFC resolve validation"
-        )
+        assert (
+            "validateOrThrow" in code
+        ), "Must import validateOrThrow for NFC resolve validation"
 
     def test_imports_nfc_resolve_response_schema(self) -> None:
         code = _read(SERVICES_DIR / "nfcResolve.ts")
-        assert "NfcResolveResponseSchema" in code, (
-            "Must import NfcResolveResponseSchema"
-        )
+        assert (
+            "NfcResolveResponseSchema" in code
+        ), "Must import NfcResolveResponseSchema"
 
     def test_imports_schema_validation_error(self) -> None:
         code = _read(SERVICES_DIR / "nfcResolve.ts")
-        assert "SchemaValidationError" in code, (
-            "Must import SchemaValidationError to catch validation failures"
-        )
+        assert (
+            "SchemaValidationError" in code
+        ), "Must import SchemaValidationError to catch validation failures"
 
     def test_handles_schema_validation_error(self) -> None:
         code = _read(SERVICES_DIR / "nfcResolve.ts")
-        assert "NFC_SCHEMA_VALIDATION_FAILED" in code, (
-            "Must handle SchemaValidationError with NFC_SCHEMA_VALIDATION_FAILED code"
-        )
+        assert (
+            "NFC_SCHEMA_VALIDATION_FAILED" in code
+        ), "Must handle SchemaValidationError with NFC_SCHEMA_VALIDATION_FAILED code"
 
     def test_imports_from_schemas(self) -> None:
         code = _read(SERVICES_DIR / "nfcResolve.ts")
-        assert "authNfcSchemas" in code, (
-            "Must import from authNfcSchemas schema module"
-        )
+        assert "authNfcSchemas" in code, "Must import from authNfcSchemas schema module"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -354,17 +358,19 @@ class TestDoctorFlowDocHonesty:
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         code_lower = code.lower()
         # Should not say "complete" without qualification
-        assert "integration validation pending" in code_lower, (
-            "Must state 'integration validation pending' — not claim complete"
-        )
+        assert (
+            "integration validation pending" in code_lower
+        ), "Must state 'integration validation pending' — not claim complete"
 
     def test_doc_documents_known_gaps(self) -> None:
         """Must document known security and functionality gaps."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         code_lower = code.lower()
-        assert "known gap" in code_lower or "known gaps" in code_lower or "alpha" in code_lower, (
-            "Must document known gaps and ALPHA limitations"
-        )
+        assert (
+            "known gap" in code_lower
+            or "known gaps" in code_lower
+            or "alpha" in code_lower
+        ), "Must document known gaps and ALPHA limitations"
 
     def test_doc_documents_role_limitation(self) -> None:
         """Must document that role is not from a signed claim."""
@@ -372,47 +378,58 @@ class TestDoctorFlowDocHonesty:
         assert "role" in code.lower(), "Must mention role"
         # Must acknowledge the limitation
         code_lower = code.lower()
-        assert "signed" in code_lower or "default" in code_lower or "not from" in code_lower or "hardcoded" in code_lower, (
-            "Must document that role is not from a signed backend claim"
-        )
+        assert (
+            "signed" in code_lower
+            or "default" in code_lower
+            or "not from" in code_lower
+            or "hardcoded" in code_lower
+        ), "Must document that role is not from a signed backend claim"
 
     def test_doc_documents_token_persistence_gap(self) -> None:
         """Must document that tokens do not survive page reload."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "reload" in code.lower() or "persist" in code.lower() or "memory" in code.lower() or "in-memory" in code.lower(), (
-            "Must document token persistence limitation"
-        )
+        assert (
+            "reload" in code.lower()
+            or "persist" in code.lower()
+            or "memory" in code.lower()
+            or "in-memory" in code.lower()
+        ), "Must document token persistence limitation"
 
     def test_doc_documents_server_logout_gap(self) -> None:
         """Must document that logout does not invalidate server-side."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         assert "logout" in code.lower(), "Must mention logout"
         code_lower = code.lower()
-        assert "invalidate" in code_lower or "server" in code_lower or "not yet" in code_lower or "gap" in code_lower, (
-            "Must document that logout does not invalidate server-side tokens"
-        )
+        assert (
+            "invalidate" in code_lower
+            or "server" in code_lower
+            or "not yet" in code_lower
+            or "gap" in code_lower
+        ), "Must document that logout does not invalidate server-side tokens"
 
     def test_doc_mentions_end_to_end_milestone(self) -> None:
         """Must describe the next milestone as proving a complete live flow."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         code_lower = code.lower()
-        assert "end-to-end" in code_lower or "live flow" in code_lower or "real provider" in code_lower, (
-            "Must describe the next milestone as proving a complete end-to-end live flow"
-        )
+        assert (
+            "end-to-end" in code_lower
+            or "live flow" in code_lower
+            or "real provider" in code_lower
+        ), "Must describe the next milestone as proving a complete end-to-end live flow"
 
     def test_doc_mentions_canonical_frontend(self) -> None:
         """Must declare nexa-client as the canonical production frontend."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "nexa-client" in code, (
-            "Must declare nexa-client as the canonical production frontend"
-        )
+        assert (
+            "nexa-client" in code
+        ), "Must declare nexa-client as the canonical production frontend"
 
     def test_doc_mentions_zod_runtime_validation(self) -> None:
         """Must mention Zod runtime schema validation."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "zod" in code.lower() or "runtime validation" in code.lower(), (
-            "Must mention Zod or runtime schema validation"
-        )
+        assert (
+            "zod" in code.lower() or "runtime validation" in code.lower()
+        ), "Must mention Zod or runtime schema validation"
 
     def test_doc_mentions_consent_workflow(self) -> None:
         """Must mention the consent workflow chain."""
@@ -420,25 +437,29 @@ class TestDoctorFlowDocHonesty:
         code_lower = code.lower()
         assert "consent" in code_lower, "Must mention consent workflow"
         # Must acknowledge navigation ≠ authorization
-        assert "authorization" in code_lower or "not equal" in code_lower or "navigation" in code_lower, (
-            "Must acknowledge that navigation to a record does not equal authorization"
-        )
+        assert (
+            "authorization" in code_lower
+            or "not equal" in code_lower
+            or "navigation" in code_lower
+        ), "Must acknowledge that navigation to a record does not equal authorization"
 
     def test_doc_mentions_idor_guard(self) -> None:
         """Must document the IDOR guard on consent request endpoint."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         code_lower = code.lower()
-        assert "idor" in code_lower or "does not match" in code_lower or "rejects mismatch" in code_lower, (
-            "Must document the IDOR guard that rejects provider_id mismatches"
-        )
+        assert (
+            "idor" in code_lower
+            or "does not match" in code_lower
+            or "rejects mismatch" in code_lower
+        ), "Must document the IDOR guard that rejects provider_id mismatches"
 
     def test_doc_mentions_controlled_purpose(self) -> None:
         """Must document that purpose is a controlled code."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         code_lower = code.lower()
-        assert "controlled" in code_lower or "coded" in code_lower, (
-            "Must document that purpose/scope are controlled values"
-        )
+        assert (
+            "controlled" in code_lower or "coded" in code_lower
+        ), "Must document that purpose/scope are controlled values"
 
     def test_doc_mentions_cancel_endpoint(self) -> None:
         """Must document the consent cancel endpoint."""
@@ -450,6 +471,6 @@ class TestDoctorFlowDocHonesty:
         """Must document adaptive polling backoff strategy."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
         code_lower = code.lower()
-        assert "backoff" in code_lower or "adaptive" in code_lower, (
-            "Must document adaptive polling/backoff strategy"
-        )
+        assert (
+            "backoff" in code_lower or "adaptive" in code_lower
+        ), "Must document adaptive polling/backoff strategy"

@@ -76,10 +76,17 @@ def build_signing_input(
     device_id: str,
 ) -> str:
     return canonical_signed_approval_payload(
-        request_id=request_id, patient_id=patient_id, provider_id=provider_id,
-        challenge_nonce=challenge_nonce, decision=decision, scope=scope,
-        purpose=purpose, access_duration=access_duration, issued_at=issued_at,
-        expires_at=expires_at, device_id=device_id,
+        request_id=request_id,
+        patient_id=patient_id,
+        provider_id=provider_id,
+        challenge_nonce=challenge_nonce,
+        decision=decision,
+        scope=scope,
+        purpose=purpose,
+        access_duration=access_duration,
+        issued_at=issued_at,
+        expires_at=expires_at,
+        device_id=device_id,
     ).decode("utf-8")
 
 
@@ -96,7 +103,9 @@ def _db_result(*, scalar_one_or_none=None, scalars_all=None, scalar=None):
     """
     if scalars_all is not None:
         return MagicMock(
-            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=scalars_all))),
+            scalars=MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=scalars_all))
+            ),
         )
     if scalar is not None:
         return MagicMock(scalar=MagicMock(return_value=scalar))
@@ -190,10 +199,12 @@ def _setup_mock_db_for_approve(mock_db, device_row):
     Uses _side_effect_with_fallback so extra calls return safe defaults
     instead of raising StopAsyncIteration.
     """
-    mock_db.execute.side_effect = _side_effect_with_fallback([
-        _db_result(scalar_one_or_none=device_row),  # device lookup in route
-        _db_result(scalars_all=[device_row]),  # verifier key lookup
-    ])
+    mock_db.execute.side_effect = _side_effect_with_fallback(
+        [
+            _db_result(scalar_one_or_none=device_row),  # device lookup in route
+            _db_result(scalars_all=[device_row]),  # verifier key lookup
+        ]
+    )
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -256,36 +267,65 @@ def _apply_overrides(overrides, provider, patient_id):
 def _patch_stack(fake_redis, fake_sync_redis):
     """Return an ExitStack with all Redis/Supabase/audit patches applied."""
     stack = ExitStack()
-    stack.enter_context(patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")))
-    stack.enter_context(patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)))
+    stack.enter_context(
+        patch(
+            "app.api.v2.device_routes.claim_device_enrollment_token",
+            new=AsyncMock(return_value="claim-1"),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.api.v2.device_routes.finalize_device_enrollment_token",
+            new=AsyncMock(return_value=True),
+        )
+    )
 
     # Redis patches
     stack.enter_context(
         patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
     )
     stack.enter_context(
-        patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis)
+        patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        )
     )
     stack.enter_context(
-        patch("app.services.approved_access_capability.get_async_redis_client", return_value=fake_redis)
+        patch(
+            "app.services.approved_access_capability.get_async_redis_client",
+            return_value=fake_redis,
+        )
     )
     stack.enter_context(
-        patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis)
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=fake_redis,
+        )
     )
     stack.enter_context(
-        patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis)
+        patch(
+            "app.services.provider_auth_service.get_redis_client",
+            return_value=fake_sync_redis,
+        )
     )
 
     # Supabase / audit patches
     mock_supabase = MagicMock()
-    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
+    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+        MagicMock()
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={}
+    )
     stack.enter_context(
         patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
     )
     stack.enter_context(
-        patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None)
+        patch(
+            "app.observability.audit_ledger.append_audit_log_or_503", return_value=None
+        )
     )
     stack.enter_context(
         patch("app.observability.audit_ledger.append_audit_log", return_value=None)
@@ -301,9 +341,7 @@ def _patch_stack(fake_redis, fake_sync_redis):
         "app.services.consent_engine",
         "app.services.signed_approval_verifier",
     ):
-        stack.enter_context(
-            patch(f"{mod}.append_audit_log_or_503", return_value=None)
-        )
+        stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
     stack.enter_context(
         patch("app.services.consent_engine.append_audit_log", return_value=None)
     )
@@ -315,7 +353,10 @@ def _patch_stack(fake_redis, fake_sync_redis):
 
     # Assurance verifier for push
     stack.enter_context(
-        patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None)
+        patch(
+            "app.api.v2.assurance_routes.push_service.send_approval_request",
+            return_value=None,
+        )
     )
 
     return stack
@@ -336,7 +377,15 @@ class TestConsentFlowIntegration:
     """
 
     def test_full_consent_flow_with_real_signatures(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id, keypair
+        self,
+        client,
+        fake_redis,
+        fake_sync_redis,
+        mock_db,
+        overrides,
+        provider,
+        patient_id,
+        keypair,
     ):
         """Enroll → request → sign → approve → validate → access record."""
         private_key, der_bytes, der_b64 = keypair
@@ -349,10 +398,12 @@ class TestConsentFlowIntegration:
             # ── Step 1: Enroll device ────────────────────────────────────
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar=0),  # count query
-                _db_result(scalar_one_or_none=None),  # existing key check
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar=0),  # count query
+                    _db_result(scalar_one_or_none=None),  # existing key check
+                ]
+            )
 
             enroll_resp = client.post(
                 "/api/v2/patient/devices/enroll",
@@ -368,9 +419,11 @@ class TestConsentFlowIntegration:
 
             # ── Step 2: Request consent (doctor initiates) ──────────────
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar_one_or_none=device_row),  # device lookup
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar_one_or_none=device_row),  # device lookup
+                ]
+            )
 
             request_resp = client.post(
                 "/api/v2/consent/request",
@@ -381,7 +434,9 @@ class TestConsentFlowIntegration:
                     "access_duration_seconds": 900,
                 },
             )
-            assert request_resp.status_code == 201, f"Consent request failed: {request_resp.text}"
+            assert (
+                request_resp.status_code == 201
+            ), f"Consent request failed: {request_resp.text}"
             request_data = request_resp.json()
             assert request_data["status"] == "pending"
             request_id = request_data["request_id"]
@@ -425,7 +480,9 @@ class TestConsentFlowIntegration:
                     "device_id": device_id,
                 },
             )
-            assert approval_resp.status_code == 200, f"Approval failed: {approval_resp.text}"
+            assert (
+                approval_resp.status_code == 200
+            ), f"Approval failed: {approval_resp.text}"
             assert approval_resp.json()["status"] == "approved"
 
             # ── Step 5: Verify consent grant was issued ─────────────────
@@ -446,19 +503,30 @@ class TestConsentFlowIntegration:
             assert consent_token not in str(fake_sync_redis._a.data.keys())
 
             from app.services.approved_access_capability import validate
-            capability = asyncio.run(validate(
-                token=consent_token,
-                patient_id=patient_id,
-                provider_id=provider_id,
-                hospital_id=str(provider.hospital_id),
-                requested_category="clinical_summary",
-            ))
+
+            capability = asyncio.run(
+                validate(
+                    token=consent_token,
+                    patient_id=patient_id,
+                    provider_id=provider_id,
+                    hospital_id=str(provider.hospital_id),
+                    requested_category="clinical_summary",
+                )
+            )
             assert capability is not None, "Consent token validation failed"
             assert capability.patient_id == patient_id
             assert capability.clinician_id == provider_id
 
     def test_denied_consent_flow_with_real_signatures(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id, keypair
+        self,
+        client,
+        fake_redis,
+        fake_sync_redis,
+        mock_db,
+        overrides,
+        provider,
+        patient_id,
+        keypair,
     ):
         """Enroll → request → sign with 'denied' decision → verify no grant issued."""
         private_key, der_bytes, der_b64 = keypair
@@ -471,24 +539,38 @@ class TestConsentFlowIntegration:
             # Enroll
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar=0),
-                _db_result(scalar_one_or_none=None),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar=0),
+                    _db_result(scalar_one_or_none=None),
+                ]
+            )
             enroll_resp = client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": der_b64, "device_label": "Deny Device", "platform": "android", "device_enrollment_token": "e" * 43},
+                json={
+                    "device_public_key": der_b64,
+                    "device_label": "Deny Device",
+                    "platform": "android",
+                    "device_enrollment_token": "e" * 43,
+                },
             )
             assert enroll_resp.status_code == 201
 
             # Request consent
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar_one_or_none=device_row),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar_one_or_none=device_row),
+                ]
+            )
             request_resp = client.post(
                 "/api/v2/consent/request",
-                json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+                json={
+                    "patient_id": patient_id,
+                    "purpose": "checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 900,
+                },
             )
             assert request_resp.status_code == 201
             request_id = request_resp.json()["request_id"]
@@ -498,9 +580,17 @@ class TestConsentFlowIntegration:
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             challenge_data = json.loads(challenge_raw)
             signing_input = build_signing_input(
-                request_id, patient_id, provider_id, challenge_nonce, "denied",
-                "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["created_at"], challenge_data["expires_at"], device_id,
+                request_id,
+                patient_id,
+                provider_id,
+                challenge_nonce,
+                "denied",
+                "clinical",
+                "checkup",
+                challenge_data["access_duration"],
+                challenge_data["created_at"],
+                challenge_data["expires_at"],
+                device_id,
             )
             real_signature = sign_challenge(private_key, signing_input)
 
@@ -509,9 +599,14 @@ class TestConsentFlowIntegration:
             _setup_mock_db_for_approve(mock_db, device_row)
             denial_resp = client.post(
                 "/api/v2/consent/approve-signed",
-                json={"request_id": request_id, "patient_id": patient_id,
-                      "decision": "denied", "challenge_nonce": challenge_nonce,
-                      "signature": real_signature, "device_id": device_id},
+                json={
+                    "request_id": request_id,
+                    "patient_id": patient_id,
+                    "decision": "denied",
+                    "challenge_nonce": challenge_nonce,
+                    "signature": real_signature,
+                    "device_id": device_id,
+                },
             )
             assert denial_resp.status_code == 200
             assert denial_resp.json()["status"] == "denied"
@@ -519,12 +614,20 @@ class TestConsentFlowIntegration:
             # Verify NO consent token was issued
             updated_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             updated_data = json.loads(updated_raw)
-            assert updated_data.get("consent_token") is None, (
-                "Consent token should NOT be issued for denied decision"
-            )
+            assert (
+                updated_data.get("consent_token") is None
+            ), "Consent token should NOT be issued for denied decision"
 
     def test_wrong_key_signature_is_rejected(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id, keypair
+        self,
+        client,
+        fake_redis,
+        fake_sync_redis,
+        mock_db,
+        overrides,
+        provider,
+        patient_id,
+        keypair,
     ):
         """Enroll with key A, sign with key B → verification fails (401)."""
         _, enrolled_der_bytes, enrolled_der_b64 = keypair
@@ -538,24 +641,38 @@ class TestConsentFlowIntegration:
             # Enroll with key A
             device_row = _mock_device_row(device_id, patient_id, enrolled_der_bytes)
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar=0),
-                _db_result(scalar_one_or_none=None),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar=0),
+                    _db_result(scalar_one_or_none=None),
+                ]
+            )
             enroll_resp = client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": enrolled_der_b64, "device_label": "Key Mismatch Device", "platform": "ios", "device_enrollment_token": "e" * 43},
+                json={
+                    "device_public_key": enrolled_der_b64,
+                    "device_label": "Key Mismatch Device",
+                    "platform": "ios",
+                    "device_enrollment_token": "e" * 43,
+                },
             )
             assert enroll_resp.status_code == 201
 
             # Request consent
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar_one_or_none=device_row),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar_one_or_none=device_row),
+                ]
+            )
             request_resp = client.post(
                 "/api/v2/consent/request",
-                json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+                json={
+                    "patient_id": patient_id,
+                    "purpose": "checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 900,
+                },
             )
             assert request_resp.status_code == 201
             request_id = request_resp.json()["request_id"]
@@ -565,9 +682,17 @@ class TestConsentFlowIntegration:
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             challenge_data = json.loads(challenge_raw)
             signing_input = build_signing_input(
-                request_id, patient_id, provider_id, challenge_nonce, "approved",
-                "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["created_at"], challenge_data["expires_at"], device_id,
+                request_id,
+                patient_id,
+                provider_id,
+                challenge_nonce,
+                "approved",
+                "clinical",
+                "checkup",
+                challenge_data["access_duration"],
+                challenge_data["created_at"],
+                challenge_data["expires_at"],
+                device_id,
             )
             forged_signature = sign_challenge(wrong_private_key, signing_input)
 
@@ -576,16 +701,29 @@ class TestConsentFlowIntegration:
             _setup_mock_db_for_approve(mock_db, device_row)
             approval_resp = client.post(
                 "/api/v2/consent/approve-signed",
-                json={"request_id": request_id, "patient_id": patient_id,
-                      "decision": "approved", "challenge_nonce": challenge_nonce,
-                      "signature": forged_signature, "device_id": device_id},
+                json={
+                    "request_id": request_id,
+                    "patient_id": patient_id,
+                    "decision": "approved",
+                    "challenge_nonce": challenge_nonce,
+                    "signature": forged_signature,
+                    "device_id": device_id,
+                },
             )
-            assert approval_resp.status_code == 401, (
-                f"Wrong-key signature should be rejected (401), got {approval_resp.status_code}"
-            )
+            assert (
+                approval_resp.status_code == 401
+            ), f"Wrong-key signature should be rejected (401), got {approval_resp.status_code}"
 
     def test_consent_status_polling(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id, keypair
+        self,
+        client,
+        fake_redis,
+        fake_sync_redis,
+        mock_db,
+        overrides,
+        provider,
+        patient_id,
+        keypair,
     ):
         """Request → poll status (pending) → approve → poll status (approved)."""
         private_key, der_bytes, der_b64 = keypair
@@ -598,23 +736,37 @@ class TestConsentFlowIntegration:
             # Enroll
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar=0),
-                _db_result(scalar_one_or_none=None),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar=0),
+                    _db_result(scalar_one_or_none=None),
+                ]
+            )
             client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": der_b64, "device_label": "Poll Device", "platform": "ios", "device_enrollment_token": "e" * 43},
+                json={
+                    "device_public_key": der_b64,
+                    "device_label": "Poll Device",
+                    "platform": "ios",
+                    "device_enrollment_token": "e" * 43,
+                },
             )
 
             # Request
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar_one_or_none=device_row),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar_one_or_none=device_row),
+                ]
+            )
             request_resp = client.post(
                 "/api/v2/consent/request",
-                json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+                json={
+                    "patient_id": patient_id,
+                    "purpose": "checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 900,
+                },
             )
             request_id = request_resp.json()["request_id"]
             challenge_nonce = request_resp.json()["challenge_nonce"]
@@ -628,9 +780,17 @@ class TestConsentFlowIntegration:
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             challenge_data = json.loads(challenge_raw)
             signing_input = build_signing_input(
-                request_id, patient_id, provider_id, challenge_nonce, "approved",
-                "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["created_at"], challenge_data["expires_at"], device_id,
+                request_id,
+                patient_id,
+                provider_id,
+                challenge_nonce,
+                "approved",
+                "clinical",
+                "checkup",
+                challenge_data["access_duration"],
+                challenge_data["created_at"],
+                challenge_data["expires_at"],
+                device_id,
             )
             real_sig = sign_challenge(private_key, signing_input)
 
@@ -638,9 +798,14 @@ class TestConsentFlowIntegration:
             _setup_mock_db_for_approve(mock_db, device_row)
             client.post(
                 "/api/v2/consent/approve-signed",
-                json={"request_id": request_id, "patient_id": patient_id,
-                      "decision": "approved", "challenge_nonce": challenge_nonce,
-                      "signature": real_sig, "device_id": device_id},
+                json={
+                    "request_id": request_id,
+                    "patient_id": patient_id,
+                    "decision": "approved",
+                    "challenge_nonce": challenge_nonce,
+                    "signature": real_sig,
+                    "device_id": device_id,
+                },
             )
 
             # Poll — should be approved
@@ -649,7 +814,15 @@ class TestConsentFlowIntegration:
             assert status_resp.json()["status"] == "approved"
 
     def test_replayed_nonce_is_rejected(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id, keypair
+        self,
+        client,
+        fake_redis,
+        fake_sync_redis,
+        mock_db,
+        overrides,
+        provider,
+        patient_id,
+        keypair,
     ):
         """Approve → replay the same nonce/signature → 409 conflict."""
         private_key, der_bytes, der_b64 = keypair
@@ -662,23 +835,37 @@ class TestConsentFlowIntegration:
             # Enroll
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar=0),
-                _db_result(scalar_one_or_none=None),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar=0),
+                    _db_result(scalar_one_or_none=None),
+                ]
+            )
             client.post(
                 "/api/v2/patient/devices/enroll",
-                json={"device_public_key": der_b64, "device_label": "Replay Device", "platform": "ios", "device_enrollment_token": "e" * 43},
+                json={
+                    "device_public_key": der_b64,
+                    "device_label": "Replay Device",
+                    "platform": "ios",
+                    "device_enrollment_token": "e" * 43,
+                },
             )
 
             # Request
             _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback([
-                _db_result(scalar_one_or_none=device_row),
-            ])
+            mock_db.execute.side_effect = _side_effect_with_fallback(
+                [
+                    _db_result(scalar_one_or_none=device_row),
+                ]
+            )
             request_resp = client.post(
                 "/api/v2/consent/request",
-                json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+                json={
+                    "patient_id": patient_id,
+                    "purpose": "checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 900,
+                },
             )
             request_id = request_resp.json()["request_id"]
             challenge_nonce = request_resp.json()["challenge_nonce"]
@@ -687,9 +874,17 @@ class TestConsentFlowIntegration:
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             challenge_data = json.loads(challenge_raw)
             signing_input = build_signing_input(
-                request_id, patient_id, provider_id, challenge_nonce, "approved",
-                "clinical", "checkup", challenge_data["access_duration"],
-                challenge_data["created_at"], challenge_data["expires_at"], device_id,
+                request_id,
+                patient_id,
+                provider_id,
+                challenge_nonce,
+                "approved",
+                "clinical",
+                "checkup",
+                challenge_data["access_duration"],
+                challenge_data["created_at"],
+                challenge_data["expires_at"],
+                device_id,
             )
             real_sig = sign_challenge(private_key, signing_input)
 
@@ -697,9 +892,14 @@ class TestConsentFlowIntegration:
             _setup_mock_db_for_approve(mock_db, device_row)
             first = client.post(
                 "/api/v2/consent/approve-signed",
-                json={"request_id": request_id, "patient_id": patient_id,
-                      "decision": "approved", "challenge_nonce": challenge_nonce,
-                      "signature": real_sig, "device_id": device_id},
+                json={
+                    "request_id": request_id,
+                    "patient_id": patient_id,
+                    "decision": "approved",
+                    "challenge_nonce": challenge_nonce,
+                    "signature": real_sig,
+                    "device_id": device_id,
+                },
             )
             assert first.status_code == 200
 
@@ -708,9 +908,14 @@ class TestConsentFlowIntegration:
             _setup_mock_db_for_approve(mock_db, device_row)
             replay = client.post(
                 "/api/v2/consent/approve-signed",
-                json={"request_id": request_id, "patient_id": patient_id,
-                      "decision": "approved", "challenge_nonce": challenge_nonce,
-                      "signature": real_sig, "device_id": device_id},
+                json={
+                    "request_id": request_id,
+                    "patient_id": patient_id,
+                    "decision": "approved",
+                    "challenge_nonce": challenge_nonce,
+                    "signature": real_sig,
+                    "device_id": device_id,
+                },
             )
             assert replay.status_code == 200
             assert replay.json() == first.json()

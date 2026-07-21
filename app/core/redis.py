@@ -83,6 +83,7 @@ def ping_redis() -> bool:
 # Scope-aware consent tokens
 # ─────────────────────────────────────────────────────────────────────────
 
+
 def issue_consent_token(
     masked_internal_id: str,
     scope: str = DEFAULT_CONSENT_SCOPE,
@@ -183,7 +184,10 @@ def revoke_consent_token(token: str | None) -> None:
 # "a token that can see everything" keeps working unchanged. New code
 # should call the scoped functions above directly instead.
 
-def issue_token(masked_internal_id: str, ttl_seconds: int = CONSENT_TOKEN_TTL_SECONDS) -> str:
+
+def issue_token(
+    masked_internal_id: str, ttl_seconds: int = CONSENT_TOKEN_TTL_SECONDS
+) -> str:
     return issue_consent_token(
         masked_internal_id=masked_internal_id, scope="full", ttl_seconds=ttl_seconds
     )
@@ -195,7 +199,9 @@ def validate_token(token: str) -> str | None:
 
 
 def create_access_token(masked_id: str) -> str:
-    return issue_token(masked_internal_id=masked_id, ttl_seconds=CONSENT_TOKEN_TTL_SECONDS)
+    return issue_token(
+        masked_internal_id=masked_id, ttl_seconds=CONSENT_TOKEN_TTL_SECONDS
+    )
 
 
 def get_id_from_token(token: str) -> str | None:

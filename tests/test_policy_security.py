@@ -47,12 +47,15 @@ def _override_provider_context(provider: ProviderContext):
 
     return _override
 
+
 def test_policy_update_requires_auth():
     """Policy update should fail without authentication"""
-    response = client.put("/api/v2/patient/123e4567-e89b-12d3-a456-426614174000/policy", json={
-        "consent_assurance_policy": "standard"
-    })
+    response = client.put(
+        "/api/v2/patient/123e4567-e89b-12d3-a456-426614174000/policy",
+        json={"consent_assurance_policy": "standard"},
+    )
     assert response.status_code == 401
+
 
 def test_policy_update_requires_role():
     """Only clinician/admin should be able to update policy"""
@@ -74,13 +77,14 @@ def test_policy_update_requires_role():
 
     assert response.status_code == 403
 
+
 def test_policy_update_blocked_in_production():
     """Policy updates should be blocked unless ALLOW_DEV_POLICY_UPDATES=true"""
     headers = {"Authorization": "Bearer clinician-token"}
     response = client.put(
         "/api/v2/patient/123e4567-e89b-12d3-a456-426614174000/policy",
         json={"consent_assurance_policy": "standard"},
-        headers=headers
+        headers=headers,
     )
     # Should be 403 if ALLOW_DEV_POLICY_UPDATES is not set
     assert response.status_code in [403, 401]

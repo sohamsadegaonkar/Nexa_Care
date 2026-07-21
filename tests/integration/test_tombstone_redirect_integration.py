@@ -22,22 +22,35 @@ from app.core.dependencies import get_db_session, get_provider_context
 from app.main import app
 from app.models.nfc_card_registry import NFCCardStatus
 from app.models.provider import AffiliationType
-from app.models.provider_context import AffiliationContext, HospitalContext, ProviderContext, ProviderIdentityContext
+from app.models.provider_context import (
+    AffiliationContext,
+    HospitalContext,
+    ProviderContext,
+    ProviderIdentityContext,
+)
 
 
 def _provider() -> ProviderContext:
     return ProviderContext(
-        provider=ProviderIdentityContext(provider_id=uuid.uuid4(), display_name="Dr. NFC", contact_email="n@ex.com"),
-        hospital=HospitalContext(hospital_id=uuid.uuid4(), facility_code="H", display_name="H"),
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(), display_name="Dr. NFC", contact_email="n@ex.com"
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(), facility_code="H", display_name="H"
+        ),
         affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(), affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True, roles=["clinician"],
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            is_primary=True,
+            roles=["clinician"],
         ),
     )
 
 
 class FakeCard:
-    def __init__(self, card_uid: str, patient_id, status: str = NFCCardStatus.ACTIVE.value):
+    def __init__(
+        self, card_uid: str, patient_id, status: str = NFCCardStatus.ACTIVE.value
+    ):
         self.card_uid = card_uid
         self.patient_id = patient_id
         self.status = status
@@ -96,10 +109,17 @@ def _bypass_rate_limit():
     fake_redis = AsyncMock()
     fake_redis.eval = AsyncMock(return_value=[1, 60])
 
-    with patch("app.api.v2.nfc_routes.get_async_redis_client", return_value=fake_redis), \
-         patch("app.api.v2.nfc_routes.atomic_fixed_window", AsyncMock(return_value=(1, 60))), \
-         patch("app.api.v2.nfc_routes.append_audit_log", AsyncMock(return_value=True)), \
-         patch("app.services.card_resolution_service.append_audit_log_or_503", AsyncMock(return_value=None)):
+    with (
+        patch("app.api.v2.nfc_routes.get_async_redis_client", return_value=fake_redis),
+        patch(
+            "app.api.v2.nfc_routes.atomic_fixed_window", AsyncMock(return_value=(1, 60))
+        ),
+        patch("app.api.v2.nfc_routes.append_audit_log", AsyncMock(return_value=True)),
+        patch(
+            "app.services.card_resolution_service.append_audit_log_or_503",
+            AsyncMock(return_value=None),
+        ),
+    ):
         yield
 
 
@@ -126,7 +146,11 @@ def test_merged_card_redirect():
 
 def test_inactive_card_rejected():
     db = FakeDB(
-        cards=[FakeCard("INACTIVE-CARD-UID", uuid.uuid4(), status=NFCCardStatus.REVOKED.value)],
+        cards=[
+            FakeCard(
+                "INACTIVE-CARD-UID", uuid.uuid4(), status=NFCCardStatus.REVOKED.value
+            )
+        ],
         tombstones=[],
     )
     client = _client_with_overrides(db)
@@ -156,7 +180,10 @@ def test_bounded_multi_hop_redirect_chain():
     patient_a, patient_b, patient_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = FakeDB(
         cards=[FakeCard("CHAIN-CARD-UID", patient_a)],
-        tombstones=[FakeTombstone(patient_a, patient_b), FakeTombstone(patient_b, patient_c)],
+        tombstones=[
+            FakeTombstone(patient_a, patient_b),
+            FakeTombstone(patient_b, patient_c),
+        ],
     )
     client = _client_with_overrides(db)
 
@@ -171,7 +198,10 @@ def test_cycle_detected_returns_409():
     patient_a, patient_b = uuid.uuid4(), uuid.uuid4()
     db = FakeDB(
         cards=[FakeCard("CYCLE-CARD-UID", patient_a)],
-        tombstones=[FakeTombstone(patient_a, patient_b), FakeTombstone(patient_b, patient_a)],
+        tombstones=[
+            FakeTombstone(patient_a, patient_b),
+            FakeTombstone(patient_b, patient_a),
+        ],
     )
     client = _client_with_overrides(db)
 

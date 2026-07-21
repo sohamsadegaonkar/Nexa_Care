@@ -6,6 +6,7 @@ lives in :func:`should_auto_approve`; this wrapper preserves the existing
 ``can_auto_approve()`` return-type contract (``bool``) used by the pipeline
 orchestrator.
 """
+
 from __future__ import annotations
 
 from app.ai.auto_approval import should_auto_approve

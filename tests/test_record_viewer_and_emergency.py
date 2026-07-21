@@ -75,9 +75,9 @@ class TestRecordViewerTabs:
 
     def test_has_prescriptions_tab(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
-        assert "prescriptions" in code.lower() or "medication" in code.lower(), (
-            "Must have Prescriptions/Medications tab"
-        )
+        assert (
+            "prescriptions" in code.lower() or "medication" in code.lower()
+        ), "Must have Prescriptions/Medications tab"
 
     def test_has_lab_reports_tab(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
@@ -97,16 +97,16 @@ class TestRecordViewerTabs:
 
     def test_has_access_status_tab(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
-        assert "access" in code.lower() and "status" in code.lower(), (
-            "Must have Access Status tab"
-        )
+        assert (
+            "access" in code.lower() and "status" in code.lower()
+        ), "Must have Access Status tab"
 
     def test_tab_navigation_buttons(self) -> None:
         """Tab navigation must use Button components to switch tabs."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "onPress" in code and "setActiveTab" in code, (
-            "Tab buttons must call setActiveTab on press"
-        )
+        assert (
+            "onPress" in code and "setActiveTab" in code
+        ), "Tab buttons must call setActiveTab on press"
 
     def test_at_least_eight_tabs_defined(self) -> None:
         """Must define at least 8 tabs in the tab definitions."""
@@ -119,11 +119,15 @@ class TestRecordViewerTabs:
         all_tabs_match = re.search(r"ALL_TABS\s*=\s*\[([^\]]+)\]", code)
         if all_tabs_match:
             tab_strings = re.findall(r"'(\w+)'", all_tabs_match.group(1))
-            assert len(tab_strings) >= 8, f"Must define at least 8 tabs in ALL_TABS, found {len(tab_strings)}: {tab_strings}"
+            assert (
+                len(tab_strings) >= 8
+            ), f"Must define at least 8 tabs in ALL_TABS, found {len(tab_strings)}: {tab_strings}"
             return
         # Fallback: check tabRenderers keys
         renderer_keys = re.findall(r"(\w+):\s*\(\)\s*=>\s*JSX\.Element", code)
-        assert len(renderer_keys) >= 8, f"Must define at least 8 tab renderers, found {len(renderer_keys)}"
+        assert (
+            len(renderer_keys) >= 8
+        ), f"Must define at least 8 tab renderers, found {len(renderer_keys)}"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -137,9 +141,9 @@ class TestAllergyProminence:
     def test_allergies_labeled_safety_critical(self) -> None:
         """Allergies must be labeled as safety-critical."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "SAFETY CRITICAL" in code, (
-            "Allergies section must be labeled 'SAFETY CRITICAL'"
-        )
+        assert (
+            "SAFETY CRITICAL" in code
+        ), "Allergies section must be labeled 'SAFETY CRITICAL'"
 
     def test_allergies_use_red_color(self) -> None:
         """Allergy display must use red color scheme."""
@@ -153,18 +157,18 @@ class TestAllergyProminence:
         """Allergies banner must be visible regardless of active tab."""
         code = _read_screen("PatientRecordViewerScreen")
         # Must have an always-visible allergy banner (outside tab content)
-        assert "ALLERGIES:" in code or "ALLERGIES" in code, (
-            "Must have always-visible allergies banner"
-        )
+        assert (
+            "ALLERGIES:" in code or "ALLERGIES" in code
+        ), "Must have always-visible allergies banner"
 
     def test_allergies_dedicated_tab(self) -> None:
         """Must have a dedicated Allergies tab with full detail."""
         code = _read_screen("PatientRecordViewerScreen")
         assert "allergies" in code.lower(), "Must have allergies tab"
         # The allergies tab must show a warning banner
-        assert "safety" in code.lower() and "critical" in code.lower(), (
-            "Allergies tab must show safety-critical warning"
-        )
+        assert (
+            "safety" in code.lower() and "critical" in code.lower()
+        ), "Allergies tab must show safety-critical warning"
 
     def test_allergy_items_display_warning_emoji(self) -> None:
         """Individual allergy items must display warning indicators."""
@@ -200,14 +204,16 @@ class TestConfidenceBadges:
         code = _read_screen("PatientRecordViewerScreen")
         # Count occurrences of ProvenanceBadge usage
         count = code.count("<ProvenanceBadge")
-        assert count >= 3, f"ProvenanceBadge must be used in at least 3 data sections, found {count}"
+        assert (
+            count >= 3
+        ), f"ProvenanceBadge must be used in at least 3 data sections, found {count}"
 
     def test_detects_ai_extracted_source(self) -> None:
         """Must detect ai_extracted source and show AI badge."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "ai_extracted" in code or "ai" in code.lower(), (
-            "Must detect ai_extracted source for badge display"
-        )
+        assert (
+            "ai_extracted" in code or "ai" in code.lower()
+        ), "Must detect ai_extracted source for badge display"
 
     def test_shows_verification_status(self) -> None:
         """Must distinguish between verified and unverified AI-extracted fields."""
@@ -222,7 +228,9 @@ class TestConfidenceBadges:
     def test_not_yet_verified_badge(self) -> None:
         """Must show 'Not yet verified' for unverified AI-extracted fields."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "Not yet verified" in code, "Must show 'Not yet verified' for unverified AI fields"
+        assert (
+            "Not yet verified" in code
+        ), "Must show 'Not yet verified' for unverified AI fields"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -249,19 +257,19 @@ class TestConsentExpiryCountdown:
         """When seconds reach zero, must transition to expired state."""
         code = _read_screen("PatientRecordViewerScreen")
         assert "expired" in code.lower(), "Must transition to expired state"
-        assert "setViewerState" in code or "viewerState" in code, (
-            "Must update viewer state to expired"
-        )
+        assert (
+            "setViewerState" in code or "viewerState" in code
+        ), "Must update viewer state to expired"
 
     def test_shows_expired_message(self) -> None:
         """Expired state must show 'Consent expired. Request access again.'"""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "Consent Expired" in code or "Consent expired" in code, (
-            "Must show 'Consent Expired' or 'Consent expired' message"
-        )
-        assert "Request access again" in code or "request access" in code.lower(), (
-            "Must prompt to request access again"
-        )
+        assert (
+            "Consent Expired" in code or "Consent expired" in code
+        ), "Must show 'Consent Expired' or 'Consent expired' message"
+        assert (
+            "Request access again" in code or "request access" in code.lower()
+        ), "Must prompt to request access again"
 
     def test_expired_state_shows_lock_icon(self) -> None:
         """Expired state must show a lock icon."""
@@ -272,31 +280,33 @@ class TestConsentExpiryCountdown:
         """When active, must show a countdown bar with remaining time."""
         code = _read_screen("PatientRecordViewerScreen")
         assert "formatCountdown" in code, "Must format countdown display"
-        assert "Consent active" in code or "consent" in code.lower(), (
-            "Must show consent active status bar"
-        )
+        assert (
+            "Consent active" in code or "consent" in code.lower()
+        ), "Must show consent active status bar"
 
     def test_warns_when_close_to_expiry(self) -> None:
         """Must warn when consent is close to expiry (e.g. < 60 seconds)."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "60" in code or "expiring soon" in code.lower(), (
-            "Must warn when consent is close to expiry"
-        )
+        assert (
+            "60" in code or "expiring soon" in code.lower()
+        ), "Must warn when consent is close to expiry"
 
     def test_cleanup_timer_on_unmount(self) -> None:
         """Must clean up the expiry timer on unmount."""
         code = _read_screen("PatientRecordViewerScreen")
         assert "clearInterval" in code, "Must clearInterval on unmount"
-        assert "return ()" in code or "return () =>" in code, (
-            "Must return cleanup function from useEffect"
-        )
+        assert (
+            "return ()" in code or "return () =>" in code
+        ), "Must return cleanup function from useEffect"
 
     def test_periodic_consent_revalidation(self) -> None:
         """Must periodically revalidate consent (not just local countdown)."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "validate" in code.lower() or "revalidation" in code.lower() or "consent/validate" in code.lower(), (
-            "Must periodically revalidate consent with the server"
-        )
+        assert (
+            "validate" in code.lower()
+            or "revalidation" in code.lower()
+            or "consent/validate" in code.lower()
+        ), "Must periodically revalidate consent with the server"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -310,7 +320,9 @@ class TestRecordViewerConsentRequired:
     def test_fetches_via_api_client(self) -> None:
         """Must use apiClient to fetch patient data, not raw fetch."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "apiClient" in code or "NexaApiClient" in code, "Must use shared apiClient"
+        assert (
+            "apiClient" in code or "NexaApiClient" in code
+        ), "Must use shared apiClient"
 
     def test_no_raw_fetch(self) -> None:
         """Must not use raw fetch()."""
@@ -320,24 +332,24 @@ class TestRecordViewerConsentRequired:
     def test_handles_consent_expired_error(self) -> None:
         """Must handle the case where consent has expired during fetch."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "expired" in code.lower() or "consent" in code.lower(), (
-            "Must handle consent-expired error from backend"
-        )
+        assert (
+            "expired" in code.lower() or "consent" in code.lower()
+        ), "Must handle consent-expired error from backend"
 
     def test_viewer_state_includes_expired(self) -> None:
         """ViewerState must include 'expired' as a possible state."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "'expired'" in code or '"expired"' in code, (
-            "ViewerState must include 'expired' variant"
-        )
+        assert (
+            "'expired'" in code or '"expired"' in code
+        ), "ViewerState must include 'expired' variant"
 
     def test_viewer_state_includes_loading_and_error(self) -> None:
         """ViewerState must include 'loading', 'error', and 'active' states."""
         code = _read_screen("PatientRecordViewerScreen")
         for state in ["loading", "error", "active"]:
-            assert f"'{state}'" in code or f'"{state}"' in code, (
-                f"ViewerState must include '{state}' variant"
-            )
+            assert (
+                f"'{state}'" in code or f'"{state}"' in code
+            ), f"ViewerState must include '{state}' variant"
 
     def test_reads_request_id_from_params(self) -> None:
         """Must read request_id from URL search params."""
@@ -376,7 +388,9 @@ class TestEmergencyControlledReasonCodes:
 
     def test_includes_life_threatening_reason(self) -> None:
         code = _read_reason_contract()
-        assert "LIFE_THREATENING" in code or "IMMEDIATE_THREAT_TO_LIFE" in code, "Must include LIFE_THREATENING or IMMEDIATE_THREAT_TO_LIFE reason"
+        assert (
+            "LIFE_THREATENING" in code or "IMMEDIATE_THREAT_TO_LIFE" in code
+        ), "Must include LIFE_THREATENING or IMMEDIATE_THREAT_TO_LIFE reason"
 
     def test_includes_surgical_emergency_reason(self) -> None:
         code = _read_reason_contract()
@@ -396,24 +410,30 @@ class TestEmergencyControlledReasonCodes:
         reason_values = re.findall(r"value:\s*'([A-Z_]+)'", code)
         # Filter to reason codes (all caps with underscores)
         valid_reasons = [v for v in reason_values if v.isupper() and "_" in v]
-        assert len(valid_reasons) >= 6, (
-            f"Must have at least 6 reason options, found {len(valid_reasons)}: {valid_reasons}"
-        )
+        assert (
+            len(valid_reasons) >= 6
+        ), f"Must have at least 6 reason options, found {len(valid_reasons)}: {valid_reasons}"
 
     def test_includes_patient_incapacitated_reason(self) -> None:
         """Must include PATIENT_INCAPACITATED reason code."""
         code = _read_reason_contract()
-        assert "PATIENT_INCAPACITATED" in code, "Must include PATIENT_INCAPACITATED reason"
+        assert (
+            "PATIENT_INCAPACITATED" in code
+        ), "Must include PATIENT_INCAPACITATED reason"
 
     def test_includes_other_emergency_reason(self) -> None:
         """Must include OTHER_CLINICALLY_JUSTIFIED_EMERGENCY with mandatory review."""
         code = _read_reason_contract()
-        assert "OTHER_CLINICALLY_JUSTIFIED_EMERGENCY" in code, "Must include OTHER_CLINICALLY_JUSTIFIED_EMERGENCY reason"
+        assert (
+            "OTHER_CLINICALLY_JUSTIFIED_EMERGENCY" in code
+        ), "Must include OTHER_CLINICALLY_JUSTIFIED_EMERGENCY reason"
 
     def test_includes_system_unavailable_reason(self) -> None:
         """Must include SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE reason code."""
         code = _read_reason_contract()
-        assert "SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE" in code, "Must include SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE reason"
+        assert (
+            "SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE" in code
+        ), "Must include SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE reason"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -427,16 +447,18 @@ class TestBreakGlassRequiresJustification:
     def test_has_free_text_field(self) -> None:
         """Must have a clinical justification text field."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "freeText" in code or "free_text" in code or "justification" in code.lower(), (
-            "Must have clinical justification field"
-        )
+        assert (
+            "freeText" in code or "free_text" in code or "justification" in code.lower()
+        ), "Must have clinical justification field"
 
     def test_validates_justification_not_empty(self) -> None:
         """Must validate that clinical justification is not empty."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "!freeText.trim()" in code or "justification is required" in code.lower() or "required" in code.lower(), (
-            "Must validate that clinical justification is not empty"
-        )
+        assert (
+            "!freeText.trim()" in code
+            or "justification is required" in code.lower()
+            or "required" in code.lower()
+        ), "Must validate that clinical justification is not empty"
 
     def test_button_disabled_without_justification(self) -> None:
         """Submit button must be disabled without justification."""
@@ -444,15 +466,17 @@ class TestBreakGlassRequiresJustification:
         assert "justification" in code, "Must reference justification in disabled check"
         # The disabled prop should include freeText validation
         code_norm = _normalize_ws(code)
-        assert "!justification.trim()" in code_norm, "justification must be in button disabled prop"
+        assert (
+            "!justification.trim()" in code_norm
+        ), "justification must be in button disabled prop"
 
     def test_shows_error_when_justification_missing(self) -> None:
         """Must show an error message when justification is missing."""
         code = _read_screen("EmergencyAccessScreen")
         code_lower = code.lower()
-        assert "justification" in code_lower or "required" in code_lower, (
-            "Must show error when justification is missing"
-        )
+        assert (
+            "justification" in code_lower or "required" in code_lower
+        ), "Must show error when justification is missing"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -470,23 +494,23 @@ class TestEmergencyAuditAndRateLimit:
     def test_shows_permanently_recorded_warning(self) -> None:
         """Must warn that access is permanently recorded."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "permanently" in code.lower() or "recorded" in code.lower(), (
-            "Must warn that access is permanently recorded"
-        )
+        assert (
+            "permanently" in code.lower() or "recorded" in code.lower()
+        ), "Must warn that access is permanently recorded"
 
     def test_shows_rate_limit_warning(self) -> None:
         """Must warn about rate limiting."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "rate" in code.lower() or "3 per hour" in code, (
-            "Must show rate limit warning (3 per hour)"
-        )
+        assert (
+            "rate" in code.lower() or "3 per hour" in code
+        ), "Must show rate limit warning (3 per hour)"
 
     def test_shows_compliance_violation_warning(self) -> None:
         """Must warn that unauthorized use is a compliance violation."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "compliance" in code.lower() or "violation" in code.lower(), (
-            "Must warn about compliance violation"
-        )
+        assert (
+            "compliance" in code.lower() or "violation" in code.lower()
+        ), "Must warn about compliance violation"
 
     def test_red_color_scheme(self) -> None:
         """Must use red color scheme for emergency warnings."""
@@ -498,9 +522,9 @@ class TestEmergencyAuditAndRateLimit:
         code = _read_screen("EmergencyAccessScreen")
         # Must use honest wording — not "will be notified" but "may trigger notifications"
         code_norm = _normalize_ws(code).lower()
-        assert "recorded" in code_norm and ("notification" in code_norm or "notified" in code_norm), (
-            "Must warn that access will be recorded and may trigger notifications"
-        )
+        assert "recorded" in code_norm and (
+            "notification" in code_norm or "notified" in code_norm
+        ), "Must warn that access will be recorded and may trigger notifications"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -578,11 +602,15 @@ class TestBothScreensTamaguiOnly:
 
     def test_record_viewer_imports_from_tamagui(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
-        assert "from 'tamagui'" in code or "from '@my/ui'" in code, "Must import from 'tamagui'"
+        assert (
+            "from 'tamagui'" in code or "from '@my/ui'" in code
+        ), "Must import from 'tamagui'"
 
     def test_emergency_imports_from_tamagui(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
-        assert "from 'tamagui'" in code or "from '@my/ui'" in code, "Must import from 'tamagui'"
+        assert (
+            "from 'tamagui'" in code or "from '@my/ui'" in code
+        ), "Must import from 'tamagui'"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -596,30 +624,30 @@ class TestNeitherScreenApproves:
     def test_record_viewer_no_approve_signed(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
         code_no_comments = _strip_comments(code)
-        assert "approve-signed" not in code_no_comments, (
-            "Record viewer must NOT call /consent/approve-signed"
-        )
+        assert (
+            "approve-signed" not in code_no_comments
+        ), "Record viewer must NOT call /consent/approve-signed"
 
     def test_emergency_no_approve_signed(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
         code_no_comments = _strip_comments(code)
-        assert "approve-signed" not in code_no_comments, (
-            "Emergency screen must NOT call /consent/approve-signed"
-        )
+        assert (
+            "approve-signed" not in code_no_comments
+        ), "Emergency screen must NOT call /consent/approve-signed"
 
     def test_record_viewer_no_approve_button(self) -> None:
         code = _read_screen("PatientRecordViewerScreen")
         code_no_comments = _strip_comments(code)
-        assert not re.search(r'<Button[^>]*>.*Approve', code_no_comments, re.DOTALL), (
-            "Record viewer must NOT render Approve button"
-        )
+        assert not re.search(
+            r"<Button[^>]*>.*Approve", code_no_comments, re.DOTALL
+        ), "Record viewer must NOT render Approve button"
 
     def test_emergency_no_approve_button(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
         code_no_comments = _strip_comments(code)
-        assert not re.search(r'<Button[^>]*>.*Approve', code_no_comments, re.DOTALL), (
-            "Emergency screen must NOT render Approve button"
-        )
+        assert not re.search(
+            r"<Button[^>]*>.*Approve", code_no_comments, re.DOTALL
+        ), "Emergency screen must NOT render Approve button"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -633,9 +661,9 @@ class TestEmergencyBackendContract:
     def test_calls_break_glass_issue_endpoint(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
         # The screen may use NexaApiClient.breakGlassIssue() or call the endpoint directly
-        assert "breakGlassIssue" in code or "/api/v2/consent/break-glass/issue" in code, (
-            "Must call break-glass API (via NexaApiClient or direct endpoint)"
-        )
+        assert (
+            "breakGlassIssue" in code or "/api/v2/consent/break-glass/issue" in code
+        ), "Must call break-glass API (via NexaApiClient or direct endpoint)"
 
     def test_sends_required_fields(self) -> None:
         """Must send patient_id, reason_code, and clinical justification."""
@@ -647,23 +675,23 @@ class TestEmergencyBackendContract:
     def test_backend_enforces_rate_limit(self) -> None:
         """Backend must enforce rate limiting on break-glass."""
         code = _read(CONSENT_ROUTES)
-        assert "3" in code and "break-glass" in code.lower(), (
-            "Backend must rate-limit break-glass (3 per hour)"
-        )
+        assert (
+            "3" in code and "break-glass" in code.lower()
+        ), "Backend must rate-limit break-glass (3 per hour)"
 
     def test_backend_ttl_is_15_minutes(self) -> None:
         """Backend break-glass TTL must be 15 minutes."""
         code = _read(CONSENT_ROUTES)
-        assert "BREAK_GLASS_TTL_SECONDS = 15 * 60" in code, (
-            "Break-glass TTL must be 15 minutes (900 seconds)"
-        )
+        assert (
+            "BREAK_GLASS_TTL_SECONDS = 15 * 60" in code
+        ), "Break-glass TTL must be 15 minutes (900 seconds)"
 
     def test_success_screen_shows_expiry(self) -> None:
         """After break-glass success, must show the expiry time."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "expires_at" in code or "Expires At" in code, (
-            "Must display consent expiry after break-glass"
-        )
+        assert (
+            "expires_at" in code or "Expires At" in code
+        ), "Must display consent expiry after break-glass"
 
     def test_navigates_to_record_viewer(self) -> None:
         """After break-glass, must navigate to patient record viewer."""
@@ -682,41 +710,45 @@ class TestRecordViewerDataDisplay:
     def test_vitals_show_type_value_unit(self) -> None:
         """Vitals must display type, value, and unit."""
         code = _read_screen("PatientRecordViewerScreen")
-        vitals_render = code[code.find("renderVitals"):] if "renderVitals" in code else code
-        assert "v.type" in vitals_render or "type" in vitals_render.lower(), (
-            "Vitals must display type"
+        vitals_render = (
+            code[code.find("renderVitals") :] if "renderVitals" in code else code
         )
-        assert "v.value" in vitals_render or "value" in vitals_render.lower(), (
-            "Vitals must display value"
-        )
+        assert (
+            "v.type" in vitals_render or "type" in vitals_render.lower()
+        ), "Vitals must display type"
+        assert (
+            "v.value" in vitals_render or "value" in vitals_render.lower()
+        ), "Vitals must display value"
 
     def test_lab_reports_show_abnormal_flag(self) -> None:
         """Lab reports must flag abnormal results."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "is_abnormal" in code or "ABNORMAL" in code, (
-            "Lab reports must show abnormal flag"
-        )
+        assert (
+            "is_abnormal" in code or "ABNORMAL" in code
+        ), "Lab reports must show abnormal flag"
 
     def test_lab_reports_show_reference_range(self) -> None:
         """Lab reports must show reference ranges."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "reference_range" in code or "ref" in code.lower(), (
-            "Lab reports must show reference range"
-        )
+        assert (
+            "reference_range" in code or "ref" in code.lower()
+        ), "Lab reports must show reference range"
 
     def test_medications_show_name_dosage_frequency(self) -> None:
         """Medications must display name, dosage, and frequency."""
         code = _read_screen("PatientRecordViewerScreen")
         assert "name" in code.lower(), "Medications must show name"
-        assert "dosage" in code.lower() or "strength" in code.lower(), "Medications must show dosage"
+        assert (
+            "dosage" in code.lower() or "strength" in code.lower()
+        ), "Medications must show dosage"
         assert "frequency" in code.lower(), "Medications must show frequency"
 
     def test_timeline_shows_source_display(self) -> None:
         """Timeline events must show source display text."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "source_display" in code or "sourceDisplay" in code, (
-            "Timeline must show source display"
-        )
+        assert (
+            "source_display" in code or "sourceDisplay" in code
+        ), "Timeline must show source display"
 
     def test_timeline_shows_badges(self) -> None:
         """Timeline events must show badges (AI extracted, risk, etc.)."""
@@ -742,22 +774,24 @@ class TestFrontendLockIsUXOnly:
         """Source must document that the frontend lock is UX only."""
         code = _read_screen("PatientRecordViewerScreen")
         code_norm = _normalize_ws(code).lower()
-        assert "ux control only" in code_norm or "not the security boundary" in code_norm, (
-            "Must document that frontend lock is UX only, not the security boundary"
-        )
+        assert (
+            "ux control only" in code_norm or "not the security boundary" in code_norm
+        ), "Must document that frontend lock is UX only, not the security boundary"
 
     def test_passes_consent_token_header(self) -> None:
         """Must pass X-Consent-Token header on data API requests."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "X-Consent-Token" in code, "Must pass X-Consent-Token header on data requests"
+        assert (
+            "X-Consent-Token" in code
+        ), "Must pass X-Consent-Token header on data requests"
 
     def test_expired_state_mentions_server_validation(self) -> None:
         """Expired state must mention that backend validates independently."""
         code = _read_screen("PatientRecordViewerScreen")
         code_norm = _normalize_ws(code).lower()
-        assert "server-side" in code_norm or "independently validated" in code_norm, (
-            "Expired state must mention server-side validation"
-        )
+        assert (
+            "server-side" in code_norm or "independently validated" in code_norm
+        ), "Expired state must mention server-side validation"
 
 
 class TestConsentTokenNotDisplayed:
@@ -771,7 +805,9 @@ class TestConsentTokenNotDisplayed:
     def test_emergency_success_shows_masked_token(self) -> None:
         """Emergency success screen must show masked authorization reference, not raw token."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "maskToken" in code, "Must use maskToken to hide raw consent token in success screen"
+        assert (
+            "maskToken" in code
+        ), "Must use maskToken to hide raw consent token in success screen"
 
 
 class TestScopeAwareTabs:
@@ -799,17 +835,23 @@ class TestJustificationMinimumLength:
     def test_has_minimum_length_validation(self) -> None:
         """Must enforce minimum character length for justification."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "MIN_JUSTIFICATION_LENGTH" in code, "Must define MIN_JUSTIFICATION_LENGTH"
+        assert (
+            "MIN_JUSTIFICATION_LENGTH" in code
+        ), "Must define MIN_JUSTIFICATION_LENGTH"
 
     def test_other_reason_requires_longer_justification(self) -> None:
         """'Other' reason must require a longer justification."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "OTHER_JUSTIFICATION_LENGTH" in code, "Must define OTHER_JUSTIFICATION_LENGTH for 'other' reason"
+        assert (
+            "OTHER_JUSTIFICATION_LENGTH" in code
+        ), "Must define OTHER_JUSTIFICATION_LENGTH for 'other' reason"
 
     def test_uses_validate_justification_function(self) -> None:
         """Must use validateJustification function for enforcement."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "validateJustification" in code, "Must define and use validateJustification function"
+        assert (
+            "validateJustification" in code
+        ), "Must define and use validateJustification function"
 
 
 class TestConsentRevalidationInterval:
@@ -819,7 +861,9 @@ class TestConsentRevalidationInterval:
         """Consent revalidation must run every 10 seconds (reduced from 30s)."""
         code = _read_screen("PatientRecordViewerScreen")
         # Must use 10000ms (10 seconds) for revalidation
-        assert "10000" in code, "Consent revalidation must be every 10 seconds (10000ms)"
+        assert (
+            "10000" in code
+        ), "Consent revalidation must be every 10 seconds (10000ms)"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -843,9 +887,9 @@ class TestSessionGuards:
         """Every authenticated screen must read isAuthenticated from ProviderAuthContext."""
         for screen_name in self.AUTHENTICATED_SCREENS:
             code = _read_screen(screen_name)
-            assert "isAuthenticated" in code, (
-                f"{screen_name} must check isAuthenticated from useProviderAuth()"
-            )
+            assert (
+                "isAuthenticated" in code
+            ), f"{screen_name} must check isAuthenticated from useProviderAuth()"
 
     def test_all_screens_show_session_required_on_unauthenticated(self) -> None:
         """Every authenticated screen must show a session-required state when not authenticated."""
@@ -853,13 +897,15 @@ class TestSessionGuards:
             code = _read_screen(screen_name)
             code_lower = code.lower()
             # Must have some guard condition checking !isAuthenticated
-            assert "!isAuthenticated" in code, (
-                f"{screen_name} must have a guard checking !isAuthenticated"
-            )
+            assert (
+                "!isAuthenticated" in code
+            ), f"{screen_name} must have a guard checking !isAuthenticated"
             # Must show a session-required message or redirect to login
-            assert "session required" in code_lower or "must be logged in" in code_lower or "login" in code_lower, (
-                f"{screen_name} must show session-required message or redirect to login"
-            )
+            assert (
+                "session required" in code_lower
+                or "must be logged in" in code_lower
+                or "login" in code_lower
+            ), f"{screen_name} must show session-required message or redirect to login"
 
     def test_session_guard_shows_login_button(self) -> None:
         """Session guard must offer a way to get back to login."""
@@ -867,9 +913,9 @@ class TestSessionGuards:
             code = _read_screen(screen_name)
             # The guard should have a Go to Login button
             if "!isAuthenticated" in code:
-                assert "/doctor/login" in code, (
-                    f"{screen_name} must have a login redirect/button in session guard"
-                )
+                assert (
+                    "/doctor/login" in code
+                ), f"{screen_name} must have a login redirect/button in session guard"
 
 
 class TestZeroPlaceholders:
@@ -883,37 +929,39 @@ class TestZeroPlaceholders:
             code = f.read_text(encoding="utf-8")
             # Look for provider_id = 'some-value' patterns (not from context)
             # Allowed: provider_id: providerId, provider_id: providerUid, .provider_id
-            assert not re.search(r"provider_id\s*[:=]\s*['\"][a-zA-Z0-9-]+['\"]", code), (
-                f"{f.name} must not have hardcoded provider_id value"
-            )
+            assert not re.search(
+                r"provider_id\s*[:=]\s*['\"][a-zA-Z0-9-]+['\"]", code
+            ), f"{f.name} must not have hardcoded provider_id value"
 
     def test_no_localhost_in_screens(self) -> None:
         """No screen may contain localhost URLs."""
         for f in DOCTOR_DIR.glob("*.tsx"):
             code = f.read_text(encoding="utf-8")
             code_no_comments = _strip_comments(code)
-            assert "localhost" not in code_no_comments.lower(), (
-                f"{f.name} must not contain localhost"
-            )
+            assert (
+                "localhost" not in code_no_comments.lower()
+            ), f"{f.name} must not contain localhost"
 
     def test_no_localhost_in_api_client(self) -> None:
         """apiClient must not contain localhost URLs."""
-        code = _read(ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClient.ts")
-        code_no_comments = _strip_comments(code)
-        assert "localhost" not in code_no_comments.lower(), (
-            "apiClient must not contain localhost"
+        code = _read(
+            ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClient.ts"
         )
+        code_no_comments = _strip_comments(code)
+        assert (
+            "localhost" not in code_no_comments.lower()
+        ), "apiClient must not contain localhost"
 
     def test_no_mock_data_in_record_viewer(self) -> None:
         """Record viewer must not contain mock/sample patient data."""
         code = _read_screen("PatientRecordViewerScreen")
         code_no_comments = _strip_comments(code)
-        assert "pat-123" not in code_no_comments, (
-            "Must not contain hardcoded patient ID 'pat-123'"
-        )
-        assert "Jane Doe" not in code_no_comments, (
-            "Must not contain hardcoded mock patient name 'Jane Doe'"
-        )
-        assert "Aarav Sharma" not in code_no_comments, (
-            "Must not contain hardcoded demo patient name in record viewer"
-        )
+        assert (
+            "pat-123" not in code_no_comments
+        ), "Must not contain hardcoded patient ID 'pat-123'"
+        assert (
+            "Jane Doe" not in code_no_comments
+        ), "Must not contain hardcoded mock patient name 'Jane Doe'"
+        assert (
+            "Aarav Sharma" not in code_no_comments
+        ), "Must not contain hardcoded demo patient name in record viewer"

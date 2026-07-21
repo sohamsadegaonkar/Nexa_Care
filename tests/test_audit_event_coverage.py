@@ -144,11 +144,13 @@ def test_no_undocumented_audit_events():
     """Scan the codebase for audit event literals and ensure they are in EXPECTED_EVENTS."""
     app_path = Path(__file__).parent.parent / "app"
     found_events = set()
-    
+
     # Regex to find event types in append_audit_log and append_audit_log_or_503
     # Matches event_type="EVENT" or "EVENT" as 2nd positional arg
     regex_kw = re.compile(r'event_type\s*=\s*["\']([A-Z0-9_]+)["\']')
-    regex_pos = re.compile(r'append_audit_log(?:_or_503)?\(\s*[^,]+,\s*["\']([A-Z0-9_]+)["\']')
+    regex_pos = re.compile(
+        r'append_audit_log(?:_or_503)?\(\s*[^,]+,\s*["\']([A-Z0-9_]+)["\']'
+    )
 
     for root, _, files in os.walk(app_path):
         for file in files:
@@ -158,7 +160,9 @@ def test_no_undocumented_audit_events():
                 found_events.update(regex_pos.findall(content))
 
     undocumented = found_events - EXPECTED_EVENTS
-    assert not undocumented, f"Found undocumented audit event types in codebase: {undocumented}"
+    assert (
+        not undocumented
+    ), f"Found undocumented audit event types in codebase: {undocumented}"
 
 
 @pytest.mark.asyncio
@@ -172,27 +176,30 @@ async def test_audit_event_writing_and_chaining():
             event_type="CONSENT_GRANT_SUCCESS",
             target_id="test-target",
             status="SUCCESS",
-            metadata={"test": "data"}
+            metadata={"test": "data"},
         )
-        
+
         assert success is True
-        
+
         call = append_once.await_args.kwargs
         assert call["event_type"] == "CONSENT_GRANT_SUCCESS"
         assert call["actor_uid"] == "test-actor"
         assert call["metadata"] == {"test": "data"}
+
 
 # Helper to verify all events can be written
 @pytest.mark.parametrize("event_type", list(EXPECTED_EVENTS))
 @pytest.mark.asyncio
 async def test_all_expected_events_can_be_written(event_type):
     """Smoke test: verify append_audit_log doesn't crash for any expected event type."""
-    with patch("app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})):
+    with patch(
+        "app.observability.audit_ledger._append_once", new=AsyncMock(return_value={})
+    ):
         success = await append_audit_log(
             audit_context=AUDIT_CONTEXT,
             actor_uid="system",
             event_type=event_type,
             target_id="unit-test",
-            status="SUCCESS"
+            status="SUCCESS",
         )
         assert success is True

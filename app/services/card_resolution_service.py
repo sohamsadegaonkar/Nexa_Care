@@ -91,19 +91,27 @@ class CardResolutionService:
         row = await self._load_card_by_uid(request.card_uid)
 
         if row is None:
-            logger.warning(json.dumps({
-                "event": "nfc_card_resolution_denied",
-                "reason": "card_not_found",
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "nfc_card_resolution_denied",
+                        "reason": "card_not_found",
+                    }
+                )
+            )
             raise self._forbidden()
 
         if row.status != NFCCardStatus.ACTIVE.value:
-            logger.warning(json.dumps({
-                "event": "nfc_card_resolution_denied",
-                "reason": "inactive_card",
-                "status": row.status,
-                "patient_id": str(row.patient_id),
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "nfc_card_resolution_denied",
+                        "reason": "inactive_card",
+                        "status": row.status,
+                        "patient_id": str(row.patient_id),
+                    }
+                )
+            )
             raise self._forbidden()
 
         return row.patient_id
@@ -129,11 +137,15 @@ class CardResolutionService:
         row = await self._load_card_by_uid(request.card_uid, lock_for_update=True)
 
         if row is None:
-            logger.warning(json.dumps({
-                "event": "nfc_card_report_lost_denied",
-                "reason": "card_not_found",
-                "reported_by": str(request.reported_by),
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "nfc_card_report_lost_denied",
+                        "reason": "card_not_found",
+                        "reported_by": str(request.reported_by),
+                    }
+                )
+            )
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="NFC card registry entry was not found.",
@@ -152,7 +164,9 @@ class CardResolutionService:
             await self._db.commit()
         except SQLAlchemyError as exc:
             await self._db.rollback()
-            log_safe_exception(logger, exc, subsystem="database", operation="nfc_report_lost")
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="nfc_report_lost"
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="NFC card status update failed.",
@@ -186,7 +200,9 @@ class CardResolutionService:
         try:
             result = await self._db.execute(stmt)
         except SQLAlchemyError as exc:
-            log_safe_exception(logger, exc, subsystem="database", operation="nfc_card_lookup")
+            log_safe_exception(
+                logger, exc, subsystem="database", operation="nfc_card_lookup"
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail=_CARD_DB_UNAVAILABLE_DETAIL,

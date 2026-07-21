@@ -48,6 +48,7 @@ AUDIT-FAILURE-HANDLING FIX (this revision) — BIOMETRIC_HANDSHAKE_SUCCESS
           function's own outer except-and-return-None handler -- see the
           dedicated `except HTTPException: raise` clause below.
 """
+
 from __future__ import annotations
 
 from app.security.audit_context import AuditDomain, current_audit_context
@@ -60,11 +61,15 @@ import uuid
 
 from fastapi import HTTPException
 
-from app.core.config import get_handshake_config          # F-07 fix: was get_handshake_security_config
+from app.core.config import (
+    get_handshake_config,
+)  # F-07 fix: was get_handshake_security_config
 from app.core.redis import get_redis_client
 from app.core.request_context import trace_id_var
 from app.observability.audit_ledger import append_audit_log, append_audit_log_or_503
-from app.services.biometric_registry import verify_biometric_binding  # F-03 fix: import added
+from app.services.biometric_registry import (
+    verify_biometric_binding,
+)  # F-03 fix: import added
 
 # PBKDF2 iteration count for the per-record-salted derivation below.
 # Revisit against current OWASP guidance if this needs to move higher --
@@ -84,7 +89,9 @@ def _derive_record_salt(nfc_uid: str) -> bytes:
     # F-07 fix: was get_handshake_security_config().pepper
     pepper = get_handshake_config().pepper_secret.encode("utf-8")
     # F-08 guidance: keyword args so key/msg order is unambiguous
-    return hmac.new(key=pepper, msg=nfc_uid.encode("utf-8"), digestmod=hashlib.sha256).digest()
+    return hmac.new(
+        key=pepper, msg=nfc_uid.encode("utf-8"), digestmod=hashlib.sha256
+    ).digest()
 
 
 def _audit_safe_device_ref(nfc_uid: str) -> str:
@@ -122,8 +129,10 @@ async def process_biometric_handshake(
 
         # ── Input validation ──────────────────────────────────────────────
         if (
-            not isinstance(nfc_uid, str) or not nfc_uid.strip()
-            or not isinstance(bio_seed, str) or not bio_seed.strip()
+            not isinstance(nfc_uid, str)
+            or not nfc_uid.strip()
+            or not isinstance(bio_seed, str)
+            or not bio_seed.strip()
         ):
             await append_audit_log(
                 audit_context=current_audit_context(AuditDomain.AUTH),
@@ -199,7 +208,9 @@ async def process_biometric_handshake(
             "derived_alpha": derived_alpha.hex()[:16],
         }
 
-        setex_result = redis.setex(token, 1800, json.dumps(session_state, separators=(",", ":")))
+        setex_result = redis.setex(
+            token, 1800, json.dumps(session_state, separators=(",", ":"))
+        )
         if hasattr(setex_result, "__await__"):
             await setex_result
 

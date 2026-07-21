@@ -11,7 +11,11 @@ from app.main import app
 
 @pytest.mark.integration
 def test_full_chain_uses_canonical_signed_approval_route():
-    routes = {(method, route.path) for route in app.routes for method in getattr(route, "methods", set())}
+    routes = {
+        (method, route.path)
+        for route in app.routes
+        for method in getattr(route, "methods", set())
+    }
     assert ("POST", "/api/v2/consent/approve-signed") in routes
     assert ("POST", "/api/v2/push/{request_id}/respond") not in routes
 

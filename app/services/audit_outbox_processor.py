@@ -95,7 +95,9 @@ _HEALTH_SQL = text(
 
 
 def _backoff_seconds(attempt_count: int) -> int:
-    return min(_BACKOFF_BASE_SECONDS * (2 ** max(0, attempt_count)), _BACKOFF_MAX_SECONDS)
+    return min(
+        _BACKOFF_BASE_SECONDS * (2 ** max(0, attempt_count)), _BACKOFF_MAX_SECONDS
+    )
 
 
 def make_worker_id() -> str:
@@ -112,13 +114,19 @@ async def get_outbox_health(db: AsyncSession) -> dict[str, int | float]:
         "dead_letter_backlog": int(row["dead_letter_backlog"] or 0),
         "expired_lease_count": int(row["expired_lease_count"] or 0),
         "oldest_pending_age_seconds": float(row["oldest_pending_age_seconds"] or 0),
-        "oldest_expired_lease_age_seconds": float(row["oldest_expired_lease_age_seconds"] or 0),
+        "oldest_expired_lease_age_seconds": float(
+            row["oldest_expired_lease_age_seconds"] or 0
+        ),
     }
 
 
 async def process_outbox_batch(
-    db: AsyncSession, *, batch_size: int = DEFAULT_BATCH_SIZE, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
-    lease_seconds: int = DEFAULT_LEASE_SECONDS, worker_id: str | None = None,
+    db: AsyncSession,
+    *,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    lease_seconds: int = DEFAULT_LEASE_SECONDS,
+    worker_id: str | None = None,
 ) -> dict[str, int]:
     """Claim and process one batch. Safe to run concurrently across multiple
     app instances -- FOR UPDATE SKIP LOCKED means two workers never claim
@@ -159,28 +167,51 @@ async def process_outbox_batch(
             processed += 1
         except Exception as exc:  # noqa: BLE001 - must survive individual failures
             log_safe_exception(
-                logger, logging.ERROR, "audit_outbox_event_failed", exc,
-                subsystem="audit_outbox", operation="process_outbox_batch",
-                fields={"outbox_id": str(row["id"]), "attempt_count": row["attempt_count"]},
+                logger,
+                logging.ERROR,
+                "audit_outbox_event_failed",
+                exc,
+                subsystem="audit_outbox",
+                operation="process_outbox_batch",
+                fields={
+                    "outbox_id": str(row["id"]),
+                    "attempt_count": row["attempt_count"],
+                },
             )
             error_code = type(exc).__name__[:64]
             if row["attempt_count"] + 1 >= max_attempts:
-                await db.execute(_MARK_DEAD_LETTER_SQL, {"id": row["id"], "error_code": error_code})
+                await db.execute(
+                    _MARK_DEAD_LETTER_SQL, {"id": row["id"], "error_code": error_code}
+                )
                 dead_lettered += 1
             else:
-                available_at = datetime.now(timezone.utc) + timedelta(seconds=_backoff_seconds(row["attempt_count"]))
+                available_at = datetime.now(timezone.utc) + timedelta(
+                    seconds=_backoff_seconds(row["attempt_count"])
+                )
                 await db.execute(
                     _MARK_RETRY_SQL,
-                    {"id": row["id"], "available_at": available_at, "error_code": error_code},
+                    {
+                        "id": row["id"],
+                        "available_at": available_at,
+                        "error_code": error_code,
+                    },
                 )
                 retried += 1
             await db.commit()
 
-    return {"claimed": len(rows), "processed": processed, "retried": retried, "dead_lettered": dead_lettered}
+    return {
+        "claimed": len(rows),
+        "processed": processed,
+        "retried": retried,
+        "dead_lettered": dead_lettered,
+    }
 
 
 async def run_outbox_processor_forever(
-    session_factory, *, poll_interval_seconds: float = 2.0, shutdown_event: asyncio.Event | None = None,
+    session_factory,
+    *,
+    poll_interval_seconds: float = 2.0,
+    shutdown_event: asyncio.Event | None = None,
 ) -> None:
     """Run process_outbox_batch in a loop until shutdown_event is set.
 
@@ -197,8 +228,12 @@ async def run_outbox_processor_forever(
                 await process_outbox_batch(db, worker_id=worker_id)
         except Exception as exc:  # noqa: BLE001 - the loop itself must survive
             log_safe_exception(
-                logger, logging.ERROR, "audit_outbox_processor_loop_failed", exc,
-                subsystem="audit_outbox", operation="run_outbox_processor_forever",
+                logger,
+                logging.ERROR,
+                "audit_outbox_processor_loop_failed",
+                exc,
+                subsystem="audit_outbox",
+                operation="run_outbox_processor_forever",
             )
         try:
             await asyncio.wait_for(stop.wait(), timeout=poll_interval_seconds)

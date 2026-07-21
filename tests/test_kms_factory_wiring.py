@@ -2,14 +2,22 @@ import pytest
 
 from app.api.v2.patient_routes import get_kms_provider
 from app.core.config import ConfigError
-from app.services.crypto_kms import AWSKMSProvider, LocalEnvelopeProvider, get_encryption_provider
+from app.services.crypto_kms import (
+    AWSKMSProvider,
+    LocalEnvelopeProvider,
+    get_encryption_provider,
+)
 
 
 @pytest.mark.asyncio
-async def test_route_dependency_resolves_configured_safe_test_provider(monkeypatch) -> None:
+async def test_route_dependency_resolves_configured_safe_test_provider(
+    monkeypatch,
+) -> None:
     monkeypatch.setenv("ENVIRONMENT", "test")
     monkeypatch.setenv("ENCRYPTION_BACKEND", "local")
-    monkeypatch.setenv("KEK_ROOT_SECRET", "test-only-root-secret-with-sufficient-entropy")
+    monkeypatch.setenv(
+        "KEK_ROOT_SECRET", "test-only-root-secret-with-sufficient-entropy"
+    )
     provider = await get_kms_provider()
     assert isinstance(provider, LocalEnvelopeProvider)
 

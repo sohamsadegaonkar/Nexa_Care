@@ -8,7 +8,10 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.v2.patient_record_routes import (
-    AppendLabResultRequest, AppendVitalsRequest, _enrich_timeline_provenance, _parse_uuid,
+    AppendLabResultRequest,
+    AppendVitalsRequest,
+    _enrich_timeline_provenance,
+    _parse_uuid,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,8 +29,11 @@ def test_patient_identifier_is_strict_uuid():
 def test_recorded_timestamp_is_schema_validated():
     with pytest.raises(ValidationError):
         AppendVitalsRequest(
-            systolic_bp=120, diastolic_bp=80, heart_rate=70,
-            temperature_celsius=37, sp_o2_percentage=98,
+            systolic_bp=120,
+            diastolic_bp=80,
+            heart_rate=70,
+            temperature_celsius=37,
+            sp_o2_percentage=98,
             recorded_at="not-a-timestamp",
         )
 
@@ -35,14 +41,23 @@ def test_recorded_timestamp_is_schema_validated():
 def test_source_document_identifier_is_schema_validated():
     with pytest.raises(ValidationError):
         AppendLabResultRequest(
-            test_name="x", value="x", unit="x", reference_range="x",
-            recorded_at="2026-07-17T00:00:00Z", source_document_id="doc-1",
+            test_name="x",
+            value="x",
+            unit="x",
+            reference_range="x",
+            recorded_at="2026-07-17T00:00:00Z",
+            source_document_id="doc-1",
         )
 
 
 def test_ai_timeline_without_optional_metadata_does_not_invent_it():
     event = _enrich_timeline_provenance(
-        "1", "LAB", "Lab", "Reviewed lab", "2026-07-17T00:00:00+00:00", "ai_extracted",
+        "1",
+        "LAB",
+        "Lab",
+        "Reviewed lab",
+        "2026-07-17T00:00:00+00:00",
+        "ai_extracted",
     )
     assert event["confidence"] is None
     assert event["risk_level"] is None
@@ -52,7 +67,12 @@ def test_ai_timeline_without_optional_metadata_does_not_invent_it():
 
 def test_manual_timeline_without_provider_does_not_invent_identity():
     event = _enrich_timeline_provenance(
-        "1", "NOTE", "Note", "Reviewed note", "2026-07-17T00:00:00+00:00", "manual",
+        "1",
+        "NOTE",
+        "Note",
+        "Reviewed note",
+        "2026-07-17T00:00:00+00:00",
+        "manual",
     )
     assert event["source_display"] == "Manual entry"
 

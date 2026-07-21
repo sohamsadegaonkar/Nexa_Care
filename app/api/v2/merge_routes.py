@@ -1,8 +1,9 @@
-from app.security.audit_context import AuditDomain, current_audit_context
 """
 Patient Merge (Alias & Tombstone) Workflow
 Implements Section 9 of the Nexa Care v1.0 Architecture
 """
+
+from __future__ import annotations
 
 import inspect
 import json
@@ -18,6 +19,7 @@ from app.core.redis import get_async_redis_client as get_redis_client
 from app.models.provider_context import ProviderContext
 from app.core.session_binding import provider_session_binding
 from app.services.merge_service import PatientMergeService
+from app.security.audit_context import AuditDomain, current_audit_context
 
 router = APIRouter(prefix="/api/v2/patient", tags=["merge"])
 _MERGE_CHALLENGE_PREFIX = "merge_challenge:"
@@ -63,7 +65,7 @@ async def merge_patients(
 
     redis = get_redis_client()
     key = f"{_MERGE_CHALLENGE_PREFIX}{x_merge_challenge}"
-    
+
     getdel = getattr(redis, "getdel", None)
     if getdel is not None:
         cached = await _maybe_await(getdel(key))
@@ -123,7 +125,7 @@ async def merge_patients(
             event_type="MERGE_EXECUTED",
             target_id=str(payload.old_patient_uuid),
             status="SUCCESS",
-            metadata={"canonical_patient_uuid": str(resolved_canonical_uuid)}
+            metadata={"canonical_patient_uuid": str(resolved_canonical_uuid)},
         )
 
         return MergeResponse(
@@ -143,6 +145,8 @@ async def merge_patients(
                 "reason": "MERGE_VALIDATION_FAILED",
             },
         )
-        raise HTTPException(status_code=400, detail={"error_code": "MERGE_VALIDATION_FAILED"}) from e
+        raise HTTPException(
+            status_code=400, detail={"error_code": "MERGE_VALIDATION_FAILED"}
+        ) from e
     except Exception as exc:
         raise HTTPException(status_code=500, detail="Merge operation failed") from exc

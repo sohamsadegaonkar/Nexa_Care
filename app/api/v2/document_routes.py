@@ -12,6 +12,7 @@ router = APIRouter(prefix="/api/v2/documents", tags=["documents"])
 
 class DocumentUploadAcceptedResponse(BaseModel):
     """Historical response schema retained for generated-client imports only."""
+
     job_id: UUID
     status: Literal["accepted"] = "accepted"
     queued_at: datetime

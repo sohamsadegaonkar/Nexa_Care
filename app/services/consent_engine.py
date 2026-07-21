@@ -58,6 +58,7 @@ LEGACY_IN_MEMORY_CAPABILITY_EXPIRES_AT = "9999-12-31T23:59:59+00:00"
 
 class ConsentPurpose(str, Enum):
     """Canonical consent purposes for Nexa Care V2."""
+
     TREATMENT = "TREATMENT"
     PAYMENT = "PAYMENT"
     OPERATIONS = "OPERATIONS"
@@ -95,7 +96,11 @@ def get_consent_redis_client() -> redis_async.Redis:
 
 
 def _token_key(token: str) -> str:
-    return token if token.startswith(CONSENT_TOKEN_PREFIX) else f"{CONSENT_TOKEN_PREFIX}{token}"
+    return (
+        token
+        if token.startswith(CONSENT_TOKEN_PREFIX)
+        else f"{CONSENT_TOKEN_PREFIX}{token}"
+    )
 
 
 def _token_hash(token: str) -> str:
@@ -104,7 +109,11 @@ def _token_hash(token: str) -> str:
     Deliberately not reversible to the raw token -- see consent_grant.py's
     module docstring for why the raw token is never persisted to Postgres.
     """
-    clean = token[len(CONSENT_TOKEN_PREFIX):] if token.startswith(CONSENT_TOKEN_PREFIX) else token
+    clean = (
+        token[len(CONSENT_TOKEN_PREFIX) :]
+        if token.startswith(CONSENT_TOKEN_PREFIX)
+        else token
+    )
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
@@ -137,7 +146,9 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
     required_strings = [patient_id, clinician_id, purpose, issued_at, expires_at]
     if not all(isinstance(v, str) and v for v in required_strings):
         return None
-    if not isinstance(scope, list) or not all(isinstance(s, str) and s.strip() for s in scope):
+    if not isinstance(scope, list) or not all(
+        isinstance(s, str) and s.strip() for s in scope
+    ):
         return None
     if not isinstance(is_break_glass, bool):
         return None
@@ -153,11 +164,19 @@ def _parse_payload(raw_value: object) -> ConsentCapability | None:
         reason_code=reason_code.strip() if isinstance(reason_code, str) else None,
         issued_at=issued_at,
         expires_at=expires_at,
-        hospital_id=hospital_id if isinstance(hospital_id, str) and hospital_id else None,
-        session_binding=session_binding if isinstance(session_binding, str) and session_binding else None,
-        reason_code_version=(reason_code_version if isinstance(reason_code_version, str) else None),
+        hospital_id=hospital_id
+        if isinstance(hospital_id, str) and hospital_id
+        else None,
+        session_binding=session_binding
+        if isinstance(session_binding, str) and session_binding
+        else None,
+        reason_code_version=(
+            reason_code_version if isinstance(reason_code_version, str) else None
+        ),
         category_protocol_version=(
-            category_protocol_version if isinstance(category_protocol_version, str) else None
+            category_protocol_version
+            if isinstance(category_protocol_version, str)
+            else None
         ),
     )
 
@@ -191,7 +210,11 @@ def _matches(
         return False
     if session_binding is not None and capability.session_binding != session_binding:
         return False
-    if capability.is_break_glass and capability.session_binding and session_binding is None:
+    if (
+        capability.is_break_glass
+        and capability.session_binding
+        and session_binding is None
+    ):
         return False
     return True
 
@@ -252,9 +275,12 @@ async def issue(
             },
         )
         from fastapi import HTTPException
+
         raise HTTPException(status_code=403, detail="Assurance verification failed")
 
-    ttl = ttl_seconds or (BREAK_GLASS_TTL_SECONDS if is_break_glass else DEFAULT_TTL_SECONDS)
+    ttl = ttl_seconds or (
+        BREAK_GLASS_TTL_SECONDS if is_break_glass else DEFAULT_TTL_SECONDS
+    )
     if ttl <= 0:
         raise ValueError("ttl_seconds must be positive.")
 
@@ -325,7 +351,9 @@ async def issue(
 
     try:
         redis_client = get_consent_redis_client()
-        await redis_client.set(_token_key(token), json.dumps(payload, sort_keys=True), ex=int(ttl))
+        await redis_client.set(
+            _token_key(token), json.dumps(payload, sort_keys=True), ex=int(ttl)
+        )
 
         if is_break_glass:
             notification = {
@@ -339,7 +367,9 @@ async def issue(
             # an otherwise-valid, already-durable emergency grant. It's
             # logged via the SUCCESS audit metadata either way.
             try:
-                await redis_client.rpush(COMPLIANCE_QUEUE_KEY, json.dumps(notification, sort_keys=True))
+                await redis_client.rpush(
+                    COMPLIANCE_QUEUE_KEY, json.dumps(notification, sort_keys=True)
+                )
             except Exception as exc:
                 logger.error(
                     "Break-glass compliance notification enqueue failed",
@@ -363,7 +393,9 @@ async def issue(
             target_id=target_id,
             status="LIVE_STORE_WRITE_FAILED",
         )
-        raise ConsentEngineUnavailable("Consent capability could not be made live.") from exc
+        raise ConsentEngineUnavailable(
+            "Consent capability could not be made live."
+        ) from exc
 
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.CONSENT),
@@ -400,7 +432,9 @@ async def issue_routine(
     validates purpose against the canonical ConsentPurpose enum.
     """
     if not isinstance(purpose, ConsentPurpose):
-        raise ValueError(f"Invalid purpose. Must be one of: {[p.value for p in ConsentPurpose]}")
+        raise ValueError(
+            f"Invalid purpose. Must be one of: {[p.value for p in ConsentPurpose]}"
+        )
 
     evidence = assurance_evidence or {}
 
@@ -467,10 +501,19 @@ async def issue_break_glass(
     """
     if not reason_code or not reason_code.strip():
         raise ValueError("Break-glass grants require a non-empty reason_code.")
-    if not hospital_id or not session_binding or not mfa_verified_at or not reason_code_version:
-        raise ValueError("Break-glass grants require tenant, session, policy, and MFA bindings.")
+    if (
+        not hospital_id
+        or not session_binding
+        or not mfa_verified_at
+        or not reason_code_version
+    ):
+        raise ValueError(
+            "Break-glass grants require tenant, session, policy, and MFA bindings."
+        )
     if not scope:
-        raise ValueError("Break-glass grants require an approved minimum-necessary scope.")
+        raise ValueError(
+            "Break-glass grants require an approved minimum-necessary scope."
+        )
     # Fail closed on any category outside the canonical vocabulary. Callers
     # (issue_break_glass's caller, via break_glass_policy.approved_break_glass_scope)
     # are expected to have already narrowed `scope` to approved categories,
@@ -487,7 +530,10 @@ async def issue_break_glass(
         event_type="BREAK_GLASS_GRANT_ATTEMPT",
         target_id=target_id,
         status="STARTED",
-        metadata={"reason_code": reason_code, "reason_code_version": reason_code_version},
+        metadata={
+            "reason_code": reason_code,
+            "reason_code_version": reason_code_version,
+        },
     )
 
     try:
@@ -582,12 +628,16 @@ async def consume(
         raise ConsentEngineUnavailable("Consent store is unavailable.") from exc
 
     capability = _parse_payload(raw_value)
-    if capability is None or not _matches(capability, patient_id, clinician_id, purpose):
+    if capability is None or not _matches(
+        capability, patient_id, clinician_id, purpose
+    ):
         return None
 
     target_id = f"{patient_id}:{clinician_id}:{purpose}"
     try:
-        stmt = select(ConsentGrantLog).where(ConsentGrantLog.token_hash == _token_hash(token))
+        stmt = select(ConsentGrantLog).where(
+            ConsentGrantLog.token_hash == _token_hash(token)
+        )
         result = await db.execute(stmt)
         row = result.scalar_one_or_none()
         if row is not None:
@@ -613,7 +663,9 @@ async def consume(
     return capability
 
 
-async def revoke(*, db: AsyncSession, token: str, reason: str = "manual_revocation") -> None:
+async def revoke(
+    *, db: AsyncSession, token: str, reason: str = "manual_revocation"
+) -> None:
     """Best-effort revocation -- never raises. Matches the old
     consent_service.py's revoke_routine_consent: a revoke that can't be
     fully persisted shouldn't block whatever caller is trying to clean up

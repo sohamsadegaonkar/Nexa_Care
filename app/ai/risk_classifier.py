@@ -35,11 +35,35 @@ def classify_risk(
     # 1. Base risk from field-to-risk catalog
     if fname in {"patient_name", "dob", "phone", "abha_id"}:
         base_risk = "LOW_RISK"
-    elif fname in {"bp", "systolic_bp", "diastolic_bp", "heart_rate", "pulse", "resp_rate", "temp"}:
+    elif fname in {
+        "bp",
+        "systolic_bp",
+        "diastolic_bp",
+        "heart_rate",
+        "pulse",
+        "resp_rate",
+        "temp",
+    }:
         base_risk = "MEDIUM_RISK"
-    elif fname in {"sugar", "fasting_glucose", "postprandial", "hba1c", "lab_result", "lab_value", "cbc", "lipid_panel"}:
+    elif fname in {
+        "sugar",
+        "fasting_glucose",
+        "postprandial",
+        "hba1c",
+        "lab_result",
+        "lab_value",
+        "cbc",
+        "lipid_panel",
+    }:
         base_risk = "MEDIUM_RISK"
-    elif fname in {"medication", "prescription", "drug", "dosage", "strength", "frequency"}:
+    elif fname in {
+        "medication",
+        "prescription",
+        "drug",
+        "dosage",
+        "strength",
+        "frequency",
+    }:
         base_risk = "HIGH_RISK"
     elif fname in {"allergy", "allergen", "sensitivity"}:
         base_risk = "HIGH_RISK"
@@ -66,7 +90,11 @@ def classify_risk(
             ref = validation_result.get("reference_range")
             if isinstance(ref, dict):
                 is_abnormal = bool(ref.get("is_abnormal", False))
-                requires_review = requires_review or bool(ref.get("requires_review") or ref.get("unknown_reference_range") or ref.get("reference_range_known") is False)
+                requires_review = requires_review or bool(
+                    ref.get("requires_review")
+                    or ref.get("unknown_reference_range")
+                    or ref.get("reference_range_known") is False
+                )
         else:
             is_valid = getattr(validation_result, "is_valid", True)
             has_conflict = getattr(validation_result, "has_conflict", False)
@@ -74,13 +102,24 @@ def classify_risk(
             ref = getattr(validation_result, "reference_range", None)
             if isinstance(ref, dict):
                 is_abnormal = bool(ref.get("is_abnormal", False))
-                requires_review = requires_review or bool(ref.get("requires_review") or ref.get("unknown_reference_range") or ref.get("reference_range_known") is False)
+                requires_review = requires_review or bool(
+                    ref.get("requires_review")
+                    or ref.get("unknown_reference_range")
+                    or ref.get("reference_range_known") is False
+                )
             elif ref is not None:
                 is_abnormal = bool(getattr(ref, "is_abnormal", False))
-                requires_review = requires_review or bool(getattr(ref, "requires_review", False) or getattr(ref, "unknown_reference_range", False))
+                requires_review = requires_review or bool(
+                    getattr(ref, "requires_review", False)
+                    or getattr(ref, "unknown_reference_range", False)
+                )
 
     # Check abnormal keywords
-    if "abnormal" in val or "critical" in val or ("high" in val and fname in {"hba1c", "sugar"}):
+    if (
+        "abnormal" in val
+        or "critical" in val
+        or ("high" in val and fname in {"hba1c", "sugar"})
+    ):
         is_abnormal = True
 
     current_risk = base_risk

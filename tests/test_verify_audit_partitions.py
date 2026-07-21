@@ -39,8 +39,10 @@ class FakeConnection:
 def _row(audit_id, previous_hash, payload, sequence_number):
     record_hash = _calculate_hash(payload, previous_hash)
     return {
-        "audit_id": audit_id, "previous_hash": previous_hash,
-        "record_hash": record_hash, "details": payload,
+        "audit_id": audit_id,
+        "previous_hash": previous_hash,
+        "record_hash": record_hash,
+        "details": payload,
         "sequence_number": sequence_number,
     }
 
@@ -59,8 +61,10 @@ def _build_healthy_chain(n: int) -> list[dict]:
 async def test_healthy_chain_passes():
     rows = _build_healthy_chain(5)
     head = {
-        "head_event_id": rows[-1]["audit_id"], "head_hash": rows[-1]["record_hash"],
-        "sequence_number": 5, "is_healthy": True,
+        "head_event_id": rows[-1]["audit_id"],
+        "head_hash": rows[-1]["record_hash"],
+        "sequence_number": 5,
+        "is_healthy": True,
     }
     conn = FakeConnection(rows, head)
     result = await verify_partition(conn, "global", dry_run=False)
@@ -101,10 +105,14 @@ async def test_fork_multiple_successors_fails():
 @pytest.mark.asyncio
 async def test_tampered_payload_fails_hash_recalculation():
     rows = _build_healthy_chain(3)
-    rows[1]["details"] = {"event": "TAMPERED"}  # payload changed but record_hash was not recalculated
+    rows[1]["details"] = {
+        "event": "TAMPERED"
+    }  # payload changed but record_hash was not recalculated
     head = {
-        "head_event_id": rows[-1]["audit_id"], "head_hash": rows[-1]["record_hash"],
-        "sequence_number": 3, "is_healthy": True,
+        "head_event_id": rows[-1]["audit_id"],
+        "head_hash": rows[-1]["record_hash"],
+        "sequence_number": 3,
+        "is_healthy": True,
     }
     conn = FakeConnection(rows, head)
     result = await verify_partition(conn, "global", dry_run=False)
@@ -117,8 +125,10 @@ async def test_sequence_discontinuity_fails():
     rows = _build_healthy_chain(3)
     rows[2]["sequence_number"] = 99
     head = {
-        "head_event_id": rows[-1]["audit_id"], "head_hash": rows[-1]["record_hash"],
-        "sequence_number": 3, "is_healthy": True,
+        "head_event_id": rows[-1]["audit_id"],
+        "head_hash": rows[-1]["record_hash"],
+        "sequence_number": 3,
+        "is_healthy": True,
     }
     conn = FakeConnection(rows, head)
     result = await verify_partition(conn, "global", dry_run=False)
@@ -130,8 +140,10 @@ async def test_sequence_discontinuity_fails():
 async def test_head_hash_mismatch_fails():
     rows = _build_healthy_chain(3)
     head = {
-        "head_event_id": rows[-1]["audit_id"], "head_hash": "wrong" * 12 + "0000",
-        "sequence_number": 3, "is_healthy": True,
+        "head_event_id": rows[-1]["audit_id"],
+        "head_hash": "wrong" * 12 + "0000",
+        "sequence_number": 3,
+        "is_healthy": True,
     }
     conn = FakeConnection(rows, head)
     result = await verify_partition(conn, "global", dry_run=False)

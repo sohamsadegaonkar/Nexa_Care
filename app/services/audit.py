@@ -13,7 +13,9 @@ from app.observability.audit_ledger import append_audit_log_or_503
 
 
 @asynccontextmanager
-async def audit_read(clinician_id: str, patient_id: str, purpose: str) -> AsyncIterator[str]:
+async def audit_read(
+    clinician_id: str, patient_id: str, purpose: str
+) -> AsyncIterator[str]:
     """Write immutable view evidence before yielding permission to read shards."""
 
     audit_transaction_id = str(uuid4())

@@ -43,13 +43,19 @@ def _exception_code(exc: BaseException, subsystem: str) -> tuple[str, bool, int 
         return ("HTTP_REQUEST_REJECTED", status >= 500, status)
     if "validation" in name or name in {"jsondecodeerror"}:
         return ("VALIDATION_ERROR", False, 422)
-    if any(token in name or token in module for token in ("sql", "database", "asyncpg", "integrity")):
+    if any(
+        token in name or token in module
+        for token in ("sql", "database", "asyncpg", "integrity")
+    ):
         return ("DATABASE_OPERATION_FAILED", True, 503)
     if "redis" in name or "redis" in module:
         return ("REDIS_OPERATION_FAILED", True, 503)
     if "kms" in name or subsystem == "kms":
         return ("KMS_OPERATION_FAILED", True, 503)
-    if any(token in name or token in module for token in ("crypto", "decrypt", "encrypt", "signature")):
+    if any(
+        token in name or token in module
+        for token in ("crypto", "decrypt", "encrypt", "signature")
+    ):
         return ("CRYPTOGRAPHIC_OPERATION_FAILED", False, 500)
     if subsystem in {"extraction", "document_extraction"}:
         return ("EXTRACTION_OPERATION_FAILED", True, 503)
@@ -75,7 +81,9 @@ def _validation_issues(exc: BaseException) -> list[dict[str, Any]]:
     if not callable(errors):
         return []
     try:
-        raw_errors = errors(include_url=False, include_context=False, include_input=False)
+        raw_errors = errors(
+            include_url=False, include_context=False, include_input=False
+        )
     except TypeError:
         try:
             raw_errors = errors()

@@ -22,14 +22,14 @@ class NexaVault(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "nexa_vault"
 
-    masked_internal_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    masked_internal_id: Mapped[str] = mapped_column(
+        String(64), nullable=False, unique=True
+    )
     patient_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     aadhaar_abha_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    __table_args__ = (
-        Index("ix_nexa_vault_masked_internal_id", "masked_internal_id"),
-    )
+    __table_args__ = (Index("ix_nexa_vault_masked_internal_id", "masked_internal_id"),)
 
 
 class NexaClinical(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -53,12 +53,12 @@ class NexaEmergencySnapshot(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __tablename__ = "nexa_emergency_snapshot"
 
-    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False, unique=True)
+    patient_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, unique=True
+    )
     allergies: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     conditions: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     medications: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     emergency_notes: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
-    __table_args__ = (
-        Index("ix_nexa_emergency_snapshot_patient_id", "patient_id"),
-    )
+    __table_args__ = (Index("ix_nexa_emergency_snapshot_patient_id", "patient_id"),)

@@ -22,7 +22,12 @@ from fastapi.testclient import TestClient
 from app.core.dependencies import get_current_provider, get_db_session
 from app.main import app
 from app.models.provider import AffiliationType, ProviderCredential
-from app.models.provider_context import AffiliationContext, HospitalContext, ProviderContext, ProviderIdentityContext
+from app.models.provider_context import (
+    AffiliationContext,
+    HospitalContext,
+    ProviderContext,
+    ProviderIdentityContext,
+)
 
 
 class FakeAsyncRedis:
@@ -99,11 +104,17 @@ class FakeSyncRedis:
 
 def _provider(roles=("admin",)) -> ProviderContext:
     return ProviderContext(
-        provider=ProviderIdentityContext(provider_id=uuid.uuid4(), display_name="Dr. Merge", contact_email="m@ex.com"),
-        hospital=HospitalContext(hospital_id=uuid.uuid4(), facility_code="H", display_name="H"),
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(), display_name="Dr. Merge", contact_email="m@ex.com"
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(), facility_code="H", display_name="H"
+        ),
         affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(), affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True, roles=list(roles),
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            is_primary=True,
+            roles=list(roles),
         ),
     )
 
@@ -135,7 +146,10 @@ async def test_merge_requires_fresh_challenge(mfa_env):
                 "canonical_patient_uuid": str(uuid.uuid4()),
                 "reason": "duplicate record",
             },
-            headers={**AUTH_HEADER, "X-Merge-Challenge": "never-issued-challenge-token"},
+            headers={
+                **AUTH_HEADER,
+                "X-Merge-Challenge": "never-issued-challenge-token",
+            },
         )
         assert response.status_code == 403
         assert "challenge" in response.text.lower()
@@ -163,25 +177,45 @@ async def test_merge_with_verified_mfa_challenge_succeeds(mfa_env):
 
     async_redis = FakeAsyncRedis()
     sync_redis = FakeSyncRedis()
-    fake_tombstone = MagicMock(tombstone_id=uuid.uuid4(), canonical_patient_uuid=uuid.uuid4())
+    fake_tombstone = MagicMock(
+        tombstone_id=uuid.uuid4(), canonical_patient_uuid=uuid.uuid4()
+    )
 
     app.dependency_overrides[get_current_provider] = lambda: provider
     app.dependency_overrides[get_db_session] = lambda: db
 
     try:
-        with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=async_redis), \
-             patch("app.api.v2.merge_routes.get_redis_client", return_value=async_redis), \
-             patch("app.services.provider_auth_service.get_redis_client", return_value=sync_redis), \
-             patch("app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)), \
-             patch("app.observability.audit_ledger.append_audit_log", AsyncMock(return_value=True)), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", AsyncMock(return_value=None)), \
-             patch(
-                 "app.services.merge_service.PatientMergeService.merge_patients",
-                 new=AsyncMock(return_value=fake_tombstone),
-             ):
+        with (
+            patch(
+                "app.api.v2.auth_routes.get_async_redis_client",
+                return_value=async_redis,
+            ),
+            patch("app.api.v2.merge_routes.get_redis_client", return_value=async_redis),
+            patch(
+                "app.services.provider_auth_service.get_redis_client",
+                return_value=sync_redis,
+            ),
+            patch(
+                "app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log",
+                AsyncMock(return_value=True),
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.merge_service.PatientMergeService.merge_patients",
+                new=AsyncMock(return_value=fake_tombstone),
+            ),
+        ):
             client = TestClient(app)
 
-            challenge_resp = client.post("/api/v2/auth/challenge/merge", headers=AUTH_HEADER)
+            challenge_resp = client.post(
+                "/api/v2/auth/challenge/merge", headers=AUTH_HEADER
+            )
             assert challenge_resp.status_code == 200, challenge_resp.text
             challenge_token = challenge_resp.json()["challenge_token"]
 
@@ -229,25 +263,45 @@ async def test_merge_challenge_cannot_be_replayed(mfa_env):
 
     async_redis = FakeAsyncRedis()
     sync_redis = FakeSyncRedis()
-    fake_tombstone = MagicMock(tombstone_id=uuid.uuid4(), canonical_patient_uuid=uuid.uuid4())
+    fake_tombstone = MagicMock(
+        tombstone_id=uuid.uuid4(), canonical_patient_uuid=uuid.uuid4()
+    )
 
     app.dependency_overrides[get_current_provider] = lambda: provider
     app.dependency_overrides[get_db_session] = lambda: db
 
     try:
-        with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=async_redis), \
-             patch("app.api.v2.merge_routes.get_redis_client", return_value=async_redis), \
-             patch("app.services.provider_auth_service.get_redis_client", return_value=sync_redis), \
-             patch("app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)), \
-             patch("app.observability.audit_ledger.append_audit_log", AsyncMock(return_value=True)), \
-             patch("app.observability.audit_ledger.append_audit_log_or_503", AsyncMock(return_value=None)), \
-             patch(
-                 "app.services.merge_service.PatientMergeService.merge_patients",
-                 new=AsyncMock(return_value=fake_tombstone),
-             ):
+        with (
+            patch(
+                "app.api.v2.auth_routes.get_async_redis_client",
+                return_value=async_redis,
+            ),
+            patch("app.api.v2.merge_routes.get_redis_client", return_value=async_redis),
+            patch(
+                "app.services.provider_auth_service.get_redis_client",
+                return_value=sync_redis,
+            ),
+            patch(
+                "app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log",
+                AsyncMock(return_value=True),
+            ),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.services.merge_service.PatientMergeService.merge_patients",
+                new=AsyncMock(return_value=fake_tombstone),
+            ),
+        ):
             client = TestClient(app)
 
-            challenge_token = client.post("/api/v2/auth/challenge/merge", headers=AUTH_HEADER).json()["challenge_token"]
+            challenge_token = client.post(
+                "/api/v2/auth/challenge/merge", headers=AUTH_HEADER
+            ).json()["challenge_token"]
             valid_code = pyotp.TOTP(totp_secret).now()
             client.post(
                 "/api/v2/auth/challenge/merge/verify",
@@ -261,13 +315,15 @@ async def test_merge_challenge_cannot_be_replayed(mfa_env):
                 "reason": "first merge",
             }
             first = client.post(
-                "/api/v2/patient/merge", json=merge_payload,
+                "/api/v2/patient/merge",
+                json=merge_payload,
                 headers={**AUTH_HEADER, "X-Merge-Challenge": challenge_token},
             )
             assert first.status_code == 201
 
             second = client.post(
-                "/api/v2/patient/merge", json=merge_payload,
+                "/api/v2/patient/merge",
+                json=merge_payload,
                 headers={**AUTH_HEADER, "X-Merge-Challenge": challenge_token},
             )
             assert second.status_code == 403
@@ -297,11 +353,23 @@ async def test_merge_rejects_wrong_totp_code(mfa_env):
     app.dependency_overrides[get_db_session] = lambda: db
 
     try:
-        with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=async_redis), \
-             patch("app.services.provider_auth_service.get_redis_client", return_value=sync_redis), \
-             patch("app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)):
+        with (
+            patch(
+                "app.api.v2.auth_routes.get_async_redis_client",
+                return_value=async_redis,
+            ),
+            patch(
+                "app.services.provider_auth_service.get_redis_client",
+                return_value=sync_redis,
+            ),
+            patch(
+                "app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)
+            ),
+        ):
             client = TestClient(app)
-            challenge_token = client.post("/api/v2/auth/challenge/merge", headers=AUTH_HEADER).json()["challenge_token"]
+            challenge_token = client.post(
+                "/api/v2/auth/challenge/merge", headers=AUTH_HEADER
+            ).json()["challenge_token"]
 
             wrong_code_resp = client.post(
                 "/api/v2/auth/challenge/merge/verify",
@@ -324,17 +392,31 @@ async def test_merge_challenge_bound_to_issuing_session(mfa_env):
     app.dependency_overrides[get_db_session] = lambda: AsyncMock()
 
     try:
-        with patch("app.api.v2.auth_routes.get_async_redis_client", return_value=async_redis), \
-             patch("app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)):
+        with (
+            patch(
+                "app.api.v2.auth_routes.get_async_redis_client",
+                return_value=async_redis,
+            ),
+            patch(
+                "app.api.v2.auth_routes.append_audit_log", AsyncMock(return_value=True)
+            ),
+        ):
             client = TestClient(app)
-            challenge_token = client.post("/api/v2/auth/challenge/merge", headers=AUTH_HEADER).json()["challenge_token"]
+            challenge_token = client.post(
+                "/api/v2/auth/challenge/merge", headers=AUTH_HEADER
+            ).json()["challenge_token"]
 
             verify_resp = client.post(
                 "/api/v2/auth/challenge/merge/verify",
                 json={"challenge_token": challenge_token, "totp_code": "123456"},
-                headers={"Authorization": "Bearer a-completely-different-session-token"},
+                headers={
+                    "Authorization": "Bearer a-completely-different-session-token"
+                },
             )
             assert verify_resp.status_code == 403
-            assert verify_resp.json()["detail"]["error_code"] == "MERGE_CHALLENGE_BINDING_MISMATCH"
+            assert (
+                verify_resp.json()["detail"]["error_code"]
+                == "MERGE_CHALLENGE_BINDING_MISMATCH"
+            )
     finally:
         app.dependency_overrides.clear()

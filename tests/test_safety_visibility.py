@@ -61,7 +61,9 @@ class TestSourceBadge:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(SOURCE_BADGE_PATH)
-        assert "from 'tamagui'" in code or "from '@my/ui'" in code, "Must import from tamagui"
+        assert (
+            "from 'tamagui'" in code or "from '@my/ui'" in code
+        ), "Must import from tamagui"
         assert "<div" not in code, "Must not use HTML div"
         assert "<span" not in code, "Must not use HTML span"
 
@@ -87,9 +89,7 @@ class TestSourceBadge:
         code = _read(SOURCE_BADGE_PATH)
         # AI-extracted badge must display confidence percentage
         assert "confidence" in code, "Must accept confidence prop"
-        assert "%" in code or "confidence" in code, (
-            "Must display confidence percentage"
-        )
+        assert "%" in code or "confidence" in code, "Must display confidence percentage"
 
     def test_manual_label_text(self) -> None:
         code = _read(SOURCE_BADGE_PATH)
@@ -121,7 +121,9 @@ class TestRiskBadge:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(RISK_BADGE_PATH)
-        assert "from 'tamagui'" in code or "from '@my/ui'" in code, "Must import from tamagui"
+        assert (
+            "from 'tamagui'" in code or "from '@my/ui'" in code
+        ), "Must import from tamagui"
         assert "<div" not in code, "Must not use HTML div"
 
     def test_handles_all_risk_levels(self) -> None:
@@ -189,16 +191,14 @@ class TestAccessHistoryScreenDetailed:
 
     def test_uses_shared_api_client(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
-        assert "apiClient" in code, (
-            "Must import from shared apiClient"
-        )
+        assert "apiClient" in code, "Must import from shared apiClient"
 
     def test_no_raw_fetch(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
         code_no_comments = _strip_comments(code)
-        assert not re.search(r"\bfetch\s*\(", code_no_comments), (
-            "Must not use raw fetch()"
-        )
+        assert not re.search(
+            r"\bfetch\s*\(", code_no_comments
+        ), "Must not use raw fetch()"
 
     def test_no_axios(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
@@ -208,22 +208,16 @@ class TestAccessHistoryScreenDetailed:
     def test_no_localhost(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
         code_no_comments = _strip_comments(code)
-        assert "localhost" not in code_no_comments.lower(), (
-            "Must not contain localhost"
-        )
+        assert "localhost" not in code_no_comments.lower(), "Must not contain localhost"
 
     def test_no_hardcoded_patient_id(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
         code_no_comments = _strip_comments(code)
-        assert "patient_id" not in code_no_comments, (
-            "Must not hardcode patient_id"
-        )
+        assert "patient_id" not in code_no_comments, "Must not hardcode patient_id"
 
     def test_fetches_via_get_access_history(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
-        assert "access-history" in code, (
-            "Must fetch access history via apiClient"
-        )
+        assert "access-history" in code, "Must fetch access history via apiClient"
 
     def test_displays_provider_name(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
@@ -247,12 +241,12 @@ class TestAccessHistoryScreenDetailed:
 
     def test_flags_break_glass_accesses(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
-        assert "is_break_glass" in code, (
-            "Must check is_break_glass field on access entries"
-        )
-        assert "BREAK-GLASS" in code, (
-            "Must display BREAK-GLASS warning badge for emergency accesses"
-        )
+        assert (
+            "is_break_glass" in code
+        ), "Must check is_break_glass field on access entries"
+        assert (
+            "BREAK-GLASS" in code
+        ), "Must display BREAK-GLASS warning badge for emergency accesses"
 
     def test_break_glass_badge_uses_red(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
@@ -261,9 +255,9 @@ class TestAccessHistoryScreenDetailed:
 
     def test_empty_state_text(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
-        assert "No one has accessed your records yet" in code, (
-            "Empty state must say 'No one has accessed your records yet.'"
-        )
+        assert (
+            "No one has accessed your records yet" in code
+        ), "Empty state must say 'No one has accessed your records yet.'"
 
     def test_handles_all_event_types(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
@@ -277,7 +271,9 @@ class TestAccessHistoryScreenDetailed:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
-        assert "from 'tamagui'" in code or "from '@my/ui'" in code, "Must import from tamagui"
+        assert (
+            "from 'tamagui'" in code or "from '@my/ui'" in code
+        ), "Must import from tamagui"
         assert "<div" not in code, "Must not use HTML div"
         assert "<button" not in code, "Must not use HTML button"
         assert "<span" not in code, "Must not use HTML span"
@@ -296,16 +292,14 @@ class TestPatientTimelineScreenDetailed:
 
     def test_uses_shared_api_client(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
-        assert "apiClient" in code, (
-            "Must import from shared apiClient"
-        )
+        assert "apiClient" in code, "Must import from shared apiClient"
 
     def test_no_raw_fetch(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
         code_no_comments = _strip_comments(code)
-        assert not re.search(r"\bfetch\s*\(", code_no_comments), (
-            "Must not use raw fetch()"
-        )
+        assert not re.search(
+            r"\bfetch\s*\(", code_no_comments
+        ), "Must not use raw fetch()"
 
     def test_no_axios(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
@@ -315,27 +309,28 @@ class TestPatientTimelineScreenDetailed:
     def test_no_localhost(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
         code_no_comments = _strip_comments(code)
-        assert "localhost" not in code_no_comments.lower(), (
-            "Must not contain localhost"
-        )
+        assert "localhost" not in code_no_comments.lower(), "Must not contain localhost"
 
     def test_no_hardcoded_patient_id(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
         code_no_comments = _strip_comments(code)
-        assert "patient_id" not in code_no_comments, (
-            "Must not hardcode patient_id"
-        )
+        assert "patient_id" not in code_no_comments, "Must not hardcode patient_id"
 
     def test_fetches_via_get_my_timeline(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
-        assert "timeline" in code, (
-            "Must fetch timeline via apiClient"
-        )
+        assert "timeline" in code, "Must fetch timeline via apiClient"
 
     def test_handles_all_categories(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
         # Backend event_type values are UPPERCASE
-        for cat in ["VITALS", "MEDICATION", "LAB_RESULT", "ALLERGY", "DOCUMENT", "ENCOUNTER"]:
+        for cat in [
+            "VITALS",
+            "MEDICATION",
+            "LAB_RESULT",
+            "ALLERGY",
+            "DOCUMENT",
+            "ENCOUNTER",
+        ]:
             assert cat in code, f"Must handle {cat} category"
 
     def test_uses_source_badge(self) -> None:
@@ -354,9 +349,9 @@ class TestPatientTimelineScreenDetailed:
 
     def test_passes_confidence_to_badge(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
-        assert "confidence=" in code or "confidence" in code, (
-            "Must pass confidence prop to SourceBadge"
-        )
+        assert (
+            "confidence=" in code or "confidence" in code
+        ), "Must pass confidence prop to SourceBadge"
 
     def test_passes_risk_level_to_badge(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
@@ -368,7 +363,9 @@ class TestPatientTimelineScreenDetailed:
         badge_code = _read(SOURCE_BADGE_PATH)
         screen_code = _read(PATIENT_TIMELINE_PATH)
         assert "manual" in badge_code, "SourceBadge must handle 'manual' source"
-        assert "ai_extracted" in badge_code, "SourceBadge must handle 'ai_extracted' source"
+        assert (
+            "ai_extracted" in badge_code
+        ), "SourceBadge must handle 'ai_extracted' source"
         # Screen must pass source to the badge
         assert "source=" in screen_code, "Screen must pass event.source to SourceBadge"
 
@@ -385,7 +382,9 @@ class TestPatientTimelineScreenDetailed:
         code = _read(PATIENT_TIMELINE_PATH)
         # Backend packs value, unit, reference range into summary text
         # (e.g. "HbA1c: 7.2 %" or "BP: 120/80 mmHg")
-        assert "summary" in code, "Must display event summary (includes value/reference)"
+        assert (
+            "summary" in code
+        ), "Must display event summary (includes value/reference)"
 
     def test_empty_state(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
@@ -397,15 +396,17 @@ class TestPatientTimelineScreenDetailed:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
-        assert "from 'tamagui'" in code or "from '@my/ui'" in code, "Must import from tamagui"
+        assert (
+            "from 'tamagui'" in code or "from '@my/ui'" in code
+        ), "Must import from tamagui"
         assert "<div" not in code, "Must not use HTML div"
         assert "<button" not in code, "Must not use HTML button"
 
     def test_navigates_to_access_history(self) -> None:
         code = _read(PATIENT_TIMELINE_PATH)
-        assert "/patient/access-history" in code, (
-            "Must have navigation link to access history"
-        )
+        assert (
+            "/patient/access-history" in code
+        ), "Must have navigation link to access history"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -420,29 +421,28 @@ class TestApiClientConvenienceMethods:
         code = _read(API_CLIENT_PATH)
         # The client may have a dedicated method or the screen may call
         # the endpoint directly via apiClient.get(...)
-        assert "getAccessLog" in code or "getAccessHistory" in code or "access-log" in code or "access-history" in code, (
-            "apiClient must have access history/log support"
-        )
+        assert (
+            "getAccessLog" in code
+            or "getAccessHistory" in code
+            or "access-log" in code
+            or "access-history" in code
+        ), "apiClient must have access history/log support"
 
     def test_get_my_timeline_method(self) -> None:
         code = _read(API_CLIENT_PATH)
         # The client may have a dedicated method or the screen may call
         # the endpoint directly via apiClient.get(...)
-        assert "timeline" in code, (
-            "apiClient must have timeline support"
-        )
+        assert "timeline" in code, "apiClient must have timeline support"
 
     def test_access_history_endpoint(self) -> None:
         code = _read(API_CLIENT_PATH)
-        assert "access-log" in code or "access-history" in code or "access_log" in code, (
-            "apiClient must define access history/log endpoint"
-        )
+        assert (
+            "access-log" in code or "access-history" in code or "access_log" in code
+        ), "apiClient must define access history/log endpoint"
 
     def test_timeline_endpoint(self) -> None:
         code = _read(API_CLIENT_PATH)
-        assert "timeline" in code, (
-            "apiClient must define timeline endpoint"
-        )
+        assert "timeline" in code, "apiClient must define timeline endpoint"
 
     def test_access_history_entry_type(self) -> None:
         # The type may be defined in apiClient.ts or in the screen itself
@@ -450,33 +450,33 @@ class TestApiClientConvenienceMethods:
         screen_code = _read(ACCESS_HISTORY_PATH)
         has_type = "AccessHistoryEntry" in code or "AccessHistoryEntry" in screen_code
         has_fields = "is_break_glass" in code or "is_break_glass" in screen_code
-        assert has_type or has_fields, (
-            "Must define AccessHistoryEntry type or include is_break_glass field"
-        )
+        assert (
+            has_type or has_fields
+        ), "Must define AccessHistoryEntry type or include is_break_glass field"
 
     def test_timeline_entry_type(self) -> None:
         # The type may be defined in apiClient.ts or in the screen itself
         code = _read(API_CLIENT_PATH)
         screen_code = _read(PATIENT_TIMELINE_PATH)
         has_type = "TimelineEntry" in code or "TimelineEntry" in screen_code
-        has_fields = ("source" in code and "confidence" in code) or ("source" in screen_code and "confidence" in screen_code)
-        assert has_type or has_fields, (
-            "Must define TimelineEntry type or include source/confidence fields"
+        has_fields = ("source" in code and "confidence" in code) or (
+            "source" in screen_code and "confidence" in screen_code
         )
+        assert (
+            has_type or has_fields
+        ), "Must define TimelineEntry type or include source/confidence fields"
 
     def test_no_localhost_in_api_client(self) -> None:
         code = _read(API_CLIENT_PATH)
         code_no_comments = _strip_comments(code)
-        assert "localhost" not in code_no_comments, (
-            "apiClient must not contain localhost"
-        )
+        assert (
+            "localhost" not in code_no_comments
+        ), "apiClient must not contain localhost"
 
     def test_no_axios_in_api_client(self) -> None:
         code = _read(API_CLIENT_PATH)
         code_no_comments = _strip_comments(code)
-        assert "axios" not in code_no_comments.lower(), (
-            "apiClient must not use axios"
-        )
+        assert "axios" not in code_no_comments.lower(), "apiClient must not use axios"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -505,9 +505,9 @@ class TestScreenApiClientIntegration:
         api_code = _read(API_CLIENT_PATH)
         screen_code = _read(ACCESS_HISTORY_PATH)
         # is_break_glass may be in the type definition or the screen's inline type
-        assert "is_break_glass" in api_code or "is_break_glass" in screen_code, (
-            "Type or screen must include is_break_glass"
-        )
+        assert (
+            "is_break_glass" in api_code or "is_break_glass" in screen_code
+        ), "Type or screen must include is_break_glass"
         assert "is_break_glass" in screen_code, "Screen must check is_break_glass"
 
     def test_provenance_in_type_and_screen(self) -> None:

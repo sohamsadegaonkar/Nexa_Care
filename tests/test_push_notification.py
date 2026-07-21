@@ -17,9 +17,14 @@ client = TestClient(app)
 JWT_SECRET = "push-test-patient-secret-at-least-32-characters"
 
 
-@pytest.mark.parametrize("token", ["ExponentPushToken[legacy]", "ExpoPushToken[current]"])
+@pytest.mark.parametrize(
+    "token", ["ExponentPushToken[legacy]", "ExpoPushToken[current]"]
+)
 def test_push_token_registration_accepts_expo_token_formats(token):
-    assert PushTokenRegistration(expo_push_token=token, platform="android").expo_push_token == token
+    assert (
+        PushTokenRegistration(expo_push_token=token, platform="android").expo_push_token
+        == token
+    )
 
 
 def test_push_token_registration_rejects_malformed_token():
@@ -50,8 +55,12 @@ def test_push_registration_rejects_an_expired_session(monkeypatch):
         JWT_SECRET,
         algorithm="HS256",
     )
-    with patch("app.core.dependencies.append_audit_log", new=AsyncMock()), patch(
-        "app.core.dependencies.validate_session_context", new=AsyncMock(return_value=None)
+    with (
+        patch("app.core.dependencies.append_audit_log", new=AsyncMock()),
+        patch(
+            "app.core.dependencies.validate_session_context",
+            new=AsyncMock(return_value=None),
+        ),
     ):
         response = client.post(
             "/api/v2/push/register-token",
@@ -109,7 +118,9 @@ async def test_register_token_is_idempotent_for_same_patient():
     db.execute.return_value = result
 
     await register_push_token(
-        PushTokenRegistration(expo_push_token="ExpoPushToken[current]", platform="android"),
+        PushTokenRegistration(
+            expo_push_token="ExpoPushToken[current]", platform="android"
+        ),
         patient_id=str(patient_id),
         db=db,
     )
@@ -137,7 +148,9 @@ async def test_register_token_safely_reassigns_device_between_patients():
     new_patient = "123e4567-e89b-12d3-a456-426614174002"
 
     await register_push_token(
-        PushTokenRegistration(expo_push_token="ExpoPushToken[current]", platform="android"),
+        PushTokenRegistration(
+            expo_push_token="ExpoPushToken[current]", platform="android"
+        ),
         patient_id=new_patient,
         db=db,
     )
@@ -148,25 +161,26 @@ async def test_register_token_safely_reassigns_device_between_patients():
     assert created.is_active is True
     db.commit.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 async def test_send_approval_request_success():
     service = PushNotificationService()
-    
+
     mock_response = MagicMock()
     mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "data": {"status": "ok", "id": "123-456"}
-    }
-    
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
+    mock_response.json.return_value = {"data": {"status": "ok", "id": "123-456"}}
+
+    with patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response
+    ):
         result = await service.send_approval_request(
             patient_id="p-1",
             request_id="req-1",
             provider_name="Strange",
             purpose="review",
-            expo_push_token="ExponentPushToken[xxx]"
+            expo_push_token="ExponentPushToken[xxx]",
         )
-        
+
         assert result.success is True
         assert result.message_id == "123-456"
 
@@ -177,7 +191,9 @@ async def test_consent_push_payload_uses_canonical_route_and_generic_lock_screen
     response = MagicMock(status_code=200)
     response.json.return_value = {"data": [{"status": "ok", "id": "ticket-1"}]}
 
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response) as post:
+    with patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=response
+    ) as post:
         await service.send_approval_request(
             patient_id="patient-secret",
             request_id="request-123",
@@ -194,46 +210,50 @@ async def test_consent_push_payload_uses_canonical_route_and_generic_lock_screen
     assert "Sensitive Provider Name" not in payload["body"]
     assert "sensitive-purpose" not in payload["body"]
 
+
 @pytest.mark.asyncio
 async def test_send_approval_request_expo_error():
     service = PushNotificationService()
-    
+
     mock_response = MagicMock()
     mock_response.status_code = 200
     mock_response.json.return_value = {
-        "data": [
-            {"status": "error", "message": "Device not registered"}
-        ]
+        "data": [{"status": "error", "message": "Device not registered"}]
     }
-    
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
+
+    with patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response
+    ):
         result = await service.send_approval_request(
             patient_id="p-1",
             request_id="req-1",
             provider_name="Strange",
             purpose="review",
-            expo_push_token="ExponentPushToken[xxx]"
+            expo_push_token="ExponentPushToken[xxx]",
         )
-        
+
         assert result.success is False
         assert result.error == "PUSH_PROVIDER_REJECTED"
+
 
 @pytest.mark.asyncio
 async def test_send_approval_request_http_failure():
     service = PushNotificationService()
-    
+
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.text = "Internal Server Error"
-    
-    with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
+
+    with patch(
+        "httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response
+    ):
         result = await service.send_approval_request(
             patient_id="p-1",
             request_id="req-1",
             provider_name="Strange",
             purpose="review",
-            expo_push_token="ExponentPushToken[xxx]"
+            expo_push_token="ExponentPushToken[xxx]",
         )
-        
+
         assert result.success is False
         assert result.error == "HTTP 500"

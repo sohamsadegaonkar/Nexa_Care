@@ -9,9 +9,9 @@ from typing import Optional
 class AssuranceLevel(str, Enum):
     """Canonical assurance levels for Nexa Care V2 consent grants."""
 
-    STANDARD = "standard"            # Password + MFA only
-    PUSH_BIOMETRIC = "push_biometric" # Real push notification + biometric approval
-    BREAK_GLASS = "break_glass"       # Emergency override
+    STANDARD = "standard"  # Password + MFA only
+    PUSH_BIOMETRIC = "push_biometric"  # Real push notification + biometric approval
+    BREAK_GLASS = "break_glass"  # Emergency override
 
 
 @dataclass(frozen=True, slots=True)

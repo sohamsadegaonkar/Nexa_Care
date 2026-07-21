@@ -21,8 +21,12 @@ class ProviderIdentityContext(BaseModel):
         default=None,
         description="Medical council registration number, if registered",
     )
-    specialty: str | None = Field(default=None, description="Primary clinical specialty")
-    contact_email: str = Field(..., description="Provider contact email (login identifier)")
+    specialty: str | None = Field(
+        default=None, description="Primary clinical specialty"
+    )
+    contact_email: str = Field(
+        ..., description="Provider contact email (login identifier)"
+    )
 
 
 class HospitalContext(BaseModel):
@@ -48,11 +52,21 @@ class AffiliationContext(BaseModel):
         ...,
         description="Nature of the provider's association with the hospital",
     )
-    department: str | None = Field(default=None, description="Department within the facility")
-    roles: list[str] = Field(default_factory=list, description="Granted roles at this facility")
-    is_primary: bool = Field(..., description="Whether this is the provider's primary affiliation")
-    valid_from: datetime | None = Field(default=None, description="Affiliation start, if bounded")
-    valid_until: datetime | None = Field(default=None, description="Affiliation end, if bounded")
+    department: str | None = Field(
+        default=None, description="Department within the facility"
+    )
+    roles: list[str] = Field(
+        default_factory=list, description="Granted roles at this facility"
+    )
+    is_primary: bool = Field(
+        ..., description="Whether this is the provider's primary affiliation"
+    )
+    valid_from: datetime | None = Field(
+        default=None, description="Affiliation start, if bounded"
+    )
+    valid_until: datetime | None = Field(
+        default=None, description="Affiliation end, if bounded"
+    )
 
 
 class ProviderContext(BaseModel):

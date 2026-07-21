@@ -1,6 +1,7 @@
 """
 Shared test setup.
 """
+
 import os
 import sys
 import types
@@ -22,8 +23,13 @@ os.environ["ENVIRONMENT"] = "test"
 os.environ["ENV"] = "test"
 os.environ.setdefault("DOCUMENT_EXTRACTION_PROVIDER", "demo")
 os.environ.setdefault("DOCUMENT_STORAGE_PROVIDER", "local")
-os.environ.setdefault("DOCUMENT_STORAGE_LOCAL_ROOT", os.path.join(tempfile.gettempdir(), "nexa-care-tests"))
-os.environ.setdefault("DOCUMENT_STORAGE_ENCRYPTION_KEY", "dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHQ=")
+os.environ.setdefault(
+    "DOCUMENT_STORAGE_LOCAL_ROOT",
+    os.path.join(tempfile.gettempdir(), "nexa-care-tests"),
+)
+os.environ.setdefault(
+    "DOCUMENT_STORAGE_ENCRYPTION_KEY", "dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHR0dHQ="
+)
 os.environ["TRUSTED_HOSTS"] = "localhost,127.0.0.1,testserver"
 
 from app.main import app
@@ -60,6 +66,7 @@ class DualModeTestClient:
             response = attr(*args, **kwargs)
             try:
                 import asyncio
+
                 asyncio.get_running_loop()
             except RuntimeError:
                 return response
@@ -83,6 +90,7 @@ class FakeRedisPipeline:
 
     async def execute(self):
         import time
+
         results = []
         for op in self.ops:
             if op[0] == "incr":
@@ -105,6 +113,7 @@ class FakeRedis:
 
     async def get(self, key):
         import time
+
         if key in self.ttls and self.ttls[key] < time.time():
             del self.data[key]
             del self.ttls[key]
@@ -113,12 +122,14 @@ class FakeRedis:
 
     async def setex(self, key, ttl, value):
         import time
+
         self.data[key] = value
         self.ttls[key] = time.time() + ttl
         return True
 
     async def set(self, key, value, ex=None, nx=False):
         import time
+
         if nx and key in self.data:
             return False
         self.data[key] = value
@@ -143,18 +154,21 @@ class FakeRedis:
 
     async def expire(self, key, ttl, nx=False):
         import time
+
         if nx and key in self.ttls:
-             return 0
+            return 0
         self.ttls[key] = time.time() + ttl
         return 1
 
     async def ttl(self, key):
         import time
+
         return max(-1, int(self.ttls.get(key, time.time() - 1) - time.time()))
 
     async def eval(self, script, numkeys, *args):
         import json
         import time
+
         keys = list(args[:numkeys])
         argv = list(args[numkeys:])
         if numkeys == 1 and "DEL" in script:  # compare-and-delete lock release
@@ -175,7 +189,10 @@ class FakeRedis:
         if not raw or nonce_key in self.data:
             return 0
         payload = json.loads(raw)
-        if payload.get("status") != "pending" or payload.get("challenge_nonce") != argv[0]:
+        if (
+            payload.get("status") != "pending"
+            or payload.get("challenge_nonce") != argv[0]
+        ):
             return 0
         self.data[nonce_key] = "1"
         self.ttls[nonce_key] = time.time() + 300
@@ -188,21 +205,24 @@ class FakeRedis:
 
     def register_script(self, script_body):
         import json
+
         # We'll mock the specific PUSH resolve script logic
         async def run_script(keys=None, args=None):
             key = keys[0]
             current = self.data.get(key)
             if not current:
-                return 'EXPIRED'
+                return "EXPIRED"
             data = json.loads(current)
-            if data['status'] != 'pending':
-                return 'ALREADY_RESOLVED'
-            data['status'] = args[0]
-            data['responded_at'] = args[1]
-            data['biometric_token_hash'] = args[2]
+            if data["status"] != "pending":
+                return "ALREADY_RESOLVED"
+            data["status"] = args[0]
+            data["responded_at"] = args[1]
+            data["biometric_token_hash"] = args[2]
             self.data[key] = json.dumps(data)
-            return 'OK'
+            return "OK"
+
         return run_script
+
 
 class FakeSyncRedis:
     def __init__(self, async_redis):
@@ -210,6 +230,7 @@ class FakeSyncRedis:
 
     def get(self, key):
         import time
+
         if key in self._a.ttls and self._a.ttls[key] < time.time():
             del self._a.data[key]
             del self._a.ttls[key]
@@ -218,12 +239,14 @@ class FakeSyncRedis:
 
     def setex(self, key, ttl, value):
         import time
+
         self._a.data[key] = value
         self._a.ttls[key] = time.time() + ttl
         return True
 
     def set(self, key, value, ex=None, nx=False):
         import time
+
         if nx and key in self._a.data:
             return False
         self._a.data[key] = value
@@ -238,14 +261,18 @@ class FakeSyncRedis:
 
     def ttl(self, key):
         import time
+
         return max(-1, int(self._a.ttls.get(key, time.time() - 1) - time.time()))
 
     def eval(self, script, numkeys, *args):
         import json
         import time
-        keys = list(args[:numkeys]); argv = list(args[numkeys:])
+
+        keys = list(args[:numkeys])
+        argv = list(args[numkeys:])
         if numkeys == 1:
-            key = keys[0]; count = int(self._a.data.get(key, 0)) + 1
+            key = keys[0]
+            count = int(self._a.data.get(key, 0)) + 1
             self._a.data[key] = str(count)
             self._a.ttls.setdefault(key, time.time() + int(argv[0]))
             return [count, self.ttl(key)]
@@ -254,10 +281,15 @@ class FakeSyncRedis:
         if not raw or nonce_key in self._a.data:
             return 0
         payload = json.loads(raw)
-        if payload.get("status") != "pending" or payload.get("challenge_nonce") != argv[0]:
+        if (
+            payload.get("status") != "pending"
+            or payload.get("challenge_nonce") != argv[0]
+        ):
             return 0
-        self._a.data[nonce_key] = "1"; self._a.ttls[nonce_key] = time.time() + 300
-        self._a.data[request_key] = argv[1]; self._a.ttls[request_key] = time.time() + int(argv[2])
+        self._a.data[nonce_key] = "1"
+        self._a.ttls[nonce_key] = time.time() + 300
+        self._a.data[request_key] = argv[1]
+        self._a.ttls[request_key] = time.time() + int(argv[2])
         return 1
 
     def pipeline(self):
@@ -268,28 +300,48 @@ class FakeSyncRedis:
 def mock_redis():
     return FakeRedis()
 
+
 @pytest.fixture
 def test_client():
     return DualModeTestClient(app)
+
 
 @pytest.fixture
 def admin_token():
     return "admin-test-token"
 
+
 @pytest.fixture
 def admin_context():
     import uuid
-    from app.models.provider_context import ProviderContext, ProviderIdentityContext, HospitalContext, AffiliationContext
-    from app.models.provider import AffiliationType
-    return ProviderContext(
-        provider=ProviderIdentityContext(provider_id=uuid.uuid4(), display_name="Admin", contact_email="a@ex.com"),
-        hospital=HospitalContext(hospital_id=uuid.uuid4(), facility_code="H", display_name="H"),
-        affiliation=AffiliationContext(affiliation_id=uuid.uuid4(), affiliation_type=AffiliationType.PERMANENT, is_primary=True, roles=["admin"])
+    from app.models.provider_context import (
+        ProviderContext,
+        ProviderIdentityContext,
+        HospitalContext,
+        AffiliationContext,
     )
+    from app.models.provider import AffiliationType
+
+    return ProviderContext(
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(), display_name="Admin", contact_email="a@ex.com"
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(), facility_code="H", display_name="H"
+        ),
+        affiliation=AffiliationContext(
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            is_primary=True,
+            roles=["admin"],
+        ),
+    )
+
 
 @pytest.fixture
 def admin_headers(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
+
 
 @pytest.fixture
 def mock_db():
@@ -302,56 +354,92 @@ def mock_db():
     session.execute.return_value = MagicMock()
     return session
 
+
 @pytest.fixture
 def test_db(mock_db):
     return mock_db
 
+
 @pytest.fixture(autouse=True)
 def override_deps(request, mock_db, mock_redis):
-    from app.security.audit_context import bind_trusted_audit_tenant, reset_trusted_audit_scope
+    from app.security.audit_context import (
+        bind_trusted_audit_tenant,
+        reset_trusted_audit_scope,
+    )
     from app.core.database import get_db_session
     from app.api.v2.patient_routes import get_kms_provider
     from app.services.consent_engine import get_consent_redis_client
     from app.core.redis import get_redis_client
     from contextlib import ExitStack
-    
+
     get_consent_redis_client.cache_clear()
     get_redis_client.cache_clear()
-    
+
     app.dependency_overrides[get_db_session] = lambda: mock_db
     app.dependency_overrides[get_kms_provider] = lambda: AsyncMock()
-    
+
     # Reset cached scripts in the service singleton
     from app.api.v2.assurance_routes import service
+
     service._resolve_script = None
 
     # Mocking Supabase client globally
     mock_supabase = MagicMock()
-    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
+    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+        MagicMock()
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={}
+    )
 
     sync_redis = FakeSyncRedis(mock_redis)
     patches = [
-         patch("app.core.redis.get_redis_client", return_value=sync_redis),
-         patch("app.api.v2.merge_routes.get_redis_client", return_value=sync_redis),
-         patch("app.api.v2.auth_routes.get_async_redis_client", return_value=mock_redis),
-         patch("app.api.v2.auth_routes.enforce_provider_login_controls", new=AsyncMock(return_value=("test-login-hash", 1))),
-         patch("app.api.v2.consent_routes.get_redis_client", return_value=sync_redis),
-         patch("app.services.provider_auth_service.get_redis_client", return_value=sync_redis),
-         patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis),
-         patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None),
-         patch("app.core.supabase.get_supabase_client", return_value=mock_supabase),
-         patch("app.services.consent_engine.get_consent_redis_client", return_value=mock_redis),
-         patch("app.observability.audit_ledger.append_audit_log_or_503", return_value=None),
-         patch("app.observability.audit_ledger.append_audit_log", return_value=True),
-         patch("app.services.consent_engine.append_audit_log_or_503", return_value=None),
-         patch("app.services.consent_engine.append_audit_log", return_value=True),
-         patch("app.services.crypto_kms.EncryptionProvider._check_erasure_registry", new=AsyncMock(return_value=None)),
+        patch("app.core.redis.get_redis_client", return_value=sync_redis),
+        patch("app.api.v2.merge_routes.get_redis_client", return_value=sync_redis),
+        patch("app.api.v2.auth_routes.get_async_redis_client", return_value=mock_redis),
+        patch(
+            "app.api.v2.auth_routes.enforce_provider_login_controls",
+            new=AsyncMock(return_value=("test-login-hash", 1)),
+        ),
+        patch("app.api.v2.consent_routes.get_redis_client", return_value=sync_redis),
+        patch(
+            "app.services.provider_auth_service.get_redis_client",
+            return_value=sync_redis,
+        ),
+        patch("app.api.v2.assurance_routes.get_redis_client", return_value=mock_redis),
+        patch(
+            "app.api.v2.assurance_routes.push_service.send_approval_request",
+            return_value=None,
+        ),
+        patch("app.core.supabase.get_supabase_client", return_value=mock_supabase),
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=mock_redis,
+        ),
+        patch(
+            "app.observability.audit_ledger.append_audit_log_or_503", return_value=None
+        ),
+        patch("app.observability.audit_ledger.append_audit_log", return_value=True),
+        patch("app.services.consent_engine.append_audit_log_or_503", return_value=None),
+        patch("app.services.consent_engine.append_audit_log", return_value=True),
+        patch(
+            "app.services.crypto_kms.EncryptionProvider._check_erasure_registry",
+            new=AsyncMock(return_value=None),
+        ),
     ]
     if "test_push_rate_limits" not in str(request.node.nodeid):
-        patches.append(patch("app.api.v2.assurance_routes.push_limiter.check_and_acquire", return_value=None))
-        patches.append(patch("app.api.v2.assurance_routes.push_limiter.release", return_value=None))
+        patches.append(
+            patch(
+                "app.api.v2.assurance_routes.push_limiter.check_and_acquire",
+                return_value=None,
+            )
+        )
+        patches.append(
+            patch("app.api.v2.assurance_routes.push_limiter.release", return_value=None)
+        )
 
     audit_token = bind_trusted_audit_tenant("test-tenant")
     try:

@@ -36,7 +36,9 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def make_provider_rows() -> tuple[ProviderIdentity, HospitalRegistry, ProviderHospitalAffiliation]:
+def make_provider_rows() -> (
+    tuple[ProviderIdentity, HospitalRegistry, ProviderHospitalAffiliation]
+):
     provider = ProviderIdentity(
         display_name="Dr. Auth Test",
         medical_registration_number="AUTH-1",
@@ -129,7 +131,9 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         password_hash = hash_provider_password("Strong-Test-Password-42!")
         from app.services.provider_auth_service import verify_provider_password
 
-        self.assertTrue(verify_provider_password("Strong-Test-Password-42!", password_hash))
+        self.assertTrue(
+            verify_provider_password("Strong-Test-Password-42!", password_hash)
+        )
         self.assertFalse(verify_provider_password("wrong", password_hash))
 
     def test_login_identifier_normalization(self) -> None:
@@ -152,7 +156,9 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         mock_load_credential.return_value = credential
         mock_verify.return_value = False
 
-        result = run(authenticate_provider_password(db, provider.contact_email, "bad", None))
+        result = run(
+            authenticate_provider_password(db, provider.contact_email, "bad", None)
+        )
 
         self.assertIsNone(result.context)
         self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
@@ -174,7 +180,9 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         mock_load_credential.return_value = credential
         mock_verify.return_value = False
 
-        result = run(authenticate_provider_password(db, provider.contact_email, "bad", None))
+        result = run(
+            authenticate_provider_password(db, provider.contact_email, "bad", None)
+        )
 
         self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
         self.assertEqual(credential.failed_login_attempts, 5)
@@ -201,7 +209,9 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         mock_load_provider.return_value = provider
         mock_verify.return_value = True
 
-        result = run(authenticate_provider_password(db, provider.contact_email, "good", None))
+        result = run(
+            authenticate_provider_password(db, provider.contact_email, "good", None)
+        )
 
         self.assertIsNotNone(result.context)
         self.assertIsNone(result.failure)
@@ -211,7 +221,9 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
 
     @patch("app.services.provider_auth_service.verify_provider_password")
     @patch("app.services.provider_auth_service.load_credential_by_login")
-    def test_canonical_password_hash_is_authoritative(self, mock_load, mock_verify) -> None:
+    def test_canonical_password_hash_is_authoritative(
+        self, mock_load, mock_verify
+    ) -> None:
         provider, _, _ = make_provider_rows()
         credential = make_credential(provider)
         credential.password_hash = "canonical-hash"
@@ -219,7 +231,11 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         mock_load.return_value = credential
         mock_verify.return_value = False
 
-        result = run(authenticate_provider_password(AsyncMock(), provider.contact_email, "bad", None))
+        result = run(
+            authenticate_provider_password(
+                AsyncMock(), provider.contact_email, "bad", None
+            )
+        )
 
         self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
         mock_verify.assert_called_once_with("bad", "canonical-hash")
@@ -230,15 +246,25 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         provider.status = "suspended"
         mock_load.return_value = make_credential(provider)
 
-        result = run(authenticate_provider_password(AsyncMock(), provider.contact_email, "good", None))
+        result = run(
+            authenticate_provider_password(
+                AsyncMock(), provider.contact_email, "good", None
+            )
+        )
 
         self.assertEqual(result.failure, ProviderAuthFailure.PROVIDER_INACTIVE)
 
     @patch("app.services.provider_auth_service.verify_provider_password")
     @patch("app.services.provider_auth_service.load_credential_by_login")
-    def test_unknown_provider_runs_dummy_verification(self, mock_load, mock_verify) -> None:
+    def test_unknown_provider_runs_dummy_verification(
+        self, mock_load, mock_verify
+    ) -> None:
         mock_load.return_value = None
-        result = run(authenticate_provider_password(AsyncMock(), "missing@example.com", "guess", None))
+        result = run(
+            authenticate_provider_password(
+                AsyncMock(), "missing@example.com", "guess", None
+            )
+        )
 
         self.assertEqual(result.failure, ProviderAuthFailure.INVALID_CREDENTIALS)
         mock_verify.assert_called_once()
@@ -250,14 +276,20 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
         credential.locked_until = datetime.now(timezone.utc) + timedelta(minutes=5)
         mock_load.return_value = credential
 
-        result = run(authenticate_provider_password(AsyncMock(), provider.contact_email, "good", None))
+        result = run(
+            authenticate_provider_password(
+                AsyncMock(), provider.contact_email, "good", None
+            )
+        )
 
         self.assertEqual(result.failure, ProviderAuthFailure.ACCOUNT_LOCKED)
 
 
 class TestProviderSessionRevocation(unittest.TestCase):
     @patch("app.services.provider_auth_service.get_redis_client")
-    def test_revokes_bearer_and_pending_mfa_for_only_target_provider(self, mock_redis) -> None:
+    def test_revokes_bearer_and_pending_mfa_for_only_target_provider(
+        self, mock_redis
+    ) -> None:
         target = uuid.uuid4()
         other = uuid.uuid4()
         fake = FakeRedis()
@@ -286,19 +318,25 @@ class TestProviderSessionBinding(unittest.TestCase):
         provider.credential = credential
         mock_load.return_value = provider
         fake_redis = FakeRedis()
-        fake_redis._store["provider_session:token"] = json.dumps({
-            "authenticated": True,
-            "provider_id": str(provider.id),
-            "ua_hash": hash_user_agent("OriginalAgent/1.0"),
-            "ip_hash": hash_client_ip("10.0.0.1"),
-        })
+        fake_redis._store["provider_session:token"] = json.dumps(
+            {
+                "authenticated": True,
+                "provider_id": str(provider.id),
+                "ua_hash": hash_user_agent("OriginalAgent/1.0"),
+                "ip_hash": hash_client_ip("10.0.0.1"),
+            }
+        )
         mock_redis.return_value = fake_redis
 
-        result = run(authenticate_provider_session(
-            AsyncMock(), "token", None,
-            user_agent="DifferentAgent/2.0",
-            client_ip="10.0.0.1",
-        ))
+        result = run(
+            authenticate_provider_session(
+                AsyncMock(),
+                "token",
+                None,
+                user_agent="DifferentAgent/2.0",
+                client_ip="10.0.0.1",
+            )
+        )
 
         self.assertIsNone(result.context)
         self.assertEqual(result.failure, ProviderAuthFailure.SESSION_BINDING_MISMATCH)
@@ -312,19 +350,25 @@ class TestProviderSessionBinding(unittest.TestCase):
         provider.credential = credential
         mock_load.return_value = provider
         fake_redis = FakeRedis()
-        fake_redis._store["provider_session:token"] = json.dumps({
-            "authenticated": True,
-            "provider_id": str(provider.id),
-            "ua_hash": hash_user_agent("SameAgent/1.0"),
-            "ip_hash": hash_client_ip("10.0.0.1"),
-        })
+        fake_redis._store["provider_session:token"] = json.dumps(
+            {
+                "authenticated": True,
+                "provider_id": str(provider.id),
+                "ua_hash": hash_user_agent("SameAgent/1.0"),
+                "ip_hash": hash_client_ip("10.0.0.1"),
+            }
+        )
         mock_redis.return_value = fake_redis
 
-        result = run(authenticate_provider_session(
-            AsyncMock(), "token", None,
-            user_agent="SameAgent/1.0",
-            client_ip="10.0.0.2",
-        ))
+        result = run(
+            authenticate_provider_session(
+                AsyncMock(),
+                "token",
+                None,
+                user_agent="SameAgent/1.0",
+                client_ip="10.0.0.2",
+            )
+        )
 
         self.assertIsNotNone(result.context)
         self.assertEqual(result.binding_warning, "SESSION_IP_ROTATION_DETECTED")
@@ -335,19 +379,23 @@ class TestProviderSessionRefresh(unittest.TestCase):
     def test_refresh_rebinds_new_token_to_current_context(self, mock_redis):
         provider_id = uuid.uuid4()
         fake_redis = FakeRedis()
-        fake_redis._store["provider_session:old-token"] = json.dumps({
-            "authenticated": True,
-            "provider_id": str(provider_id),
-            "ua_hash": hash_user_agent("OldAgent/1.0"),
-            "ip_hash": hash_client_ip("10.0.0.1"),
-        })
+        fake_redis._store["provider_session:old-token"] = json.dumps(
+            {
+                "authenticated": True,
+                "provider_id": str(provider_id),
+                "ua_hash": hash_user_agent("OldAgent/1.0"),
+                "ip_hash": hash_client_ip("10.0.0.1"),
+            }
+        )
         mock_redis.return_value = fake_redis
 
-        new_token = run(refresh_provider_session_token(
-            "old-token",
-            user_agent="NewAgent/2.0",
-            client_ip="10.0.0.2",
-        ))
+        new_token = run(
+            refresh_provider_session_token(
+                "old-token",
+                user_agent="NewAgent/2.0",
+                client_ip="10.0.0.2",
+            )
+        )
 
         self.assertIsNotNone(new_token)
         self.assertNotEqual(new_token, "old-token")
@@ -360,9 +408,17 @@ class TestProviderSessionRefresh(unittest.TestCase):
 
 
 class TestMfaCompositeLockout(unittest.TestCase):
-    @patch("app.services.provider_auth_service.delete_mfa_pending_token", new_callable=AsyncMock)
-    @patch("app.services.provider_auth_service.resolve_mfa_pending_token", new_callable=AsyncMock)
-    def test_missing_pending_token_is_reported_as_expired(self, mock_resolve, mock_delete):
+    @patch(
+        "app.services.provider_auth_service.delete_mfa_pending_token",
+        new_callable=AsyncMock,
+    )
+    @patch(
+        "app.services.provider_auth_service.resolve_mfa_pending_token",
+        new_callable=AsyncMock,
+    )
+    def test_missing_pending_token_is_reported_as_expired(
+        self, mock_resolve, mock_delete
+    ):
         mock_resolve.return_value = None
 
         result = run(complete_mfa_login(AsyncMock(), "expired-token", "000000", None))
@@ -374,7 +430,10 @@ class TestMfaCompositeLockout(unittest.TestCase):
     @patch("app.services.provider_auth_service.load_provider_with_affiliations")
     @patch("app.services.provider_auth_service.decrypt_mfa_secret")
     @patch("app.services.provider_auth_service.verify_totp_code")
-    @patch("app.services.provider_auth_service.resolve_mfa_pending_token", new_callable=AsyncMock)
+    @patch(
+        "app.services.provider_auth_service.resolve_mfa_pending_token",
+        new_callable=AsyncMock,
+    )
     def test_failed_mfa_tracks_composite_key_and_rate_limits(
         self,
         mock_resolve,
@@ -401,9 +460,9 @@ class TestMfaCompositeLockout(unittest.TestCase):
         client_ip = "10.0.0.1"
         ip_hash = hash_client_ip(client_ip)
         for attempt in range(1, _MAX_FAILED_MFA_ATTEMPTS + 1):
-            result = run(complete_mfa_login(
-                db, "mfa-token", "000000", None, client_ip=client_ip
-            ))
+            result = run(
+                complete_mfa_login(db, "mfa-token", "000000", None, client_ip=client_ip)
+            )
             if attempt < _MAX_FAILED_MFA_ATTEMPTS:
                 self.assertEqual(result.failure, ProviderAuthFailure.MFA_INVALID_CODE)
             else:

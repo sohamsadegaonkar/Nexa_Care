@@ -32,6 +32,7 @@ through unnoticed too.
 No mocking needed: this only inspects the real `app.routes` list that
 gets built at import time from the route decorators in app/api/routes.py.
 """
+
 from app.main import app
 
 
@@ -117,7 +118,10 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/approve-signed"),
     ("POST", "/api/v2/consent/{request_id}/claim-access"),
     ("GET", "/api/v2/consent/status/{request_id}"),
-    ("POST", "/api/v2/consent/request/{request_id}/cancel"),  # Day 14: real server-side cancellation
+    (
+        "POST",
+        "/api/v2/consent/request/{request_id}/cancel",
+    ),  # Day 14: real server-side cancellation
     ("GET", "/api/v2/consent/challenge/{request_id}"),
     ("GET", "/api/v2/patient/{id}/summary"),
     ("GET", "/api/v2/patient/{id}/timeline"),
@@ -193,4 +197,6 @@ def test_no_unexpected_extra_routes():
     """
     registered = set(_registered_routes())
     extra = registered - EXPECTED_ROUTES
-    assert not extra, f"Unexpected routes registered (update EXPECTED_ROUTES if intentional): {extra}"
+    assert (
+        not extra
+    ), f"Unexpected routes registered (update EXPECTED_ROUTES if intentional): {extra}"

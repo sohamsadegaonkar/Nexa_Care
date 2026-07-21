@@ -63,7 +63,11 @@ class MemorySession:
     async def get(self, model, primary_key):
         key = "patient_uuid" if model is Patient else "id"
         return next(
-            (obj for obj in self.objects if isinstance(obj, model) and getattr(obj, key, None) == primary_key),
+            (
+                obj
+                for obj in self.objects
+                if isinstance(obj, model) and getattr(obj, key, None) == primary_key
+            ),
             None,
         )
 
@@ -113,7 +117,9 @@ async def test_seed_demo_patient_creates_authoritative_patient_and_clinical_reco
     assert len([obj for obj in session.objects if isinstance(obj, Allergy)]) == 1
     assert len([obj for obj in session.objects if isinstance(obj, LabResult)]) == 1
     assert len([obj for obj in session.objects if isinstance(obj, TimelineEvent)]) == 6
-    assert len([obj for obj in session.objects if isinstance(obj, DocumentReference)]) == 1
+    assert (
+        len([obj for obj in session.objects if isinstance(obj, DocumentReference)]) == 1
+    )
 
 
 @pytest.mark.asyncio
@@ -146,10 +152,14 @@ async def test_seed_run_prints_created_then_already_exists(monkeypatch, capsys):
     monkeypatch.setattr(seeder, "get_async_engine", lambda: Engine())
 
     assert await seeder._run() == 0
-    assert capsys.readouterr().out.endswith(f"status=created patient_id={seeder.DEMO_PATIENT_ID}\n")
+    assert capsys.readouterr().out.endswith(
+        f"status=created patient_id={seeder.DEMO_PATIENT_ID}\n"
+    )
 
     assert await seeder._run() == 0
-    assert capsys.readouterr().out.endswith(f"status=already-exists patient_id={seeder.DEMO_PATIENT_ID}\n")
+    assert capsys.readouterr().out.endswith(
+        f"status=already-exists patient_id={seeder.DEMO_PATIENT_ID}\n"
+    )
 
 
 @pytest.mark.asyncio
@@ -177,7 +187,9 @@ async def test_seed_demo_patient_rejects_conflicting_patient_data():
 async def test_identity_link_accepts_seeded_authoritative_patient(monkeypatch):
     session = MemorySession()
     await seeder.seed_aarav_sharma(session)
-    monkeypatch.setattr(identity_script, "append_audit_log", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        identity_script, "append_audit_log", AsyncMock(return_value=True)
+    )
 
     result = await identity_script.link_patient_auth_identity(
         session,

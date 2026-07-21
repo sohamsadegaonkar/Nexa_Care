@@ -45,7 +45,10 @@ from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
 from app.services.patient_auth_service import decode_patient_access_token
-from app.services.consent_engine import ConsentEngineUnavailable, validate as validate_consent_capability
+from app.services.consent_engine import (
+    ConsentEngineUnavailable,
+    validate as validate_consent_capability,
+)
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
@@ -90,7 +93,9 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
             target_id="UNKNOWN",
             status="UNSCOPED_SESSION",
         )
-        raise HTTPException(status_code=401, detail="Session is not scoped to a patient")
+        raise HTTPException(
+            status_code=401, detail="Session is not scoped to a patient"
+        )
 
     return masked_internal_id
 
@@ -219,13 +224,25 @@ async def get_provider_context(
     if result.context is not None:
         bind_trusted_audit_hospital(str(result.context.hospital.hospital_id))
         if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
-            logger.warning(json.dumps({
-                "event": "SESSION_IP_ROTATION_DETECTED",
-                "provider_id": str(result.context.provider.provider_id),
-                "ip_hash": hash_client_ip(client_ip),
-            }))
-        raw_session = credentials.credentials if credentials is not None and credentials.credentials else cookie_session
-        binding = hashlib.sha256(raw_session.encode("utf-8")).hexdigest() if raw_session else None
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "SESSION_IP_ROTATION_DETECTED",
+                        "provider_id": str(result.context.provider.provider_id),
+                        "ip_hash": hash_client_ip(client_ip),
+                    }
+                )
+            )
+        raw_session = (
+            credentials.credentials
+            if credentials is not None and credentials.credentials
+            else cookie_session
+        )
+        binding = (
+            hashlib.sha256(raw_session.encode("utf-8")).hexdigest()
+            if raw_session
+            else None
+        )
         return result.context.model_copy(update={"session_binding": binding})
 
     assert result.failure is not None
@@ -262,7 +279,11 @@ async def get_current_provider(
     cookie_token = getattr(request, "cookies", {}).get("nexa_provider_session")
     if not isinstance(cookie_token, str):
         cookie_token = None
-    session_token = credentials.credentials if credentials is not None and credentials.credentials else cookie_token
+    session_token = (
+        credentials.credentials
+        if credentials is not None and credentials.credentials
+        else cookie_token
+    )
     if not session_token:
         await append_audit_log(
             audit_context=current_audit_context(AuditDomain.AUTH),
@@ -283,11 +304,15 @@ async def get_current_provider(
     if result.context is not None:
         bind_trusted_audit_hospital(str(result.context.hospital.hospital_id))
         if result.binding_warning == "SESSION_IP_ROTATION_DETECTED":
-            logger.warning(json.dumps({
-                "event": "SESSION_IP_ROTATION_DETECTED",
-                "provider_id": str(result.context.provider.provider_id),
-                "ip_hash": hash_client_ip(client_ip),
-            }))
+            logger.warning(
+                json.dumps(
+                    {
+                        "event": "SESSION_IP_ROTATION_DETECTED",
+                        "provider_id": str(result.context.provider.provider_id),
+                        "ip_hash": hash_client_ip(client_ip),
+                    }
+                )
+            )
         binding = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
         return result.context.model_copy(update={"session_binding": binding})
 
@@ -300,6 +325,7 @@ async def get_current_provider(
         status=_audit_status_for_failure(result.failure),
     )
     raise _http_exception_for_failure(result.failure)
+
 
 def require_role(required_role: str):
     """Factory that returns a FastAPI dependency enforcing a provider role.

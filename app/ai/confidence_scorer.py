@@ -17,7 +17,9 @@ def score_field(
     context: dict[str, Any] | None = None,
 ) -> float:
     """Calculate normalized confidence score (0.0 to 1.0) for an extracted field."""
-    base_conf = float(extractor_confidence) if extractor_confidence is not None else 0.90
+    base_conf = (
+        float(extractor_confidence) if extractor_confidence is not None else 0.90
+    )
     base_conf = max(0.0, min(1.0, base_conf))
 
     fname = str(field_name).strip().lower()
@@ -35,13 +37,23 @@ def score_field(
         else:
             adjustment -= 0.25
     elif fname in {"sugar", "fasting_glucose", "hba1c", "lab_result"}:
-        if re.search(r"\d+(\.\d+)?\s*(mg/dL|mmol/L|%)", val, re.IGNORECASE) or re.match(r"^\d+(\.\d+)?$", val):
+        if re.search(r"\d+(\.\d+)?\s*(mg/dL|mmol/L|%)", val, re.IGNORECASE) or re.match(
+            r"^\d+(\.\d+)?$", val
+        ):
             adjustment += 0.03
         else:
             adjustment -= 0.20
     elif fname in {"medication", "prescription", "drug"}:
-        has_strength = bool(re.search(r"\d+\s*(mg|g|ml|mcg|units?)", val, re.IGNORECASE))
-        has_freq = bool(re.search(r"(daily|twice|once|bid|tid|qid|q\d+h|prn|morning|night)", val, re.IGNORECASE))
+        has_strength = bool(
+            re.search(r"\d+\s*(mg|g|ml|mcg|units?)", val, re.IGNORECASE)
+        )
+        has_freq = bool(
+            re.search(
+                r"(daily|twice|once|bid|tid|qid|q\d+h|prn|morning|night)",
+                val,
+                re.IGNORECASE,
+            )
+        )
         if has_strength and has_freq:
             adjustment += 0.05
         elif not has_strength and not has_freq:

@@ -38,8 +38,12 @@ router = APIRouter(prefix="/api/v2/patient/devices", tags=["devices"])
 
 
 class DeviceEnrollRequest(BaseModel):
-    device_public_key: str = Field(..., description="Base64 DER-encoded ECDSA P-256 public key")
-    device_label: str = Field(..., max_length=100, description="Friendly name e.g. iPhone 14")
+    device_public_key: str = Field(
+        ..., description="Base64 DER-encoded ECDSA P-256 public key"
+    )
+    device_label: str = Field(
+        ..., max_length=100, description="Friendly name e.g. iPhone 14"
+    )
     platform: str = Field(..., max_length=20, description="ios or android")
     expo_push_token: str | None = None
     device_enrollment_token: str = Field(..., min_length=32, max_length=256)
@@ -66,7 +70,9 @@ class EnrolledDevicesListResponse(BaseModel):
     devices: list[EnrolledDeviceInfo]
 
 
-@router.post("/enroll", status_code=status.HTTP_201_CREATED, response_model=DeviceEnrollResponse)
+@router.post(
+    "/enroll", status_code=status.HTTP_201_CREATED, response_model=DeviceEnrollResponse
+)
 async def enroll_device(
     payload: DeviceEnrollRequest,
     patient_id: str = Depends(get_scoped_session),
@@ -110,7 +116,9 @@ async def enroll_device(
     try:
         pid_uuid = uuid.UUID(patient_id)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
+        raise HTTPException(
+            status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
+        ) from exc
 
     # Check active device limit (max 5 active devices per patient)
     stmt_count = select(func.count(PatientDeviceKey.id)).where(
@@ -133,9 +141,14 @@ async def enroll_device(
     res_existing = await db.execute(stmt_existing)
     existing = res_existing.scalar_one_or_none()
     now = datetime.now(timezone.utc)
-    claim_id = await claim_device_enrollment_token(payload.device_enrollment_token, patient_id)
+    claim_id = await claim_device_enrollment_token(
+        payload.device_enrollment_token, patient_id
+    )
     if claim_id is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired device enrollment token.")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired device enrollment token.",
+        )
 
     try:
         if existing:
@@ -163,8 +176,13 @@ async def enroll_device(
         await release_device_enrollment_claim(payload.device_enrollment_token, claim_id)
         raise
 
-    if not await finalize_device_enrollment_token(payload.device_enrollment_token, claim_id):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Device enrollment token was already consumed.")
+    if not await finalize_device_enrollment_token(
+        payload.device_enrollment_token, claim_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Device enrollment token was already consumed.",
+        )
 
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.PLATFORM),
@@ -183,7 +201,9 @@ async def enroll_device(
     )
 
 
-@router.get("", status_code=status.HTTP_200_OK, response_model=EnrolledDevicesListResponse)
+@router.get(
+    "", status_code=status.HTTP_200_OK, response_model=EnrolledDevicesListResponse
+)
 async def list_devices(
     patient_id: str = Depends(get_scoped_session),
     db: AsyncSession = Depends(get_db_session),
@@ -192,11 +212,17 @@ async def list_devices(
     try:
         pid_uuid = uuid.UUID(patient_id)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
+        raise HTTPException(
+            status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
+        ) from exc
 
-    stmt = select(PatientDeviceKey).where(
-        PatientDeviceKey.patient_id == pid_uuid,
-    ).order_by(PatientDeviceKey.enrolled_at.desc())
+    stmt = (
+        select(PatientDeviceKey)
+        .where(
+            PatientDeviceKey.patient_id == pid_uuid,
+        )
+        .order_by(PatientDeviceKey.enrolled_at.desc())
+    )
     res = await db.execute(stmt)
     rows = res.scalars().all()
 
@@ -220,7 +246,11 @@ class DeviceRevokeResponse(BaseModel):
     revoked_at: str
 
 
-@router.post("/{device_id}/revoke", status_code=status.HTTP_200_OK, response_model=DeviceRevokeResponse)
+@router.post(
+    "/{device_id}/revoke",
+    status_code=status.HTTP_200_OK,
+    response_model=DeviceRevokeResponse,
+)
 async def revoke_device(
     device_id: str,
     patient_id: str = Depends(get_scoped_session),
@@ -230,12 +260,16 @@ async def revoke_device(
     try:
         pid_uuid = uuid.UUID(patient_id)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}) from exc
+        raise HTTPException(
+            status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
+        ) from exc
 
     try:
         dev_uuid = uuid.UUID(device_id)
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid device_id UUID") from exc
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid device_id UUID"
+        ) from exc
 
     stmt = select(PatientDeviceKey).where(
         PatientDeviceKey.id == dev_uuid,
@@ -244,7 +278,9 @@ async def revoke_device(
     res = await db.execute(stmt)
     device = res.scalar_one_or_none()
     if not device:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Device key not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Device key not found"
+        )
 
     now = datetime.now(timezone.utc)
     device.status = "revoked"

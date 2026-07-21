@@ -12,7 +12,11 @@ async def test_atomic_resolution_success():
     redis = AsyncMock()
     redis.eval.return_value = 1
     resolved = await _resolve_signed_approval_atomic(
-        redis, "request-id", "nonce", {"status": "approved"}, 300,
+        redis,
+        "request-id",
+        "nonce",
+        {"status": "approved"},
+        300,
     )
     assert resolved is True
     args = redis.eval.await_args.args
@@ -26,6 +30,10 @@ async def test_already_resolved_rejection():
     redis = AsyncMock()
     redis.eval.return_value = 0
     resolved = await _resolve_signed_approval_atomic(
-        redis, "request-id", "nonce", {"status": "denied"}, 300,
+        redis,
+        "request-id",
+        "nonce",
+        {"status": "denied"},
+        300,
     )
     assert resolved is False

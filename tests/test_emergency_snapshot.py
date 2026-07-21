@@ -121,12 +121,14 @@ def sample_provider_context() -> ProviderContext:
 class TestEmergencySnapshotService(unittest.TestCase):
     def test_existing_snapshot_is_returned_without_writes(self) -> None:
         patient_id = uuid.uuid4()
-        session = FakeSnapshotSession(row={
-            "patient_id": patient_id,
-            "allergies": ["penicillin"],
-            "blood_group": "O+",
-            "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-        })
+        session = FakeSnapshotSession(
+            row={
+                "patient_id": patient_id,
+                "allergies": ["penicillin"],
+                "blood_group": "O+",
+                "updated_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            }
+        )
 
         result = run(get_emergency_snapshot(patient_id, session))
 
@@ -145,16 +147,48 @@ class TestEmergencySnapshotService(unittest.TestCase):
             row={"allergies": ["legacy-only"]},
             structured={
                 "patient_allergies": [
-                    Allergy(patient_id=patient_id, allergen="Penicillin", severity="Severe", source="manual", risk_level="HIGH_RISK")
+                    Allergy(
+                        patient_id=patient_id,
+                        allergen="Penicillin",
+                        severity="Severe",
+                        source="manual",
+                        risk_level="HIGH_RISK",
+                    )
                 ],
                 "patient_medications": [
-                    Medication(patient_id=patient_id, name="Metformin", strength="500mg", frequency="Twice daily", prescribed_at=now, source="manual", risk_level="MEDIUM_RISK")
+                    Medication(
+                        patient_id=patient_id,
+                        name="Metformin",
+                        strength="500mg",
+                        frequency="Twice daily",
+                        prescribed_at=now,
+                        source="manual",
+                        risk_level="MEDIUM_RISK",
+                    )
                 ],
                 "patient_vitals": [
-                    Vitals(patient_id=patient_id, type="BP", value="130/85", unit="mmHg", recorded_at=now, source="manual", risk_level="LOW_RISK")
+                    Vitals(
+                        patient_id=patient_id,
+                        type="BP",
+                        value="130/85",
+                        unit="mmHg",
+                        recorded_at=now,
+                        source="manual",
+                        risk_level="LOW_RISK",
+                    )
                 ],
                 "patient_lab_results": [
-                    LabResult(patient_id=patient_id, test_name="HbA1c", value="7.2", unit="%", reference_range="4.0-5.6", is_abnormal=True, recorded_at=now, source="manual", risk_level="HIGH_RISK")
+                    LabResult(
+                        patient_id=patient_id,
+                        test_name="HbA1c",
+                        value="7.2",
+                        unit="%",
+                        reference_range="4.0-5.6",
+                        is_abnormal=True,
+                        recorded_at=now,
+                        source="manual",
+                        risk_level="HIGH_RISK",
+                    )
                 ],
             },
         )
@@ -194,11 +228,16 @@ class TestEmergencySnapshotService(unittest.TestCase):
 class TestEmergencyRoute(unittest.TestCase):
     def test_nfc_request_rejects_extra_fields(self) -> None:
         with self.assertRaises(ValidationError):
-            NFCReadRequest.model_validate({"card_uid": "CARD-1", "patient_id": str(uuid.uuid4())})
+            NFCReadRequest.model_validate(
+                {"card_uid": "CARD-1", "patient_id": str(uuid.uuid4())}
+            )
 
     @patch("app.api.v2.emergency_routes.get_emergency_snapshot", new_callable=AsyncMock)
     @patch("app.api.v2.emergency_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.emergency_routes.CardResolutionService.resolve_card", new_callable=AsyncMock)
+    @patch(
+        "app.api.v2.emergency_routes.CardResolutionService.resolve_card",
+        new_callable=AsyncMock,
+    )
     def test_read_card_resolves_audits_then_retrieves(
         self,
         mock_resolve,
@@ -232,11 +271,13 @@ class TestEmergencyRoute(unittest.TestCase):
         mock_audit.side_effect = audit_side_effect
         mock_snapshot.side_effect = snapshot_side_effect
 
-        response = run(read_emergency_card(
-            payload=NFCReadRequest(card_uid="CARD-ER-1"),
-            provider=provider,
-            db_session=db_session,
-        ))
+        response = run(
+            read_emergency_card(
+                payload=NFCReadRequest(card_uid="CARD-ER-1"),
+                provider=provider,
+                db_session=db_session,
+            )
+        )
 
         self.assertEqual(calls, ["resolve", "audit", "snapshot"])
         self.assertEqual(response.patient_id, patient_id)
@@ -246,7 +287,9 @@ class TestEmergencyRoute(unittest.TestCase):
         self.assertEqual(audit_kwargs["actor_uid"], provider.actor_uid)
         self.assertEqual(audit_kwargs["event_type"], "SNAPSHOT_ACCESSED")
         self.assertEqual(audit_kwargs["target_id"], str(patient_id))
-        self.assertEqual(audit_kwargs["metadata"]["hospital_id"], str(provider.hospital.hospital_id))
+        self.assertEqual(
+            audit_kwargs["metadata"]["hospital_id"], str(provider.hospital.hospital_id)
+        )
         self.assertEqual(audit_kwargs["metadata"]["patient_id"], str(patient_id))
         self.assertEqual(
             audit_kwargs["metadata"]["access_timestamp"],
@@ -255,7 +298,10 @@ class TestEmergencyRoute(unittest.TestCase):
 
     @patch("app.api.v2.emergency_routes.get_emergency_snapshot", new_callable=AsyncMock)
     @patch("app.api.v2.emergency_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.emergency_routes.CardResolutionService.resolve_card", new_callable=AsyncMock)
+    @patch(
+        "app.api.v2.emergency_routes.CardResolutionService.resolve_card",
+        new_callable=AsyncMock,
+    )
     def test_audit_failure_aborts_before_snapshot_retrieval(
         self,
         mock_resolve,
@@ -266,26 +312,35 @@ class TestEmergencyRoute(unittest.TestCase):
         mock_audit.return_value = False
 
         with self.assertRaises(HTTPException) as cm:
-            run(read_emergency_card(
-                payload=NFCReadRequest(card_uid="CARD-ER-1"),
-                provider=sample_provider_context(),
-                db_session=FakeSnapshotSession(),
-            ))
+            run(
+                read_emergency_card(
+                    payload=NFCReadRequest(card_uid="CARD-ER-1"),
+                    provider=sample_provider_context(),
+                    db_session=FakeSnapshotSession(),
+                )
+            )
 
         self.assertEqual(cm.exception.status_code, 503)
         mock_snapshot.assert_not_awaited()
 
     @patch("app.api.v2.emergency_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.emergency_routes.CardResolutionService.resolve_card", new_callable=AsyncMock)
-    def test_resolution_403_bubbles_without_audit(self, mock_resolve, mock_audit) -> None:
+    @patch(
+        "app.api.v2.emergency_routes.CardResolutionService.resolve_card",
+        new_callable=AsyncMock,
+    )
+    def test_resolution_403_bubbles_without_audit(
+        self, mock_resolve, mock_audit
+    ) -> None:
         mock_resolve.side_effect = HTTPException(status_code=403, detail="forbidden")
 
         with self.assertRaises(HTTPException) as cm:
-            run(read_emergency_card(
-                payload=NFCReadRequest(card_uid="LOST-CARD"),
-                provider=sample_provider_context(),
-                db_session=FakeSnapshotSession(),
-            ))
+            run(
+                read_emergency_card(
+                    payload=NFCReadRequest(card_uid="LOST-CARD"),
+                    provider=sample_provider_context(),
+                    db_session=FakeSnapshotSession(),
+                )
+            )
 
         self.assertEqual(cm.exception.status_code, 403)
         mock_audit.assert_not_awaited()
@@ -313,7 +368,10 @@ class TestEmergencyRouteIntegration(unittest.TestCase):
 
     @patch("app.api.v2.emergency_routes.get_emergency_snapshot", new_callable=AsyncMock)
     @patch("app.api.v2.emergency_routes.append_audit_log", new_callable=AsyncMock)
-    @patch("app.api.v2.emergency_routes.CardResolutionService.resolve_card", new_callable=AsyncMock)
+    @patch(
+        "app.api.v2.emergency_routes.CardResolutionService.resolve_card",
+        new_callable=AsyncMock,
+    )
     def test_post_read_card_route_returns_snapshot_response(
         self,
         mock_resolve,

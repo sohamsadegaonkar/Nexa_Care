@@ -65,7 +65,9 @@ def _build_signing_input(**kw) -> str:
 def _db_result(*, scalar_one_or_none=None, scalars_all=None, scalar=None):
     if scalars_all is not None:
         return MagicMock(
-            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=scalars_all))),
+            scalars=MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=scalars_all))
+            ),
         )
     if scalar is not None:
         return MagicMock(scalar=MagicMock(return_value=scalar))
@@ -99,7 +101,9 @@ def _reset_mock_db(mock_db):
     )
 
 
-def _mock_device_row(device_id, patient_id, der_bytes, status="active", revoked_at=None):
+def _mock_device_row(
+    device_id, patient_id, der_bytes, status="active", revoked_at=None
+):
     row = MagicMock()
     row.id = uuid.UUID(device_id)
     row.patient_id = uuid.UUID(patient_id)
@@ -136,17 +140,51 @@ def _make_provider_context() -> ProviderContext:
 
 def _patch_stack(fake_redis, fake_sync_redis):
     stack = ExitStack()
-    stack.enter_context(patch("app.api.v2.device_routes.claim_device_enrollment_token", new=AsyncMock(return_value="claim-1")))
-    stack.enter_context(patch("app.api.v2.device_routes.finalize_device_enrollment_token", new=AsyncMock(return_value=True)))
-    stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-    stack.enter_context(patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis))
-    stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
-    stack.enter_context(patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis))
+    stack.enter_context(
+        patch(
+            "app.api.v2.device_routes.claim_device_enrollment_token",
+            new=AsyncMock(return_value="claim-1"),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.api.v2.device_routes.finalize_device_enrollment_token",
+            new=AsyncMock(return_value=True),
+        )
+    )
+    stack.enter_context(
+        patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+    )
+    stack.enter_context(
+        patch(
+            "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=fake_redis,
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.services.provider_auth_service.get_redis_client",
+            return_value=fake_sync_redis,
+        )
+    )
     mock_supabase = MagicMock()
-    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
-    stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+        MagicMock()
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={}
+    )
+    stack.enter_context(
+        patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+    )
     for mod in (
         "app.observability.audit_ledger",
         "app.core.consent_gate",
@@ -156,10 +194,21 @@ def _patch_stack(fake_redis, fake_sync_redis):
         "app.services.signed_approval_verifier",
     ):
         stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-    stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-    stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
-    stack.enter_context(patch("app.api.v2.consent_routes._break_glass_limiter", return_value=None))
-    stack.enter_context(patch("app.api.v2.assurance_routes.push_service.send_approval_request", return_value=None))
+    stack.enter_context(
+        patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+    )
+    stack.enter_context(
+        patch("app.services.consent_engine.append_audit_log", return_value=None)
+    )
+    stack.enter_context(
+        patch("app.api.v2.consent_routes._break_glass_limiter", return_value=None)
+    )
+    stack.enter_context(
+        patch(
+            "app.api.v2.assurance_routes.push_service.send_approval_request",
+            return_value=None,
+        )
+    )
     return stack
 
 
@@ -203,7 +252,13 @@ def overrides():
 
 
 def test_forged_signature_wrong_keypair(
-    client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
+    provider,
+    patient_id,
 ):
     """T-01a: A signature from an attacker-generated keypair is rejected (401).
 
@@ -230,24 +285,38 @@ def test_forged_signature_wrong_keypair(
         # Enroll with key A
         device_row = _mock_device_row(device_id, patient_id, enrolled_der)
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar=0),
-            _db_result(scalar_one_or_none=None),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar=0),
+                _db_result(scalar_one_or_none=None),
+            ]
+        )
         enroll_resp = client.post(
             "/api/v2/patient/devices/enroll",
-            json={"device_public_key": enrolled_b64, "device_label": "Sec Device", "platform": "ios", "device_enrollment_token": "e" * 43},
+            json={
+                "device_public_key": enrolled_b64,
+                "device_label": "Sec Device",
+                "platform": "ios",
+                "device_enrollment_token": "e" * 43,
+            },
         )
         assert enroll_resp.status_code == 201
 
         # Request consent
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=device_row),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=device_row),
+            ]
+        )
         req_resp = client.post(
             "/api/v2/consent/request",
-            json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+            json={
+                "patient_id": patient_id,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
         )
         assert req_resp.status_code == 201
         request_id = req_resp.json()["request_id"]
@@ -257,35 +326,53 @@ def test_forged_signature_wrong_keypair(
         challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
         challenge_data = json.loads(challenge_raw)
         signing_input = _build_signing_input(
-            request_id=request_id, patient_id=patient_id, provider_id=provider_id,
-            challenge_nonce=challenge_nonce, decision="approved", scope="clinical",
-            purpose="checkup", access_duration=challenge_data["access_duration"],
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
             expires_at=challenge_data["expires_at"],
         )
         forged_sig = _sign(attacker_private, signing_input)
 
         # Submit — must be rejected
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=device_row),
-            _db_result(scalars_all=[device_row]),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=device_row),
+                _db_result(scalars_all=[device_row]),
+            ]
+        )
         resp = client.post(
             "/api/v2/consent/approve-signed",
-            json={"request_id": request_id, "patient_id": patient_id,
-                  "decision": "approved", "challenge_nonce": challenge_nonce,
-                  "signature": forged_sig, "device_id": device_id},
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": forged_sig,
+                "device_id": device_id,
+            },
         )
-        assert resp.status_code == 401, (
-            f"Forged signature from wrong keypair should be rejected (401), got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 401
+        ), f"Forged signature from wrong keypair should be rejected (401), got {resp.status_code}"
 
 
 # ── Test: Revoked device ─────────────────────────────────────────────────────
 
 
 def test_forged_signature_revoked_device(
-    client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
+    provider,
+    patient_id,
 ):
     """T-01b: A valid signature from a revoked device is rejected (401).
 
@@ -310,18 +397,32 @@ def test_forged_signature_revoked_device(
     with _patch_stack(fake_redis, fake_sync_redis):
         # Mock a REVOKED device row
         revoked_row = _mock_device_row(
-            device_id, patient_id, der_bytes,
-            status="revoked", revoked_at=datetime.now(timezone.utc),
+            device_id,
+            patient_id,
+            der_bytes,
+            status="revoked",
+            revoked_at=datetime.now(timezone.utc),
         )
 
         # Request consent — device is still "active" for the initial query
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=_mock_device_row(device_id, patient_id, der_bytes, status="active")),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(
+                    scalar_one_or_none=_mock_device_row(
+                        device_id, patient_id, der_bytes, status="active"
+                    )
+                ),
+            ]
+        )
         req_resp = client.post(
             "/api/v2/consent/request",
-            json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+            json={
+                "patient_id": patient_id,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
         )
         assert req_resp.status_code == 201
         request_id = req_resp.json()["request_id"]
@@ -331,27 +432,41 @@ def test_forged_signature_revoked_device(
         challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
         challenge_data = json.loads(challenge_raw)
         signing_input = _build_signing_input(
-            request_id=request_id, patient_id=patient_id, provider_id=provider_id,
-            challenge_nonce=challenge_nonce, decision="approved", scope="clinical",
-            purpose="checkup", access_duration=challenge_data["access_duration"],
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
             expires_at=challenge_data["expires_at"],
         )
         real_sig = _sign(private_key, signing_input)
 
         # Submit with revoked device — route handler checks revoked_at
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=revoked_row),  # device lookup in route → revoked
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(
+                    scalar_one_or_none=revoked_row
+                ),  # device lookup in route → revoked
+            ]
+        )
         resp = client.post(
             "/api/v2/consent/approve-signed",
-            json={"request_id": request_id, "patient_id": patient_id,
-                  "decision": "approved", "challenge_nonce": challenge_nonce,
-                  "signature": real_sig, "device_id": device_id},
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": real_sig,
+                "device_id": device_id,
+            },
         )
-        assert resp.status_code == 401, (
-            f"Valid signature from revoked device should be rejected (401), got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 401
+        ), f"Valid signature from revoked device should be rejected (401), got {resp.status_code}"
 
 
 # ── Test: Timing side-channel ────────────────────────────────────────────────
@@ -361,16 +476,22 @@ def test_forged_signature_timing_sidechannel():
     """T-01c: SignedApprovalVerifier enforces minimum verification duration."""
     from app.services.signed_approval_verifier import _MIN_VERIFY_DURATION_SECONDS
 
-    assert _MIN_VERIFY_DURATION_SECONDS > 0, (
-        "SignedApprovalVerifier must enforce a minimum verification duration to prevent timing attacks"
-    )
+    assert (
+        _MIN_VERIFY_DURATION_SECONDS > 0
+    ), "SignedApprovalVerifier must enforce a minimum verification duration to prevent timing attacks"
 
 
 # ── Test: Unenrolled key (verifier direct) ────────────────────────────────────
 
 
 def test_forged_signature_unenrolled_key_direct(
-    client, fake_redis, fake_sync_redis, mock_db, overrides, provider, patient_id,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
+    provider,
+    patient_id,
 ):
     """T-01d: Signature from a key that was never enrolled for the patient → 401.
 
@@ -398,24 +519,38 @@ def test_forged_signature_unenrolled_key_direct(
         enrolled_row = _mock_device_row(str(uuid.uuid4()), patient_id, enrolled_der)
 
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar=0),
-            _db_result(scalar_one_or_none=None),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar=0),
+                _db_result(scalar_one_or_none=None),
+            ]
+        )
         enroll_resp = client.post(
             "/api/v2/patient/devices/enroll",
-            json={"device_public_key": enrolled_b64, "device_label": "Enrolled Device", "platform": "ios", "device_enrollment_token": "e" * 43},
+            json={
+                "device_public_key": enrolled_b64,
+                "device_label": "Enrolled Device",
+                "platform": "ios",
+                "device_enrollment_token": "e" * 43,
+            },
         )
         assert enroll_resp.status_code == 201
 
         # Request consent
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=enrolled_row),
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=enrolled_row),
+            ]
+        )
         req_resp = client.post(
             "/api/v2/consent/request",
-            json={"patient_id": patient_id, "purpose": "checkup", "scope": "clinical", "access_duration_seconds": 900},
+            json={
+                "patient_id": patient_id,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
         )
         assert req_resp.status_code == 201
         request_id = req_resp.json()["request_id"]
@@ -425,24 +560,36 @@ def test_forged_signature_unenrolled_key_direct(
         challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
         challenge_data = json.loads(challenge_raw)
         signing_input = _build_signing_input(
-            request_id=request_id, patient_id=patient_id, provider_id=provider_id,
-            challenge_nonce=challenge_nonce, decision="approved", scope="clinical",
-            purpose="checkup", access_duration=challenge_data["access_duration"],
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
             expires_at=challenge_data["expires_at"],
         )
         forged_sig = _sign(attacker_private, signing_input)
 
         # Device not found for this patient
         _reset_mock_db(mock_db)
-        mock_db.execute.side_effect = _side_effect_with_fallback([
-            _db_result(scalar_one_or_none=None),  # device lookup → not found
-        ])
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=None),  # device lookup → not found
+            ]
+        )
         resp = client.post(
             "/api/v2/consent/approve-signed",
-            json={"request_id": request_id, "patient_id": patient_id,
-                  "decision": "approved", "challenge_nonce": challenge_nonce,
-                  "signature": forged_sig, "device_id": device_id},
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": forged_sig,
+                "device_id": device_id,
+            },
         )
-        assert resp.status_code == 401, (
-            f"Unenrolled key signature should be rejected (401), got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 401
+        ), f"Unenrolled key signature should be rejected (401), got {resp.status_code}"

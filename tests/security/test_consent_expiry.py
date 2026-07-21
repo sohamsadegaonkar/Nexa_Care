@@ -60,15 +60,37 @@ def _make_provider_context(provider_id=None) -> ProviderContext:
 
 def _patch_stack(fake_redis, fake_sync_redis):
     stack = ExitStack()
-    stack.enter_context(patch("app.core.redis.get_redis_client", return_value=fake_sync_redis))
-    stack.enter_context(patch("app.services.consent_engine.get_consent_redis_client", return_value=fake_redis))
-    stack.enter_context(patch("app.core.consent_gate.validate_approved_access", return_value=None))
-    stack.enter_context(patch("app.services.provider_auth_service.get_redis_client", return_value=fake_sync_redis))
+    stack.enter_context(
+        patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
+    )
+    stack.enter_context(
+        patch(
+            "app.services.consent_engine.get_consent_redis_client",
+            return_value=fake_redis,
+        )
+    )
+    stack.enter_context(
+        patch("app.core.consent_gate.validate_approved_access", return_value=None)
+    )
+    stack.enter_context(
+        patch(
+            "app.services.provider_auth_service.get_redis_client",
+            return_value=fake_sync_redis,
+        )
+    )
     mock_supabase = MagicMock()
-    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(data=[])
-    mock_supabase.table.return_value.insert.return_value.execute.return_value = MagicMock()
-    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(data={})
-    stack.enter_context(patch("app.core.supabase.get_supabase_client", return_value=mock_supabase))
+    mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
+        data=[]
+    )
+    mock_supabase.table.return_value.insert.return_value.execute.return_value = (
+        MagicMock()
+    )
+    mock_supabase.table.return_value.select.return_value.eq.return_value.single.return_value.execute.return_value = MagicMock(
+        data={}
+    )
+    stack.enter_context(
+        patch("app.core.supabase.get_supabase_client", return_value=mock_supabase)
+    )
     for mod in (
         "app.observability.audit_ledger",
         "app.core.consent_gate",
@@ -76,8 +98,12 @@ def _patch_stack(fake_redis, fake_sync_redis):
         "app.services.consent_engine",
     ):
         stack.enter_context(patch(f"{mod}.append_audit_log_or_503", return_value=None))
-    stack.enter_context(patch("app.observability.audit_ledger.append_audit_log", return_value=None))
-    stack.enter_context(patch("app.services.consent_engine.append_audit_log", return_value=None))
+    stack.enter_context(
+        patch("app.observability.audit_ledger.append_audit_log", return_value=None)
+    )
+    stack.enter_context(
+        patch("app.services.consent_engine.append_audit_log", return_value=None)
+    )
     return stack
 
 
@@ -122,17 +148,23 @@ def test_expired_consent_rejected_by_validate(fake_redis):
     token = f"expired-token-{uuid.uuid4().hex}"
     # No data in Redis at all → expired/revoked
 
-    result = asyncio.run(validate(
-        token=token,
-        patient_id=str(uuid.uuid4()),
-        clinician_id=str(uuid.uuid4()),
-        purpose="TREATMENT",
-    ))
+    result = asyncio.run(
+        validate(
+            token=token,
+            patient_id=str(uuid.uuid4()),
+            clinician_id=str(uuid.uuid4()),
+            purpose="TREATMENT",
+        )
+    )
     assert result is None, "Expired consent token must not validate"
 
 
 def test_expired_routine_consent_rejected_at_gate(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-03b: Access with expired consent → 403 from require_consent gate."""
     patient_id = str(uuid.uuid4())
@@ -148,15 +180,17 @@ def test_expired_routine_consent_rejected_at_gate(
     # Seed an already-expired consent capability in Redis
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
-    cap_data = json.dumps({
-        "patient_id": patient_id,
-        "clinician_id": provider_id,
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_id,
+            "clinician_id": provider_id,
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() - 1  # expired
 
@@ -165,13 +199,17 @@ def test_expired_routine_consent_rejected_at_gate(
             f"/api/v2/patient/{patient_id}/summary",
             headers={"X-Consent-Token": token_raw},
         )
-        assert resp.status_code == 403, (
-            f"Expired consent should be rejected (403), got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Expired consent should be rejected (403), got {resp.status_code}"
 
 
 def test_revoked_consent_rejected_at_gate(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-03c: Revoked consent (key deleted from Redis) → 403."""
     patient_id = str(uuid.uuid4())
@@ -191,9 +229,9 @@ def test_revoked_consent_rejected_at_gate(
             f"/api/v2/patient/{patient_id}/summary",
             headers={"X-Consent-Token": token_raw},
         )
-        assert resp.status_code == 403, (
-            f"Revoked consent should be rejected (403), got {resp.status_code}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"Revoked consent should be rejected (403), got {resp.status_code}"
 
 
 def test_consent_rejected_one_second_past_expiry(fake_redis):
@@ -209,29 +247,37 @@ def test_consent_rejected_one_second_past_expiry(fake_redis):
     patient_id = str(uuid.uuid4())
     provider_id = str(uuid.uuid4())
 
-    cap_data = json.dumps({
-        "patient_id": patient_id,
-        "clinician_id": provider_id,
-        "purpose": "TREATMENT",
-        "scope": ["clinical.*"],
-        "is_break_glass": False,
-        "reason_code": None,
-        "issued_at": "2026-07-11T10:00:00Z",
-    })
+    cap_data = json.dumps(
+        {
+            "patient_id": patient_id,
+            "clinician_id": provider_id,
+            "purpose": "TREATMENT",
+            "scope": ["clinical.*"],
+            "is_break_glass": False,
+            "reason_code": None,
+            "issued_at": "2026-07-11T10:00:00Z",
+        }
+    )
     fake_redis.data[token_key] = cap_data
     fake_redis.ttls[token_key] = time.time() - 1  # 1 second past
 
-    result = asyncio.run(validate(
-        token=token_raw,
-        patient_id=patient_id,
-        clinician_id=provider_id,
-        purpose="TREATMENT",
-    ))
+    result = asyncio.run(
+        validate(
+            token=token_raw,
+            patient_id=patient_id,
+            clinician_id=provider_id,
+            purpose="TREATMENT",
+        )
+    )
     assert result is None, "Consent 1s past TTL must not validate"
 
 
 def test_expired_challenge_cannot_be_approved(
-    client, fake_redis, fake_sync_redis, mock_db, overrides,
+    client,
+    fake_redis,
+    fake_sync_redis,
+    mock_db,
+    overrides,
 ):
     """T-03e: An expired challenge nonce cannot be approved → 403 from verifier.
 
@@ -240,26 +286,29 @@ def test_expired_challenge_cannot_be_approved(
     """
     import asyncio
     from app.services.signed_approval_verifier import SignedApprovalVerifier
+
     patient_id = str(uuid.uuid4())
     request_id = str(uuid.uuid4())
     challenge_nonce = "expired-nonce-1234"
     past_time = "2020-01-01T00:00:00+00:00"
     verifier = SignedApprovalVerifier()
-    result = asyncio.run(verifier.verify_signed_approval(
-        db=mock_db,
-        patient_id=patient_id,
-        request_id=request_id,
-        challenge_nonce=challenge_nonce,
-        decision="approved",
-        signature_b64="invalid",
-        expires_at=past_time,
-        issued_at="2019-12-31T23:58:00+00:00",
-        provider_id="doctor-uid",
-        scope="clinical",
-        purpose="checkup",
-        access_duration=900,
-        device_id=str(uuid.uuid4()),
-    ))
+    result = asyncio.run(
+        verifier.verify_signed_approval(
+            db=mock_db,
+            patient_id=patient_id,
+            request_id=request_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            signature_b64="invalid",
+            expires_at=past_time,
+            issued_at="2019-12-31T23:58:00+00:00",
+            provider_id="doctor-uid",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=900,
+            device_id=str(uuid.uuid4()),
+        )
+    )
     assert not result.verified, "Expired challenge must fail signature verification"
 
 
@@ -269,7 +318,9 @@ def test_expired_challenge_cannot_be_approved(
 def _db_result(*, scalar_one_or_none=None, scalars_all=None, scalar=None):
     if scalars_all is not None:
         return MagicMock(
-            scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=scalars_all))),
+            scalars=MagicMock(
+                return_value=MagicMock(all=MagicMock(return_value=scalars_all))
+            ),
         )
     if scalar is not None:
         return MagicMock(scalar=MagicMock(return_value=scalar))

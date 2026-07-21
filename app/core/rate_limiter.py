@@ -44,9 +44,13 @@ return {count, ttl}
 """
 
 
-async def atomic_fixed_window(redis_client: Any, key: str, window_seconds: int) -> tuple[int, int]:
+async def atomic_fixed_window(
+    redis_client: Any, key: str, window_seconds: int
+) -> tuple[int, int]:
     """Atomically increment a counter, guarantee a TTL, and return both."""
-    result = await redis_client.eval(_ATOMIC_FIXED_WINDOW_SCRIPT, 1, key, int(window_seconds))
+    result = await redis_client.eval(
+        _ATOMIC_FIXED_WINDOW_SCRIPT, 1, key, int(window_seconds)
+    )
     return int(result[0]), int(result[1])
 
 
@@ -118,8 +122,13 @@ class OtpRedisRateLimiter:
                 result = await result
             return int(result)
         except Exception as exc:
-            logger.error("OTP rate limiter Redis failure; denying request: %s", type(exc).__name__)
-            raise OtpRateLimitBackendUnavailable("OTP rate limiting is unavailable") from exc
+            logger.error(
+                "OTP rate limiter Redis failure; denying request: %s",
+                type(exc).__name__,
+            )
+            raise OtpRateLimitBackendUnavailable(
+                "OTP rate limiting is unavailable"
+            ) from exc
 
     async def check(self, *, action: str, ip: str, normalized_phone: str) -> None:
         if action not in {"send", "verify"}:
@@ -180,7 +189,9 @@ class RateLimiter:
                 cfg = get_redis_config()
                 redis_client = redis_async.from_url(cfg.url, decode_responses=True)
             key = self._key(identifier)
-            count, _ttl = await atomic_fixed_window(redis_client, key, self.window_seconds)
+            count, _ttl = await atomic_fixed_window(
+                redis_client, key, self.window_seconds
+            )
             if self._redis_client is None:
                 await redis_client.close()
             return count <= self.max_requests
@@ -278,8 +289,14 @@ class ConcurrentPushLimiter:
                 try:
                     await redis.delete(concurrent_key)
                 except Exception as cleanup_exc:
-                    logger.error("Concurrent push lock cleanup failed", extra={"error_type": type(cleanup_exc).__name__})
-            logger.error("Concurrent push limiter unavailable; failing closed", extra={"error_type": type(exc).__name__})
+                    logger.error(
+                        "Concurrent push lock cleanup failed",
+                        extra={"error_type": type(cleanup_exc).__name__},
+                    )
+            logger.error(
+                "Concurrent push limiter unavailable; failing closed",
+                extra={"error_type": type(exc).__name__},
+            )
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Push rate-limit enforcement unavailable",
