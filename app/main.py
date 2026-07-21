@@ -36,7 +36,6 @@ Fixes applied in this file:
 """
 from __future__ import annotations
 
-import json
 import asyncio
 import logging
 import os

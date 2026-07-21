@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
-from pydantic import ValidationError
 
 from app.api.v2.pipeline_routes import CommitJobRequest, _validate_commit_field_metadata
 from app.models.extracted_field import ExtractedField

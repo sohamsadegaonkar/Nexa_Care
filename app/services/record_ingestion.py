@@ -20,9 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.extracted_field import ExtractedField
 from app.models.patient_records import (
-    Allergy,
     LabResult,
-    Medication,
     TimelineEvent,
     Vitals,
 )

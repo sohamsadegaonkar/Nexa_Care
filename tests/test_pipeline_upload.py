@@ -1,6 +1,5 @@
 import base64
 import uuid
-from pathlib import Path
 
 import pytest
 from fastapi import HTTPException

@@ -1,12 +1,11 @@
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import AsyncMock, patch, MagicMock
-import json
 import uuid
 from pathlib import Path
 
 from app.main import app
-from app.core.dependencies import get_current_provider, get_scoped_session, get_db_session
+from app.core.dependencies import get_current_provider, get_db_session
 
 @pytest.fixture
 def client():

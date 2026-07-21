@@ -8,7 +8,6 @@ medical data by returning an empty projection.
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from app.security.audit_context import AuditDomain, current_audit_context
 
-import json
 import logging
 from typing import Any
 from uuid import UUID

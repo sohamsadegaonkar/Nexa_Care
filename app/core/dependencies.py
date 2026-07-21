@@ -40,7 +40,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db_session
 from app.core.security import hash_client_ip
 from app.core.client_ip import resolve_client_ip
-from app.core.session_binding import provider_session_token
 import hashlib
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log

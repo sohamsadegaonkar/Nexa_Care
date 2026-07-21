@@ -10,8 +10,7 @@ from app.core.request_context import (
     trace_id_var, request_id_var, span_id_var,
     generate_trace_id, generate_span_id
 )
-from app.observability.redactor import redact_payload
-from app.observability.error_catalog import Catalog, get_error
+from app.observability.error_catalog import Catalog
 from app.observability.safe_exceptions import log_safe_exception, safe_error_response
 
 logger = logging.getLogger("nexa_logger")

@@ -153,7 +153,8 @@ class FakeRedis:
         return max(-1, int(self.ttls.get(key, time.time() - 1) - time.time()))
 
     async def eval(self, script, numkeys, *args):
-        import json, time
+        import json
+        import time
         keys = list(args[:numkeys])
         argv = list(args[numkeys:])
         if numkeys == 1 and "DEL" in script:  # compare-and-delete lock release
@@ -240,7 +241,8 @@ class FakeSyncRedis:
         return max(-1, int(self._a.ttls.get(key, time.time() - 1) - time.time()))
 
     def eval(self, script, numkeys, *args):
-        import json, time
+        import json
+        import time
         keys = list(args[:numkeys]); argv = list(args[numkeys:])
         if numkeys == 1:
             key = keys[0]; count = int(self._a.data.get(key, 0)) + 1

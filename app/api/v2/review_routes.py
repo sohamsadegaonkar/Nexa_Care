@@ -7,7 +7,7 @@ from app.security.audit_context import AuditDomain, current_audit_context
 import json
 import logging
 from datetime import datetime
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, JsonValue

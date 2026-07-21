@@ -41,7 +41,7 @@ from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.pipeline_orchestrator import process_extraction_job
 from app.services.record_ingestion import ingest_extracted_fields
-from app.services.document_storage import DocumentStorageError, get_document_storage
+from app.services.document_storage import get_document_storage
 
 logger = logging.getLogger("nexa_logger")
 

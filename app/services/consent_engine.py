@@ -427,7 +427,7 @@ async def issue_routine(
             ttl_seconds=ttl_seconds,
             is_break_glass=False,
         )
-    except Exception as exc:
+    except Exception:
         await append_audit_log(
             audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,
@@ -507,7 +507,7 @@ async def issue_break_glass(
             category_protocol_version=CLINICAL_CATEGORY_PROTOCOL_VERSION,
             session_binding=session_binding,
         )
-    except Exception as exc:
+    except Exception:
         await append_audit_log(
             audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=clinician_id,

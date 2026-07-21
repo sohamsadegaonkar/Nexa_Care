@@ -18,7 +18,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.models.patient_records import Allergy, DocumentReference, LabResult, Medication, TimelineEvent, Vitals
+from app.models.patient_records import Allergy, DocumentReference, LabResult, Medication, Vitals
 from app.services.consent_engine import ConsentCapability
 from app.services.emergency_summary_service import build_emergency_summary
 from app.security.clinical_categories import ClinicalCategory

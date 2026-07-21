@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.core.dependencies import get_current_provider, get_scoped_session, get_db_session
+from app.core.dependencies import get_current_provider, get_db_session
 from app.core.rate_limiter import ConcurrentPushLimiter
 
 class FakeRedis:
