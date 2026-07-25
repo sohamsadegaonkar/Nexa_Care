@@ -8,10 +8,7 @@ import {
   installConsentNotificationListeners,
   registerForPushNotifications,
 } from 'app/services/pushNotifications'
-import {
-  hydratePatientAuthSession,
-  usePatientAuthSession,
-} from 'app/services/patientAuthSession'
+import { hydratePatientAuthSession, usePatientAuthSession } from 'app/services/patientAuthSession'
 import {
   CurrentDeviceError,
   ensureCurrentDeviceEnrollment,
@@ -49,12 +46,15 @@ function RootLayoutNav() {
   const colorScheme = useColorScheme()
   const router = useRouter()
   const patientAuth = usePatientAuthSession()
-  const navigateToConsent = useCallback((requestId: string) => {
-    router.push({
-      pathname: '/patient/consent-request',
-      params: { requestId },
-    })
-  }, [router])
+  const navigateToConsent = useCallback(
+    (requestId: string) => {
+      router.push({
+        pathname: '/patient/consent-request',
+        params: { requestId },
+      })
+    },
+    [router]
+  )
 
   useEffect(() => {
     void hydratePatientAuthSession()
@@ -68,12 +68,12 @@ function RootLayoutNav() {
     void ensureCurrentDeviceEnrollment()
       .then(() => registerForPushNotifications({ signal: controller.signal }))
       .catch((error) => {
-      if (controller.signal.aborted || process.env.NODE_ENV === 'production') return
-      console.warn('PATIENT_DEVICE_SETUP_OR_PUSH_FAILED', {
-        code: error instanceof CurrentDeviceError ? error.code : 'UNKNOWN',
-        authState: patientAuth.status,
-        hydrated: patientAuth.hydrated,
-      })
+        if (controller.signal.aborted || process.env.NODE_ENV === 'production') return
+        console.warn('PATIENT_DEVICE_SETUP_OR_PUSH_FAILED', {
+          code: error instanceof CurrentDeviceError ? error.code : 'UNKNOWN',
+          authState: patientAuth.status,
+          hydrated: patientAuth.hydrated,
+        })
       })
     return () => controller.abort()
   }, [patientAuth.hydrated, patientAuth.sessionKey, patientAuth.status])
@@ -85,7 +85,14 @@ function RootLayoutNav() {
   return (
     <Provider>
       <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-        <Stack />
+        <Stack
+          screenOptions={{
+            contentStyle: {
+              flex: 1,
+              backgroundColor: '#FFFFFF',
+            },
+          }}
+        />
       </ThemeProvider>
     </Provider>
   )

@@ -1,6 +1,7 @@
-"""Access-history results remain authoritative and fail closed."""
+"""Access-history results remain authoritative, meaningful, and fail closed."""
 
 import uuid
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,34 +13,202 @@ from app.api.v2.patient_record_routes import (
 )
 
 
-@pytest.mark.asyncio
-async def test_missing_audit_attributes_remain_null():
-    row = {"event_type": "PATIENT_RECORD_READ_SUCCESS", "actor_uid": "provider-id"}
-    with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
-        new=AsyncMock(return_value=[row]),
-    ):
-        result = await get_my_access_history(patient_id=str(uuid.uuid4()))
-    event = result["access_history"][0]
-    assert event["audit_id"] is None
-    assert event["hospital_name"] is None
-    assert event["accessed_at"] is None
-    assert event["accessed_by"] == "provider-id"
+def _result(*rows):
+    return SimpleNamespace(all=lambda: list(rows))
 
 
-@pytest.mark.asyncio
-async def test_break_glass_is_derived_only_from_audit_evidence():
+def _provider_access_row(provider_id, hospital_id, **overrides):
     row = {
-        "event_type": "BREAK_GLASS_ACCESS",
-        "actor_uid": "provider-id",
-        "metadata": {"purpose": "EMERGENCY", "scope": ["clinical"]},
+        "audit_id": str(uuid.uuid4()),
+        "event_type": "PATIENT_RECORD_READ_SUCCESS",
+        "actor_uid": str(provider_id),
+        "status": "SUCCESS",
+        "created_at": "2026-07-26T10:00:00+00:00",
+        "metadata": {
+            "hospital_id": str(hospital_id),
+            "purpose": "treatment",
+            "scope": ["clinical_summary"],
+        },
     }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.asyncio
+async def test_patient_self_access_events_are_excluded():
+    patient_id = str(uuid.uuid4())
+    rows = [
+        {
+            "event_type": "PATIENT_RECORD_READ_SUCCESS",
+            "actor_uid": patient_id,
+            "status": "SUCCESS",
+            "metadata": {"access_type": "self_access"},
+        }
+    ]
+    db = AsyncMock()
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=rows),
+    ):
+        result = await get_my_access_history(patient_id=patient_id, db=db)
+
+    assert result["access_history"] == []
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_refreshing_access_history_does_not_create_another_visible_card():
+    patient_id = str(uuid.uuid4())
+    provider_id = uuid.uuid4()
+    hospital_id = uuid.uuid4()
+    rows = [
+        _provider_access_row(provider_id, hospital_id),
+        {
+            "event_type": "PATIENT_RECORD_READ_SUCCESS",
+            "actor_uid": patient_id,
+            "status": "SUCCESS",
+            "metadata": {"access_type": "self_access"},
+        },
+    ]
+    db = AsyncMock()
+    db.execute.side_effect = [
+        _result((provider_id, "Dr. Registry Name", hospital_id)),
+        _result((hospital_id, "Registry Hospital")),
+    ]
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=rows),
+    ):
+        result = await get_my_access_history(patient_id=patient_id, db=db)
+
+    assert len(result["access_history"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_provider_access_has_registry_provider_hospital_and_purpose():
+    provider_id = uuid.uuid4()
+    hospital_id = uuid.uuid4()
+    db = AsyncMock()
+    db.execute.side_effect = [
+        _result((provider_id, "Dr. Registry Name", hospital_id)),
+        _result((hospital_id, "Registry Hospital")),
+    ]
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=[_provider_access_row(provider_id, hospital_id)]),
+    ):
+        result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
+
+    event = result["access_history"][0]
+    assert event["doctor_name"] == "Dr. Registry Name"
+    assert event["hospital_name"] == "Registry Hospital"
+    assert event["purpose"] == "treatment"
+    assert all(
+        isinstance(event[field], str) and event[field].strip()
+        for field in ("doctor_name", "hospital_name", "purpose")
+    )
+    assert db.execute.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_failed_started_denied_validation_and_consent_requests_are_excluded():
+    rows = [
+        {"event_type": "PATIENT_RECORD_VIEW_STARTED", "status": "STARTED"},
+        {"event_type": "PATIENT_RECORD_VIEW_FAILED", "status": "FAILED"},
+        {"event_type": "PATIENT_RECORD_READ_FAILED", "status": "FAILED"},
+        {"event_type": "PROVIDER_ACCESS_DENIED", "status": "DENIED"},
+        {"event_type": "SESSION_VALIDATION_FAILED", "status": "FAILED"},
+        {"event_type": "CONSENT_REQUEST_CREATED", "status": "SUCCESS"},
+    ]
+    db = AsyncMock()
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=rows),
+    ):
+        result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
+
+    assert result["access_history"] == []
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_break_glass_access_remains_clearly_flagged():
+    provider_id = uuid.uuid4()
+    hospital_id = uuid.uuid4()
+    row = {
+        "event_type": "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED",
+        "actor_uid": str(provider_id),
+        "status": "SUCCESS",
+        "metadata": {
+            "hospital_id": str(hospital_id),
+            "purpose": "EMERGENCY",
+            "categories": ["allergies"],
+        },
+    }
+    db = AsyncMock()
+    db.execute.side_effect = [
+        _result((provider_id, "Dr. Emergency", hospital_id)),
+        _result((hospital_id, "Emergency Hospital")),
+    ]
     with patch(
         "app.api.v2.patient_record_routes.read_audit_events",
         new=AsyncMock(return_value=[row]),
     ):
-        result = await get_my_access_history(patient_id=str(uuid.uuid4()))
-    assert result["access_history"][0]["is_break_glass"] is True
+        result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
+
+    event = result["access_history"][0]
+    assert event["is_break_glass"] is True
+    assert event["flag"] == "BREAK_GLASS_ACCESS"
+    assert event["data_categories"] == ["allergies"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_missing_identities_use_explicit_fallback_labels():
+    row = {
+        "event_type": "PATIENT_RECORD_READ_SUCCESS",
+        "actor_uid": "legacy-provider-id",
+        "status": "SUCCESS",
+        "metadata": {},
+    }
+    db = AsyncMock()
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=[row]),
+    ):
+        result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
+
+    event = result["access_history"][0]
+    assert event["doctor_name"] == "Former or unavailable provider"
+    assert event["hospital_name"] == "Unknown facility"
+    assert event["purpose"] == "Purpose not recorded"
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_one_provider_operation_produces_one_transparency_entry():
+    provider_id = uuid.uuid4()
+    hospital_id = uuid.uuid4()
+    operation_id = str(uuid.uuid4())
+    first = _provider_access_row(provider_id, hospital_id)
+    first["metadata"]["audit_transaction_id"] = operation_id
+    duplicate = {
+        **first,
+        "audit_id": str(uuid.uuid4()),
+        "event_type": "PATIENT_RECORD_VIEW_COMPLETED",
+        "status": "COMPLETED",
+    }
+    db = AsyncMock()
+    db.execute.side_effect = [
+        _result((provider_id, "Dr. Registry Name", hospital_id)),
+        _result((hospital_id, "Registry Hospital")),
+    ]
+    with patch(
+        "app.api.v2.patient_record_routes.read_audit_events",
+        new=AsyncMock(return_value=[first, duplicate]),
+    ):
+        result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
+
+    assert len(result["access_history"]) == 1
 
 
 @pytest.mark.asyncio
@@ -49,7 +218,7 @@ async def test_patient_access_history_store_failure_returns_503():
         new=AsyncMock(side_effect=RuntimeError()),
     ):
         with pytest.raises(HTTPException) as exc:
-            await get_my_access_history(patient_id=str(uuid.uuid4()))
+            await get_my_access_history(patient_id=str(uuid.uuid4()), db=AsyncMock())
     assert exc.value.status_code == 503
 
 

@@ -25,6 +25,11 @@ API_CLIENT_PATH = ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClie
 OTP_SERVICE_PATH = (
     ROOT / "nexa-client" / "packages" / "app" / "services" / "patientOtp.ts"
 )
+EXPO_APP_CONFIG_PATH = ROOT / "nexa-client" / "apps" / "expo" / "app.config.ts"
+EXPO_ROOT_LAYOUT_PATH = ROOT / "nexa-client" / "apps" / "expo" / "app" / "_layout.tsx"
+EXPO_PATIENT_LAYOUT_PATH = (
+    ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
+)
 
 SCREENS = [
     "PatientLoginScreen",
@@ -302,6 +307,29 @@ class TestPatientLoginScreen:
         assert "/api/v2/consent/requests/pending" not in code
         assert "/patient/access-history" in code
 
+    def test_keyboard_safe_layout_and_dismissal_before_navigation(self) -> None:
+        code = _read_screen("PatientLoginScreen")
+        assert "KeyboardAvoidingView" in code
+        assert "contentContainerStyle={{ flexGrow: 1 }}" in code
+        assert 'keyboardShouldPersistTaps="handled"' in code
+        assert 'keyboardDismissMode="on-drag"' in code
+        assert code.index("Keyboard.dismiss()") < code.index(
+            "router.replace('/patient/access-history')"
+        )
+
+
+class TestPatientNativeViewportConfiguration:
+    def test_android_keyboard_pans_instead_of_resizing_app(self) -> None:
+        code = EXPO_APP_CONFIG_PATH.read_text(encoding="utf-8")
+        assert "softwareKeyboardLayoutMode: 'pan'" in code
+
+    def test_root_and_patient_navigators_have_full_screen_backgrounds(self) -> None:
+        for path in (EXPO_ROOT_LAYOUT_PATH, EXPO_PATIENT_LAYOUT_PATH):
+            code = path.read_text(encoding="utf-8")
+            assert "contentStyle" in code
+            assert "flex: 1" in code
+            assert "backgroundColor: '#FFFFFF'" in code
+
 
 class TestSecureDeviceScreen:
     def test_uses_device_enrollment_service(self) -> None:
@@ -476,6 +504,16 @@ class TestAccessHistoryScreen:
             "No one has accessed your records yet" in code
         ), "Must render empty state: 'No one has accessed your records yet.'"
 
+    def test_scroll_and_empty_states_fill_available_screen(self) -> None:
+        code = _read_screen("AccessHistoryScreen")
+        assert re.search(r"<ScrollView\s+f=\{1\}", code)
+        assert "flexGrow: 1" in code
+        assert re.search(
+            r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
+            code,
+        )
+        assert 'borderTopColor="$borderColor"' in code
+
     def test_renders_loading_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "Loading history" in code, "Must render loading state"
@@ -507,6 +545,10 @@ class TestAccessHistoryScreen:
         code = _read_screen("AccessHistoryScreen")
         assert "doctor_name" in code, "Must display doctor name"
 
+    def test_never_renders_an_orphan_separator_bullet(self) -> None:
+        code = _read_screen("AccessHistoryScreen")
+        assert "entry.doctor_name && entry.hospital_name" in code
+
     def test_shows_data_categories(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "data_categories" in code, "Must display data categories accessed"
@@ -530,6 +572,23 @@ class TestPatientTimelineScreen:
     def test_renders_empty_state(self) -> None:
         code = _read_screen("PatientTimelineScreen")
         assert "No clinical events" in code, "Must render empty state"
+
+    def test_scroll_and_empty_states_fill_available_screen(self) -> None:
+        code = _read_screen("PatientTimelineScreen")
+        assert re.search(r"<ScrollView\s+f=\{1\}", code)
+        assert "flexGrow: 1" in code
+        assert "paddingBottom: 32" in code
+        assert re.search(
+            r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
+            code,
+        )
+
+    def test_footer_remains_outside_flexible_scroll_view(self) -> None:
+        code = _read_screen("PatientTimelineScreen")
+        scroll_end = code.index("</ScrollView>")
+        footer = code.index("← Access History")
+        assert scroll_end < footer
+        assert re.search(r"<ScrollView\s+f=\{1\}", code)
 
     def test_renders_error_state(self) -> None:
         code = _read_screen("PatientTimelineScreen")

@@ -1,5 +1,15 @@
 import { useRouter } from 'expo-router'
-import { YStack, H2, Paragraph, Text, ScrollView, XStack, Separator, Button, Spinner } from 'tamagui'
+import {
+  YStack,
+  H2,
+  Paragraph,
+  Text,
+  ScrollView,
+  XStack,
+  Separator,
+  Button,
+  Spinner,
+} from 'tamagui'
 import { useState, useEffect, useCallback } from 'react'
 import { apiClient } from '../../utils/apiClient'
 import SourceBadge from './badges/SourceBadge'
@@ -60,7 +70,9 @@ const CATEGORY_LABELS: Record<string, string> = {
   DIAGNOSIS: 'Diagnosis',
 }
 
-export default function PatientTimelineScreen({ timeline: initialTimeline }: PatientTimelineScreenProps) {
+export default function PatientTimelineScreen({
+  timeline: initialTimeline,
+}: PatientTimelineScreenProps) {
   const router = useRouter()
   const [timeline, setTimeline] = useState<TimelineEntry[]>(initialTimeline ?? [])
   const [loading, setLoading] = useState(!initialTimeline)
@@ -101,29 +113,84 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
   }, {})
 
   return (
-    <YStack f={1} bg="$background">
-      <YStack px="$4" pt="$4" pb="$2">
-        <H2 col="$color" size="$7">Health Timeline</H2>
-        <Paragraph col="$colorSubdued" size="$3">
+    <YStack
+      f={1}
+      bg="$background"
+    >
+      <YStack
+        px="$4"
+        pt="$4"
+        pb="$2"
+      >
+        <H2
+          col="$color"
+          size="$7"
+        >
+          Health Timeline
+        </H2>
+        <Paragraph
+          col="$colorSubdued"
+          size="$3"
+        >
           Your clinical events, consent-gated and de-identified.
         </Paragraph>
       </YStack>
 
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <ScrollView
+        f={1}
+        bg="$background"
+        showsVerticalScrollIndicator
+        contentContainerStyle={{
+          flexGrow: 1,
+          padding: 16,
+          paddingBottom: 32,
+          gap: 16,
+        }}
+      >
         {/* Loading state */}
         {loading && (
-          <YStack ai="center" py="$8" gap="$3">
-            <Spinner size="large" color="$blue10" />
-            <Paragraph col="$colorSubdued" size="$4">Loading timeline...</Paragraph>
+          <YStack
+            f={1}
+            ai="center"
+            jc="center"
+            py="$8"
+            gap="$3"
+          >
+            <Spinner
+              size="large"
+              color="$blue10"
+            />
+            <Paragraph
+              col="$colorSubdued"
+              size="$4"
+            >
+              Loading timeline...
+            </Paragraph>
           </YStack>
         )}
 
         {/* Error state */}
         {error !== null ? (
-          <YStack ai="center" py="$8" gap="$2">
+          <YStack
+            f={1}
+            ai="center"
+            jc="center"
+            py="$8"
+            gap="$2"
+          >
             <Text fontSize={36}>⚠️</Text>
-            <Paragraph col="$red10" size="$4" ta="center">{error}</Paragraph>
-            <Button size="$3" chromeless onPress={handleRetry}>
+            <Paragraph
+              col="$red10"
+              size="$4"
+              ta="center"
+            >
+              {error}
+            </Paragraph>
+            <Button
+              size="$3"
+              chromeless
+              onPress={handleRetry}
+            >
               Retry
             </Button>
           </YStack>
@@ -131,12 +198,27 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
 
         {/* Empty state */}
         {!loading && error === null && timeline.length === 0 ? (
-          <YStack ai="center" py="$8" gap="$2">
+          <YStack
+            f={1}
+            ai="center"
+            jc="center"
+            py="$8"
+            gap="$2"
+          >
             <Text fontSize={48}>📊</Text>
-            <Paragraph col="$colorSubdued" size="$4" ta="center">
+            <Paragraph
+              col="$colorSubdued"
+              size="$4"
+              ta="center"
+            >
               No clinical events yet.
             </Paragraph>
-            <Paragraph col="$colorSubdued" size="$3" ta="center" o={0.6}>
+            <Paragraph
+              col="$colorSubdued"
+              size="$3"
+              ta="center"
+              o={0.6}
+            >
               When your provider uploads documents, your timeline will populate here.
             </Paragraph>
           </YStack>
@@ -144,10 +226,22 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
 
         {/* Grouped timeline events */}
         {Object.entries(grouped).map(([dateKey, events]) => (
-          <YStack key={dateKey} gap="$2">
-            <XStack ai="center" gap="$3">
+          <YStack
+            key={dateKey}
+            gap="$2"
+          >
+            <XStack
+              ai="center"
+              gap="$3"
+            >
               <Separator f={1} />
-              <Text col="$colorSubdued" size="$2" fontWeight="600" textTransform="uppercase" letterSpacing={1}>
+              <Text
+                col="$colorSubdued"
+                size="$2"
+                fontWeight="600"
+                textTransform="uppercase"
+                letterSpacing={1}
+              >
                 {dateKey}
               </Text>
               <Separator f={1} />
@@ -156,45 +250,88 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
             {events.map((event) => {
               const icon = CATEGORY_ICONS[event.event_type] ?? '📋'
               const label = CATEGORY_LABELS[event.event_type] ?? event.event_type
-              const isAbnormal = event.summary?.toLowerCase().includes('abnormal')
-                || event.description?.toLowerCase().includes('abnormal')
+              const isAbnormal =
+                event.summary?.toLowerCase().includes('abnormal') ||
+                event.description?.toLowerCase().includes('abnormal')
               const riskLevel = event.risk_level as RiskLevel | null
 
               return (
-                <YStack key={event.event_id} bg="$backgroundHover" br="$4" p="$3" gap="$2">
+                <YStack
+                  key={event.event_id}
+                  bg="$backgroundHover"
+                  br="$4"
+                  p="$3"
+                  gap="$2"
+                >
                   {/* Category icon + title + abnormal flag + risk badge */}
-                  <XStack ai="center" gap="$2" fw="wrap">
+                  <XStack
+                    ai="center"
+                    gap="$2"
+                    fw="wrap"
+                  >
                     <Text fontSize={18}>{icon}</Text>
                     <YStack f={1}>
-                      <Text col="$color" fontWeight="600" size="$4">{event.title}</Text>
-                      <Paragraph col="$colorSubdued" size="$2">
+                      <Text
+                        col="$color"
+                        fontWeight="600"
+                        size="$4"
+                      >
+                        {event.title}
+                      </Text>
+                      <Paragraph
+                        col="$colorSubdued"
+                        size="$2"
+                      >
                         {label}
                       </Paragraph>
                     </YStack>
                     {isAbnormal && (
-                      <YStack bg="$red5" br="$2" px="$2" py="$1">
-                        <Text col="$red10" size="$2" fontWeight="600">ABNORMAL</Text>
+                      <YStack
+                        bg="$red5"
+                        br="$2"
+                        px="$2"
+                        py="$1"
+                      >
+                        <Text
+                          col="$red10"
+                          size="$2"
+                          fontWeight="600"
+                        >
+                          ABNORMAL
+                        </Text>
                       </YStack>
                     )}
-                    {riskLevel ? (
-                      <RiskBadge level={riskLevel} />
-                    ) : null}
+                    {riskLevel ? <RiskBadge level={riskLevel} /> : null}
                   </XStack>
 
                   {/* Summary / description */}
-                  <Text col="$color" size="$4">{event.summary}</Text>
+                  <Text
+                    col="$color"
+                    size="$4"
+                  >
+                    {event.summary}
+                  </Text>
 
                   {/* Provenance: source badge */}
-                  <XStack ai="center" gap="$2">
+                  <XStack
+                    ai="center"
+                    gap="$2"
+                  >
                     <SourceBadge
                       source={event.source}
-                      confidence={event.confidence != null ? Math.round(event.confidence * 100) : undefined}
+                      confidence={
+                        event.confidence != null ? Math.round(event.confidence * 100) : undefined
+                      }
                     />
                   </XStack>
 
                   {/* Source display text from backend */}
                   {typeof event.source_display === 'string' && event.source_display.length > 0 ? (
-                    <Paragraph col="$colorSubdued" size="$2" o={0.5}>
+                    <Paragraph
+                      col="$colorSubdued"
+                      size="$2"
+                      o={0.5}
+                    >
                       {event.source_display}
                     </Paragraph>
                   ) : null}
@@ -205,9 +342,16 @@ export default function PatientTimelineScreen({ timeline: initialTimeline }: Pat
         ))}
       </ScrollView>
 
-      <YStack p="$4" bc="$background">
+      <YStack
+        p="$4"
+        bc="$background"
+      >
         <Separator />
-        <Button chromeless size="$3" onPress={() => router.push('/patient/access-history')}>
+        <Button
+          chromeless
+          size="$3"
+          onPress={() => router.push('/patient/access-history')}
+        >
           ← Access History
         </Button>
       </YStack>

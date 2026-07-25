@@ -36,14 +36,32 @@ class FakeConnection:
         return _MappingsResult(self.events)
 
 
-def _row(audit_id, previous_hash, payload, sequence_number):
-    record_hash = _calculate_hash(payload, previous_hash)
+def _row(
+    audit_id,
+    previous_hash,
+    payload,
+    sequence_number,
+    *,
+    protocol_version=2,
+):
+    if protocol_version == 2:
+        payload = {
+            "protocol_version": 2,
+            "chain_scope": "global",
+            **payload,
+        }
+    record_hash = _calculate_hash(
+        payload,
+        previous_hash,
+        protocol_version=protocol_version,
+    )
     return {
         "audit_id": audit_id,
         "previous_hash": previous_hash,
         "record_hash": record_hash,
         "details": payload,
         "sequence_number": sequence_number,
+        "protocol_version": protocol_version,
     }
 
 
@@ -105,9 +123,9 @@ async def test_fork_multiple_successors_fails():
 @pytest.mark.asyncio
 async def test_tampered_payload_fails_hash_recalculation():
     rows = _build_healthy_chain(3)
-    rows[1]["details"] = {
-        "event": "TAMPERED"
-    }  # payload changed but record_hash was not recalculated
+    rows[1]["details"]["event"] = (
+        "TAMPERED"  # payload changed but record_hash was not recalculated
+    )
     head = {
         "head_event_id": rows[-1]["audit_id"],
         "head_hash": rows[-1]["record_hash"],
@@ -161,3 +179,64 @@ async def test_dry_run_reports_but_does_not_mark_unhealthy():
     result = await verify_partition(conn, "global", dry_run=True)
     assert result is not None
     assert conn.marked_unhealthy == []  # dry-run must not write
+
+
+@pytest.mark.asyncio
+async def test_legacy_v1_non_ascii_payload_uses_legacy_canonicalization():
+    payload = {"event": "RÉSUMÉ", "metadata": {"note": "परीक्षण"}}
+    row = _row(
+        1,
+        "GENESIS",
+        payload,
+        1,
+        protocol_version=1,
+    )
+    head = {
+        "head_event_id": row["audit_id"],
+        "head_hash": row["record_hash"],
+        "sequence_number": 1,
+        "is_healthy": True,
+    }
+    conn = FakeConnection([row], head)
+
+    result = await verify_partition(conn, "global", dry_run=False)
+
+    assert result is None
+    assert conn.marked_unhealthy == []
+
+
+@pytest.mark.asyncio
+async def test_unsupported_protocol_version_fails_closed():
+    row = _row(1, "GENESIS", {"event": "A"}, 1)
+    row["protocol_version"] = 99
+    head = {
+        "head_event_id": row["audit_id"],
+        "head_hash": row["record_hash"],
+        "sequence_number": 1,
+        "is_healthy": True,
+    }
+    conn = FakeConnection([row], head)
+
+    result = await verify_partition(conn, "global", dry_run=True)
+
+    assert result is not None
+    assert "unsupported protocol_version" in result.reason
+    assert conn.marked_unhealthy == []
+
+
+@pytest.mark.asyncio
+async def test_v2_payload_protocol_must_match_column():
+    row = _row(1, "GENESIS", {"event": "A"}, 1)
+    row["details"]["protocol_version"] = 1
+    head = {
+        "head_event_id": row["audit_id"],
+        "head_hash": row["record_hash"],
+        "sequence_number": 1,
+        "is_healthy": True,
+    }
+    conn = FakeConnection([row], head)
+
+    result = await verify_partition(conn, "global", dry_run=True)
+
+    assert result is not None
+    assert "protocol_version mismatch" in result.reason
