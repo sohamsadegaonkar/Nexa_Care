@@ -128,6 +128,32 @@ describe('shared API transport', () => {
     expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
   })
 
+  it('revokes approved access through the authenticated patient endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        request_id: 'request/with space',
+        status: 'revoked',
+        revoked_at: '2026-07-26T00:00:00+00:00',
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'patient-session')
+
+    await NexaApiClient.revokeApprovedAccess('request/with space')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://native.example.test/api/v2/consent/request/request%2Fwith%20space/revoke',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer patient-session',
+        }),
+      }),
+    )
+  })
+
   it('rejects missing consent-status hospital context before fetch', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
