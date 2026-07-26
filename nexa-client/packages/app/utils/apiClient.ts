@@ -1,5 +1,10 @@
 import { RuntimeConfigError, resolveConfiguredApiUrl } from './runtimeConfig'
-import { ProviderWebAuthenticatedStateSchema, ProviderWebLoginStateSchema, ProviderWebSessionSchema, validateOrThrow } from '../schemas/authNfcSchemas'
+import {
+  ProviderWebAuthenticatedStateSchema,
+  ProviderWebLoginStateSchema,
+  ProviderWebSessionSchema,
+  validateOrThrow,
+} from '../schemas/authNfcSchemas'
 
 /**
  * Canonical Shared API Client for Nexa Care Alpha Demo
@@ -10,9 +15,16 @@ import { ProviderWebAuthenticatedStateSchema, ProviderWebLoginStateSchema, Provi
 export type AuthTokenProvider = () => Promise<string | null | undefined> | string | null | undefined
 let authTokenProvider: AuthTokenProvider = () => null
 let providerCookieAuthEnabled = false
-export function setAuthTokenProvider(provider: AuthTokenProvider): void { authTokenProvider = provider }
-export function setProviderCookieAuthEnabled(enabled: boolean): void { providerCookieAuthEnabled = enabled }
-export async function getAuthToken(): Promise<string | null> { const token = await authTokenProvider(); return typeof token === 'string' && token.trim() ? token.trim() : null }
+export function setAuthTokenProvider(provider: AuthTokenProvider): void {
+  authTokenProvider = provider
+}
+export function setProviderCookieAuthEnabled(enabled: boolean): void {
+  providerCookieAuthEnabled = enabled
+}
+export async function getAuthToken(): Promise<string | null> {
+  const token = await authTokenProvider()
+  return typeof token === 'string' && token.trim() ? token.trim() : null
+}
 
 // Preserve the public export used by existing callers without allowing an
 // invalid or missing value to become an implicit local endpoint.
@@ -133,7 +145,14 @@ export interface ConsentStatusResponse {
   request_id: string
   patient_id?: string
   status: 'pending' | 'approved' | 'denied' | 'expired' | 'timeout' | 'cancelled'
-  doctor_status?: 'pending' | 'approved' | 'denied' | 'expired' | 'timeout' | 'cancelled' | 'delivery_failed'
+  doctor_status?:
+    | 'pending'
+    | 'approved'
+    | 'denied'
+    | 'expired'
+    | 'timeout'
+    | 'cancelled'
+    | 'delivery_failed'
   delivery_status?: 'queued' | 'sent' | 'failed' | 'unavailable' | 'unknown'
   delivery_error?: string | null
   delivery_attempted_at?: string | null
@@ -315,9 +334,7 @@ export interface ProviderMfaRequiredResponse {
   mfa_token: string
 }
 
-export type ProviderLoginResponse =
-  | ProviderLoginSuccessResponse
-  | ProviderMfaRequiredResponse
+export type ProviderLoginResponse = ProviderLoginSuccessResponse | ProviderMfaRequiredResponse
 
 export interface ProviderMfaVerifyRequest {
   mfa_token: string
@@ -335,13 +352,19 @@ function backendMessage(payload: unknown, fallback: string): string {
     const value = record[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
     if (Array.isArray(value) && value.length) {
-      const messages = value.map((item) => {
-        if (typeof item === 'string') return item
-        if (item && typeof item === 'object' && typeof (item as Record<string, unknown>).msg === 'string') {
-          return (item as Record<string, unknown>).msg as string
-        }
-        return null
-      }).filter(Boolean)
+      const messages = value
+        .map((item) => {
+          if (typeof item === 'string') return item
+          if (
+            item &&
+            typeof item === 'object' &&
+            typeof (item as Record<string, unknown>).msg === 'string'
+          ) {
+            return (item as Record<string, unknown>).msg as string
+          }
+          return null
+        })
+        .filter(Boolean)
       if (messages.length) return messages.join('; ')
     }
   }
@@ -379,9 +402,8 @@ function diagnostic(method: string, path: string, fields: Record<string, unknown
   if (process.env.NODE_ENV !== 'production') {
     const status = typeof fields.status === 'number' ? fields.status : null
     const handledClientFailure = status !== null && status >= 400 && status < 500
-    const expectedAuthFailure = status === 401
-      || fields.code === 'AUTH_REQUIRED'
-      || fields.code === 'REAUTH_REQUIRED'
+    const expectedAuthFailure =
+      status === 401 || fields.code === 'AUTH_REQUIRED' || fields.code === 'REAUTH_REQUIRED'
     const log = handledClientFailure || expectedAuthFailure ? console.warn : console.error
     log('API_REQUEST_ERROR', { method, path, ...fields })
   }
@@ -404,7 +426,7 @@ async function request<T>(
   customHeaders: Record<string, string> = {},
   noAuth = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  forceCookieTransport = false,
+  forceCookieTransport = false
 ): Promise<T> {
   if (!API_BASE_URL) {
     try {
@@ -418,9 +440,15 @@ async function request<T>(
   }
 
   const token = noAuth ? null : await getAuthToken()
-  const browserCookieSession = typeof window !== 'undefined' && (providerCookieAuthEnabled || forceCookieTransport)
+  const browserCookieSession =
+    typeof window !== 'undefined' && (providerCookieAuthEnabled || forceCookieTransport)
   if (!noAuth && !token && !browserCookieSession) {
-    throw new ApiError('Authentication is required before making this request.', 0, 'AUTH_REQUIRED', false)
+    throw new ApiError(
+      'Authentication is required before making this request.',
+      0,
+      'AUTH_REQUIRED',
+      false
+    )
   }
   const headers: Record<string, string> = {
     ...customHeaders,
@@ -430,8 +458,14 @@ async function request<T>(
     headers['Authorization'] = `Bearer ${token}`
   }
 
-  if (browserCookieSession && !['GET', 'HEAD', 'OPTIONS'].includes((options.method ?? 'GET').toUpperCase())) {
-    const csrf = document.cookie.split('; ').find((item) => item.startsWith('nexa_csrf='))?.split('=')[1]
+  if (
+    browserCookieSession &&
+    !['GET', 'HEAD', 'OPTIONS'].includes((options.method ?? 'GET').toUpperCase())
+  ) {
+    const csrf = document.cookie
+      .split('; ')
+      .find((item) => item.startsWith('nexa_csrf='))
+      ?.split('=')[1]
     if (csrf) headers['X-CSRF-Token'] = decodeURIComponent(csrf)
   }
 
@@ -457,7 +491,11 @@ async function request<T>(
     })
   } catch (error: unknown) {
     const timedOut = controller.signal.aborted && !callerSignal?.aborted
-    const code = timedOut ? 'REQUEST_TIMEOUT' : callerSignal?.aborted ? 'REQUEST_CANCELLED' : 'NETWORK_ERROR'
+    const code = timedOut
+      ? 'REQUEST_TIMEOUT'
+      : callerSignal?.aborted
+        ? 'REQUEST_CANCELLED'
+        : 'NETWORK_ERROR'
     const message = timedOut
       ? 'The request timed out. Please try again.'
       : callerSignal?.aborted
@@ -497,16 +535,16 @@ async function request<T>(
 
     if (response.status === 401 && !noAuth) {
       if (onReAuthRequired) onReAuthRequired()
-      throw new ApiError(errorMsg || 'Authentication required or session expired', 401, 'REAUTH_REQUIRED', false)
+      throw new ApiError(
+        errorMsg || 'Authentication required or session expired',
+        401,
+        'REAUTH_REQUIRED',
+        false
+      )
     }
 
     if (response.status === 403) {
-      throw new ApiError(
-        errorMsg || 'Consent required or access denied',
-        403,
-        errorCode,
-        false,
-      )
+      throw new ApiError(errorMsg || 'Consent required or access denied', 403, errorCode, false)
     }
 
     if (response.status >= 500) {
@@ -529,43 +567,68 @@ async function request<T>(
       code: 'MALFORMED_RESPONSE',
       retryable: true,
     })
-    throw new ApiError('The server returned an unreadable response.', response.status, 'MALFORMED_RESPONSE', true)
+    throw new ApiError(
+      'The server returned an unreadable response.',
+      response.status,
+      'MALFORMED_RESPONSE',
+      true
+    )
   }
 }
 
 export const NexaApiClient = {
   // Device Enrollment
-  enrollDevice(payload: DeviceEnrollmentRequest, consentToken: string): Promise<DeviceEnrollmentResponse> {
-    return request<DeviceEnrollmentResponse>('/api/v2/patient/devices/enroll', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'device_enrollment',
-    })
+  enrollDevice(
+    payload: DeviceEnrollmentRequest,
+    consentToken: string
+  ): Promise<DeviceEnrollmentResponse> {
+    return request<DeviceEnrollmentResponse>(
+      '/api/v2/patient/devices/enroll',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'device_enrollment',
+      }
+    )
   },
 
   listDevices(consentToken: string): Promise<EnrolledDevicesListResponse> {
-    return request<EnrolledDevicesListResponse>('/api/v2/patient/devices', {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'security_audit',
-    })
+    return request<EnrolledDevicesListResponse>(
+      '/api/v2/patient/devices',
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'security_audit',
+      }
+    )
   },
 
   // Consent Handshake
-  requestConsent(payload: ConsentChallengeRequest, hospitalId: string): Promise<ConsentChallengeResponse> {
-    return request<ConsentChallengeResponse>('/api/v2/consent/request', {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, {
-      'X-Hospital-Id': hospitalId,
-    })
+  requestConsent(
+    payload: ConsentChallengeRequest,
+    hospitalId: string
+  ): Promise<ConsentChallengeResponse> {
+    return request<ConsentChallengeResponse>(
+      '/api/v2/consent/request',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      {
+        'X-Hospital-Id': hospitalId,
+      }
+    )
   },
 
   fetchConsentChallenge(requestId: string): Promise<FullConsentChallenge> {
-    return request<FullConsentChallenge>(`/api/v2/consent/challenge/${requestId}`, { method: 'GET' })
+    return request<FullConsentChallenge>(`/api/v2/consent/challenge/${requestId}`, {
+      method: 'GET',
+    })
   },
 
   approveSignedConsent(payload: SignedApprovalRequest): Promise<SignedApprovalResponse> {
@@ -577,10 +640,15 @@ export const NexaApiClient = {
 
   denySignedConsent(payload: SignedApprovalRequest): Promise<SignedApprovalResponse> {
     if (payload.decision !== 'denied') throw new Error('denySignedConsent requires decision=denied')
-    return request<SignedApprovalResponse>('/api/v2/consent/approve-signed', { method: 'POST', body: JSON.stringify(payload) })
+    return request<SignedApprovalResponse>('/api/v2/consent/approve-signed', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
   },
 
-  revokeDevice(deviceId: string): Promise<{ device_id: string; status: string; revoked_at: string }> {
+  revokeDevice(
+    deviceId: string
+  ): Promise<{ device_id: string; status: string; revoked_at: string }> {
     return request(`/api/v2/patient/devices/${deviceId}/revoke`, { method: 'POST' })
   },
 
@@ -589,7 +657,7 @@ export const NexaApiClient = {
       '/api/v2/auth/login',
       { method: 'POST', body: JSON.stringify(payload) },
       {},
-      true,
+      true
     )
   },
 
@@ -598,158 +666,276 @@ export const NexaApiClient = {
       '/api/v2/auth/mfa/verify',
       { method: 'POST', body: JSON.stringify(payload) },
       {},
-      true,
+      true
     )
   },
 
-  providerWebLogin(payload: ProviderLoginRequest): Promise<{ status: 'authenticated' | 'mfa_required'; expires_at?: string }> {
-    return request('/api/v2/auth/web/login', { method: 'POST', body: JSON.stringify(payload) }, {}, true, DEFAULT_TIMEOUT_MS, true)
-      .then((data) => validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login'))
+  providerWebLogin(
+    payload: ProviderLoginRequest
+  ): Promise<{ status: 'authenticated' | 'mfa_required'; expires_at?: string }> {
+    return request(
+      '/api/v2/auth/web/login',
+      { method: 'POST', body: JSON.stringify(payload) },
+      {},
+      true,
+      DEFAULT_TIMEOUT_MS,
+      true
+    ).then((data) => validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login'))
   },
 
   providerWebMfaVerify(totpCode: string): Promise<{ status: 'authenticated'; expires_at: string }> {
-    return request('/api/v2/auth/web/mfa/verify', {
-      method: 'POST', body: JSON.stringify({ totp_code: totpCode }),
-    }, {}, true, DEFAULT_TIMEOUT_MS, true).then((data) => validateOrThrow(ProviderWebAuthenticatedStateSchema, data, 'provider web MFA'))
+    return request(
+      '/api/v2/auth/web/mfa/verify',
+      {
+        method: 'POST',
+        body: JSON.stringify({ totp_code: totpCode }),
+      },
+      {},
+      true,
+      DEFAULT_TIMEOUT_MS,
+      true
+    ).then((data) => validateOrThrow(ProviderWebAuthenticatedStateSchema, data, 'provider web MFA'))
   },
 
   providerWebSession(): Promise<{
-    authenticated: boolean; expires_at: string; provider_uid: string; hospital_id: string;
-    display_name: string; hospital_name: string; roles: string[]
+    authenticated: boolean
+    expires_at: string
+    provider_uid: string
+    hospital_id: string
+    display_name: string
+    hospital_name: string
+    roles: string[]
   }> {
-    return request('/api/v2/auth/web/session', { method: 'GET' }, {}, false, DEFAULT_TIMEOUT_MS, true)
-      .then((data) => validateOrThrow(ProviderWebSessionSchema, data, 'provider web session'))
+    return request(
+      '/api/v2/auth/web/session',
+      { method: 'GET' },
+      {},
+      false,
+      DEFAULT_TIMEOUT_MS,
+      true
+    ).then((data) => validateOrThrow(ProviderWebSessionSchema, data, 'provider web session'))
   },
 
   providerWebLogout(): Promise<void> {
-    return request('/api/v2/auth/web/logout', { method: 'POST' }, {}, false, DEFAULT_TIMEOUT_MS, true)
+    return request(
+      '/api/v2/auth/web/logout',
+      { method: 'POST' },
+      {},
+      false,
+      DEFAULT_TIMEOUT_MS,
+      true
+    )
   },
 
   getConsentStatus(requestId: string, hospitalId: string): Promise<ConsentStatusResponse> {
     const normalizedHospitalId = hospitalId.trim()
     if (!normalizedHospitalId) {
-      return Promise.reject(new ApiError(
-        'Provider hospital context is unavailable. Sign in again.',
-        0,
-        'PROVIDER_CONTEXT_REQUIRED',
-        false,
-      ))
+      return Promise.reject(
+        new ApiError(
+          'Provider hospital context is unavailable. Sign in again.',
+          0,
+          'PROVIDER_CONTEXT_REQUIRED',
+          false
+        )
+      )
     }
-    return request<ConsentStatusResponse>(`/api/v2/consent/status/${requestId}`, {
-      method: 'GET',
-    }, {
-      'X-Hospital-Id': normalizedHospitalId,
-    })
+    return request<ConsentStatusResponse>(
+      `/api/v2/consent/status/${requestId}`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Hospital-Id': normalizedHospitalId,
+      }
+    )
   },
 
   claimConsentAccess(requestId: string, hospitalId: string): Promise<ConsentAccessClaimResponse> {
     return request<ConsentAccessClaimResponse>(
       `/api/v2/consent/${encodeURIComponent(requestId)}/claim-access`,
       { method: 'POST' },
-      { 'X-Hospital-Id': hospitalId },
+      { 'X-Hospital-Id': hospitalId }
     )
   },
 
   // Patient Records
-  getPatientSummary(patientId: string, consentToken: string, hospitalId: string, purpose = 'clinical_summary'): Promise<PatientSummaryResponse> {
-    return request<PatientSummaryResponse>(`/api/v2/patient/${patientId}/summary`, {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': purpose,
-      'X-Hospital-Id': hospitalId,
-    })
+  getPatientSummary(
+    patientId: string,
+    consentToken: string,
+    hospitalId: string,
+    purpose = 'clinical_summary'
+  ): Promise<PatientSummaryResponse> {
+    return request<PatientSummaryResponse>(
+      `/api/v2/patient/${patientId}/summary`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': purpose,
+        'X-Hospital-Id': hospitalId,
+      }
+    )
   },
 
-  getPatientTimeline(patientId: string, consentToken: string, hospitalId: string, limit = 20, cursor?: string): Promise<PatientTimelineResponse> {
+  getPatientTimeline(
+    patientId: string,
+    consentToken: string,
+    hospitalId: string,
+    limit = 20,
+    cursor?: string
+  ): Promise<PatientTimelineResponse> {
     const params = new URLSearchParams({ limit: String(limit) })
     if (cursor) params.append('cursor', cursor)
-    return request<PatientTimelineResponse>(`/api/v2/patient/${patientId}/timeline?${params.toString()}`, {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'timeline_view',
-      'X-Hospital-Id': hospitalId,
-    })
+    return request<PatientTimelineResponse>(
+      `/api/v2/patient/${patientId}/timeline?${params.toString()}`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'timeline_view',
+        'X-Hospital-Id': hospitalId,
+      }
+    )
   },
 
-  getPatientRecord(patientId: string, consentToken: string, purpose = 'clinical_view'): Promise<any> {
-    return request<any>(`/api/v2/patient/${patientId}/record`, {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': purpose,
-    })
+  getPatientRecord(
+    patientId: string,
+    consentToken: string,
+    purpose = 'clinical_view'
+  ): Promise<any> {
+    return request<any>(
+      `/api/v2/patient/${patientId}/record`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': purpose,
+      }
+    )
   },
 
   /** Break-glass capabilities must use this endpoint, never getPatientRecord
    * (the general record endpoint rejects break-glass tokens outright). */
   getEmergencySummary(patientId: string, consentToken: string): Promise<EmergencySummaryResponse> {
-    return request<EmergencySummaryResponse>(`/api/v2/patient/${patientId}/emergency-summary`, {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-    })
+    return request<EmergencySummaryResponse>(
+      `/api/v2/patient/${patientId}/emergency-summary`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+      }
+    )
   },
 
-  appendVitals(patientId: string, payload: AppendVitalsRequest, consentToken: string): Promise<AppendRecordResponse> {
-    return request<AppendRecordResponse>(`/api/v2/patient/${patientId}/record/vitals`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'clinical_append',
-    })
+  appendVitals(
+    patientId: string,
+    payload: AppendVitalsRequest,
+    consentToken: string
+  ): Promise<AppendRecordResponse> {
+    return request<AppendRecordResponse>(
+      `/api/v2/patient/${patientId}/record/vitals`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'clinical_append',
+      }
+    )
   },
 
   // AI Pipeline & Review Queue
-  uploadDocument(patientId: string, formData: FormData, consentToken: string): Promise<DocumentUploadResponse> {
-    return request<DocumentUploadResponse>('/api/v2/pipeline/documents/upload', {
-      method: 'POST',
-      body: formData,
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'ai_document_ingestion',
-    })
+  uploadDocument(
+    patientId: string,
+    formData: FormData,
+    consentToken: string
+  ): Promise<DocumentUploadResponse> {
+    return request<DocumentUploadResponse>(
+      '/api/v2/pipeline/documents/upload',
+      {
+        method: 'POST',
+        body: formData,
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'ai_document_ingestion',
+      }
+    )
   },
 
-  getExtractionJobStatus(jobId: string, consentToken: string): Promise<ExtractionJobStatusResponse> {
-    return request<ExtractionJobStatusResponse>(`/api/v2/pipeline/jobs/${jobId}`, {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'pipeline_status',
-    })
+  getExtractionJobStatus(
+    jobId: string,
+    consentToken: string
+  ): Promise<ExtractionJobStatusResponse> {
+    return request<ExtractionJobStatusResponse>(
+      `/api/v2/pipeline/jobs/${jobId}`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'pipeline_status',
+      }
+    )
   },
 
-  getReviewQueue(hospitalId: string, consentToken: string, status = 'needs_review'): Promise<ReviewQueueListResponse> {
+  getReviewQueue(
+    hospitalId: string,
+    consentToken: string,
+    status = 'needs_review'
+  ): Promise<ReviewQueueListResponse> {
     const params = new URLSearchParams({ hospital_id: hospitalId, status })
-    return request<ReviewQueueListResponse>(`/api/v2/pipeline/review-queue?${params.toString()}`, {
-      method: 'GET',
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'clinical_review',
-    })
+    return request<ReviewQueueListResponse>(
+      `/api/v2/pipeline/review-queue?${params.toString()}`,
+      {
+        method: 'GET',
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'clinical_review',
+      }
+    )
   },
 
-  reviewField(fieldId: string, payload: FieldReviewRequest, consentToken: string): Promise<FieldReviewResponse> {
-    return request<FieldReviewResponse>(`/api/v2/pipeline/fields/${fieldId}/review`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'field_adjudication',
-    })
+  reviewField(
+    fieldId: string,
+    payload: FieldReviewRequest,
+    consentToken: string
+  ): Promise<FieldReviewResponse> {
+    return request<FieldReviewResponse>(
+      `/api/v2/pipeline/fields/${fieldId}/review`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'field_adjudication',
+      }
+    )
   },
 
-  commitExtractionJob(jobId: string, payload: CommitJobRequest, consentToken: string): Promise<CommitJobResponse> {
-    return request<CommitJobResponse>(`/api/v2/pipeline/jobs/${jobId}/commit`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }, {
-      'X-Consent-Token': consentToken,
-      'X-Consent-Purpose': 'pipeline_commit',
-    })
+  commitExtractionJob(
+    jobId: string,
+    payload: CommitJobRequest,
+    consentToken: string
+  ): Promise<CommitJobResponse> {
+    return request<CommitJobResponse>(
+      `/api/v2/pipeline/jobs/${jobId}/commit`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      {
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'pipeline_commit',
+      }
+    )
   },
 
   getConsentHistory(): Promise<any> {
@@ -786,19 +972,45 @@ export const NexaApiClient = {
   },
 
   /** Cancel a pending consent request (real server-side cancellation). */
-  cancelConsentRequest(requestId: string): Promise<{ request_id: string; status: string; cancelled_at: string }> {
+  cancelConsentRequest(
+    requestId: string
+  ): Promise<{ request_id: string; status: string; cancelled_at: string }> {
     return request<{ request_id: string; status: string; cancelled_at: string }>(
       `/api/v2/consent/request/${requestId}/cancel`,
-      { method: 'POST' },
+      { method: 'POST' }
+    )
+  },
+
+  /** Revoke provider access previously approved by the authenticated patient. */
+  revokeApprovedAccess(
+    requestId: string
+  ): Promise<{ request_id: string; status: 'revoked'; revoked_at: string }> {
+    return request<{ request_id: string; status: 'revoked'; revoked_at: string }>(
+      `/api/v2/consent/request/${encodeURIComponent(requestId)}/revoke`,
+      { method: 'DELETE' }
     )
   },
 
   /** Issue a break-glass emergency consent token (audited, rate-limited). */
-  breakGlassIssue(payload: { patient_id: string; reason_code: string; justification: string; requested_scope?: string[] }): Promise<{ consent_token: string; expires_at: string; approved_scope: string[]; policy_version: string; authorization_ref: string }> {
-    return request<{ consent_token: string; expires_at: string; approved_scope: string[]; policy_version: string; authorization_ref: string }>(
-      '/api/v2/consent/break-glass/issue',
-      { method: 'POST', body: JSON.stringify(payload) },
-    )
+  breakGlassIssue(payload: {
+    patient_id: string
+    reason_code: string
+    justification: string
+    requested_scope?: string[]
+  }): Promise<{
+    consent_token: string
+    expires_at: string
+    approved_scope: string[]
+    policy_version: string
+    authorization_ref: string
+  }> {
+    return request<{
+      consent_token: string
+      expires_at: string
+      approved_scope: string[]
+      policy_version: string
+      authorization_ref: string
+    }>('/api/v2/consent/break-glass/issue', { method: 'POST', body: JSON.stringify(payload) })
   },
 
   verifyActionMfa(code: string): Promise<{ verified: boolean }> {
@@ -809,21 +1021,43 @@ export const NexaApiClient = {
   },
 }
 
-
-export interface ApiRequestConfig { headers?: Record<string, unknown>; noAuth?: boolean; timeoutMs?: number; signal?: AbortSignal }
-export interface ApiResponse<T> { data: T }
-async function transport<T>(path: string, method: string, body?: unknown, config: ApiRequestConfig = {}): Promise<ApiResponse<T>> {
-  const data = await request<T>(path, {
-    method,
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    ...(config.signal ? { signal: config.signal } : {}),
-  }, config.headers as Record<string, string> | undefined, config.noAuth, config.timeoutMs)
+export interface ApiRequestConfig {
+  headers?: Record<string, unknown>
+  noAuth?: boolean
+  timeoutMs?: number
+  signal?: AbortSignal
+}
+export interface ApiResponse<T> {
+  data: T
+}
+async function transport<T>(
+  path: string,
+  method: string,
+  body?: unknown,
+  config: ApiRequestConfig = {}
+): Promise<ApiResponse<T>> {
+  const data = await request<T>(
+    path,
+    {
+      method,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      ...(config.signal ? { signal: config.signal } : {}),
+    },
+    config.headers as Record<string, string> | undefined,
+    config.noAuth,
+    config.timeoutMs
+  )
   return { data }
 }
 export const apiClient = {
-  get: <T, R = ApiResponse<T>>(path: string, config?: ApiRequestConfig) => transport<T>(path, "GET", undefined, config) as Promise<R>,
-  post: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) => transport<T>(path, "POST", body, config) as Promise<R>,
-  put: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) => transport<T>(path, "PUT", body, config) as Promise<R>,
-  patch: <T,>(path: string, body?: unknown, config?: ApiRequestConfig) => transport<T>(path, "PATCH", body, config),
-  delete: <T,>(path: string, config?: ApiRequestConfig) => transport<T>(path, "DELETE", undefined, config),
+  get: <T, R = ApiResponse<T>>(path: string, config?: ApiRequestConfig) =>
+    transport<T>(path, 'GET', undefined, config) as Promise<R>,
+  post: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) =>
+    transport<T>(path, 'POST', body, config) as Promise<R>,
+  put: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) =>
+    transport<T>(path, 'PUT', body, config) as Promise<R>,
+  patch: <T,>(path: string, body?: unknown, config?: ApiRequestConfig) =>
+    transport<T>(path, 'PATCH', body, config),
+  delete: <T,>(path: string, config?: ApiRequestConfig) =>
+    transport<T>(path, 'DELETE', undefined, config),
 }

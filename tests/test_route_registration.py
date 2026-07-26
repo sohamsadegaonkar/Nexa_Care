@@ -122,6 +122,7 @@ EXPECTED_ROUTES = {
         "POST",
         "/api/v2/consent/request/{request_id}/cancel",
     ),  # Day 14: real server-side cancellation
+    ("DELETE", "/api/v2/consent/request/{request_id}/revoke"),
     ("GET", "/api/v2/consent/challenge/{request_id}"),
     ("GET", "/api/v2/patient/{id}/summary"),
     ("GET", "/api/v2/patient/{id}/timeline"),

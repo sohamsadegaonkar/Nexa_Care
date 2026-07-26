@@ -478,7 +478,8 @@ class TestApprovalResultScreen:
 
     def test_calls_revoke_api(self) -> None:
         code = _read_screen("ApprovalResultScreen")
-        assert "/api/v2/consent/grants/" in code, "Must call revoke endpoint"
+        assert "NexaApiClient.revokeApprovedAccess" in code
+        assert "revokeError" in code, "Must display revocation failures"
 
     def test_shows_approved_state(self) -> None:
         code = _read_screen("ApprovalResultScreen")
