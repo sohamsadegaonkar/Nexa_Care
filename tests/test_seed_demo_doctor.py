@@ -312,6 +312,9 @@ async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
     assert exit_code == 0
     revoke.assert_awaited_once_with(provider_id)
     assert audit.await_args.kwargs["event_type"] == "PROVIDER_PASSWORD_RESET"
+    audit_context = audit.await_args.kwargs["audit_context"]
+    assert audit_context.hospital_id == str(hospital_id)
+    assert audit_context.domain.value == "auth"
     session.commit.assert_awaited_once()
     session.rollback.assert_not_awaited()
 
