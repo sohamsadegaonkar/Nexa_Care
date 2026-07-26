@@ -86,10 +86,59 @@ describe('shared API transport', () => {
       code,
       message: expect.stringMatching(/valid Indian|Too many OTP/),
     })
-    expect(warn).toHaveBeenCalledWith('API_REQUEST_ERROR', expect.objectContaining({
-      method: 'POST', path: '/api/v2/auth/otp/send', status, code,
-      retryable: status === 429,
-    }))
+    expect(warn).toHaveBeenCalledWith(
+      `API_REQUEST_REJECTED ${JSON.stringify({
+        method: 'POST',
+        path: '/api/v2/auth/otp/send',
+        status,
+        code,
+        retryable: status === 429,
+      })}`
+    )
+    expect(error).not.toHaveBeenCalled()
+  })
+
+  it('logs revoked patient access as a redacted expected rejection', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const patientId = '32e1a052-e82d-48c6-982b-d88f4fc57cb5'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            detail: {
+              message: 'Approved access is no longer valid.',
+              error_code: 'CONSENT_REVOKED',
+            },
+          }),
+          {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
+      )
+    )
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-session-token')
+
+    await expect(
+      NexaApiClient.getPatientSummary(patientId, 'consent-capability', 'hospital-1')
+    ).rejects.toMatchObject({
+      status: 403,
+      code: 'CONSENT_REVOKED',
+      isRetryable: false,
+    })
+    expect(warn).toHaveBeenCalledWith(
+      `API_REQUEST_REJECTED ${JSON.stringify({
+        method: 'GET',
+        path: '/api/v2/patient/:id/summary',
+        status: 403,
+        code: 'CONSENT_REVOKED',
+        retryable: false,
+      })}`
+    )
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(patientId)
     expect(error).not.toHaveBeenCalled()
   })
 
@@ -126,6 +175,32 @@ describe('shared API transport', () => {
     expect(url).toBe('https://native.example.test/api/v2/consent/status/request-1')
     expect(init.headers.Authorization).toBe('Bearer provider-session-token')
     expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
+  })
+
+  it('revokes approved access through the authenticated patient endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({
+        request_id: 'request/with space',
+        status: 'revoked',
+        revoked_at: '2026-07-26T00:00:00+00:00',
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'patient-session')
+
+    await NexaApiClient.revokeApprovedAccess('request/with space')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://native.example.test/api/v2/consent/request/request%2Fwith%20space/revoke',
+      expect.objectContaining({
+        method: 'DELETE',
+        headers: expect.objectContaining({
+          Authorization: 'Bearer patient-session',
+        }),
+      }),
+    )
   })
 
   it('rejects missing consent-status hospital context before fetch', async () => {

@@ -1,6 +1,17 @@
 'use client'
 
-import { Button, Card, Input, Paragraph, ScrollView, Select, Spinner, Text, XStack, YStack } from '@my/ui'
+import {
+  Button,
+  Card,
+  Input,
+  Paragraph,
+  ScrollView,
+  Select,
+  Spinner,
+  Text,
+  XStack,
+  YStack,
+} from '@my/ui'
 import { AlertTriangle, ChevronDown } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -20,7 +31,9 @@ function maskToken(value: string): string {
 function validateJustification(reasonCode: BreakGlassReasonCode, value: string): string | null {
   const clean = value.trim()
   const minimumLength =
-    reasonCode === 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY' ? OTHER_JUSTIFICATION_LENGTH : MIN_JUSTIFICATION_LENGTH
+    reasonCode === 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY'
+      ? OTHER_JUSTIFICATION_LENGTH
+      : MIN_JUSTIFICATION_LENGTH
   if (clean.length < minimumLength) {
     return `A ${minimumLength}-character clinical justification is required.`
   }
@@ -44,7 +57,12 @@ export function EmergencyAccessScreen() {
 
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} justify="center" items="center" gap="$4">
+      <YStack
+        flex={1}
+        justify="center"
+        items="center"
+        gap="$4"
+      >
         <Text>Provider session required.</Text>
         <Button onPress={() => router.push('/doctor/login')}>Go to login</Button>
       </YStack>
@@ -92,7 +110,9 @@ export function EmergencyAccessScreen() {
       } else if (caught instanceof ApiError && caught.status === 403) {
         setError('Your current role is not authorized for emergency access.')
       } else {
-        setError('Emergency access could not be issued. Contact the clinical administrator if the emergency continues.')
+        setError(
+          'Emergency access could not be issued. Contact the clinical administrator if the emergency continues.'
+        )
       }
     } finally {
       setSubmitting(false)
@@ -120,31 +140,87 @@ export function EmergencyAccessScreen() {
 
   return (
     <ScrollView>
-      <YStack p="$5" gap="$5" maxW={600} mx="auto">
-        <XStack gap="$2" items="center">
-          <AlertTriangle size={36} color="$red10" />
-          <Text fontSize={26} fontWeight="900" color="$red10">Emergency access</Text>
+      <YStack
+        p="$5"
+        gap="$5"
+        maxW={600}
+        mx="auto"
+      >
+        <XStack
+          gap="$2"
+          items="center"
+        >
+          <AlertTriangle
+            size={36}
+            color="$red10"
+          />
+          <Text
+            fontSize={26}
+            fontWeight="900"
+            color="$red10"
+          >
+            Emergency access
+          </Text>
         </XStack>
-        <Card bg="$red2" borderWidth={1} borderColor="$red8" p="$4">
+        <Card
+          bg="$red2"
+          borderWidth={1}
+          borderColor="$red8"
+          p="$4"
+        >
           <Paragraph color="$red10">
-            Limited, 15-minute access. This access is permanently recorded in the audit ledger, rate limited to 3 per hour, and may trigger patient notification and compliance review.
+            Limited, 15-minute access. This access is permanently recorded in the audit ledger, rate
+            limited to 3 per hour, and may trigger patient notification and compliance review.
           </Paragraph>
         </Card>
         {authorizationRef && (
-          <Card bg="$green2" borderWidth={1} borderColor="$green8" p="$4">
-            <Paragraph color="$green10">Authorization reference: {maskToken(authorizationRef)}</Paragraph>
+          <Card
+            bg="$green2"
+            borderWidth={1}
+            borderColor="$green8"
+            p="$4"
+          >
+            <Paragraph color="$green10">
+              Authorization reference: {maskToken(authorizationRef)}
+            </Paragraph>
           </Card>
         )}
-        <Input value={patientId} onChangeText={setPatientId} placeholder="Canonical patient UUID" />
-        <Select value={reasonCode} onValueChange={(value) => setReasonCode(value as BreakGlassReasonCode)}>
-          <Select.Trigger iconAfter={ChevronDown}><Select.Value /></Select.Trigger>
-          <Select.Content><Select.Viewport>
-            {REASON_OPTIONS.map((option, index) => (
-              <Select.Item key={option.value} index={index} value={option.value}>
-                <Select.ItemText>{option.label}</Select.ItemText>
-              </Select.Item>
-            ))}
-          </Select.Viewport></Select.Content>
+        <Input
+          value={patientId}
+          onChangeText={setPatientId}
+          placeholder="Canonical patient UUID"
+        />
+        <Select
+          value={reasonCode}
+          onValueChange={(value) => setReasonCode(value as BreakGlassReasonCode)}
+        >
+          <Select.Trigger iconAfter={ChevronDown}>
+            <Select.Value />
+          </Select.Trigger>
+          <Select.Content zIndex={200000}>
+            <Select.Viewport
+              unstyled
+              minWidth={280}
+              maxHeight={320}
+              backgroundColor="$background"
+              borderWidth={1}
+              borderColor="$borderColor"
+              borderRadius="$4"
+              padding="$1"
+            >
+              <Select.Group>
+                {REASON_OPTIONS.map((option, index) => (
+                  <Select.Item
+                    key={option.value}
+                    index={index}
+                    value={option.value}
+                  >
+                    <Select.ItemText>{option.label}</Select.ItemText>
+                  </Select.Item>
+                ))}
+              </Select.Group>
+            </Select.Viewport>
+          </Select.Content>
         </Select>
         <Input
           value={justification}
@@ -154,19 +230,42 @@ export function EmergencyAccessScreen() {
           maxLength={MAX_JUSTIFICATION_LENGTH}
         />
         {needsStepUp && (
-          <Card p="$4" gap="$3">
+          <Card
+            p="$4"
+            gap="$3"
+          >
             <Text fontWeight="700">Step-up MFA required</Text>
-            <Input value={mfaCode} onChangeText={setMfaCode} keyboardType="numeric" maxLength={6} secureTextEntry />
-            <Button onPress={verifyStepUp} disabled={submitting}>Verify MFA and continue</Button>
+            <Input
+              value={mfaCode}
+              onChangeText={setMfaCode}
+              keyboardType="numeric"
+              maxLength={6}
+              secureTextEntry
+            />
+            <Button
+              onPress={verifyStepUp}
+              disabled={submitting}
+            >
+              Verify MFA and continue
+            </Button>
           </Card>
         )}
         {error && <Text color="$red10">{error}</Text>}
         {!needsStepUp && (
-          <Button theme="red" onPress={issueEmergencyAccess} disabled={submitting || !justification.trim()}>
+          <Button
+            theme="red"
+            onPress={issueEmergencyAccess}
+            disabled={submitting || !justification.trim()}
+          >
             {submitting ? <Spinner /> : 'Issue minimum-necessary emergency access'}
           </Button>
         )}
-        <Button chromeless onPress={() => router.push('/doctor/dashboard')}>Cancel</Button>
+        <Button
+          chromeless
+          onPress={() => router.push('/doctor/dashboard')}
+        >
+          Cancel
+        </Button>
       </YStack>
     </ScrollView>
   )

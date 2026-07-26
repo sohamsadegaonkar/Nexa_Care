@@ -25,6 +25,22 @@ API_CLIENT_PATH = ROOT / "nexa-client" / "packages" / "app" / "utils" / "apiClie
 OTP_SERVICE_PATH = (
     ROOT / "nexa-client" / "packages" / "app" / "services" / "patientOtp.ts"
 )
+EXPO_APP_CONFIG_PATH = ROOT / "nexa-client" / "apps" / "expo" / "app.config.ts"
+EXPO_ROOT_LAYOUT_PATH = ROOT / "nexa-client" / "apps" / "expo" / "app" / "_layout.tsx"
+EXPO_PATIENT_LAYOUT_PATH = (
+    ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
+)
+HOME_SCREEN_PATH = (
+    ROOT / "nexa-client" / "packages" / "app" / "features" / "home" / "screen.tsx"
+)
+PATIENT_RESET_HOOK_PATH = (
+    ROOT
+    / "nexa-client"
+    / "packages"
+    / "app"
+    / "hooks"
+    / "useResetToPatientAccessHistory.ts"
+)
 
 SCREENS = [
     "PatientLoginScreen",
@@ -302,6 +318,48 @@ class TestPatientLoginScreen:
         assert "/api/v2/consent/requests/pending" not in code
         assert "/patient/access-history" in code
 
+    def test_keyboard_safe_layout_and_dismissal_before_navigation(self) -> None:
+        code = _read_screen("PatientLoginScreen")
+        assert "KeyboardAvoidingView" in code
+        assert "contentContainerStyle={{ flexGrow: 1 }}" in code
+        assert 'keyboardShouldPersistTaps="handled"' in code
+        assert 'keyboardDismissMode="on-drag"' in code
+        assert code.index("Keyboard.dismiss()") < code.index(
+            "router.replace('/patient/access-history')"
+        )
+
+
+class TestPatientNativeViewportConfiguration:
+    def test_android_keyboard_pans_instead_of_resizing_app(self) -> None:
+        code = EXPO_APP_CONFIG_PATH.read_text(encoding="utf-8")
+        assert "softwareKeyboardLayoutMode: 'pan'" in code
+
+    def test_root_and_patient_navigators_have_full_screen_backgrounds(self) -> None:
+        for path in (EXPO_ROOT_LAYOUT_PATH, EXPO_PATIENT_LAYOUT_PATH):
+            code = path.read_text(encoding="utf-8")
+            assert "contentStyle" in code
+            assert "flex: 1" in code
+            assert "backgroundColor: '#FFFFFF'" in code
+
+    def test_root_navigator_hides_its_header_for_patient_routes(self) -> None:
+        code = EXPO_ROOT_LAYOUT_PATH.read_text(encoding="utf-8")
+        patient_screen = code.split('name="patient"', 1)[1]
+        assert "headerShown: false" in patient_screen
+
+    def test_home_screen_is_keyboard_safe_and_removes_template_sheet(self) -> None:
+        code = HOME_SCREEN_PATH.read_text(encoding="utf-8")
+        assert "KeyboardAvoidingView" in code
+        assert "useSafeAreaInsets" in code
+        assert 'keyboardShouldPersistTaps="handled"' in code
+        assert "paddingBottom: insets.bottom + 32" in code
+        assert "SheetDemo" not in code
+
+    def test_patient_history_reset_uses_common_actions(self) -> None:
+        code = PATIENT_RESET_HOOK_PATH.read_text(encoding="utf-8")
+        assert "CommonActions.reset" in code
+        assert "useCallback" in code
+        assert "routes: [{ name: 'access-history' }]" in code
+
 
 class TestSecureDeviceScreen:
     def test_uses_device_enrollment_service(self) -> None:
@@ -387,6 +445,17 @@ class TestConsentRequestScreen:
         code = _read_screen("ConsentRequestScreen")
         assert "consentSigning" in code, "Must import from consentSigning service"
 
+    def test_terminal_requests_fail_closed_and_controls_scroll(self) -> None:
+        code = _read_screen("ConsentRequestScreen")
+        assert "challenge.status !== 'pending'" in code
+        assert "useResetToPatientAccessHistory" in code
+        assert "dismissAll" not in code
+        assert "useSafeAreaInsets" in code
+        assert 'keyboardShouldPersistTaps="handled"' in code
+        scroll_end = code.rindex("</ScrollView>")
+        assert code.index("onPress={handleApprove}") < scroll_end
+        assert code.index("onPress={handleDeny}") < scroll_end
+
 
 class TestBiometricApprovalScreen:
     def test_blocks_approval_if_signing_fails(self) -> None:
@@ -439,6 +508,11 @@ class TestBiometricApprovalScreen:
         code = _read_screen("BiometricApprovalScreen")
         assert "expired" in code.lower(), "Must handle expired challenge"
 
+    def test_success_shows_result_without_dispatching_pop_to_top(self) -> None:
+        code = _read_screen("BiometricApprovalScreen")
+        assert "pathname: '/patient/approval-result'" in code
+        assert "dismissAll" not in code
+
 
 class TestApprovalResultScreen:
     def test_shows_expiry_and_revoke_action(self) -> None:
@@ -450,7 +524,8 @@ class TestApprovalResultScreen:
 
     def test_calls_revoke_api(self) -> None:
         code = _read_screen("ApprovalResultScreen")
-        assert "/api/v2/consent/grants/" in code, "Must call revoke endpoint"
+        assert "NexaApiClient.revokeApprovedAccess" in code
+        assert "revokeError" in code, "Must display revocation failures"
 
     def test_shows_approved_state(self) -> None:
         code = _read_screen("ApprovalResultScreen")
@@ -468,6 +543,12 @@ class TestApprovalResultScreen:
             "expired" in code.lower() or "Request Expired" in code
         ), "Must handle expired state"
 
+    def test_terminal_actions_reset_to_access_history(self) -> None:
+        code = _read_screen("ApprovalResultScreen")
+        assert "useResetToPatientAccessHistory" in code
+        assert "resetToAccessHistory" in code
+        assert "dismissAll" not in code
+
 
 class TestAccessHistoryScreen:
     def test_renders_empty_state(self) -> None:
@@ -475,6 +556,17 @@ class TestAccessHistoryScreen:
         assert (
             "No one has accessed your records yet" in code
         ), "Must render empty state: 'No one has accessed your records yet.'"
+
+    def test_scroll_and_empty_states_fill_available_screen(self) -> None:
+        code = _read_screen("AccessHistoryScreen")
+        assert "<FlatList" in code
+        assert "flexGrow: 1" in code
+        assert "ListFooterComponent" in code
+        assert "paddingBottom: insets.bottom + 32" in code
+        assert re.search(
+            r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
+            code,
+        )
 
     def test_renders_loading_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -494,6 +586,12 @@ class TestAccessHistoryScreen:
         code = _read_screen("AccessHistoryScreen")
         assert "access-history" in code, "Must fetch access history via apiClient"
 
+    def test_can_load_older_access_history_pages(self) -> None:
+        code = _read_screen("AccessHistoryScreen")
+        assert "next_cursor" in code
+        assert "Load older records" in code
+        assert "encodeURIComponent(cursor)" in code
+
     def test_flags_break_glass_accesses(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "is_break_glass" in code, "Must check is_break_glass field"
@@ -506,6 +604,10 @@ class TestAccessHistoryScreen:
     def test_shows_provider_name(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "doctor_name" in code, "Must display doctor name"
+
+    def test_never_renders_an_orphan_separator_bullet(self) -> None:
+        code = _read_screen("AccessHistoryScreen")
+        assert "entry.doctor_name && entry.hospital_name" in code
 
     def test_shows_data_categories(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -530,6 +632,23 @@ class TestPatientTimelineScreen:
     def test_renders_empty_state(self) -> None:
         code = _read_screen("PatientTimelineScreen")
         assert "No clinical events" in code, "Must render empty state"
+
+    def test_scroll_and_empty_states_fill_available_screen(self) -> None:
+        code = _read_screen("PatientTimelineScreen")
+        assert re.search(r"<ScrollView\s+f=\{1\}", code)
+        assert "flexGrow: 1" in code
+        assert "paddingBottom: 32" in code
+        assert re.search(
+            r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
+            code,
+        )
+
+    def test_footer_remains_outside_flexible_scroll_view(self) -> None:
+        code = _read_screen("PatientTimelineScreen")
+        scroll_end = code.index("</ScrollView>")
+        footer = code.index("← Access History")
+        assert scroll_end < footer
+        assert re.search(r"<ScrollView\s+f=\{1\}", code)
 
     def test_renders_error_state(self) -> None:
         code = _read_screen("PatientTimelineScreen")

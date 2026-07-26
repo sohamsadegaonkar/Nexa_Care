@@ -1,62 +1,65 @@
-﻿{
-    "expo":  {
-                 "name":  "Nexa Care",
-                 "slug":  "nexa-care",
-                 "scheme":  "nexacare",
-                 "version":  "1.0.0",
-                 "orientation":  "portrait",
-                 "icon":  "./assets/icon.png",
-                 "userInterfaceStyle":  "automatic",
-                 "splash":  {
-                                "image":  "./assets/splash.png",
-                                "resizeMode":  "contain",
-                                "backgroundColor":  "#ffffff"
-                            },
-                 "updates":  {
-                                 "fallbackToCacheTimeout":  0
-                             },
-                 "assetBundlePatterns":  [
-                                             "**/*"
-                                         ],
-                 "ios":  {
-                             "supportsTablet":  true,
-                             "bundleIdentifier":  "ai.nexacare.patient"
-                         },
-                 "android":  {
-                                 "adaptiveIcon":  {
-                                                      "foregroundImage":  "./assets/adaptive-icon.png",
-                                                      "backgroundColor":  "#FFFFFF"
-                                                  },
-                                 "package":  "ai.nexacare.patient"
-                             },
-                 "web":  {
-                             "favicon":  "./assets/favicon.png"
-                         },
-                 "plugins":  [
-                                 [
-                                     "expo-router",
-                                     {
-                                         "root":  "./app"
-                                     }
-                                 ],
-                                 "expo-font",
-                                 "expo-notifications",
-                                 "expo-secure-store",
-                                 [
-                                     "expo-local-authentication",
-                                     {
-                                         "faceIDPermission":  "Allow Nexa Care to confirm your identity for secure health-data approvals."
-                                     }
-                                 ]
-                             ],
-                 "experiments":  {
-                                     "typedRoutes":  true
-                                 },
-                 "extra":  {
-                               "router":  {
-                                              "root":  "./app"
-                                          },
-                               "eas":  {}
-                           }
-             }
+{
+  "expo": {
+    "name": "Nexa Care",
+    "slug": "nexa-care",
+    "scheme": "nexacare",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "updates": {
+      "fallbackToCacheTimeout": 0
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "ai.nexacare.patient"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "package": "ai.nexacare.patient"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-router",
+        {
+          "root": "./app"
+        }
+      ],
+      "expo-font",
+      "expo-notifications",
+      "expo-secure-store",
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Allow Nexa Care to confirm your identity for secure health-data approvals."
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "root": "./app"
+      },
+      "eas": {
+        "projectId": "3e9612c9-2661-4deb-8012-e78bd3500534"
+      },
+      "appEnvironment": "development"
+    }
+  }
 }

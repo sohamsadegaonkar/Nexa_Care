@@ -47,7 +47,7 @@ logger = logging.getLogger("nexa_security")
 _SELECT_PARTITIONS_SQL = text("SELECT DISTINCT chain_scope FROM public.audit_ledger")
 _SELECT_PARTITION_EVENTS_SQL = text(
     """
-    SELECT audit_id, previous_hash, record_hash, details, sequence_number
+    SELECT audit_id, previous_hash, record_hash, details, sequence_number, protocol_version
     FROM public.audit_ledger
     WHERE chain_scope = :chain_partition
     """
@@ -69,26 +69,60 @@ class VerificationFailure:
         return f"{self.chain_partition}: {self.reason}"
 
 
-def _calculate_hash(payload: dict, previous_hash: str) -> str:
-    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+def _calculate_hash(
+    payload: dict, previous_hash: str, *, protocol_version: int = 2
+) -> str:
+    if protocol_version == 1:
+        ensure_ascii = True
+    elif protocol_version == 2:
+        ensure_ascii = False
+    else:
+        raise ValueError(f"unsupported audit protocol_version={protocol_version!r}")
+
+    canonical = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=ensure_ascii,
+    )
     return hashlib.sha256((canonical + previous_hash).encode("utf-8")).hexdigest()
 
 
-async def verify_partition(connection, chain_partition: str, *, dry_run: bool) -> VerificationFailure | None:
+async def verify_partition(
+    connection, chain_partition: str, *, dry_run: bool
+) -> VerificationFailure | None:
     rows = list(
-        (await connection.execute(_SELECT_PARTITION_EVENTS_SQL, {"chain_partition": chain_partition})).mappings()
+        (
+            await connection.execute(
+                _SELECT_PARTITION_EVENTS_SQL, {"chain_partition": chain_partition}
+            )
+        ).mappings()
     )
     head_row = (
-        (await connection.execute(_SELECT_HEAD_SQL, {"chain_partition": chain_partition})).mappings().first()
+        (
+            await connection.execute(
+                _SELECT_HEAD_SQL, {"chain_partition": chain_partition}
+            )
+        )
+        .mappings()
+        .first()
     )
 
     async def fail(reason: str) -> VerificationFailure:
-        logger.critical(json.dumps({
-            "event": "audit_partition_verification_failed", "severity": "critical",
-            "chain_partition": chain_partition, "reason": reason,
-        }))
+        logger.critical(
+            json.dumps(
+                {
+                    "event": "audit_partition_verification_failed",
+                    "severity": "critical",
+                    "chain_partition": chain_partition,
+                    "reason": reason,
+                }
+            )
+        )
         if not dry_run:
-            await connection.execute(_MARK_UNHEALTHY_SQL, {"chain_partition": chain_partition})
+            await connection.execute(
+                _MARK_UNHEALTHY_SQL, {"chain_partition": chain_partition}
+            )
         return VerificationFailure(chain_partition, reason)
 
     if not rows:
@@ -114,7 +148,9 @@ async def verify_partition(connection, chain_partition: str, *, dry_run: bool) -
         successors.setdefault(previous_hash, []).append(record_hash)
     for previous_hash, children in successors.items():
         if len(children) > 1:
-            return await fail(f"multiple successors for hash {previous_hash!r} (fork/cycle): {children}")
+            return await fail(
+                f"multiple successors for hash {previous_hash!r} (fork/cycle): {children}"
+            )
 
     ordered = []
     current = genesis[0]
@@ -127,7 +163,29 @@ async def verify_partition(connection, chain_partition: str, *, dry_run: bool) -
         details = row["details"]
         if isinstance(details, str):
             details = json.loads(details)
-        recalculated = _calculate_hash(details, row["previous_hash"])
+        if not isinstance(details, dict):
+            return await fail(f"invalid details payload at audit_id={row['audit_id']}")
+
+        protocol_version = row["protocol_version"]
+        if protocol_version == 2:
+            if details.get("protocol_version") != 2:
+                return await fail(
+                    f"protocol_version mismatch at audit_id={row['audit_id']}"
+                )
+            if details.get("chain_scope") != chain_partition:
+                return await fail(f"chain_scope mismatch at audit_id={row['audit_id']}")
+
+        try:
+            recalculated = _calculate_hash(
+                details,
+                row["previous_hash"],
+                protocol_version=protocol_version,
+            )
+        except ValueError:
+            return await fail(
+                f"unsupported protocol_version at audit_id={row['audit_id']}"
+            )
+
         if recalculated != current:
             return await fail(f"record_hash mismatch at audit_id={row['audit_id']}")
         ordered.append(row)
@@ -137,7 +195,9 @@ async def verify_partition(connection, chain_partition: str, *, dry_run: bool) -
         current = nxt[0]
 
     if len(ordered) != len(rows):
-        return await fail(f"disconnected component: reached {len(ordered)} of {len(rows)} events")
+        return await fail(
+            f"disconnected component: reached {len(ordered)} of {len(rows)} events"
+        )
 
     for expected_seq, row in enumerate(ordered, start=1):
         if row["sequence_number"] != expected_seq:
@@ -150,26 +210,39 @@ async def verify_partition(connection, chain_partition: str, *, dry_run: bool) -
     if head_row is None:
         return await fail("no chain_chain_heads row exists for a non-empty partition")
     if head_row["head_hash"] != tip["record_hash"]:
-        return await fail(f"head_hash mismatch: stored={head_row['head_hash']} calculated={tip['record_hash']}")
+        return await fail(
+            f"head_hash mismatch: stored={head_row['head_hash']} calculated={tip['record_hash']}"
+        )
     if head_row["head_event_id"] != tip["audit_id"]:
-        return await fail(f"head_event_id mismatch: stored={head_row['head_event_id']} calculated={tip['audit_id']}")
+        return await fail(
+            f"head_event_id mismatch: stored={head_row['head_event_id']} calculated={tip['audit_id']}"
+        )
     if head_row["sequence_number"] != len(ordered):
-        return await fail(f"head sequence_number mismatch: stored={head_row['sequence_number']} calculated={len(ordered)}")
+        return await fail(
+            f"head sequence_number mismatch: stored={head_row['sequence_number']} calculated={len(ordered)}"
+        )
 
     return None
 
 
-async def verify_all(partition: str | None = None, *, dry_run: bool = False) -> list[VerificationFailure]:
+async def verify_all(
+    partition: str | None = None, *, dry_run: bool = False
+) -> list[VerificationFailure]:
     engine = get_async_engine()
     async with engine.begin() as connection:
         if partition:
             partitions = [partition]
         else:
-            partitions = [row[0] for row in (await connection.execute(_SELECT_PARTITIONS_SQL)).fetchall()]
+            partitions = [
+                row[0]
+                for row in (await connection.execute(_SELECT_PARTITIONS_SQL)).fetchall()
+            ]
 
         failures = []
         for chain_partition in partitions:
-            result = await verify_partition(connection, chain_partition, dry_run=dry_run)
+            result = await verify_partition(
+                connection, chain_partition, dry_run=dry_run
+            )
             if result is not None:
                 failures.append(result)
         return failures
@@ -181,7 +254,9 @@ async def _main(partition: str | None, dry_run: bool) -> int:
         print("Audit chain verification: OK, all partitions healthy.")
         return 0
 
-    print(f"Audit chain verification: {len(failures)} partition(s) failed verification:")
+    print(
+        f"Audit chain verification: {len(failures)} partition(s) failed verification:"
+    )
     for failure in failures:
         print(f"  - {failure}")
     return 1
@@ -189,8 +264,16 @@ async def _main(partition: str | None, dry_run: bool) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--partition", default=None, help="Verify only this chain_partition instead of all of them.")
-    parser.add_argument("--dry-run", action="store_true", help="Report only; do not mark any partition unhealthy.")
+    parser.add_argument(
+        "--partition",
+        default=None,
+        help="Verify only this chain_partition instead of all of them.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report only; do not mark any partition unhealthy.",
+    )
     args = parser.parse_args()
     return asyncio.run(_main(args.partition, args.dry_run))
 

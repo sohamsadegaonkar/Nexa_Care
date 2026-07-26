@@ -10,6 +10,7 @@ import {
 } from '../../services/consentSigning'
 import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrollment'
 import { ApiError } from '../../utils/apiClient'
+import { useResetToPatientAccessHistory } from '../../hooks/useResetToPatientAccessHistory'
 
 /**
  * Biometric approval screen — Face ID / Touch ID → sign → submit.
@@ -44,6 +45,7 @@ export default function BiometricApprovalScreen({
   onCancelled,
 }: BiometricApprovalScreenProps) {
   const router = useRouter()
+  const resetToAccessHistory = useResetToPatientAccessHistory()
   const params = useLocalSearchParams<{ requestId?: string }>()
   const requestId = requestIdProp ?? params.requestId ?? ''
 
@@ -66,8 +68,7 @@ export default function BiometricApprovalScreen({
         const data = await fetchChallenge(requestId)
         if (cancelled) return
         if (isChallengeExpired(data) || data.status !== 'pending') {
-          setChallenge(data)
-          setStatus('expired')
+          resetToAccessHistory()
           return
         }
         setChallenge(data)
@@ -95,7 +96,7 @@ export default function BiometricApprovalScreen({
 
     load()
     return () => { cancelled = true }
-  }, [requestId])
+  }, [requestId, resetToAccessHistory])
 
   const handleBiometricAuth = async () => {
     if (!challenge) return
@@ -182,7 +183,7 @@ export default function BiometricApprovalScreen({
         <Paragraph col="$colorSubdued" ta="center" size="$4">
           {error ?? 'This consent request has expired. No action is needed.'}
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.replace('/patient/access-history')}>
+        <Button theme="blue" size="$4" onPress={resetToAccessHistory}>
           Go to Access History
         </Button>
       </YStack>

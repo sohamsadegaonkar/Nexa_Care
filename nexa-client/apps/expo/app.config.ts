@@ -22,11 +22,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
   }
   if (appEnvironment !== 'development' && (!easProjectId || !googleServicesFile)) {
     throw new Error(
-      'Preview and production builds require EXPO_PUBLIC_EAS_PROJECT_ID and GOOGLE_SERVICES_FILE from the EAS environment.',
+      'Preview and production builds require EXPO_PUBLIC_EAS_PROJECT_ID and GOOGLE_SERVICES_FILE from the EAS environment.'
     )
   }
   if (googleServicesFile && !existsSync(googleServicesFile)) {
-    throw new Error('GOOGLE_SERVICES_FILE does not resolve to an available Firebase client configuration.')
+    throw new Error(
+      'GOOGLE_SERVICES_FILE does not resolve to an available Firebase client configuration.'
+    )
   }
   if (appEnvironment === 'production' && googleServicesFile) {
     const firebaseConfig = JSON.parse(readFileSync(googleServicesFile, 'utf8')) as {
@@ -55,6 +57,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     android: {
       ...config.android,
       package: config.android?.package ?? 'ai.nexacare.patient',
+      softwareKeyboardLayoutMode: 'pan',
       ...(googleServicesFile ? { googleServicesFile } : {}),
     },
     extra: {

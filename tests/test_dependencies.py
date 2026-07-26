@@ -69,15 +69,33 @@ class TestGetScopedSession(unittest.TestCase):
         mock_audit.assert_called_once()
         self.assertEqual(mock_audit.call_args.kwargs["status"], "MISSING_TOKEN")
 
+    @patch("app.core.dependencies.bind_trusted_audit_tenant")
     @patch("app.core.dependencies.validate_session_context")
+    @patch("app.core.dependencies.decode_patient_access_token")
     @patch("app.core.dependencies.append_audit_log")
-    def test_invalid_or_expired_session_raises_401(self, mock_audit, mock_validate):
+    def test_invalid_or_expired_session_raises_401(
+        self, mock_audit, mock_decode, mock_validate, mock_bind_tenant
+    ):
+        mock_decode.return_value = None
         mock_validate.return_value = None
 
         with self.assertRaises(HTTPException) as cm:
             run(get_scoped_session(authorization="Bearer some-token"))
         self.assertEqual(cm.exception.status_code, 401)
         self.assertEqual(mock_audit.call_args.kwargs["status"], "INVALID_OR_EXPIRED")
+        mock_bind_tenant.assert_not_called()
+
+    @patch("app.core.dependencies.decode_patient_access_token")
+    @patch("app.core.dependencies.bind_trusted_audit_tenant")
+    def test_patient_jwt_binds_and_returns_patient_id(
+        self, mock_bind_tenant, mock_decode
+    ):
+        mock_decode.return_value = {"patient_id": "patient-jwt-123"}
+
+        result = run(get_scoped_session(authorization="Bearer patient-token"))
+
+        self.assertEqual(result, "patient-jwt-123")
+        mock_bind_tenant.assert_called_once_with("patient-jwt-123")
 
     @patch("app.core.dependencies.validate_session_context")
     @patch("app.core.dependencies.append_audit_log")
@@ -91,10 +109,11 @@ class TestGetScopedSession(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 401)
         self.assertEqual(mock_audit.call_args.kwargs["status"], "UNSCOPED_SESSION")
 
+    @patch("app.core.dependencies.bind_trusted_audit_tenant")
     @patch("app.core.dependencies.validate_session_context")
     @patch("app.core.dependencies.append_audit_log")
     def test_valid_scoped_session_returns_masked_internal_id(
-        self, mock_audit, mock_validate
+        self, mock_audit, mock_validate, mock_bind_tenant
     ):
         mock_validate.return_value = {
             "authenticated": True,
@@ -105,6 +124,7 @@ class TestGetScopedSession(unittest.TestCase):
         result = run(get_scoped_session(authorization="Bearer some-token"))
 
         self.assertEqual(result, "patient-uuid-123")
+        mock_bind_tenant.assert_called_once_with("patient-uuid-123")
         mock_audit.assert_not_called()
 
 

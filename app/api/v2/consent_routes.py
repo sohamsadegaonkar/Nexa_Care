@@ -1249,6 +1249,128 @@ class ConsentCancelResponsePayload(BaseModel):
     cancelled_at: str
 
 
+class ConsentRevokeResponsePayload(BaseModel):
+    request_id: str
+    status: Literal["revoked"] = "revoked"
+    revoked_at: str
+
+
+@router.delete(
+    "/request/{request_id}/revoke",
+    status_code=status.HTTP_200_OK,
+    response_model=ConsentRevokeResponsePayload,
+)
+async def revoke_patient_approved_access(
+    request_id: str,
+    patient_id: str = Depends(get_scoped_session),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Revoke provider access previously approved by this patient."""
+
+    redis = get_redis_client()
+    raw = await _redis_call(redis.get, f"consent_request:{request_id}")
+    request_data: dict | None = None
+    if raw:
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8")
+        request_data = json.loads(raw)
+
+    grant_rows = (
+        (
+            await db.execute(
+                select(ConsentGrantLog)
+                .where(ConsentGrantLog.request_id == request_id)
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    if request_data is None and not grant_rows:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Consent request not found",
+        )
+
+    owner_patient_id = (
+        str(request_data.get("patient_id", ""))
+        if request_data is not None
+        else str(grant_rows[0].patient_id)
+    )
+    if owner_patient_id != str(patient_id) or any(
+        str(grant.patient_id) != str(patient_id) for grant in grant_rows
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Authenticated patient does not own this consent request",
+        )
+
+    prior_revoked_at = (
+        request_data.get("revoked_at") if request_data is not None else None
+    ) or next(
+        (
+            grant.revoked_at.isoformat()
+            for grant in grant_rows
+            if grant.revoked_at is not None
+        ),
+        None,
+    )
+    revoked_at = str(prior_revoked_at or datetime.now(timezone.utc).isoformat())
+
+    try:
+        await invalidate_request(request_id)
+        for grant in grant_rows:
+            if grant.revoked_at is None:
+                grant.revoked_at = datetime.fromisoformat(revoked_at)
+                grant.revoked_reason = "patient_revoked"
+
+        if request_data is not None:
+            request_data["status"] = "revoked"
+            request_data["revoked_at"] = revoked_at
+            await _redis_call(
+                redis.set,
+                f"consent_request:{request_id}",
+                json.dumps(request_data),
+                ex=300,
+            )
+        await db.commit()
+    except ApprovedAccessStoreUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CONSENT_ACCESS_STORE_UNAVAILABLE"},
+        ) from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+    await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
+        actor_uid=str(patient_id),
+        event_type="PATIENT_CONSENT_REVOKED",
+        target_id=request_id,
+        status="SUCCESS",
+        metadata={
+            "patient_id": str(patient_id),
+            "provider_id": request_data.get("provider_id")
+            if request_data is not None
+            else grant_rows[0].clinician_id,
+            "hospital_id": request_data.get("hospital_id")
+            if request_data is not None
+            else str(grant_rows[0].hospital_id),
+            "revoked_at": revoked_at,
+        },
+        idempotency_key=f"patient-consent-revoked:{request_id}",
+    )
+
+    return ConsentRevokeResponsePayload(
+        request_id=request_id,
+        status="revoked",
+        revoked_at=revoked_at,
+    )
+
+
 @router.post(
     "/request/{request_id}/cancel",
     status_code=status.HTTP_200_OK,

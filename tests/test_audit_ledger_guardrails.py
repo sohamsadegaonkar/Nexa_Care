@@ -33,6 +33,23 @@ def test_patient_record_routes_use_canonical_audit_service_only():
     assert "INSERT INTO" not in source
 
 
+def test_access_history_projection_filters_and_deduplicates_before_limit():
+    source = (ROOT / "app" / "observability" / "audit_ledger.py").read_text(
+        encoding="utf-8"
+    )
+    projection = source.split("_READ_PATIENT_ACCESS_HISTORY_SQL", 1)[1].split(
+        "_MARK_UNHEALTHY_SQL", 1
+    )[0]
+
+    assert "PATIENT_RECORD_READ_SUCCESS" in projection
+    assert "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED" in projection
+    assert "actor_id <> :target_id" in projection
+    assert "access_type" in projection
+    assert "ROW_NUMBER() OVER" in projection
+    assert "consent_request_id" in projection
+    assert projection.index("ROW_NUMBER() OVER") < projection.index("LIMIT :limit")
+
+
 def test_openapi_still_generates():
     schema = app.openapi()
     assert schema["openapi"].startswith("3.")

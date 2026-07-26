@@ -31,6 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+
 def load_standalone_demo_env() -> None:
     """Load the ignored repo .env only for direct CLI execution."""
 
@@ -52,6 +53,7 @@ from app.models.provider import (  # noqa: E402
     ProviderIdentity,
 )
 from app.observability.audit_ledger import append_audit_log  # noqa: E402
+from app.security.audit_context import AuditContext, AuditDomain  # noqa: E402
 from app.services.provider_auth_service import (  # noqa: E402
     hash_provider_password,
     normalize_provider_login_identifier,
@@ -66,7 +68,9 @@ DEMO_HOSPITAL_CODE = "NEXA-DEMO-HOSPITAL"
 DEMO_NFC_UID = "04:B3:C1:DE:55:01"
 
 # Demo patient IDs (deterministic UUIDs from namespace)
-DEMO_PATIENT_1_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "nexa-care-demo:patient:aarav-sharma")
+DEMO_PATIENT_1_ID = uuid.uuid5(
+    uuid.NAMESPACE_DNS, "nexa-care-demo:patient:aarav-sharma"
+)
 DEMO_PATIENT_2_ID = uuid.uuid5(uuid.NAMESPACE_DNS, "nexa-care-demo:patient:priya-patel")
 
 _REJECTED_PASSWORDS = {
@@ -96,7 +100,9 @@ def require_demo_provider_password() -> str:
 
     password = os.getenv("DEMO_PROVIDER_PASSWORD", "")
     if not password:
-        raise RuntimeError("Missing required script environment variable: DEMO_PROVIDER_PASSWORD")
+        raise RuntimeError(
+            "Missing required script environment variable: DEMO_PROVIDER_PASSWORD"
+        )
     normalized = password.strip().lower()
     obsolete = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
     if (
@@ -104,7 +110,9 @@ def require_demo_provider_password() -> str:
         or "generate_a_strong" in normalized
         or obsolete == _OBSOLETE_DEMO_PASSWORD_DIGEST
     ):
-        raise RuntimeError("DEMO_PROVIDER_PASSWORD is a placeholder or obsolete example value")
+        raise RuntimeError(
+            "DEMO_PROVIDER_PASSWORD is a placeholder or obsolete example value"
+        )
     if len(password) < 14:
         raise RuntimeError("DEMO_PROVIDER_PASSWORD must contain at least 14 characters")
     character_classes = (
@@ -123,7 +131,9 @@ def require_demo_provider_password() -> str:
 async def seed_hospital(session) -> uuid.UUID:
     """Create or reuse the demo hospital."""
     hospital = await session.scalar(
-        select(HospitalRegistry).where(HospitalRegistry.facility_code == DEMO_HOSPITAL_CODE)
+        select(HospitalRegistry).where(
+            HospitalRegistry.facility_code == DEMO_HOSPITAL_CODE
+        )
     )
     if hospital is None:
         hospital = HospitalRegistry(
@@ -173,13 +183,20 @@ async def seed_provider(
         provider.is_active = True
         provider.status = "active"
 
-    credentials = list((await session.scalars(
-        select(ProviderCredential).where(
-            func.lower(func.trim(ProviderCredential.login_identifier)) == normalized_login
-        )
-    )).all())
+    credentials = list(
+        (
+            await session.scalars(
+                select(ProviderCredential).where(
+                    func.lower(func.trim(ProviderCredential.login_identifier))
+                    == normalized_login
+                )
+            )
+        ).all()
+    )
     if len(credentials) > 1:
-        raise RuntimeError("Multiple credentials exist for the normalized demo provider login")
+        raise RuntimeError(
+            "Multiple credentials exist for the normalized demo provider login"
+        )
     credential = credentials[0] if credentials else None
     credential_created = credential is None
     if credential is None:
@@ -194,11 +211,15 @@ async def seed_provider(
         session.add(credential)
     else:
         if credential.provider_id != provider.id:
-            raise RuntimeError("Demo credential is bound to a different provider identity")
+            raise RuntimeError(
+                "Demo credential is bound to a different provider identity"
+            )
         if credential.login_identifier != normalized_login:
             credential.login_identifier = normalized_login
         if reset_password:
-            credential.password_hash = hash_provider_password(require_demo_provider_password())
+            credential.password_hash = hash_provider_password(
+                require_demo_provider_password()
+            )
             credential.failed_login_attempts = 0
             credential.locked_until = None
             credential.password_changed_at = datetime.now(timezone.utc)
@@ -297,7 +318,9 @@ async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> No
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Seed the canonical Nexa Care demo provider")
+    parser = argparse.ArgumentParser(
+        description="Seed the canonical Nexa Care demo provider"
+    )
     parser.add_argument("--reset-password", action="store_true")
     parser.add_argument("--confirm-demo-provider-reset", action="store_true")
     parser.add_argument("--reactivate-provider", action="store_true")
@@ -308,8 +331,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "password reset requires both --reset-password and "
             "--confirm-demo-provider-reset"
         )
-    if (args.reactivate_provider or args.reactivate_credential) and not args.reset_password:
-        parser.error("reactivation flags are allowed only during an explicit password reset")
+    if (
+        args.reactivate_provider or args.reactivate_credential
+    ) and not args.reset_password:
+        parser.error(
+            "reactivation flags are allowed only during an explicit password reset"
+        )
     return args
 
 
@@ -333,13 +360,19 @@ async def main(argv: list[str] | None = None) -> int:
             if provider_result.password_reset:
                 await revoke_provider_auth_sessions(provider_id)
                 audited = await append_audit_log(
+                    audit_context=AuditContext.for_hospital(
+                        hospital_id=str(hospital_id),
+                        domain=AuditDomain.AUTH,
+                    ),
                     actor_uid="DEMO_PROVIDER_RESET_TOOL",
                     event_type="PROVIDER_PASSWORD_RESET",
                     target_id=str(provider_id),
                     status="SUCCESS",
                 )
                 if not audited:
-                    raise RuntimeError("Audit write failed; demo provider password reset aborted")
+                    raise RuntimeError(
+                        "Audit write failed; demo provider password reset aborted"
+                    )
 
             # Patient 1: Aarav Sharma (NFC card holder)
             await seed_nfc_card(session, DEMO_PATIENT_1_ID, provider_id)
@@ -358,7 +391,9 @@ async def main(argv: list[str] | None = None) -> int:
     print("=" * 72)
     print(f"provider={'created' if provider_result.provider_created else 'reused'}")
     print(f"credential={'created' if provider_result.credential_created else 'reused'}")
-    print(f"affiliation={'created' if provider_result.affiliation_created else 'reused'}")
+    print(
+        f"affiliation={'created' if provider_result.affiliation_created else 'reused'}"
+    )
     print(f"password={'reset' if provider_result.password_reset else 'unchanged'}")
     print(f"provider_active={str(provider_result.provider_active).lower()}")
     print(f"credential_active={str(provider_result.credential_active).lower()}")

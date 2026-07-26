@@ -10,6 +10,9 @@ from __future__ import annotations
 from app.security.audit_context import AuditDomain, current_audit_context
 
 import logging
+import base64
+import binascii
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -30,6 +33,7 @@ from app.models.patient_records import (
     TimelineEvent,
     Vitals,
 )
+from app.models.provider import HospitalRegistry, ProviderIdentity
 from app.models.provider_context import ProviderContext
 from app.models.shards import NexaVault
 from app.services.crypto_kms import (
@@ -37,11 +41,61 @@ from app.services.crypto_kms import (
     EncryptionError,
     get_encryption_provider,
 )
-from app.observability.audit_ledger import append_audit_log_or_503, read_audit_events
+from app.observability.audit_ledger import (
+    append_audit_log_or_503,
+    read_audit_events,
+    read_patient_access_history_events,
+)
 
 logger = logging.getLogger("nexa_logger")
 
 router = APIRouter(tags=["records"])
+
+_ACCESS_HISTORY_SUCCESS_STATUSES = {
+    "PATIENT_RECORD_READ_SUCCESS": {"SUCCESS"},
+    "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED": {"SUCCESS"},
+    "SNAPSHOT_ACCESSED": {"SUCCESS"},
+    "PATIENT_RECORD_VIEW_COMPLETED": {"COMPLETED", "SUCCESS"},
+}
+_FORMER_PROVIDER_LABEL = "Former or unavailable provider"
+_UNKNOWN_FACILITY_LABEL = "Unknown facility"
+_UNKNOWN_PURPOSE_LABEL = "Purpose not recorded"
+
+
+def _encode_access_history_cursor(row: dict[str, Any]) -> str:
+    payload = json.dumps(
+        {
+            "created_at": str(row["created_at"]),
+            "audit_id": str(row["audit_id"]),
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_access_history_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+    if cursor is None:
+        return None, None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        created_at = datetime.fromisoformat(
+            str(payload["created_at"]).replace("Z", "+00:00")
+        )
+        audit_id = uuid.UUID(str(payload["audit_id"]))
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": "INVALID_ACCESS_HISTORY_CURSOR"},
+        ) from None
+    return created_at.isoformat(), str(audit_id)
 
 
 # ── Pydantic Request Models ──────────────────────────────────────────────────
@@ -203,10 +257,18 @@ async def get_my_access_history(
     limit: int = 20,
     cursor: str | None = None,
     patient_id: str = Depends(require_self_patient_access()),
+    db: AsyncSession = Depends(get_db_session),
 ):
     """Patient views audit ledger history of who accessed their data."""
+    bounded_limit = max(1, min(int(limit), 100))
+    cursor_created_at, cursor_audit_id = _decode_access_history_cursor(cursor)
     try:
-        rows = await read_audit_events(str(patient_id), limit=limit)
+        rows = await read_patient_access_history_events(
+            str(patient_id),
+            limit=bounded_limit + 1,
+            cursor_created_at=cursor_created_at,
+            cursor_audit_id=cursor_audit_id,
+        )
     except Exception as exc:
         logger.error(
             "Patient access history store unavailable",
@@ -217,8 +279,15 @@ async def get_my_access_history(
             detail={"error_code": "AUDIT_HISTORY_UNAVAILABLE"},
         ) from exc
 
-    history = []
-    for r in rows:
+    page_rows = rows[:bounded_limit]
+    next_cursor = (
+        _encode_access_history_cursor(page_rows[-1])
+        if len(rows) > bounded_limit and page_rows
+        else None
+    )
+
+    candidates: list[dict[str, Any]] = []
+    for r in page_rows:
         payload = r.get("payload") if isinstance(r.get("payload"), dict) else {}
         metadata = (
             payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -228,58 +297,148 @@ async def get_my_access_history(
 
         event_type = str(
             r.get("event_type") or payload.get("event") or r.get("event") or ""
+        ).upper()
+        allowed_statuses = _ACCESS_HISTORY_SUCCESS_STATUSES.get(event_type)
+        event_status = str(r.get("status") or payload.get("status") or "").upper()
+        if allowed_statuses is None or event_status not in allowed_statuses:
+            continue
+
+        actor_value = r.get("actor_uid") or payload.get("actor_uid")
+        actor_uid = str(actor_value) if actor_value is not None else ""
+        if metadata.get("access_type") == "self_access":
+            continue
+        is_break_glass = event_type == "BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED"
+        if not is_break_glass and actor_uid == str(patient_id):
+            continue
+
+        candidates.append(
+            {
+                "row": r,
+                "payload": payload,
+                "metadata": metadata,
+                "event_type": event_type,
+                "actor_uid": actor_uid,
+                "hospital_id": str(metadata.get("hospital_id") or ""),
+                "is_break_glass": is_break_glass,
+            }
         )
-        # Filter for read / view / decrypt / break-glass access events
-        if any(
-            kw in event_type.upper()
-            for kw in ("VIEW", "READ", "DECRYPT", "ACCESS", "BREAK_GLASS", "SUMMARY")
-        ):
-            actor_value = r.get("actor_uid") or payload.get("actor_uid")
-            actor_uid = str(actor_value) if actor_value is not None else None
-            doc_name = metadata.get("provider_name") or metadata.get("doctor_name")
-            hosp_name = metadata.get("hospital_name") or metadata.get("hospital")
-            accessed_by = doc_name or actor_uid
-            if accessed_by and hosp_name:
-                accessed_by = f"{accessed_by} ({hosp_name})"
 
-            is_bg = bool(
-                "BREAK_GLASS" in event_type.upper()
-                or metadata.get("is_break_glass")
-                or str(metadata.get("purpose", "")).upper() == "EMERGENCY"
-                or "break_glass" in str(metadata.get("purpose", "")).lower()
-            )
-            purpose = metadata.get("purpose") or r.get("purpose")
-            accessed_at_value = r.get("created_at") or payload.get("timestamp")
-            accessed_at = (
-                str(accessed_at_value) if accessed_at_value is not None else None
-            )
+    provider_ids = {
+        provider_id
+        for candidate in candidates
+        if (provider_id := _as_uuid(candidate["actor_uid"])) is not None
+    }
+    provider_rows = []
+    if provider_ids:
+        provider_result = await db.execute(
+            select(
+                ProviderIdentity.id,
+                ProviderIdentity.display_name,
+                ProviderIdentity.hospital_id,
+            ).where(ProviderIdentity.id.in_(provider_ids))
+        )
+        provider_rows = provider_result.all()
 
-            raw_scope = metadata.get("scope") or metadata.get("data_categories") or []
-            data_categories = (
-                raw_scope if isinstance(raw_scope, list) else [str(raw_scope)]
-            )
+    provider_names: dict[str, str] = {}
+    provider_hospital_ids: dict[str, str] = {}
+    for provider_id, display_name, hospital_id in provider_rows:
+        provider_key = str(provider_id)
+        if display_name and str(display_name).strip():
+            provider_names[provider_key] = str(display_name).strip()
+        if hospital_id is not None:
+            provider_hospital_ids[provider_key] = str(hospital_id)
 
-            history.append(
-                {
-                    "audit_id": str(r.get("audit_id") or r.get("record_hash"))
-                    if (r.get("audit_id") or r.get("record_hash"))
-                    else None,
-                    "accessed_by": accessed_by,
-                    "doctor_name": doc_name,
-                    "hospital_name": hosp_name,
-                    "purpose": purpose,
-                    "accessed_at": accessed_at,
-                    "data_categories": data_categories,
-                    "is_break_glass": is_bg,
-                    "flag": "BREAK_GLASS_ACCESS" if is_bg else "ROUTINE_ACCESS",
-                    "event_type": event_type,
-                }
+    hospital_ids = {
+        hospital_id
+        for candidate in candidates
+        if (
+            hospital_id := _as_uuid(
+                candidate["hospital_id"]
+                or provider_hospital_ids.get(candidate["actor_uid"], "")
             )
+        )
+        is not None
+    }
+    hospital_rows = []
+    if hospital_ids:
+        hospital_result = await db.execute(
+            select(HospitalRegistry.id, HospitalRegistry.display_name).where(
+                HospitalRegistry.id.in_(hospital_ids)
+            )
+        )
+        hospital_rows = hospital_result.all()
+    hospital_names = {
+        str(hospital_id): str(display_name).strip()
+        for hospital_id, display_name in hospital_rows
+        if display_name and str(display_name).strip()
+    }
+
+    history = []
+    seen_operations: set[str] = set()
+    for candidate in candidates:
+        r = candidate["row"]
+        payload = candidate["payload"]
+        metadata = candidate["metadata"]
+        operation_id = metadata.get("audit_transaction_id") or metadata.get(
+            "consent_request_id"
+        )
+        if operation_id:
+            operation_key = str(operation_id)
+            if operation_key in seen_operations:
+                continue
+            seen_operations.add(operation_key)
+
+        actor_uid = candidate["actor_uid"]
+        hospital_id = candidate["hospital_id"] or provider_hospital_ids.get(
+            actor_uid, ""
+        )
+        doctor_name = provider_names.get(actor_uid, _FORMER_PROVIDER_LABEL)
+        hospital_name = hospital_names.get(hospital_id, _UNKNOWN_FACILITY_LABEL)
+        purpose = metadata.get("purpose") or r.get("purpose")
+        if not purpose or not str(purpose).strip():
+            purpose = _UNKNOWN_PURPOSE_LABEL
+        else:
+            purpose = str(purpose).strip()
+        accessed_at_value = r.get("created_at") or payload.get("timestamp")
+        accessed_at = str(accessed_at_value) if accessed_at_value is not None else None
+        raw_scope = (
+            metadata.get("scope")
+            or metadata.get("data_categories")
+            or metadata.get("categories")
+            or []
+        )
+        data_categories = raw_scope if isinstance(raw_scope, list) else [str(raw_scope)]
+        is_break_glass = candidate["is_break_glass"]
+
+        history.append(
+            {
+                "audit_id": str(r.get("audit_id") or r.get("record_hash"))
+                if (r.get("audit_id") or r.get("record_hash"))
+                else None,
+                "accessed_by": f"{doctor_name} ({hospital_name})",
+                "doctor_name": doctor_name,
+                "hospital_name": hospital_name,
+                "purpose": purpose,
+                "accessed_at": accessed_at,
+                "data_categories": data_categories,
+                "is_break_glass": is_break_glass,
+                "flag": "BREAK_GLASS_ACCESS" if is_break_glass else "ROUTINE_ACCESS",
+                "event_type": candidate["event_type"],
+            }
+        )
 
     return {
         "patient_id": patient_id,
         "access_history": history,
+        "next_cursor": next_cursor,
     }
+
+
+def _as_uuid(value: object) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return None
 
 
 # ── Read Endpoints (Consent-Gated) ───────────────────────────────────────────

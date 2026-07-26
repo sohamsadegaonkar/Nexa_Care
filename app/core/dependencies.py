@@ -21,6 +21,7 @@ from __future__ import annotations
 from app.security.audit_context import (
     AuditDomain,
     bind_trusted_audit_hospital,
+    bind_trusted_audit_tenant,
     current_audit_context,
 )
 
@@ -71,7 +72,9 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
 
     patient_claims = decode_patient_access_token(authorization)
     if patient_claims:
-        return str(patient_claims["patient_id"])
+        patient_id = str(patient_claims["patient_id"])
+        bind_trusted_audit_tenant(patient_id)
+        return patient_id
 
     session_context = await validate_session_context(authorization)
     if not session_context:
@@ -97,7 +100,9 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
             status_code=401, detail="Session is not scoped to a patient"
         )
 
-    return masked_internal_id
+    patient_id = str(masked_internal_id)
+    bind_trusted_audit_tenant(patient_id)
+    return patient_id
 
 
 _provider_bearer_scheme = HTTPBearer(auto_error=False)

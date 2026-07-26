@@ -12,6 +12,7 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from urllib.request import urlopen
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
@@ -50,9 +51,24 @@ async def run_preflight() -> bool:
         all_go = False
 
     try:
-        response = TestClient(app, base_url="http://localhost").get("/health")
-        print(f"api_health_status={response.status_code}")
-        all_go = response.status_code == 200 and all_go
+        api_base_url = os.getenv(
+            "NEXA_CARE_API_BASE_URL",
+            "http://localhost:8000",
+        ).rstrip("/")
+
+        def check_api_health() -> int:
+            if "NEXA_CARE_API_BASE_URL" not in os.environ:
+                return (
+                    TestClient(app, base_url="http://localhost")
+                    .get("/health")
+                    .status_code
+                )
+            with urlopen(f"{api_base_url}/health", timeout=10) as response:
+                return response.status
+
+        api_health_status = await asyncio.to_thread(check_api_health)
+        print(f"api_health_status={api_health_status}")
+        all_go = api_health_status == 200 and all_go
     except Exception:
         print("api_health_status=unavailable")
         all_go = False
@@ -63,14 +79,19 @@ async def run_preflight() -> bool:
     else:
         try:
             async with get_session_factory()() as db:
-                result = await db.execute(select(PatientDeviceKey).where(
-                    PatientDeviceKey.patient_id == uuid.UUID(DEMO_PATIENT_ID),
-                    PatientDeviceKey.status == "active",
-                ).limit(1))
+                result = await db.execute(
+                    select(PatientDeviceKey)
+                    .where(
+                        PatientDeviceKey.patient_id == uuid.UUID(DEMO_PATIENT_ID),
+                        PatientDeviceKey.status == "active",
+                    )
+                    .limit(1)
+                )
                 device = result.scalar_one_or_none()
             print(
                 f"physical_device_check=active device_id={redact(str(device.id))}"
-                if device else "physical_device_check=missing"
+                if device
+                else "physical_device_check=missing"
             )
             all_go = device is not None and all_go
         except Exception:
