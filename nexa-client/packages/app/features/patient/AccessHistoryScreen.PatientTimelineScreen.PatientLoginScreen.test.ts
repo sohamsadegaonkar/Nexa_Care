@@ -10,13 +10,19 @@ function screenSource(name: string): string {
 }
 
 describe('patient screen viewport contracts', () => {
-  it('keeps Access History bounded and fills empty states', () => {
+  it('keeps Access History virtualized with controls inside the scrolling footer', () => {
     const source = screenSource('AccessHistoryScreen')
 
-    expect(source).toMatch(/<ScrollView\s+f=\{1\}/)
-    expect(source).toContain('flexGrow: 1')
+    expect(source).toContain('<FlatList')
+    expect(source).toContain('flexGrow: history.length === 0 ? 1 : undefined')
+    expect(source).toContain('ListFooterComponent')
+    expect(source).toContain('Load older records')
+    expect(source).toContain('View Health Timeline')
+    expect(source).toContain('useFocusEffect')
+    expect(source).toContain('response?.data ??')
+    expect(source).toContain('No provider has accessed your records yet.')
+    expect(source).toContain('paddingBottom: insets.bottom + 32')
     expect(source).toMatch(/<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"/)
-    expect(source).toContain('borderTopColor="$borderColor"')
   })
 
   it('keeps the timeline bounded with its footer outside the scroll view', () => {

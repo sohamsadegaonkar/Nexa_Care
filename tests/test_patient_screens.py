@@ -30,6 +30,17 @@ EXPO_ROOT_LAYOUT_PATH = ROOT / "nexa-client" / "apps" / "expo" / "app" / "_layou
 EXPO_PATIENT_LAYOUT_PATH = (
     ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
 )
+HOME_SCREEN_PATH = (
+    ROOT / "nexa-client" / "packages" / "app" / "features" / "home" / "screen.tsx"
+)
+PATIENT_RESET_HOOK_PATH = (
+    ROOT
+    / "nexa-client"
+    / "packages"
+    / "app"
+    / "hooks"
+    / "useResetToPatientAccessHistory.ts"
+)
 
 SCREENS = [
     "PatientLoginScreen",
@@ -330,6 +341,25 @@ class TestPatientNativeViewportConfiguration:
             assert "flex: 1" in code
             assert "backgroundColor: '#FFFFFF'" in code
 
+    def test_root_navigator_hides_its_header_for_patient_routes(self) -> None:
+        code = EXPO_ROOT_LAYOUT_PATH.read_text(encoding="utf-8")
+        patient_screen = code.split('name="patient"', 1)[1]
+        assert "headerShown: false" in patient_screen
+
+    def test_home_screen_is_keyboard_safe_and_removes_template_sheet(self) -> None:
+        code = HOME_SCREEN_PATH.read_text(encoding="utf-8")
+        assert "KeyboardAvoidingView" in code
+        assert "useSafeAreaInsets" in code
+        assert 'keyboardShouldPersistTaps="handled"' in code
+        assert "paddingBottom: insets.bottom + 32" in code
+        assert "SheetDemo" not in code
+
+    def test_patient_history_reset_uses_common_actions(self) -> None:
+        code = PATIENT_RESET_HOOK_PATH.read_text(encoding="utf-8")
+        assert "CommonActions.reset" in code
+        assert "useCallback" in code
+        assert "routes: [{ name: 'access-history' }]" in code
+
 
 class TestSecureDeviceScreen:
     def test_uses_device_enrollment_service(self) -> None:
@@ -415,6 +445,17 @@ class TestConsentRequestScreen:
         code = _read_screen("ConsentRequestScreen")
         assert "consentSigning" in code, "Must import from consentSigning service"
 
+    def test_terminal_requests_fail_closed_and_controls_scroll(self) -> None:
+        code = _read_screen("ConsentRequestScreen")
+        assert "challenge.status !== 'pending'" in code
+        assert "useResetToPatientAccessHistory" in code
+        assert "dismissAll" not in code
+        assert "useSafeAreaInsets" in code
+        assert 'keyboardShouldPersistTaps="handled"' in code
+        scroll_end = code.rindex("</ScrollView>")
+        assert code.index("onPress={handleApprove}") < scroll_end
+        assert code.index("onPress={handleDeny}") < scroll_end
+
 
 class TestBiometricApprovalScreen:
     def test_blocks_approval_if_signing_fails(self) -> None:
@@ -467,6 +508,11 @@ class TestBiometricApprovalScreen:
         code = _read_screen("BiometricApprovalScreen")
         assert "expired" in code.lower(), "Must handle expired challenge"
 
+    def test_success_shows_result_without_dispatching_pop_to_top(self) -> None:
+        code = _read_screen("BiometricApprovalScreen")
+        assert "pathname: '/patient/approval-result'" in code
+        assert "dismissAll" not in code
+
 
 class TestApprovalResultScreen:
     def test_shows_expiry_and_revoke_action(self) -> None:
@@ -497,6 +543,12 @@ class TestApprovalResultScreen:
             "expired" in code.lower() or "Request Expired" in code
         ), "Must handle expired state"
 
+    def test_terminal_actions_reset_to_access_history(self) -> None:
+        code = _read_screen("ApprovalResultScreen")
+        assert "useResetToPatientAccessHistory" in code
+        assert "resetToAccessHistory" in code
+        assert "dismissAll" not in code
+
 
 class TestAccessHistoryScreen:
     def test_renders_empty_state(self) -> None:
@@ -507,13 +559,14 @@ class TestAccessHistoryScreen:
 
     def test_scroll_and_empty_states_fill_available_screen(self) -> None:
         code = _read_screen("AccessHistoryScreen")
-        assert re.search(r"<ScrollView\s+f=\{1\}", code)
+        assert "<FlatList" in code
         assert "flexGrow: 1" in code
+        assert "ListFooterComponent" in code
+        assert "paddingBottom: insets.bottom + 32" in code
         assert re.search(
             r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
             code,
         )
-        assert 'borderTopColor="$borderColor"' in code
 
     def test_renders_loading_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -532,6 +585,12 @@ class TestAccessHistoryScreen:
     def test_fetches_via_get_access_history(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "access-history" in code, "Must fetch access history via apiClient"
+
+    def test_can_load_older_access_history_pages(self) -> None:
+        code = _read_screen("AccessHistoryScreen")
+        assert "next_cursor" in code
+        assert "Load older records" in code
+        assert "encodeURIComponent(cursor)" in code
 
     def test_flags_break_glass_accesses(self) -> None:
         code = _read_screen("AccessHistoryScreen")

@@ -97,6 +97,56 @@ _READ_FOR_TARGET_SQL = text(
     LIMIT :limit
     """
 )
+_READ_PATIENT_ACCESS_HISTORY_SQL = text(
+    """
+    WITH visible_events AS (
+        SELECT audit_id, trace_id, actor_id AS actor_uid, action AS event_type,
+               resource AS target_resource_id, status, details AS payload,
+               previous_hash, record_hash, created_at, timestamp,
+               chain_scope, protocol_version, sequence_number,
+               COALESCE(
+                   details #>> '{metadata,audit_transaction_id}',
+                   details #>> '{metadata,consent_request_id}',
+                   audit_id::text
+               ) AS operation_key
+        FROM public.audit_ledger
+        WHERE resource = :target_id
+          AND actor_id <> :target_id
+          AND COALESCE(details #>> '{metadata,access_type}', '') <> 'self_access'
+          AND (
+              (action IN (
+                  'PATIENT_RECORD_READ_SUCCESS',
+                  'BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED',
+                  'SNAPSHOT_ACCESSED'
+              ) AND status = 'SUCCESS')
+              OR (action = 'PATIENT_RECORD_VIEW_COMPLETED'
+                  AND status IN ('COMPLETED', 'SUCCESS'))
+          )
+    ),
+    deduplicated AS (
+        SELECT *,
+               ROW_NUMBER() OVER (
+                   PARTITION BY operation_key
+                   ORDER BY created_at DESC, audit_id DESC
+               ) AS operation_rank
+        FROM visible_events
+    )
+    SELECT audit_id, trace_id, actor_uid, event_type, target_resource_id,
+           status, payload, previous_hash, record_hash, created_at, timestamp,
+           chain_scope, protocol_version, sequence_number
+    FROM deduplicated
+    WHERE operation_rank = 1
+      AND (
+          CAST(:cursor_created_at AS TIMESTAMPTZ) IS NULL
+          OR (created_at, audit_id) < (
+              CAST(:cursor_created_at AS TIMESTAMPTZ),
+              CAST(:cursor_audit_id AS UUID)
+          )
+      )
+    ORDER BY created_at DESC, audit_id DESC
+    LIMIT :limit
+    """
+)
 _MARK_UNHEALTHY_SQL = text(
     "UPDATE public.audit_chain_heads SET is_healthy = FALSE, updated_at = now() WHERE chain_partition = :chain_partition"
 )
@@ -441,6 +491,28 @@ async def read_audit_events(target_id: str, *, limit: int = 50) -> list[dict[str
     async with get_async_engine().connect() as connection:
         result = await connection.execute(
             _READ_FOR_TARGET_SQL, {"target_id": str(target_id), "limit": bounded_limit}
+        )
+        return [dict(row) for row in result.mappings().all()]
+
+
+async def read_patient_access_history_events(
+    target_id: str,
+    *,
+    limit: int,
+    cursor_created_at: str | None = None,
+    cursor_audit_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Read the patient-visible provider-access projection before pagination."""
+    bounded_limit = max(1, min(int(limit), 201))
+    async with get_async_engine().connect() as connection:
+        result = await connection.execute(
+            _READ_PATIENT_ACCESS_HISTORY_SQL,
+            {
+                "target_id": str(target_id),
+                "limit": bounded_limit,
+                "cursor_created_at": cursor_created_at,
+                "cursor_audit_id": cursor_audit_id,
+            },
         )
         return [dict(row) for row in result.mappings().all()]
 

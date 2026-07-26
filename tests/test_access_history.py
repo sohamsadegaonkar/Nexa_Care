@@ -47,7 +47,7 @@ async def test_patient_self_access_events_are_excluded():
     ]
     db = AsyncMock()
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=rows),
     ):
         result = await get_my_access_history(patient_id=patient_id, db=db)
@@ -76,7 +76,7 @@ async def test_refreshing_access_history_does_not_create_another_visible_card():
         _result((hospital_id, "Registry Hospital")),
     ]
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=rows),
     ):
         result = await get_my_access_history(patient_id=patient_id, db=db)
@@ -94,7 +94,7 @@ async def test_provider_access_has_registry_provider_hospital_and_purpose():
         _result((hospital_id, "Registry Hospital")),
     ]
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=[_provider_access_row(provider_id, hospital_id)]),
     ):
         result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
@@ -122,7 +122,7 @@ async def test_failed_started_denied_validation_and_consent_requests_are_exclude
     ]
     db = AsyncMock()
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=rows),
     ):
         result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
@@ -151,7 +151,7 @@ async def test_break_glass_access_remains_clearly_flagged():
         _result((hospital_id, "Emergency Hospital")),
     ]
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=[row]),
     ):
         result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
@@ -172,7 +172,7 @@ async def test_legacy_missing_identities_use_explicit_fallback_labels():
     }
     db = AsyncMock()
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=[row]),
     ):
         result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
@@ -203,7 +203,7 @@ async def test_one_provider_operation_produces_one_transparency_entry():
         _result((hospital_id, "Registry Hospital")),
     ]
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(return_value=[first, duplicate]),
     ):
         result = await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
@@ -212,9 +212,64 @@ async def test_one_provider_operation_produces_one_transparency_entry():
 
 
 @pytest.mark.asyncio
+async def test_access_history_paginates_filtered_entries_with_an_opaque_cursor():
+    patient_id = str(uuid.uuid4())
+    rows = [
+        _provider_access_row(
+            "legacy-provider",
+            "",
+            audit_id=str(uuid.uuid4()),
+            created_at=f"2026-07-2{day}T10:00:00+00:00",
+        )
+        for day in (6, 5, 4)
+    ]
+    reader = AsyncMock(side_effect=[rows, [rows[2]]])
+    db = AsyncMock()
+
+    with patch(
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
+        new=reader,
+    ):
+        first = await get_my_access_history(limit=2, patient_id=patient_id, db=db)
+        second = await get_my_access_history(
+            limit=2,
+            cursor=first["next_cursor"],
+            patient_id=patient_id,
+            db=db,
+        )
+
+    assert [entry["audit_id"] for entry in first["access_history"]] == [
+        rows[0]["audit_id"],
+        rows[1]["audit_id"],
+    ]
+    assert first["next_cursor"]
+    assert [entry["audit_id"] for entry in second["access_history"]] == [
+        rows[2]["audit_id"]
+    ]
+    assert second["next_cursor"] is None
+    assert reader.await_args_list[0].kwargs["limit"] == 3
+    assert (
+        reader.await_args_list[1].kwargs["cursor_created_at"] == rows[1]["created_at"]
+    )
+    assert reader.await_args_list[1].kwargs["cursor_audit_id"] == rows[1]["audit_id"]
+
+
+@pytest.mark.asyncio
+async def test_access_history_rejects_an_invalid_cursor():
+    with pytest.raises(HTTPException) as exc:
+        await get_my_access_history(
+            cursor="not-a-valid-cursor",
+            patient_id=str(uuid.uuid4()),
+            db=AsyncMock(),
+        )
+
+    assert exc.value.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_patient_access_history_store_failure_returns_503():
     with patch(
-        "app.api.v2.patient_record_routes.read_audit_events",
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(side_effect=RuntimeError()),
     ):
         with pytest.raises(HTTPException) as exc:

@@ -1,7 +1,8 @@
-import { useRouter, useLocalSearchParams } from 'expo-router'
+import { useLocalSearchParams } from 'expo-router'
 import { YStack, H2, Paragraph, Button, Text, XStack, Separator } from 'tamagui'
 import { useState, useEffect } from 'react'
 import { NexaApiClient } from '../../utils/apiClient'
+import { useResetToPatientAccessHistory } from '../../hooks/useResetToPatientAccessHistory'
 
 /**
  * Approval result screen — shows approved / denied / expired state.
@@ -14,7 +15,7 @@ import { NexaApiClient } from '../../utils/apiClient'
  */
 
 export default function ApprovalResultScreen() {
-  const router = useRouter()
+  const resetToAccessHistory = useResetToPatientAccessHistory()
   const params = useLocalSearchParams<{
     requestId?: string
     decision?: string
@@ -33,6 +34,10 @@ export default function ApprovalResultScreen() {
   const [remaining, setRemaining] = useState('')
   const [revoking, setRevoking] = useState(false)
   const [revokeError, setRevokeError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (isExpired) resetToAccessHistory()
+  }, [isExpired, resetToAccessHistory])
 
   // Countdown timer for approved grants
   useEffect(() => {
@@ -62,7 +67,7 @@ export default function ApprovalResultScreen() {
     setRevokeError(null)
     try {
       await NexaApiClient.revokeApprovedAccess(params.requestId)
-      router.replace('/patient/access-history')
+      resetToAccessHistory()
     } catch (error) {
       setRevokeError(
         error instanceof Error ? error.message : 'Unable to revoke access. Please try again.'
@@ -102,7 +107,7 @@ export default function ApprovalResultScreen() {
           theme="blue"
           size="$4"
           mt="$2"
-          onPress={() => router.replace('/patient/access-history')}
+          onPress={resetToAccessHistory}
         >
           Go to Access History
         </Button>
@@ -240,7 +245,7 @@ export default function ApprovalResultScreen() {
           <Button
             theme="blue"
             size="$4"
-            onPress={() => router.replace('/patient/access-history')}
+            onPress={resetToAccessHistory}
           >
             View Access History
           </Button>
@@ -300,7 +305,7 @@ export default function ApprovalResultScreen() {
         theme="blue"
         size="$4"
         mt="$2"
-        onPress={() => router.replace('/patient/access-history')}
+        onPress={resetToAccessHistory}
       >
         Go to Access History
       </Button>

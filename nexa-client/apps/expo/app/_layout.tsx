@@ -15,8 +15,7 @@ import {
 } from 'app/services/currentDeviceEnrollment'
 
 export const unstable_settings = {
-  // Ensure that reloading on `/user` keeps a back button present.
-  initialRouteName: 'Home',
+  initialRouteName: 'index',
 }
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
@@ -92,7 +91,16 @@ function RootLayoutNav() {
               backgroundColor: '#FFFFFF',
             },
           }}
-        />
+        >
+          <Stack.Screen
+            name="index"
+            options={{ title: 'Nexa Care' }}
+          />
+          <Stack.Screen
+            name="patient"
+            options={{ headerShown: false }}
+          />
+        </Stack>
       </ThemeProvider>
     </Provider>
   )

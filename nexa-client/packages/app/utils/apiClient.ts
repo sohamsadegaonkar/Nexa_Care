@@ -399,14 +399,35 @@ function statusCode(status: number): string {
 }
 
 function diagnostic(method: string, path: string, fields: Record<string, unknown>): void {
-  if (process.env.NODE_ENV !== 'production') {
-    const status = typeof fields.status === 'number' ? fields.status : null
-    const handledClientFailure = status !== null && status >= 400 && status < 500
-    const expectedAuthFailure =
-      status === 401 || fields.code === 'AUTH_REQUIRED' || fields.code === 'REAUTH_REQUIRED'
-    const log = handledClientFailure || expectedAuthFailure ? console.warn : console.error
-    log('API_REQUEST_ERROR', { method, path, ...fields })
+  if (process.env.NODE_ENV === 'production') return
+
+  const status = typeof fields.status === 'number' ? fields.status : null
+  const handledClientFailure = status !== null && status >= 400 && status < 500
+  const expectedAuthFailure =
+    status === 401 ||
+    status === 403 ||
+    fields.code === 'AUTH_REQUIRED' ||
+    fields.code === 'REAUTH_REQUIRED'
+
+  const safePath = path.replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+    ':id'
+  )
+
+  const message = JSON.stringify({
+    method,
+    path: safePath,
+    status,
+    code: fields.code ?? null,
+    retryable: fields.retryable ?? false,
+  })
+
+  if (handledClientFailure || expectedAuthFailure) {
+    console.warn(`API_REQUEST_REJECTED ${message}`)
+    return
   }
+
+  console.error(`API_REQUEST_ERROR ${message}`)
 }
 
 export type ReAuthHandler = () => void

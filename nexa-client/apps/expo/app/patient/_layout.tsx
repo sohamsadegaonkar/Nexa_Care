@@ -1,5 +1,9 @@
 import { Stack } from 'expo-router'
 
+export const unstable_settings = {
+  initialRouteName: 'access-history',
+}
+
 export default function PatientLayout() {
   return (
     <Stack

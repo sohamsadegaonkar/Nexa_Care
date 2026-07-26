@@ -1,6 +1,7 @@
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import { YStack, H2, Paragraph, Button, Text, ScrollView, XStack, Separator, Spinner } from 'tamagui'
 import { useState, useEffect, useCallback } from 'react'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   classifyConsentError,
   fetchChallenge,
@@ -8,6 +9,7 @@ import {
   type ConsentChallenge,
 } from '../../services/consentSigning'
 import { denyWithSignature } from '../../services/consentSigning'
+import { useResetToPatientAccessHistory } from '../../hooks/useResetToPatientAccessHistory'
 
 /**
  * Consent request review screen.
@@ -25,6 +27,8 @@ interface ConsentRequestScreenProps {
 
 export default function ConsentRequestScreen({ initialChallenge }: ConsentRequestScreenProps) {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
+  const resetToAccessHistory = useResetToPatientAccessHistory()
   const params = useLocalSearchParams<{ requestId?: string }>()
   const requestId = params.requestId ?? ''
 
@@ -46,6 +50,10 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
       try {
         const data = await fetchChallenge(requestId)
         if (cancelled) return
+        if (data.status !== 'pending') {
+          resetToAccessHistory()
+          return
+        }
         setChallenge(data)
         if (isChallengeExpired(data)) {
           setExpired(true)
@@ -68,7 +76,14 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
     load()
     return () => { cancelled = true }
-  }, [initialChallenge, requestId, router])
+  }, [initialChallenge, requestId, resetToAccessHistory, router])
+
+  useEffect(() => {
+    if (!challenge) return
+    if (challenge.status !== 'pending' || expired) {
+      resetToAccessHistory()
+    }
+  }, [challenge, expired, resetToAccessHistory])
 
   // Countdown timer
   const updateCountdown = useCallback(() => {
@@ -92,27 +107,21 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
   // Approve → navigate to biometric approval screen
   const handleApprove = () => {
+    if (!challenge || challenge.status !== 'pending' || expired) return
     router.push({
       pathname: '/patient/biometric-approval',
-      params: { requestId: challenge?.request_id ?? requestId },
+      params: { requestId: challenge.request_id },
     })
   }
 
   // Deny → sign denial and submit (no biometric required per WS2)
   const handleDeny = async () => {
-    if (!challenge) return
+    if (!challenge || challenge.status !== 'pending' || expired) return
     setDenying(true)
     setError(null)
     try {
       await denyWithSignature(challenge)
-      router.replace({
-        pathname: '/patient/approval-result',
-        params: {
-          requestId: challenge.request_id,
-          decision: 'denied',
-          providerName: challenge.provider_name,
-        },
-      })
+      resetToAccessHistory()
     } catch {
       setError('Failed to deny request. Please try again.')
     } finally {
@@ -141,7 +150,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
         <Paragraph col="$colorSubdued" ta="center" size="$4">
           {error ?? 'This consent request has expired. No action is needed.'}
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.replace('/patient/access-history')}>
+        <Button theme="blue" size="$4" onPress={resetToAccessHistory}>
           Go to Access History
         </Button>
       </YStack>
@@ -158,7 +167,16 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
   // ── Render: Active challenge ─────────────────────────────────────────
   return (
     <YStack f={1} bg="$background">
-      <ScrollView contentContainerStyle={{ padding: 16, gap: 16 }}>
+      <ScrollView
+        f={1}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator
+        contentContainerStyle={{
+          padding: 16,
+          paddingBottom: insets.bottom + 32,
+          gap: 16,
+        }}
+      >
         <YStack gap="$2" ai="center" mt="$2">
           <Text fontSize={44}>📋</Text>
           <H2 col="$color" ta="center">Access Request</H2>
@@ -223,9 +241,11 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
           Access duration: {accessMinutes} minute{accessMinutes !== 1 ? 's' : ''}.
           Data requested: {scopeItems.join(', ')}. Approve only if you recognize this request.
         </Paragraph>
-      </ScrollView>
 
-      <YStack p="$4" gap="$3" bg="$background">
+        {error !== null ? (
+          <Text col="$red10" ta="center" size="$3">{error}</Text>
+        ) : null}
+
         <Button
           size="$4"
           bg="$green9"
@@ -246,11 +266,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
         >
           {denying ? 'Denying...' : 'Deny'}
         </Button>
-      </YStack>
-
-      {error !== null ? (
-        <Text col="$red10" ta="center" size="$3" px="$4">{error}</Text>
-      ) : null}
+      </ScrollView>
     </YStack>
   )
 }

@@ -10,6 +10,9 @@ from __future__ import annotations
 from app.security.audit_context import AuditDomain, current_audit_context
 
 import logging
+import base64
+import binascii
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -38,7 +41,11 @@ from app.services.crypto_kms import (
     EncryptionError,
     get_encryption_provider,
 )
-from app.observability.audit_ledger import append_audit_log_or_503, read_audit_events
+from app.observability.audit_ledger import (
+    append_audit_log_or_503,
+    read_audit_events,
+    read_patient_access_history_events,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -53,6 +60,42 @@ _ACCESS_HISTORY_SUCCESS_STATUSES = {
 _FORMER_PROVIDER_LABEL = "Former or unavailable provider"
 _UNKNOWN_FACILITY_LABEL = "Unknown facility"
 _UNKNOWN_PURPOSE_LABEL = "Purpose not recorded"
+
+
+def _encode_access_history_cursor(row: dict[str, Any]) -> str:
+    payload = json.dumps(
+        {
+            "created_at": str(row["created_at"]),
+            "audit_id": str(row["audit_id"]),
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+
+def _decode_access_history_cursor(cursor: str | None) -> tuple[str | None, str | None]:
+    if cursor is None:
+        return None, None
+    try:
+        padded = cursor + "=" * (-len(cursor) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+        created_at = datetime.fromisoformat(
+            str(payload["created_at"]).replace("Z", "+00:00")
+        )
+        audit_id = uuid.UUID(str(payload["audit_id"]))
+    except (
+        KeyError,
+        TypeError,
+        ValueError,
+        UnicodeDecodeError,
+        binascii.Error,
+        json.JSONDecodeError,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": "INVALID_ACCESS_HISTORY_CURSOR"},
+        ) from None
+    return created_at.isoformat(), str(audit_id)
 
 
 # ── Pydantic Request Models ──────────────────────────────────────────────────
@@ -217,8 +260,15 @@ async def get_my_access_history(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Patient views audit ledger history of who accessed their data."""
+    bounded_limit = max(1, min(int(limit), 100))
+    cursor_created_at, cursor_audit_id = _decode_access_history_cursor(cursor)
     try:
-        rows = await read_audit_events(str(patient_id), limit=limit)
+        rows = await read_patient_access_history_events(
+            str(patient_id),
+            limit=bounded_limit + 1,
+            cursor_created_at=cursor_created_at,
+            cursor_audit_id=cursor_audit_id,
+        )
     except Exception as exc:
         logger.error(
             "Patient access history store unavailable",
@@ -229,8 +279,15 @@ async def get_my_access_history(
             detail={"error_code": "AUDIT_HISTORY_UNAVAILABLE"},
         ) from exc
 
+    page_rows = rows[:bounded_limit]
+    next_cursor = (
+        _encode_access_history_cursor(page_rows[-1])
+        if len(rows) > bounded_limit and page_rows
+        else None
+    )
+
     candidates: list[dict[str, Any]] = []
-    for r in rows:
+    for r in page_rows:
         payload = r.get("payload") if isinstance(r.get("payload"), dict) else {}
         metadata = (
             payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
@@ -373,6 +430,7 @@ async def get_my_access_history(
     return {
         "patient_id": patient_id,
         "access_history": history,
+        "next_cursor": next_cursor,
     }
 
 
