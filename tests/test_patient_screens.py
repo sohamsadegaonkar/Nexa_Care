@@ -354,11 +354,11 @@ class TestPatientNativeViewportConfiguration:
         assert "paddingBottom: insets.bottom + 32" in code
         assert "SheetDemo" not in code
 
-    def test_patient_history_reset_uses_common_actions(self) -> None:
+    def test_patient_history_reset_uses_navigation_reset(self) -> None:
         code = PATIENT_RESET_HOOK_PATH.read_text(encoding="utf-8")
-        assert "CommonActions.reset" in code
+        assert "rootNavigation.reset" in code
         assert "useCallback" in code
-        assert "routes: [{ name: 'access-history' }]" in code
+        assert "name: 'access-history'" in code
 
 
 class TestSecureDeviceScreen:
@@ -554,15 +554,15 @@ class TestAccessHistoryScreen:
     def test_renders_empty_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert (
-            "No one has accessed your records yet" in code
-        ), "Must render empty state: 'No one has accessed your records yet.'"
+            "No provider has accessed your records yet" in code
+        ), "Must render the explicit provider-access empty state."
 
     def test_scroll_and_empty_states_fill_available_screen(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "<FlatList" in code
-        assert "flexGrow: 1" in code
+        assert "flexGrow: history.length === 0 ? 1 : 0" in code
         assert "ListFooterComponent" in code
-        assert "paddingBottom: insets.bottom + 32" in code
+        assert "paddingBottom: insets.bottom + 24" in code
         assert re.search(
             r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
             code,
@@ -570,7 +570,7 @@ class TestAccessHistoryScreen:
 
     def test_renders_loading_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
-        assert "Loading history" in code, "Must render loading state"
+        assert "Loading access history" in code, "Must render loading state"
 
     def test_renders_error_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -635,20 +635,21 @@ class TestPatientTimelineScreen:
 
     def test_scroll_and_empty_states_fill_available_screen(self) -> None:
         code = _read_screen("PatientTimelineScreen")
-        assert re.search(r"<ScrollView\s+f=\{1\}", code)
-        assert "flexGrow: 1" in code
-        assert "paddingBottom: 32" in code
+        assert "<SectionList" in code
+        assert "<ScrollView" not in code
+        assert "flexGrow: sections.length === 0 ? 1 : 0" in code
+        assert "paddingBottom: insets.bottom + 96" in code
         assert re.search(
             r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
             code,
         )
 
-    def test_footer_remains_outside_flexible_scroll_view(self) -> None:
+    def test_footer_remains_outside_flexible_section_list(self) -> None:
         code = _read_screen("PatientTimelineScreen")
-        scroll_end = code.index("</ScrollView>")
+        list_end = code.index("/>", code.index("<SectionList"))
         footer = code.index("← Access History")
-        assert scroll_end < footer
-        assert re.search(r"<ScrollView\s+f=\{1\}", code)
+        assert list_end < footer
+        assert "<SectionList" in code
 
     def test_renders_error_state(self) -> None:
         code = _read_screen("PatientTimelineScreen")

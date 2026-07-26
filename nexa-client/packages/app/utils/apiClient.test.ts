@@ -143,17 +143,31 @@ describe('shared API transport', () => {
   })
 
   it('attaches bearer authentication and the hospital UUID to consent requests', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      request_id: 'request-1', challenge_nonce: 'nonce', expires_in_seconds: 300, status: 'pending',
-    }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: 'request-1',
+          challenge_nonce: 'nonce',
+          expires_in_seconds: 300,
+          status: 'pending',
+        }),
+        { status: 201, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
     vi.stubGlobal('fetch', fetchMock)
     const { NexaApiClient, setAuthTokenProvider } = await loadClient()
     setAuthTokenProvider(() => 'provider-session-token')
 
-    await NexaApiClient.requestConsent({
-      patient_id: 'patient-1', provider_id: 'provider-1', purpose: 'treatment',
-      scope: 'clinical', access_duration_seconds: 900,
-    }, 'hospital-1')
+    await NexaApiClient.requestConsent(
+      {
+        patient_id: 'patient-1',
+        provider_id: 'provider-1',
+        purpose: 'treatment',
+        scope: 'clinical',
+        access_duration_seconds: 900,
+      },
+      'hospital-1'
+    )
 
     const [url, init] = fetchMock.mock.calls[0]
     expect(url).toBe('https://native.example.test/api/v2/consent/request')
@@ -162,9 +176,16 @@ describe('shared API transport', () => {
   })
 
   it('attaches bearer authentication and the hospital UUID to consent status polling', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      request_id: 'request-1', status: 'pending', responded_at: null,
-    }), { status: 200, headers: { 'Content-Type': 'application/json' } }))
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: 'request-1',
+          status: 'pending',
+          responded_at: null,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
     vi.stubGlobal('fetch', fetchMock)
     const { NexaApiClient, setAuthTokenProvider } = await loadClient()
     setAuthTokenProvider(() => 'provider-session-token')
@@ -178,14 +199,16 @@ describe('shared API transport', () => {
   })
 
   it('revokes approved access through the authenticated patient endpoint', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(
-      JSON.stringify({
-        request_id: 'request/with space',
-        status: 'revoked',
-        revoked_at: '2026-07-26T00:00:00+00:00',
-      }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    ))
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          request_id: 'request/with space',
+          status: 'revoked',
+          revoked_at: '2026-07-26T00:00:00+00:00',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
     vi.stubGlobal('fetch', fetchMock)
     const { NexaApiClient, setAuthTokenProvider } = await loadClient()
     setAuthTokenProvider(() => 'patient-session')
@@ -199,7 +222,7 @@ describe('shared API transport', () => {
         headers: expect.objectContaining({
           Authorization: 'Bearer patient-session',
         }),
-      }),
+      })
     )
   })
 
@@ -218,7 +241,8 @@ describe('shared API transport', () => {
   })
 
   it('classifies a true transport failure without exposing the request body', async () => {
-    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Network request failed')))
     const { apiClient } = await loadClient()
 
@@ -230,13 +254,17 @@ describe('shared API transport', () => {
       )
     ).rejects.toMatchObject({ status: 0, code: 'NETWORK_ERROR' })
 
-    const diagnostics = JSON.stringify(consoleSpy.mock.calls)
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('API_REQUEST_RETRYABLE'))
+    const diagnostics = JSON.stringify(warnSpy.mock.calls)
     expect(diagnostics).toContain('/api/v2/auth/otp/send')
     expect(diagnostics).not.toContain('+919876543210')
     expect(diagnostics).not.toContain('123456')
   })
 
   it('classifies a timeout separately', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
     vi.stubGlobal(
       'fetch',
       vi.fn().mockImplementation(
@@ -253,15 +281,19 @@ describe('shared API transport', () => {
     await expect(
       apiClient.post('/api/v2/auth/otp/send', {}, { noAuth: true, timeoutMs: 5 })
     ).rejects.toMatchObject({ status: 0, code: 'REQUEST_TIMEOUT' })
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('API_REQUEST_RETRYABLE'))
   })
 
   it('rejects a malformed successful response', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('not-json', { status: 200 })))
     const { apiClient } = await loadClient()
 
     await expect(apiClient.get('/health', { noAuth: true })).rejects.toMatchObject({
       code: 'MALFORMED_RESPONSE',
     })
+    expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('API_REQUEST_ERROR'))
   })
 
   it('fails an authenticated request locally when the current token is missing', async () => {
@@ -278,13 +310,13 @@ describe('shared API transport', () => {
   })
 
   it('reads the latest token for every request instead of caching one at module load', async () => {
-    const fetchMock = vi.fn().mockImplementation(async () => new Response(
-      JSON.stringify({ ok: true }),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      },
-    ))
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    )
     vi.stubGlobal('fetch', fetchMock)
     const { apiClient, setAuthTokenProvider } = await loadClient()
     let token = 'first-session'
@@ -302,15 +334,20 @@ describe('shared API transport', () => {
     const responses = [
       { detail: 'Multi-factor authentication required.', mfa_token: 'pending-token' },
       {
-        access_token: 'provider-token', token_type: 'bearer',
-        expires_at: '2099-01-01T00:00:00Z', provider_uid: 'provider-1',
+        access_token: 'provider-token',
+        token_type: 'bearer',
+        expires_at: '2099-01-01T00:00:00Z',
+        provider_uid: 'provider-1',
         hospital_id: 'hospital-1',
       },
     ]
-    const fetchMock = vi.fn().mockImplementation(async () => new Response(
-      JSON.stringify(responses.shift()),
-      { status: 200, headers: { 'Content-Type': 'application/json' } },
-    ))
+    const fetchMock = vi.fn().mockImplementation(
+      async () =>
+        new Response(JSON.stringify(responses.shift()), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+    )
     vi.stubGlobal('fetch', fetchMock)
     const { NexaApiClient } = await loadClient()
 

@@ -15,6 +15,7 @@ import binascii
 import json
 import uuid
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -260,19 +261,52 @@ async def get_my_access_history(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Patient views audit ledger history of who accessed their data."""
+    endpoint_started = perf_counter()
     bounded_limit = max(1, min(int(limit), 100))
     cursor_created_at, cursor_audit_id = _decode_access_history_cursor(cursor)
     try:
+        connection_started = perf_counter()
+        await db.connection()
+        logger.info(
+            "Patient access history timing",
+            extra={
+                "operation": "db_connection",
+                "duration_ms": round((perf_counter() - connection_started) * 1000, 2),
+                "row_count": 0,
+            },
+        )
+        query_started = perf_counter()
         rows = await read_patient_access_history_events(
+            db,
             str(patient_id),
             limit=bounded_limit + 1,
             cursor_created_at=cursor_created_at,
             cursor_audit_id=cursor_audit_id,
         )
+        logger.info(
+            "Patient access history timing",
+            extra={
+                "operation": "audit_query",
+                "duration_ms": round((perf_counter() - query_started) * 1000, 2),
+                "row_count": len(rows),
+            },
+        )
     except Exception as exc:
+        try:
+            await db.rollback()
+        except Exception as rollback_exc:
+            logger.warning(
+                "Patient access history rollback failed",
+                extra={"error_type": type(rollback_exc).__name__},
+            )
         logger.error(
             "Patient access history store unavailable",
-            extra={"error_type": type(exc).__name__},
+            extra={
+                "operation": "audit_query",
+                "duration_ms": round((perf_counter() - endpoint_started) * 1000, 2),
+                "row_count": 0,
+                "error_type": type(exc).__name__,
+            },
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -330,6 +364,7 @@ async def get_my_access_history(
     }
     provider_rows = []
     if provider_ids:
+        provider_lookup_started = perf_counter()
         provider_result = await db.execute(
             select(
                 ProviderIdentity.id,
@@ -338,6 +373,16 @@ async def get_my_access_history(
             ).where(ProviderIdentity.id.in_(provider_ids))
         )
         provider_rows = provider_result.all()
+        logger.info(
+            "Patient access history timing",
+            extra={
+                "operation": "provider_lookup",
+                "duration_ms": round(
+                    (perf_counter() - provider_lookup_started) * 1000, 2
+                ),
+                "row_count": len(provider_rows),
+            },
+        )
 
     provider_names: dict[str, str] = {}
     provider_hospital_ids: dict[str, str] = {}
@@ -361,12 +406,23 @@ async def get_my_access_history(
     }
     hospital_rows = []
     if hospital_ids:
+        hospital_lookup_started = perf_counter()
         hospital_result = await db.execute(
             select(HospitalRegistry.id, HospitalRegistry.display_name).where(
                 HospitalRegistry.id.in_(hospital_ids)
             )
         )
         hospital_rows = hospital_result.all()
+        logger.info(
+            "Patient access history timing",
+            extra={
+                "operation": "hospital_lookup",
+                "duration_ms": round(
+                    (perf_counter() - hospital_lookup_started) * 1000, 2
+                ),
+                "row_count": len(hospital_rows),
+            },
+        )
     hospital_names = {
         str(hospital_id): str(display_name).strip()
         for hospital_id, display_name in hospital_rows
@@ -427,6 +483,14 @@ async def get_my_access_history(
             }
         )
 
+    logger.info(
+        "Patient access history timing",
+        extra={
+            "operation": "total",
+            "duration_ms": round((perf_counter() - endpoint_started) * 1000, 2),
+            "row_count": len(history),
+        },
+    )
     return {
         "patient_id": patient_id,
         "access_history": history,

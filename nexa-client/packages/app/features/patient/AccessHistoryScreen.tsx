@@ -1,7 +1,7 @@
 import { useFocusEffect, useRouter } from 'expo-router'
 import { Button, H2, Paragraph, Spinner, Text, XStack, YStack } from 'tamagui'
-import { useCallback, useState } from 'react'
-import { FlatList } from 'react-native'
+import { useCallback, useRef, useState } from 'react'
+import { FlatList, RefreshControl, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { apiClient } from '../../utils/apiClient'
 
@@ -27,175 +27,300 @@ interface AccessHistoryResponse {
   next_cursor: string | null
 }
 
-const FLAG_ICONS: Record<string, string> = {
-  BREAK_GLASS_ACCESS: '🚨',
-  ROUTINE_ACCESS: '👁️',
+type FetchMode = 'refresh' | 'append'
+
+function normalizeAccessHistoryResponse(response: unknown): AccessHistoryResponse {
+  if (response && typeof response === 'object') {
+    const direct = response as Partial<AccessHistoryResponse>
+    if (Array.isArray(direct.access_history)) {
+      return direct as AccessHistoryResponse
+    }
+
+    const data = (response as { data?: unknown }).data
+    if (data && typeof data === 'object') {
+      const wrapped = data as Partial<AccessHistoryResponse>
+      if (Array.isArray(wrapped.access_history)) {
+        return wrapped as AccessHistoryResponse
+      }
+    }
+  }
+
+  throw new Error('INVALID_ACCESS_HISTORY_RESPONSE')
+}
+
+const HUMANIZED_VALUES: Record<string, string> = {
+  treatment: 'Treatment',
+  diagnostic_review: 'Diagnostic review',
+  follow_up: 'Follow-up',
+  emergency_care: 'Emergency care',
+  clinical_summary: 'Clinical summary',
+  lab_results: 'Lab results',
+}
+
+function humanizeValue(value: string): string {
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return 'Not recorded'
+  return (
+    HUMANIZED_VALUES[normalized] ??
+    normalized.replace(/_/g, ' ').replace(/\b\w/g, (character) => character.toUpperCase())
+  )
+}
+
+function formatExactTimestamp(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Time unavailable'
+
+  const datePart = new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+  const timePart = new Intl.DateTimeFormat('en-IN', {
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+  })
+    .format(date)
+    .replace(/\b(am|pm)\b/i, (period) => period.toUpperCase())
+  return `${datePart} · ${timePart}`
+}
+
+function formatRelativeTimestamp(value: string): string {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Time unavailable'
+
+  const differenceMs = Date.now() - date.getTime()
+  if (differenceMs < 0) return 'Just now'
+
+  const minutes = Math.floor(differenceMs / 60_000)
+  const hours = Math.floor(differenceMs / 3_600_000)
+  const days = Math.floor(differenceMs / 86_400_000)
+
+  if (minutes < 1) return 'Just now'
+  if (minutes < 60) return `${minutes} min ago`
+  if (hours < 24) return `${hours} hr ago`
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`
+  return formatExactTimestamp(value)
 }
 
 export default function AccessHistoryScreen({ history: initialHistory }: AccessHistoryScreenProps) {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const [history, setHistory] = useState<AccessHistoryEntry[]>(initialHistory ?? [])
-  const [loading, setLoading] = useState(!initialHistory)
+  const [initialLoading, setInitialLoading] = useState(initialHistory === undefined)
+  const [refreshing, setRefreshing] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const historyRef = useRef(initialHistory ?? [])
+  const requestInFlightRef = useRef(false)
 
-  const fetchHistory = useCallback(async (cursor?: string) => {
-    if (cursor) setLoadingMore(true)
-    else setLoading(true)
-    setError(null)
+  const fetchHistory = useCallback(
+    async ({ mode, cursor }: { mode: FetchMode; cursor?: string }) => {
+      if (requestInFlightRef.current) return
+      requestInFlightRef.current = true
+      const hasExistingHistory = historyRef.current.length > 0
+      if (mode === 'append') setLoadingMore(true)
+      else if (hasExistingHistory) setRefreshing(true)
+      else setInitialLoading(true)
+      setError(null)
 
-    try {
-      const path = cursor
-        ? `/api/v2/patient/me/access-history?cursor=${encodeURIComponent(cursor)}`
-        : '/api/v2/patient/me/access-history'
-      const response = await apiClient.get<AccessHistoryResponse>(path)
-      const payload =
-        response?.data ?? (response as unknown as AccessHistoryResponse | null | undefined)
-      const entries = Array.isArray(payload?.access_history) ? payload.access_history : []
-      setHistory((current) => {
-        if (!cursor) return entries
-        const existingIds = new Set(current.map((entry) => entry.audit_id))
-        return [...current, ...entries.filter((entry) => !existingIds.has(entry.audit_id))]
-      })
-      setNextCursor(typeof payload?.next_cursor === 'string' ? payload.next_cursor : null)
-    } catch {
-      setError('Failed to load access history.')
-    } finally {
-      if (cursor) setLoadingMore(false)
-      else setLoading(false)
-    }
-  }, [])
+      try {
+        const path =
+          mode === 'append' && cursor
+            ? `/api/v2/patient/me/access-history?cursor=${encodeURIComponent(cursor)}`
+            : '/api/v2/patient/me/access-history'
+        const response = (await apiClient.get<AccessHistoryResponse>(path)) as unknown
+        const payload = normalizeAccessHistoryResponse(response)
+        const entries = payload.access_history
+        if (
+          entries.some(
+            (entry) =>
+              !entry ||
+              typeof entry !== 'object' ||
+              typeof entry.audit_id !== 'string' ||
+              !entry.audit_id.trim()
+          )
+        ) {
+          throw new Error('INVALID_ACCESS_HISTORY_RESPONSE')
+        }
+
+        let nextHistory = entries
+        if (mode === 'append') {
+          const existingIds = new Set(historyRef.current.map((entry) => entry.audit_id))
+          nextHistory = [
+            ...historyRef.current,
+            ...entries.filter((entry) => !existingIds.has(entry.audit_id)),
+          ]
+        }
+        historyRef.current = nextHistory
+        setHistory(nextHistory)
+        setNextCursor(typeof payload.next_cursor === 'string' ? payload.next_cursor : null)
+        setError(null)
+      } catch (caught) {
+        setError(
+          caught instanceof Error && caught.message === 'INVALID_ACCESS_HISTORY_RESPONSE'
+            ? 'Access history returned an invalid response.'
+            : 'Failed to load access history.'
+        )
+      } finally {
+        requestInFlightRef.current = false
+        setInitialLoading(false)
+        setRefreshing(false)
+        setLoadingMore(false)
+      }
+    },
+    []
+  )
 
   useFocusEffect(
     useCallback(() => {
-      void fetchHistory()
+      void fetchHistory({ mode: 'refresh' })
     }, [fetchHistory])
   )
 
-  const renderHistoryItem = ({ item: entry }: { item: AccessHistoryEntry }) => (
-    <YStack
-      bg="$backgroundHover"
-      br="$4"
-      p="$3"
-      gap="$2"
-    >
-      <XStack
-        ai="center"
-        gap="$2"
-        fw="wrap"
+  const renderHistoryItem = ({ item }: { item: AccessHistoryEntry }) => {
+    const accessLabel = item.is_break_glass ? 'Emergency access' : 'Routine access'
+    const doctorName = item.doctor_name?.trim() || 'Former or unavailable provider'
+    const hospitalName = item.hospital_name?.trim() || 'Unknown facility'
+    const purpose = humanizeValue(item.purpose || '')
+    const exactTimestamp = formatExactTimestamp(item.accessed_at)
+    const relativeTimestamp = formatRelativeTimestamp(item.accessed_at)
+
+    return (
+      <View
+        style={{
+          marginHorizontal: 16,
+          marginVertical: 6,
+        }}
+        collapsable={false}
+        accessible
+        accessibilityLabel={`${accessLabel} by ${doctorName} at ${hospitalName} on ${exactTimestamp} for ${purpose}.`}
       >
-        <Text fontSize={16}>
-          {entry.is_break_glass ? FLAG_ICONS.BREAK_GLASS_ACCESS : FLAG_ICONS.ROUTINE_ACCESS}
-        </Text>
-        <Text
-          col="$color"
-          fontWeight="600"
-          size="$4"
+        <YStack
+          minHeight={168}
+          backgroundColor="$backgroundHover"
+          borderRadius="$4"
+          borderWidth={1}
+          borderColor="$borderColor"
+          borderLeftWidth={4}
+          borderLeftColor={item.is_break_glass ? '$red9' : '$blue9'}
+          padding="$4"
+          gap="$3"
         >
-          {entry.is_break_glass ? 'Emergency Access' : 'Data Accessed'}
-        </Text>
-        {entry.is_break_glass ? (
           <XStack
-            bg="$red5"
-            br="$2"
-            px="$2"
-            py="$1"
-            ai="center"
-            gap="$1"
+            alignItems="center"
+            flexWrap="wrap"
+            gap="$2"
           >
-            <Text size="$1">⚠️</Text>
+            <Text fontSize={18}>{item.is_break_glass ? '🚨' : '🛡️'}</Text>
             <Text
-              col="$red10"
-              size="$1"
+              color="$color"
               fontWeight="700"
+              size="$4"
             >
-              BREAK-GLASS
+              {accessLabel}
             </Text>
-          </XStack>
-        ) : null}
-        <Text
-          col="$colorSubdued"
-          size="$2"
-          ml="auto"
-        >
-          {formatTimestamp(entry.accessed_at)}
-        </Text>
-      </XStack>
-
-      <XStack
-        ai="center"
-        gap="$2"
-        fw="wrap"
-      >
-        {entry.doctor_name ? (
-          <Paragraph
-            col="$color"
-            size="$3"
-            fontWeight="600"
-          >
-            {entry.doctor_name}
-          </Paragraph>
-        ) : null}
-        {entry.doctor_name && entry.hospital_name ? (
-          <Text
-            col="$colorSubdued"
-            size="$2"
-            o={0.4}
-          >
-            •
-          </Text>
-        ) : null}
-        {entry.hospital_name ? (
-          <Paragraph
-            col="$colorSubdued"
-            size="$3"
-          >
-            {entry.hospital_name}
-          </Paragraph>
-        ) : null}
-      </XStack>
-
-      <Paragraph
-        col="$colorSubdued"
-        size="$2"
-        o={0.8}
-      >
-        Purpose: {entry.purpose}
-      </Paragraph>
-
-      {Array.isArray(entry.data_categories) && entry.data_categories.length > 0 ? (
-        <XStack
-          fw="wrap"
-          gap="$1"
-          mt="$1"
-        >
-          {entry.data_categories.map((category) => (
             <YStack
-              key={category}
-              bg="$backgroundFocus"
-              br="$2"
-              px="$2"
-              py="$1"
+              backgroundColor={item.is_break_glass ? '$red5' : '$blue5'}
+              borderRadius="$2"
+              paddingHorizontal="$2"
+              paddingVertical="$1"
             >
               <Text
-                col="$colorSubdued"
+                color={item.is_break_glass ? '$red11' : '$blue11'}
+                fontWeight="700"
                 size="$1"
               >
-                {category}
+                {item.is_break_glass ? 'EMERGENCY ACCESS' : 'ROUTINE'}
               </Text>
             </YStack>
-          ))}
-        </XStack>
-      ) : null}
-    </YStack>
-  )
+            <Text
+              color="$colorSubdued"
+              marginLeft="auto"
+              size="$2"
+            >
+              {relativeTimestamp}
+            </Text>
+          </XStack>
+
+          <YStack gap="$1">
+            <Text
+              color="$color"
+              fontWeight="600"
+              size="$4"
+            >
+              {doctorName}
+            </Text>
+            <Paragraph
+              color="$colorSubdued"
+              size="$3"
+            >
+              {hospitalName}
+            </Paragraph>
+          </YStack>
+
+          <YStack gap="$1">
+            <Text
+              color="$colorSubdued"
+              fontWeight="600"
+              size="$2"
+            >
+              Purpose
+            </Text>
+            <Text
+              color="$color"
+              size="$3"
+            >
+              {purpose}
+            </Text>
+          </YStack>
+
+          {Array.isArray(item.data_categories) && item.data_categories.length > 0 ? (
+            <XStack
+              flexWrap="wrap"
+              gap="$2"
+            >
+              {item.data_categories.map((category, index) => (
+                <YStack
+                  key={`${category}-${index}`}
+                  backgroundColor="$backgroundFocus"
+                  borderRadius="$3"
+                  paddingHorizontal="$2"
+                  paddingVertical="$1"
+                >
+                  <Text
+                    color="$colorSubdued"
+                    size="$2"
+                  >
+                    {humanizeValue(category)}
+                  </Text>
+                </YStack>
+              ))}
+            </XStack>
+          ) : null}
+
+          <XStack
+            alignItems="center"
+            gap="$2"
+          >
+            <Text fontSize={14}>🕒</Text>
+            <Text
+              color="$colorSubdued"
+              size="$2"
+            >
+              {exactTimestamp}
+            </Text>
+          </XStack>
+        </YStack>
+      </View>
+    )
+  }
 
   return (
     <YStack
-      f={1}
-      bg="$background"
+      flex={1}
+      backgroundColor="$background"
     >
       <YStack
         px="$4"
@@ -216,120 +341,148 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
         </Paragraph>
       </YStack>
 
-      <FlatList
-        style={{ flex: 1 }}
-        data={!loading && error === null ? history : []}
-        keyExtractor={(item) => item.audit_id}
-        renderItem={renderHistoryItem}
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{
-          flexGrow: history.length === 0 ? 1 : undefined,
-          padding: 16,
-          paddingBottom: insets.bottom + 32,
-          gap: 12,
-        }}
-        ListEmptyComponent={
-          <YStack
-            f={1}
-            ai="center"
-            jc="center"
-            py="$8"
-            gap="$3"
-          >
-            {loading ? (
-              <>
-                <Spinner
-                  size="large"
-                  color="$blue10"
-                />
+      <View style={{ flex: 1 }}>
+        <FlatList
+          style={{ flex: 1 }}
+          data={history}
+          keyExtractor={(item) => item.audit_id.trim()}
+          renderItem={renderHistoryItem}
+          removeClippedSubviews={false}
+          initialNumToRender={20}
+          windowSize={5}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={() => void fetchHistory({ mode: 'refresh' })}
+            />
+          }
+          contentContainerStyle={{
+            flexGrow: history.length === 0 ? 1 : 0,
+            paddingBottom: insets.bottom + 24,
+          }}
+          ListHeaderComponent={
+            error !== null && history.length > 0 ? (
+              <XStack
+                ai="center"
+                gap="$2"
+                px="$4"
+                pb="$2"
+              >
+                <Text>⚠️</Text>
                 <Paragraph
-                  col="$colorSubdued"
-                  size="$4"
-                >
-                  Loading history...
-                </Paragraph>
-              </>
-            ) : error !== null ? (
-              <>
-                <Text fontSize={36}>⚠️</Text>
-                <Paragraph
+                  f={1}
                   col="$red10"
-                  size="$4"
-                  ta="center"
+                  size="$2"
                 >
                   {error}
                 </Paragraph>
                 <Button
-                  size="$3"
+                  size="$2"
                   chromeless
-                  onPress={() => fetchHistory()}
+                  onPress={() => void fetchHistory({ mode: 'refresh' })}
                 >
                   Retry
                 </Button>
-              </>
-            ) : (
-              <>
-                <Text fontSize={48}>📭</Text>
-                <Paragraph
-                  col="$colorSubdued"
-                  size="$4"
-                  ta="center"
-                >
-                  No provider has accessed your records yet.
-                </Paragraph>
-                <Paragraph
-                  col="$colorSubdued"
-                  size="$3"
-                  ta="center"
-                  o={0.6}
-                >
-                  When a provider accesses your data, it will appear here.
-                </Paragraph>
-              </>
-            )}
-          </YStack>
-        }
-        ListFooterComponent={
-          !loading && error === null ? (
+              </XStack>
+            ) : null
+          }
+          ListEmptyComponent={
             <YStack
+              f={1}
+              ai="center"
+              jc="center"
+              py="$8"
+              px="$4"
               gap="$3"
-              pt="$3"
             >
-              {nextCursor ? (
+              {initialLoading ? (
+                <>
+                  <Spinner
+                    size="large"
+                    color="$blue10"
+                  />
+                  <Paragraph
+                    col="$colorSubdued"
+                    size="$4"
+                  >
+                    Loading access history…
+                  </Paragraph>
+                </>
+              ) : error !== null ? (
+                <>
+                  <Text fontSize={36}>⚠️</Text>
+                  <Paragraph
+                    col="$red10"
+                    size="$4"
+                    ta="center"
+                  >
+                    {error}
+                  </Paragraph>
+                  <Button
+                    size="$3"
+                    chromeless
+                    onPress={() => void fetchHistory({ mode: 'refresh' })}
+                  >
+                    Retry
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Text fontSize={48}>📭</Text>
+                  <Paragraph
+                    col="$colorSubdued"
+                    size="$4"
+                    ta="center"
+                  >
+                    No provider has accessed your records yet.
+                  </Paragraph>
+                  <Paragraph
+                    col="$colorSubdued"
+                    size="$3"
+                    ta="center"
+                    o={0.6}
+                  >
+                    When a provider accesses your data, it will appear here.
+                  </Paragraph>
+                </>
+              )}
+            </YStack>
+          }
+          ListFooterComponent={
+            !initialLoading && error === null && nextCursor ? (
+              <YStack
+                gap="$3"
+                px="$4"
+                pt="$3"
+              >
                 <Button
                   size="$3"
                   chromeless
                   disabled={loadingMore}
-                  onPress={() => fetchHistory(nextCursor)}
+                  onPress={() => void fetchHistory({ mode: 'append', cursor: nextCursor })}
                 >
-                  {loadingMore ? 'Loading older records...' : 'Load older records'}
+                  {loadingMore ? 'Loading older records…' : 'Load older records'}
                 </Button>
-              ) : null}
-              <Button
-                theme="blue"
-                size="$3"
-                onPress={() => router.push('/patient/timeline')}
-              >
-                View Health Timeline
-              </Button>
-            </YStack>
-          ) : null
-        }
-      />
+              </YStack>
+            ) : null
+          }
+        />
+      </View>
+      <YStack
+        flexShrink={0}
+        px="$4"
+        pt="$2"
+        pb={insets.bottom + 12}
+      >
+        <Button
+          theme="blue"
+          size="$3"
+          onPress={() => router.push('/patient/timeline')}
+        >
+          View Health Timeline
+        </Button>
+      </YStack>
     </YStack>
   )
-}
-
-function formatTimestamp(iso: string): string {
-  const date = new Date(iso)
-  const diffMs = Date.now() - date.getTime()
-  const diffMin = Math.floor(diffMs / (1000 * 60))
-  const diffHr = Math.floor(diffMs / (1000 * 60 * 60))
-  const diffDay = Math.floor(diffMs / (1000 * 60 * 60 * 24))
-
-  if (diffMin < 1) return 'Just now'
-  if (diffMin < 60) return `${diffMin}m ago`
-  if (diffHr < 24) return `${diffHr}h ago`
-  if (diffDay < 7) return `${diffDay}d ago`
-  return date.toLocaleDateString()
 }

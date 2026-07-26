@@ -408,6 +408,11 @@ function diagnostic(method: string, path: string, fields: Record<string, unknown
     status === 403 ||
     fields.code === 'AUTH_REQUIRED' ||
     fields.code === 'REAUTH_REQUIRED'
+  const retryableTransportFailure =
+    fields.code === 'REQUEST_TIMEOUT' ||
+    fields.code === 'NETWORK_ERROR' ||
+    fields.code === 'REQUEST_CANCELLED' ||
+    (status !== null && status >= 500 && fields.retryable === true)
 
   const safePath = path.replace(
     /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
@@ -421,6 +426,11 @@ function diagnostic(method: string, path: string, fields: Record<string, unknown
     code: fields.code ?? null,
     retryable: fields.retryable ?? false,
   })
+
+  if (retryableTransportFailure) {
+    console.warn(`API_REQUEST_RETRYABLE ${message}`)
+    return
+  }
 
   if (handledClientFailure || expectedAuthFailure) {
     console.warn(`API_REQUEST_REJECTED ${message}`)
@@ -1077,8 +1087,10 @@ export const apiClient = {
     transport<T>(path, 'POST', body, config) as Promise<R>,
   put: <T, R = ApiResponse<T>, D = unknown>(path: string, body?: D, config?: ApiRequestConfig) =>
     transport<T>(path, 'PUT', body, config) as Promise<R>,
-  patch: <T,>(path: string, body?: unknown, config?: ApiRequestConfig) =>
-    transport<T>(path, 'PATCH', body, config),
-  delete: <T,>(path: string, config?: ApiRequestConfig) =>
-    transport<T>(path, 'DELETE', undefined, config),
+  patch<T>(path: string, body?: unknown, config?: ApiRequestConfig) {
+    return transport<T>(path, 'PATCH', body, config)
+  },
+  delete<T>(path: string, config?: ApiRequestConfig) {
+    return transport<T>(path, 'DELETE', undefined, config)
+  },
 }

@@ -256,8 +256,8 @@ class TestAccessHistoryScreenDetailed:
     def test_empty_state_text(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
         assert (
-            "No one has accessed your records yet" in code
-        ), "Empty state must say 'No one has accessed your records yet.'"
+            "No provider has accessed your records yet" in code
+        ), "Empty state must describe provider access explicitly."
 
     def test_handles_all_event_types(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)

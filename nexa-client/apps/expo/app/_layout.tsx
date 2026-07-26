@@ -13,6 +13,7 @@ import {
   CurrentDeviceError,
   ensureCurrentDeviceEnrollment,
 } from 'app/services/currentDeviceEnrollment'
+import { ApiError } from 'app/utils/apiClient'
 
 export const unstable_settings = {
   initialRouteName: 'index',
@@ -69,7 +70,10 @@ function RootLayoutNav() {
       .catch((error) => {
         if (controller.signal.aborted || process.env.NODE_ENV === 'production') return
         console.warn('PATIENT_DEVICE_SETUP_OR_PUSH_FAILED', {
-          code: error instanceof CurrentDeviceError ? error.code : 'UNKNOWN',
+          code:
+            error instanceof CurrentDeviceError || error instanceof ApiError
+              ? error.code
+              : 'UNKNOWN',
           authState: patientAuth.status,
           hydrated: patientAuth.hydrated,
         })

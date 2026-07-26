@@ -76,6 +76,12 @@ class ExtractionJob(Base, UUIDPrimaryKeyMixin):
         PG_UUID(as_uuid=True), nullable=True, index=True
     )
     uploader_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    authorization_provider_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
+    consent_request_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, index=True
+    )
     document_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("document_storage.id", ondelete="CASCADE"),
@@ -101,6 +107,16 @@ class ExtractionJob(Base, UUIDPrimaryKeyMixin):
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        Index(
+            "ix_extraction_jobs_authorization_binding",
+            "patient_id",
+            "tenant_id",
+            "authorization_provider_id",
+            "consent_request_id",
+        ),
     )
 
 
@@ -129,7 +145,7 @@ class ExtractedFieldRecord(Base, UUIDPrimaryKeyMixin):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     risk_level: Mapped[str] = mapped_column(String(32), nullable=False)
     validation_result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    source_page: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
     source_bbox: Mapped[list | None] = mapped_column(JSONB, nullable=True)
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, default="needs_review"

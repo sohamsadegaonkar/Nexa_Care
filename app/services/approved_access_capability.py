@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core.redis import get_async_redis_client
+from app.security.document_processing_policy import (
+    DOCUMENT_PROCESSING_GRANT_TYPE,
+    DOCUMENT_PROCESSING_PURPOSE,
+    DOCUMENT_PROCESSING_SCOPE,
+    DocumentProcessingOperation,
+    operations_for_grant,
+)
 
 
 CAPABILITY_PREFIX = "consent_access:capability:"
@@ -36,6 +43,8 @@ class ApprovedAccessCapability:
     reason_code: str | None
     issued_at: str
     expires_at: str
+    grant_type: str = "clinical"
+    allowed_operations: tuple[str, ...] = ()
 
 
 def token_hash(token: str) -> str:
@@ -86,13 +95,18 @@ async def issue_from_approved_request(
     token = secrets.token_urlsafe(48)
     digest = token_hash(token)
     scope = str(request_data["scope"])
+    purpose = str(request_data["purpose"])
+    allowed_operations = operations_for_grant(purpose, scope)
+    grant_type = DOCUMENT_PROCESSING_GRANT_TYPE if allowed_operations else "clinical"
     payload = {
         "request_id": str(request_data["request_id"]),
         "provider_id": str(request_data["provider_id"]),
         "hospital_id": str(request_data["hospital_id"]),
         "patient_id": str(request_data["patient_id"]),
-        "purpose": str(request_data["purpose"]),
+        "purpose": purpose,
         "scope": scope,
+        "grant_type": grant_type,
+        "allowed_operations": list(allowed_operations),
         "issued_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
@@ -138,6 +152,8 @@ async def issue_from_approved_request(
         reason_code=None,
         issued_at=payload["issued_at"],
         expires_at=payload["expires_at"],
+        grant_type=grant_type,
+        allowed_operations=allowed_operations,
     )
 
 
@@ -156,15 +172,14 @@ async def invalidate_request(request_id: str) -> None:
         ) from exc
 
 
-async def validate(
+async def _load_live_capability(
     *,
     token: str,
     patient_id: str,
     provider_id: str,
     hospital_id: str,
-    requested_category: str,
 ) -> ApprovedAccessCapability | None:
-    """Validate the hash-addressed grant and its live approved request."""
+    """Load a live capability after all identity, request, and revocation checks."""
     try:
         redis = get_async_redis_client()
         digest = token_hash(token)
@@ -216,9 +231,6 @@ async def validate(
         )
     ):
         return None
-    if not _scope_allows(str(payload.get("scope")), requested_category):
-        return None
-
     return ApprovedAccessCapability(
         patient_id=patient_id,
         clinician_id=provider_id,
@@ -230,4 +242,62 @@ async def validate(
         reason_code=None,
         issued_at=str(payload["issued_at"]),
         expires_at=expires_at.isoformat(),
+        grant_type=str(payload.get("grant_type", "clinical")),
+        allowed_operations=tuple(
+            str(operation)
+            for operation in payload.get("allowed_operations", [])
+            if isinstance(operation, str)
+        ),
     )
+
+
+async def validate(
+    *,
+    token: str,
+    patient_id: str,
+    provider_id: str,
+    hospital_id: str,
+    requested_category: str,
+) -> ApprovedAccessCapability | None:
+    """Validate a routine clinical category without accepting pipeline grants."""
+    capability = await _load_live_capability(
+        token=token,
+        patient_id=patient_id,
+        provider_id=provider_id,
+        hospital_id=hospital_id,
+    )
+    if capability is None or capability.grant_type != "clinical":
+        return None
+    if not _scope_allows(capability.scope[0], requested_category):
+        return None
+    return capability
+
+
+async def validate_document_processing_access(
+    *,
+    token: str,
+    patient_id: str,
+    provider_id: str,
+    hospital_id: str,
+    required_operation: DocumentProcessingOperation,
+    expected_request_id: str | None = None,
+) -> ApprovedAccessCapability | None:
+    """Validate one trusted document-processing operation."""
+    capability = await _load_live_capability(
+        token=token,
+        patient_id=patient_id,
+        provider_id=provider_id,
+        hospital_id=hospital_id,
+    )
+    if capability is None:
+        return None
+    if (
+        capability.purpose != DOCUMENT_PROCESSING_PURPOSE
+        or capability.scope != [DOCUMENT_PROCESSING_SCOPE]
+        or capability.grant_type != DOCUMENT_PROCESSING_GRANT_TYPE
+        or required_operation.value not in capability.allowed_operations
+    ):
+        return None
+    if expected_request_id is not None and capability.request_id != expected_request_id:
+        return None
+    return capability

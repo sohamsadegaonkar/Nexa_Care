@@ -11,10 +11,17 @@ from app.api.v2.patient_record_routes import (
     get_my_access_history,
     get_patient_audit_trail,
 )
+from app.observability.audit_ledger import read_patient_access_history_events
 
 
 def _result(*rows):
     return SimpleNamespace(all=lambda: list(rows))
+
+
+def _mapping_result(*rows):
+    return SimpleNamespace(
+        mappings=lambda: SimpleNamespace(all=lambda: list(rows)),
+    )
 
 
 def _provider_access_row(provider_id, hospital_id, **overrides):
@@ -248,6 +255,7 @@ async def test_access_history_paginates_filtered_entries_with_an_opaque_cursor()
     ]
     assert second["next_cursor"] is None
     assert reader.await_args_list[0].kwargs["limit"] == 3
+    assert reader.await_args_list[0].args[0] is db
     assert (
         reader.await_args_list[1].kwargs["cursor_created_at"] == rows[1]["created_at"]
     )
@@ -268,13 +276,49 @@ async def test_access_history_rejects_an_invalid_cursor():
 
 @pytest.mark.asyncio
 async def test_patient_access_history_store_failure_returns_503():
+    db = AsyncMock()
     with patch(
         "app.api.v2.patient_record_routes.read_patient_access_history_events",
         new=AsyncMock(side_effect=RuntimeError()),
     ):
         with pytest.raises(HTTPException) as exc:
-            await get_my_access_history(patient_id=str(uuid.uuid4()), db=AsyncMock())
+            await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
     assert exc.value.status_code == 503
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_patient_access_history_statement_timeout_returns_503_and_rolls_back():
+    db = AsyncMock()
+    with patch(
+        "app.api.v2.patient_record_routes.read_patient_access_history_events",
+        new=AsyncMock(side_effect=TimeoutError()),
+    ):
+        with pytest.raises(HTTPException) as exc:
+            await get_my_access_history(patient_id=str(uuid.uuid4()), db=db)
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == {"error_code": "AUDIT_HISTORY_UNAVAILABLE"}
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_patient_access_history_reader_reuses_session_and_sets_statement_timeout():
+    row = {"audit_id": str(uuid.uuid4()), "event_type": "PATIENT_RECORD_READ_SUCCESS"}
+    db = AsyncMock()
+    db.execute.side_effect = [_result(), _mapping_result(row)]
+
+    result = await read_patient_access_history_events(
+        db,
+        str(uuid.uuid4()),
+        limit=20,
+    )
+
+    assert result == [row]
+    assert db.execute.await_count == 2
+    timeout_statement = str(db.execute.await_args_list[0].args[0])
+    assert "SET LOCAL statement_timeout = '3000ms'" in timeout_statement
+    assert "FROM public.audit_ledger" in str(db.execute.await_args_list[1].args[0])
 
 
 @pytest.mark.asyncio

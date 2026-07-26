@@ -27,7 +27,7 @@ from fastapi import (
     Request,
     Response,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -533,6 +533,22 @@ class ConsentChallengeRequestPayload(BaseModel):
     purpose: str = "routine_checkup"
     scope: str = "clinical"
     access_duration_seconds: int = 900
+
+    @model_validator(mode="after")
+    def validate_purpose_scope(self):
+        from app.security.document_processing_policy import (
+            DOCUMENT_PROCESSING_PURPOSE,
+            DOCUMENT_PROCESSING_SCOPE,
+        )
+
+        if self.purpose == DOCUMENT_PROCESSING_PURPOSE:
+            if self.scope != DOCUMENT_PROCESSING_SCOPE:
+                raise ValueError("document_processing requires the documents scope")
+        elif self.scope == DOCUMENT_PROCESSING_SCOPE:
+            raise ValueError("documents scope requires the document_processing purpose")
+        elif self.scope not in {"clinical", "full"}:
+            raise ValueError("unsupported consent scope")
+        return self
 
 
 class ConsentChallengeResponsePayload(BaseModel):

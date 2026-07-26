@@ -10,9 +10,10 @@ def test_job_status_loads_job_before_consent_validation():
     start = CODE.index("async def get_extraction_job")
     body = CODE[start : CODE.index("# ── Review queue", start)]
     assert body.index("select(ExtractionJob)") < body.index(
-        "validate_consent_for_patient"
+        "authorize_document_processing"
     )
     assert "patient_id=str(job.patient_id)" in body
+    assert "assert_job_authorization_binding" in body
 
 
 def test_job_status_does_not_read_patient_header_or_query_parameter():
@@ -55,7 +56,8 @@ def test_upload_validates_consent_for_form_patient():
         )
     ]
     assert "patient_id=str(patient_id)" in body
-    assert "validate_consent_for_patient" in body
+    assert "authorize_document_processing" in body
+    assert "DocumentProcessingOperation.UPLOAD_DOCUMENT" in body
 
 
 def test_entity_routes_enforce_provider_hospital_tenant():

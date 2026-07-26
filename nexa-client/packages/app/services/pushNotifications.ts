@@ -23,6 +23,8 @@ export interface PushRegistrationOptions {
 export type ConsentNotificationNavigator = (requestId: string) => void
 
 const CONSENT_CHANNEL_ID = 'consent-requests'
+const PUSH_REGISTRATION_MAX_ATTEMPTS = 3
+const PUSH_REGISTRATION_RETRY_BASE_MS = 250
 let registrationInFlight: { sessionKey: string; promise: Promise<string | null> } | null = null
 let registered: { sessionKey: string; expoPushToken: string } | null = null
 let notificationHandlerConfigured = false
@@ -84,6 +86,42 @@ export async function registerPushToken(
   )
 }
 
+function waitForPushRetry(delayMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve()
+      return
+    }
+    const finish = () => {
+      clearTimeout(timeout)
+      signal?.removeEventListener('abort', finish)
+      resolve()
+    }
+    const timeout = setTimeout(finish, delayMs)
+    signal?.addEventListener('abort', finish, { once: true })
+  })
+}
+
+async function registerPushTokenWithBackoff(
+  expoPushToken: string,
+  signal?: AbortSignal
+): Promise<void> {
+  for (let attempt = 0; attempt < PUSH_REGISTRATION_MAX_ATTEMPTS; attempt += 1) {
+    if (signal?.aborted) return
+    try {
+      await registerPushToken(expoPushToken, signal)
+      return
+    } catch (error) {
+      const mayRetry =
+        error instanceof ApiError &&
+        error.isRetryable &&
+        attempt + 1 < PUSH_REGISTRATION_MAX_ATTEMPTS
+      if (!mayRetry) throw error
+      await waitForPushRetry(PUSH_REGISTRATION_RETRY_BASE_MS * 2 ** attempt, signal)
+    }
+  }
+}
+
 async function performPushRegistration(
   sessionKey: string,
   options: PushRegistrationOptions
@@ -117,7 +155,7 @@ async function performPushRegistration(
   if (registered?.sessionKey === sessionKey && registered.expoPushToken === token) return token
 
   try {
-    await registerPushToken(token, options.signal)
+    await registerPushTokenWithBackoff(token, options.signal)
   } catch (error) {
     if (error instanceof ApiError && error.code === 'AUTH_REQUIRED') return null
     if (error instanceof ApiError && error.status === 401) {

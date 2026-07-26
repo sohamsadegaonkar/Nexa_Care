@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import datetime
+from time import perf_counter
 
 import pytest
 from sqlalchemy import text
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient_policy import PatientPolicy
+from app.observability.audit_ledger import read_patient_access_history_events
 from app.services.audit_outbox_processor import _CLAIM_SQL
 from app.services.policy_service import PolicyService
 
@@ -239,6 +241,24 @@ async def test_runtime_table_schema_contracts(postgres_engine):
             "ix_audit_outbox_expired_lease",
             "ix_audit_outbox_dead_letter",
         } <= indexes
+
+
+@pytest.mark.asyncio
+async def test_access_history_query_completes_promptly_on_real_postgres(
+    postgres_engine,
+):
+    async with postgres_engine.connect() as connection:
+        async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+            started = perf_counter()
+            rows = await read_patient_access_history_events(
+                session,
+                str(uuid.uuid4()),
+                limit=20,
+            )
+            elapsed = perf_counter() - started
+
+    assert rows == []
+    assert elapsed < 1.0
 
 
 @pytest.mark.asyncio

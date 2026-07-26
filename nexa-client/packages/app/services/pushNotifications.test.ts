@@ -159,6 +159,31 @@ describe('authenticated patient push registration', () => {
     expect(mocks.post).toHaveBeenCalledOnce()
   })
 
+  it('retries retryable registration failures with bounded backoff', async () => {
+    mocks.post
+      .mockRejectedValueOnce(new ApiError('Timed out', 0, 'REQUEST_TIMEOUT', true))
+      .mockRejectedValueOnce(new ApiError('Network unavailable', 0, 'NETWORK_ERROR', true))
+      .mockResolvedValueOnce({ data: undefined })
+
+    await expect(registerForPushNotifications()).resolves.toBe('ExpoPushToken[device-a]')
+
+    expect(mocks.post).toHaveBeenCalledTimes(3)
+    expect(mocks.clearSession).not.toHaveBeenCalled()
+  })
+
+  it('does not clear authentication when bounded push retries time out', async () => {
+    mocks.post.mockRejectedValue(new ApiError('Timed out', 0, 'REQUEST_TIMEOUT', true))
+
+    await expect(registerForPushNotifications()).rejects.toMatchObject({
+      code: 'REQUEST_TIMEOUT',
+      status: 0,
+    })
+
+    expect(mocks.post).toHaveBeenCalledTimes(3)
+    expect(mocks.clearSession).not.toHaveBeenCalled()
+    expect(mocks.auth.status).toBe('authenticated')
+  })
+
   it('registers again when the push token changes', async () => {
     await registerForPushNotifications()
     mocks.pushToken = 'ExpoPushToken[device-b]'

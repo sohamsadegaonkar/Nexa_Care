@@ -18,6 +18,7 @@ from app.security.audit_context import AuditDomain, current_audit_context
 
 import logging
 from collections.abc import Callable
+from time import perf_counter
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
@@ -236,6 +237,7 @@ def require_self_patient_access() -> Callable[[Request, str], Any]:
         request: Request,
         session_patient_id: str = Depends(get_scoped_session),
     ) -> str:
+        gate_started = perf_counter()
         target_id = request.path_params.get("patient_id") or request.path_params.get(
             "id"
         )
@@ -255,15 +257,24 @@ def require_self_patient_access() -> Callable[[Request, str], Any]:
                 detail="Patient session token does not match target record.",
             )
 
-        await append_audit_log_or_503(
-            audit_context=current_audit_context(AuditDomain.CONSENT),
-            actor_uid=str(session_patient_id),
-            event_type="PATIENT_RECORD_READ_SUCCESS",
-            target_id=str(session_patient_id),
-            status="SUCCESS",
-            metadata={"access_type": "self_access"},
-        )
-
-        return session_patient_id
+        try:
+            await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.CONSENT),
+                actor_uid=str(session_patient_id),
+                event_type="PATIENT_RECORD_READ_SUCCESS",
+                target_id=str(session_patient_id),
+                status="SUCCESS",
+                metadata={"access_type": "self_access"},
+            )
+            return session_patient_id
+        finally:
+            logger.info(
+                "Patient self-access gate timing",
+                extra={
+                    "operation": "require_self_patient_access",
+                    "duration_ms": round((perf_counter() - gate_started) * 1000, 2),
+                    "row_count": 1,
+                },
+            )
 
     return _self_access_gate

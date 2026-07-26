@@ -34,6 +34,7 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Response,
     UploadFile,
     status,
 )
@@ -41,7 +42,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.consent_gate import require_consent, validate_consent_for_patient
+from app.core.document_processing_gate import (
+    assert_job_authorization_binding,
+    authorize_document_processing,
+)
 from app.core.database import get_db_session, get_session_factory
 from app.core.dependencies import get_current_provider
 from app.models.extracted_field import ExtractedField
@@ -55,6 +59,7 @@ from app.models.pipeline import (
 )
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.security.document_processing_policy import DocumentProcessingOperation
 from app.services.pipeline_orchestrator import process_extraction_job
 from app.services.record_ingestion import ingest_extracted_fields
 from app.services.document_storage import get_document_storage
@@ -178,11 +183,11 @@ async def upload_pipeline_document(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Store an authorized, explicitly patient-bound document before queuing extraction."""
-    capability = await validate_consent_for_patient(
+    capability = await authorize_document_processing(
+        token=x_consent_token,
         patient_id=str(patient_id),
-        purpose="ai_document_ingestion",
         provider=provider,
-        x_consent_token=x_consent_token,
+        operation=DocumentProcessingOperation.UPLOAD_DOCUMENT,
     )
     max_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
     data = await file.read(max_bytes + 1)
@@ -265,6 +270,8 @@ async def upload_pipeline_document(
         patient_id=pid_uuid,
         tenant_id=tenant_id,
         uploader_id=provider.actor_uid,
+        authorization_provider_id=provider.actor_uid,
+        consent_request_id=str(getattr(capability, "request_id", "")),
         document_id=doc_uuid,
         document_type=mime_type,
         status="extraction_pending",
@@ -342,12 +349,14 @@ async def get_extraction_job(
         )
 
     # ALPHA: Derive patient_id server-side from the job entity
-    capability = await validate_consent_for_patient(
+    capability = await authorize_document_processing(
+        token=x_consent_token,
         patient_id=str(job.patient_id),
-        purpose="pipeline_status",
         provider=provider,
-        x_consent_token=x_consent_token,
+        operation=DocumentProcessingOperation.READ_JOB_STATUS,
+        consent_request_id=job.consent_request_id,
     )
+    assert_job_authorization_binding(job=job, capability=capability, provider=provider)
     pid = capability.patient_id
 
     stmt_f = select(ExtractedFieldRecord).where(ExtractedFieldRecord.job_id == job_uuid)
@@ -387,19 +396,98 @@ async def get_extraction_job(
     }
 
 
+@router.get("/jobs/{job_id}/document", status_code=status.HTTP_200_OK)
+async def get_extraction_job_document(
+    job_id: str,
+    provider: ProviderContext = Depends(get_current_provider),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Stream an authorized original document without exposing storage metadata."""
+    job_uuid = _parse_uuid(job_id)
+    job = (
+        await db.execute(select(ExtractionJob).where(ExtractionJob.id == job_uuid))
+    ).scalar_one_or_none()
+    if job is None:
+        raise HTTPException(
+            status_code=404, detail={"error_code": "DOCUMENT_NOT_FOUND"}
+        )
+    capability = await authorize_document_processing(
+        token=x_consent_token,
+        patient_id=str(job.patient_id),
+        provider=provider,
+        operation=DocumentProcessingOperation.READ_DOCUMENT_SOURCE,
+        consent_request_id=job.consent_request_id,
+    )
+    assert_job_authorization_binding(job=job, capability=capability, provider=provider)
+    document = (
+        await db.execute(
+            select(DocumentStorage).where(DocumentStorage.id == job.document_id)
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise HTTPException(
+            status_code=404, detail={"error_code": "DOCUMENT_NOT_FOUND"}
+        )
+    try:
+        content = await get_document_storage().get_document_bytes(
+            document.storage_ref,
+            tenant_id=str(job.tenant_id),
+            patient_id=str(job.patient_id),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "DOCUMENT_STORAGE_UNAVAILABLE"},
+        ) from exc
+    filename = os.path.basename(document.original_filename or "document")
+    await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.PIPELINE),
+        actor_uid=provider.actor_uid,
+        event_type="DOCUMENT_SOURCE_VIEWED",
+        target_id=str(document.id),
+        status="SUCCESS",
+        metadata={
+            "patient_id": str(job.patient_id),
+            "provider_id": provider.actor_uid,
+            "hospital_id": str(job.tenant_id),
+            "consent_request_id": job.consent_request_id,
+            "job_id": str(job.id),
+            "document_id": str(document.id),
+        },
+    )
+    return Response(
+        content=content,
+        media_type=document.content_type,
+        headers={
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 # ── Review queue (client provides patient_id as filter) ─────────────────────
 
 
 @router.get("/review-queue", status_code=status.HTTP_200_OK)
 async def get_review_queue(
-    hospital_id: str | None = None,
     patient_id: str | None = None,
     provider: ProviderContext = Depends(get_current_provider),
-    capability=Depends(require_consent("clinical_review")),
+    x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
     """List flagged extracted fields requiring human steward review."""
-    pid = patient_id or capability.patient_id
+    if not patient_id:
+        raise HTTPException(
+            status_code=422, detail={"error_code": "PATIENT_ID_REQUIRED"}
+        )
+    capability = await authorize_document_processing(
+        token=x_consent_token,
+        patient_id=patient_id,
+        provider=provider,
+        operation=DocumentProcessingOperation.REVIEW_EXTRACTED_FIELDS,
+    )
+    pid = capability.patient_id
     pid_uuid = _parse_uuid(pid)
 
     stmt_q = select(ReviewQueueItem).where(
@@ -407,6 +495,22 @@ async def get_review_queue(
     )
     res_q = await db.execute(stmt_q)
     q_items = res_q.scalars().all()
+    authorized_items = []
+    for queue_item in q_items:
+        job = (
+            await db.execute(
+                select(ExtractionJob).where(ExtractionJob.id == queue_item.job_id)
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            continue
+        try:
+            assert_job_authorization_binding(
+                job=job, capability=capability, provider=provider
+            )
+        except HTTPException:
+            continue
+        authorized_items.append(queue_item)
 
     items = [
         {
@@ -418,7 +522,7 @@ async def get_review_queue(
             "highest_risk_level": "MEDIUM_RISK",
             "queued_at": qi.queued_at.isoformat(),
         }
-        for qi in q_items
+        for qi in authorized_items
     ]
     return {"items": items}
 
@@ -439,14 +543,6 @@ async def review_extracted_field(
     ALPHA: patient_id is derived server-side from the field's parent
     ExtractionJob, not from client-provided values.
     """
-    if not x_consent_token:
-        await validate_consent_for_patient(
-            patient_id=None,
-            purpose="field_adjudication",
-            provider=provider,
-            x_consent_token=x_consent_token,
-        )
-
     f_uuid = _parse_uuid(field_id)
     stmt_f = (
         select(ExtractedFieldRecord)
@@ -475,12 +571,14 @@ async def review_extracted_field(
         raise HTTPException(status_code=404, detail="Extracted field not found")
 
     # ALPHA: Consent validation raises HTTPException on failure
-    await validate_consent_for_patient(
+    capability = await authorize_document_processing(
+        token=x_consent_token,
         patient_id=server_patient_id,
-        purpose="field_adjudication",
         provider=provider,
-        x_consent_token=x_consent_token,
+        operation=DocumentProcessingOperation.ADJUDICATE_EXTRACTED_FIELD,
+        consent_request_id=job.consent_request_id,
     )
+    assert_job_authorization_binding(job=job, capability=capability, provider=provider)
 
     if payload.action is None:
         raise HTTPException(
@@ -695,12 +793,14 @@ async def commit_extraction_job(
         )
 
     # 2. ALPHA: Validate consent using server-derived patient_id (raises on failure)
-    await validate_consent_for_patient(
+    capability = await authorize_document_processing(
+        token=x_consent_token,
         patient_id=str(job.patient_id),
-        purpose="pipeline_commit",
         provider=provider,
-        x_consent_token=x_consent_token,
+        operation=DocumentProcessingOperation.COMMIT_VERIFIED_FIELDS,
+        consent_request_id=job.consent_request_id,
     )
+    assert_job_authorization_binding(job=job, capability=capability, provider=provider)
 
     # 3. Verify payload.patient_id matches the job's actual patient_id
     server_pid = str(job.patient_id)

@@ -28,6 +28,7 @@ from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_async_engine
 from app.core.request_context import trace_id_var
@@ -496,6 +497,7 @@ async def read_audit_events(target_id: str, *, limit: int = 50) -> list[dict[str
 
 
 async def read_patient_access_history_events(
+    db: AsyncSession,
     target_id: str,
     *,
     limit: int,
@@ -504,17 +506,17 @@ async def read_patient_access_history_events(
 ) -> list[dict[str, Any]]:
     """Read the patient-visible provider-access projection before pagination."""
     bounded_limit = max(1, min(int(limit), 201))
-    async with get_async_engine().connect() as connection:
-        result = await connection.execute(
-            _READ_PATIENT_ACCESS_HISTORY_SQL,
-            {
-                "target_id": str(target_id),
-                "limit": bounded_limit,
-                "cursor_created_at": cursor_created_at,
-                "cursor_audit_id": cursor_audit_id,
-            },
-        )
-        return [dict(row) for row in result.mappings().all()]
+    await db.execute(text("SET LOCAL statement_timeout = '3000ms'"))
+    result = await db.execute(
+        _READ_PATIENT_ACCESS_HISTORY_SQL,
+        {
+            "target_id": str(target_id),
+            "limit": bounded_limit,
+            "cursor_created_at": cursor_created_at,
+            "cursor_audit_id": cursor_audit_id,
+        },
+    )
+    return [dict(row) for row in result.mappings().all()]
 
 
 async def append_audit_log_or_503(

@@ -23,7 +23,9 @@ from app.services.approved_access_capability import (
     issue_from_approved_request,
     token_hash,
     validate,
+    validate_document_processing_access,
 )
+from app.security.document_processing_policy import DocumentProcessingOperation
 
 
 class MemoryRedis:
@@ -172,6 +174,69 @@ async def test_capability_is_bound_to_provider_hospital_patient_and_scope():
             },
         ):
             assert await validate(token=token, **kwargs) is None
+
+
+@pytest.mark.asyncio
+async def test_document_processing_operations_are_server_derived_and_separate():
+    redis = MemoryRedis()
+    request = approved_request(
+        purpose="document_processing",
+        scope="documents",
+    )
+    seed_request(redis, request)
+    with patch(
+        "app.services.approved_access_capability.get_async_redis_client",
+        return_value=redis,
+    ):
+        token, capability = await issue_from_approved_request(request_data=request)
+
+        assert capability.grant_type == "document_processing"
+        assert set(capability.allowed_operations) == {
+            operation.value for operation in DocumentProcessingOperation
+        }
+        assert (
+            await validate_document_processing_access(
+                token=token,
+                patient_id="patient-1",
+                provider_id="provider-1",
+                hospital_id="hospital-1",
+                required_operation=DocumentProcessingOperation.UPLOAD_DOCUMENT,
+                expected_request_id="request-1",
+            )
+            is not None
+        )
+        assert (
+            await validate(
+                token=token,
+                patient_id="patient-1",
+                provider_id="provider-1",
+                hospital_id="hospital-1",
+                requested_category="clinical_summary",
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_clinical_grant_cannot_authorize_document_processing():
+    redis = MemoryRedis()
+    request = approved_request()
+    seed_request(redis, request)
+    with patch(
+        "app.services.approved_access_capability.get_async_redis_client",
+        return_value=redis,
+    ):
+        token, _ = await issue_from_approved_request(request_data=request)
+        assert (
+            await validate_document_processing_access(
+                token=token,
+                patient_id="patient-1",
+                provider_id="provider-1",
+                hospital_id="hospital-1",
+                required_operation=DocumentProcessingOperation.UPLOAD_DOCUMENT,
+            )
+            is None
+        )
 
 
 @pytest.mark.asyncio

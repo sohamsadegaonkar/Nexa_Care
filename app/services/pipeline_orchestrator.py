@@ -194,7 +194,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     normalized_value=item["raw_value"],
                     confidence=float(extracted.extraction_confidence),
                     risk_level="MEDIUM_RISK",
-                    source_page=1,
+                    source_page=None,
                     source_document_id=str(job.document_id),
                     status="needs_review",
                 )
