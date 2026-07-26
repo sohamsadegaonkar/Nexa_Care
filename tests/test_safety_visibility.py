@@ -245,8 +245,8 @@ class TestAccessHistoryScreenDetailed:
             "is_break_glass" in code
         ), "Must check is_break_glass field on access entries"
         assert (
-            "BREAK-GLASS" in code
-        ), "Must display BREAK-GLASS warning badge for emergency accesses"
+            "EMERGENCY ACCESS" in code
+        ), "Must display emergency warning badge for break-glass accesses"
 
     def test_break_glass_badge_uses_red(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)
@@ -258,6 +258,9 @@ class TestAccessHistoryScreenDetailed:
         assert (
             "No provider has accessed your records yet" in code
         ), "Empty state must describe provider access explicitly."
+        assert (
+            "When a provider accesses your data, it will appear here." in code
+        ), "Empty state must explain that future provider accesses appear here."
 
     def test_handles_all_event_types(self) -> None:
         code = _read(ACCESS_HISTORY_PATH)

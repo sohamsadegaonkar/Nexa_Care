@@ -143,6 +143,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/patient/{id}/records/documents"),
     ("POST", "/api/v2/pipeline/documents/upload"),
     ("GET", "/api/v2/pipeline/jobs/{job_id}"),
+    ("GET", "/api/v2/pipeline/jobs/{job_id}/document"),
     ("GET", "/api/v2/pipeline/review-queue"),
     ("POST", "/api/v2/pipeline/fields/{field_id}/review"),
     ("POST", "/api/v2/pipeline/fields/{field_id}/approve"),

@@ -356,9 +356,16 @@ class TestPatientNativeViewportConfiguration:
 
     def test_patient_history_reset_uses_navigation_reset(self) -> None:
         code = PATIENT_RESET_HOOK_PATH.read_text(encoding="utf-8")
+        assert "useNavigation('/')" in code
         assert "rootNavigation.reset" in code
         assert "useCallback" in code
+        assert "name: 'patient'" in code
         assert "name: 'access-history'" in code
+        assert "push(" not in code
+        assert "replace(" not in code
+        assert "dismissAll" not in code
+        assert "goBack(" not in code
+        assert "setTimeout" not in code
 
 
 class TestSecureDeviceScreen:
@@ -556,13 +563,24 @@ class TestAccessHistoryScreen:
         assert (
             "No provider has accessed your records yet" in code
         ), "Must render the explicit provider-access empty state."
+        assert (
+            "When a provider accesses your data, it will appear here." in code
+        ), "Empty state must explain where future provider accesses will appear."
 
     def test_scroll_and_empty_states_fill_available_screen(self) -> None:
         code = _read_screen("AccessHistoryScreen")
+        assert "flex={1}" in code
+        assert "<View style={{ flex: 1 }}>" in code
         assert "<FlatList" in code
-        assert "flexGrow: history.length === 0 ? 1 : 0" in code
+        assert "style={{ flex: 1 }}" in code
+        assert "data={history}" in code
+        assert "<ScrollView" not in code
+        assert "removeClippedSubviews={false}" in code
+        assert "collapsable={false}" in code
         assert "ListFooterComponent" in code
         assert "paddingBottom: insets.bottom + 24" in code
+        assert "flexShrink={0}" in code
+        assert code.index("<FlatList") < code.index("View Health Timeline")
         assert re.search(
             r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
             code,
@@ -595,7 +613,7 @@ class TestAccessHistoryScreen:
     def test_flags_break_glass_accesses(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "is_break_glass" in code, "Must check is_break_glass field"
-        assert "BREAK-GLASS" in code, "Must display BREAK-GLASS warning badge"
+        assert "EMERGENCY ACCESS" in code, "Must display emergency warning badge"
 
     def test_shows_hospital_name(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -607,7 +625,9 @@ class TestAccessHistoryScreen:
 
     def test_never_renders_an_orphan_separator_bullet(self) -> None:
         code = _read_screen("AccessHistoryScreen")
-        assert "entry.doctor_name && entry.hospital_name" in code
+        assert "Former or unavailable provider" in code
+        assert "Unknown facility" in code
+        assert "<Text>•</Text>" not in code
 
     def test_shows_data_categories(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -724,8 +744,8 @@ class TestPatientTimelineScreen:
 def test_access_history_api_values_cannot_render_as_raw_native_children() -> None:
     code = _read_screen("AccessHistoryScreen")
     assert "{error &&" not in code
-    assert "{entry.data_categories &&" not in code
-    assert "Array.isArray(entry.data_categories)" in code
+    assert "{item.data_categories &&" not in code
+    assert "Array.isArray(item.data_categories)" in code
 
 
 @pytest.mark.parametrize(
