@@ -639,7 +639,8 @@ class TestProviderAuthMfaFlow:
         """verifyMfa must hydrate the authoritative cookie-backed session."""
         code = _read(DOCTOR_DIR / "ProviderAuthContext.tsx")
         code_norm = _normalize_ws(code)
-        assert "if (!await hydrate())" in code
+        assert "if (!(await hydrate()))" in code
+        assert "throw new Error('Session establishment failed')" in code
         assert (
             code_norm.count("verifyMfa") >= 2
         ), "verifyMfa must appear in both type definition and implementation"
