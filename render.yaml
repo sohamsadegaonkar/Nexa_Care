@@ -1,0 +1,70 @@
+services:
+  - type: web
+    name: nexa-care-api-remote-pilot
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: ENVIRONMENT
+        value: staging
+      - key: ENCRYPTION_BACKEND
+        value: local
+      - key: DATABASE_ECHO_SQL
+        value: "false"
+      - key: MAX_UPLOAD_BYTES
+        value: "20971520"
+      - key: DOCUMENT_EXTRACTION_PROVIDER
+        value: remote
+      - key: DOCUMENT_AI_API_URL
+        sync: false
+      - key: DOCUMENT_AI_API_KEY
+        sync: false
+      - key: DOCUMENT_AI_TIMEOUT_SECONDS
+        value: "30"
+      - key: DOCUMENT_AI_MAX_ATTEMPTS
+        value: "3"
+      - key: DOCUMENT_STORAGE_PROVIDER
+        value: s3
+      - key: DOCUMENT_STORAGE_ENCRYPTION_KEY
+        sync: false
+      - key: DOCUMENT_STORAGE_S3_BUCKET
+        sync: false
+      - key: DOCUMENT_STORAGE_S3_REGION
+        sync: false
+      - key: DOCUMENT_STORAGE_S3_KMS_KEY_ID
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: PUSH_STATUS_TRANSPORT
+        value: poll
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: UPSTASH_REDIS_URL
+        sync: false
+      - key: HANDSHAKE_PEPPER_SECRET
+        sync: false
+      - key: KEK_ROOT_SECRET
+        sync: false
+      - key: MFA_ENCRYPTION_KEY
+        sync: false
+      - key: PII_ENCRYPTION_KEY
+        sync: false
+      - key: PATIENT_JWT_SECRET
+        sync: false
+      - key: OTP_RATE_LIMIT_HMAC_SECRET
+        sync: false
+      - key: TRUSTED_HOSTS
+        sync: false
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
