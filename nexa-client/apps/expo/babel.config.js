@@ -15,9 +15,12 @@ module.exports = (api) => {
           extensions: ['.js', '.jsx', '.tsx', '.ios.js', '.android.js'],
         },
       ],
-      ['transform-inline-environment-variables', {
-        include: ['TAMAGUI_USE_NATIVE_PORTAL'],
-      }],
+      [
+        'transform-inline-environment-variables',
+        {
+          include: ['TAMAGUI_USE_NATIVE_PORTAL'],
+        },
+      ],
     ],
   }
 }

@@ -119,7 +119,10 @@ export type BreakGlassReasonCode =
   | 'SYSTEM_OR_CONSENT_SERVICE_UNAVAILABLE'
   | 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY'
 
-export const BREAK_GLASS_REASON_OPTIONS: ReadonlyArray<{ value: BreakGlassReasonCode; label: string }> = [
+export const BREAK_GLASS_REASON_OPTIONS: ReadonlyArray<{
+  value: BreakGlassReasonCode
+  label: string
+}> = [
   { value: 'UNCONSCIOUS_PATIENT', label: 'Unconscious patient' },
   { value: 'LIFE_THREATENING_EMERGENCY', label: 'Life-threatening emergency' },
   { value: 'PATIENT_UNABLE_TO_CONSENT', label: 'Patient unable to consent' },

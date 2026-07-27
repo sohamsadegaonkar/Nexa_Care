@@ -320,11 +320,7 @@ export function SearchScreen() {
     setOverrideErrorMessage(null)
 
     try {
-      const grant = await requestBreakGlassConsent(
-        selectedPatient.patient_id,
-        reasonCode,
-        freeText
-      )
+      const grant = await requestBreakGlassConsent(selectedPatient.patient_id, reasonCode, freeText)
       const workflowId = generateWorkflowId()
       setCapability({
         workflowId,

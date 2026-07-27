@@ -83,22 +83,14 @@ export async function resolveNfcCard(cardUid: string): Promise<NfcResolveRespons
   const normalizedCardUid = cardUid.trim()
 
   if (!normalizedCardUid) {
-    throw new NfcResolveError(
-      'Card UID is required.',
-      'NFC_RESOLVE_FAILED',
-      false,
-    )
+    throw new NfcResolveError('Card UID is required.', 'NFC_RESOLVE_FAILED', false)
   }
 
   try {
     const data = await NexaApiClient.resolveNfcCard({ card_uid: normalizedCardUid })
 
     // Validate backend response at runtime before trusting it
-    const validated = validateOrThrow(
-      NfcResolveResponseSchema,
-      data,
-      'NFC resolve response',
-    )
+    const validated = validateOrThrow(NfcResolveResponseSchema, data, 'NFC resolve response')
 
     return {
       patient_id: validated.patient_id,
@@ -111,25 +103,20 @@ export async function resolveNfcCard(cardUid: string): Promise<NfcResolveRespons
       throw new NfcResolveError(
         'Server returned an unexpected NFC resolution response. Please try again or contact support.',
         'NFC_SCHEMA_VALIDATION_FAILED',
-        false,
+        false
       )
     }
 
     const status = (err as any)?.status
     if (status === 404) {
-      throw new NfcResolveError(
-        'NFC card not found.',
-        'NFC_CARD_NOT_FOUND',
-        false,
-        status,
-      )
+      throw new NfcResolveError('NFC card not found.', 'NFC_CARD_NOT_FOUND', false, status)
     }
     if (status === 403) {
       throw new NfcResolveError(
         'Card is lost, revoked, or inactive.',
         'NFC_CARD_NOT_FOUND',
         false,
-        status,
+        status
       )
     }
     if (status === 503) {
@@ -137,7 +124,7 @@ export async function resolveNfcCard(cardUid: string): Promise<NfcResolveRespons
         'NFC resolve service is temporarily unavailable.',
         'NFC_RESOLVE_UNAVAILABLE',
         true,
-        status,
+        status
       )
     }
     if (status === 429) {
@@ -145,13 +132,9 @@ export async function resolveNfcCard(cardUid: string): Promise<NfcResolveRespons
         'Too many NFC scan attempts. Please wait.',
         'NFC_RESOLVE_FAILED',
         false,
-        status,
+        status
       )
     }
-    throw new NfcResolveError(
-      'Unable to resolve NFC card.',
-      'NFC_RESOLVE_FAILED',
-      false,
-    )
+    throw new NfcResolveError('Unable to resolve NFC card.', 'NFC_RESOLVE_FAILED', false)
   }
 }

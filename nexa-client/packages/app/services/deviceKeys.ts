@@ -111,7 +111,7 @@ function base64ToBytes(b64: string): Uint8Array {
 /** SHA-256 fingerprint of the raw DER bytes, matching the backend response. */
 export async function fingerprintDevicePublicKey(publicKeyDerBase64: string): Promise<string> {
   const digest = new Uint8Array(
-    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, base64ToBytes(publicKeyDerBase64)),
+    await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, base64ToBytes(publicKeyDerBase64))
   )
   return Array.from(digest, (value) => value.toString(16).padStart(2, '0')).join('')
 }
@@ -124,7 +124,7 @@ async function requireSecureStore(): Promise<void> {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(
-      `Secure storage is unavailable (${detail}). Install a development build that includes expo-secure-store.`,
+      `Secure storage is unavailable (${detail}). Install a development build that includes expo-secure-store.`
     )
   }
 }
@@ -134,7 +134,9 @@ async function generatePrivateKey(): Promise<Uint8Array> {
     const candidate = await Crypto.getRandomBytesAsync(32)
     if (p256.utils.isValidPrivateKey(candidate)) return candidate
   }
-  throw new Error('Unable to generate a valid P-256 private key using the device secure random source.')
+  throw new Error(
+    'Unable to generate a valid P-256 private key using the device secure random source.'
+  )
 }
 
 /**
@@ -200,11 +202,9 @@ export async function generateDeviceKeypair(): Promise<DeviceKeyResult> {
   // Expo Crypto supplies native secure randomness; this avoids relying on
   // crypto.getRandomValues, which is not guaranteed in React Native Hermes.
   const privateKey = await generatePrivateKey()
-  await SecureStore.setItemAsync(
-    DEVICE_PRIVATE_KEY_STORAGE_KEY,
-    bytesToBase64(privateKey),
-    { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY },
-  )
+  await SecureStore.setItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY, bytesToBase64(privateKey), {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  })
 
   const publicKey = p256.getPublicKey(privateKey, false)
   return { publicKeyDerBase64: bytesToBase64(wrapEcPublicKeyAsDer(publicKey)) }
@@ -216,12 +216,10 @@ export async function generateDeviceKeypair(): Promise<DeviceKeyResult> {
  * Uses the shared apiClient — no raw fetch, no axios, no localhost.
  * The private key is NEVER included in this request.
  */
-export async function enrollDevice(
-  params: EnrollDeviceParams,
-): Promise<EnrollDeviceResponse> {
+export async function enrollDevice(params: EnrollDeviceParams): Promise<EnrollDeviceResponse> {
   const { data } = await apiClient.post<EnrollDeviceResponse>(
     '/api/v2/patient/devices/enroll',
-    params as unknown as Record<string, unknown>,
+    params as unknown as Record<string, unknown>
   )
   return data
 }
@@ -233,9 +231,7 @@ export async function enrollDevice(
  * the device's trusted status.  Uses shared apiClient.
  */
 export async function getDevices(): Promise<DevicesListResponse> {
-  const { data } = await apiClient.get<DevicesListResponse>(
-    '/api/v2/patient/devices',
-  )
+  const { data } = await apiClient.get<DevicesListResponse>('/api/v2/patient/devices')
   return data
 }
 
@@ -251,7 +247,7 @@ export async function getDevices(): Promise<DevicesListResponse> {
  */
 export async function generateAndEnrollDevice(
   deviceLabel?: string,
-  onStage?: (stage: DeviceEnrollmentStage) => void,
+  onStage?: (stage: DeviceEnrollmentStage) => void
 ): Promise<EnrollDeviceResponse> {
   await requireSecureStore()
   const enrollmentToken = await SecureStore.getItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
@@ -332,7 +328,19 @@ export async function getDeviceId(): Promise<string | null> {
   return id ?? null
 }
 
-export interface ConsentSigningFields { request_id: string; patient_id: string; provider_id: string; challenge_nonce: string; decision: "approved" | "denied"; scope: string; purpose: string; access_duration: number; issued_at: string; expires_at: string; device_id: string }
+export interface ConsentSigningFields {
+  request_id: string
+  patient_id: string
+  provider_id: string
+  challenge_nonce: string
+  decision: 'approved' | 'denied'
+  scope: string
+  purpose: string
+  access_duration: number
+  issued_at: string
+  expires_at: string
+  device_id: string
+}
 export function constructConsentSigningInput(params: ConsentSigningFields): string {
   return JSON.stringify({
     access_duration: params.access_duration,
@@ -350,14 +358,25 @@ export function constructConsentSigningInput(params: ConsentSigningFields): stri
   })
 }
 export async function authenticateWithBiometrics(): Promise<void> {
-  if (!(await LocalAuthentication.hasHardwareAsync()) || !(await LocalAuthentication.isEnrolledAsync())) throw new Error("Biometric authentication is not available on this device.")
-  const result = await LocalAuthentication.authenticateAsync({ promptMessage: "Confirm your identity to approve this request", fallbackLabel: "Use Passcode", cancelLabel: "Cancel" })
-  if (!result.success) throw new Error("Biometric verification cancelled.")
+  if (
+    !(await LocalAuthentication.hasHardwareAsync()) ||
+    !(await LocalAuthentication.isEnrolledAsync())
+  )
+    throw new Error('Biometric authentication is not available on this device.')
+  const result = await LocalAuthentication.authenticateAsync({
+    promptMessage: 'Confirm your identity to approve this request',
+    fallbackLabel: 'Use Passcode',
+    cancelLabel: 'Cancel',
+  })
+  if (!result.success) throw new Error('Biometric verification cancelled.')
 }
 /** ALPHA: SecureStore-backed JS signing, not hardware-backed non-exportable signing. */
 export async function signConsentChallenge(params: ConsentSigningFields): Promise<string> {
   const encodedPrivateKey = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
-  if (!encodedPrivateKey) throw new Error("This device is not enrolled. Please secure this device before approving consent.")
+  if (!encodedPrivateKey)
+    throw new Error(
+      'This device is not enrolled. Please secure this device before approving consent.'
+    )
   const message = new TextEncoder().encode(constructConsentSigningInput(params))
   const digest = new Uint8Array(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, message))
   return bytesToBase64(p256.sign(digest, base64ToBytes(encodedPrivateKey)).toDERRawBytes())

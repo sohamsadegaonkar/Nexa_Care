@@ -107,9 +107,13 @@ export const ConsentChallengeResponseSchema = z.object({
 export const ConsentStatusResponseSchema = z.object({
   request_id: z.string().min(1, 'request_id must be a non-empty string'),
   status: z.enum(['pending', 'approved', 'denied', 'expired', 'timeout', 'cancelled'], {
-    errorMap: () => ({ message: 'status must be pending, approved, denied, expired, timeout, or cancelled' }),
+    errorMap: () => ({
+      message: 'status must be pending, approved, denied, expired, timeout, or cancelled',
+    }),
   }),
-  doctor_status: z.enum(['pending', 'approved', 'denied', 'expired', 'timeout', 'cancelled', 'delivery_failed']).optional(),
+  doctor_status: z
+    .enum(['pending', 'approved', 'denied', 'expired', 'timeout', 'cancelled', 'delivery_failed'])
+    .optional(),
   delivery_status: z.enum(['queued', 'sent', 'failed', 'unavailable', 'unknown']).optional(),
   delivery_error: z.string().nullable().optional(),
   delivery_attempted_at: z.string().nullable().optional(),
@@ -127,7 +131,9 @@ export const ConsentStatusResponseSchema = z.object({
  */
 export const ConsentCancelResponseSchema = z.object({
   request_id: z.string().min(1, 'request_id must be a non-empty string'),
-  status: z.literal('cancelled', { errorMap: () => ({ message: 'cancel response status must be "cancelled"' }) }),
+  status: z.literal('cancelled', {
+    errorMap: () => ({ message: 'cancel response status must be "cancelled"' }),
+  }),
   cancelled_at: z.string().min(1, 'cancelled_at must be present'),
 })
 
@@ -179,19 +185,13 @@ export function validateOrThrow<T>(schema: z.ZodType<T>, data: unknown, label: s
     return result.data
   }
 
-  const issues = result.error.issues.map(
-    (i) => `${i.path.join('.')}: ${i.message}`,
-  )
+  const issues = result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`)
 
-  console.error(
-    `[SchemaValidation] ${label} validation failed:`,
-    issues,
-  )
+  console.error(`[SchemaValidation] ${label} validation failed:`, issues)
 
   throw new SchemaValidationError(
-    `Backend response validation failed for ${label}. ` +
-    `Issues: ${issues.join('; ')}`,
-    issues,
+    `Backend response validation failed for ${label}. ` + `Issues: ${issues.join('; ')}`,
+    issues
   )
 }
 
@@ -199,10 +199,11 @@ export function validateOrThrow<T>(schema: z.ZodType<T>, data: unknown, label: s
  * Validate a login response, returning a discriminated result.
  * If neither schema matches, throws SchemaValidationError.
  */
-export function validateLoginResponse(data: unknown):
+export function validateLoginResponse(
+  data: unknown
+):
   | { type: 'authenticated'; data: ValidatedLoginSuccess }
-  | { type: 'mfa_required'; data: ValidatedLoginMfaRequired }
-{
+  | { type: 'mfa_required'; data: ValidatedLoginMfaRequired } {
   // Try MFA-required first (has mfa_token field)
   const mfaResult = ProviderLoginMfaRequiredSchema.safeParse(data)
   if (mfaResult.success) {
@@ -216,18 +217,20 @@ export function validateLoginResponse(data: unknown):
   }
 
   // Neither matched — log both sets of issues
-  console.error(
-    '[SchemaValidation] Login response matched neither schema:',
-    { mfaIssues: mfaResult.error.issues, successIssues: successResult.error.issues },
-  )
+  console.error('[SchemaValidation] Login response matched neither schema:', {
+    mfaIssues: mfaResult.error.issues,
+    successIssues: successResult.error.issues,
+  })
 
   throw new SchemaValidationError(
     'Backend login response does not match any expected schema. ' +
-    'This indicates a backend contract change that the frontend has not adapted to.',
+      'This indicates a backend contract change that the frontend has not adapted to.',
     [
       ...mfaResult.error.issues.map((i) => `MFA schema — ${i.path.join('.')}: ${i.message}`),
-      ...successResult.error.issues.map((i) => `Success schema — ${i.path.join('.')}: ${i.message}`),
-    ],
+      ...successResult.error.issues.map(
+        (i) => `Success schema — ${i.path.join('.')}: ${i.message}`
+      ),
+    ]
   )
 }
 

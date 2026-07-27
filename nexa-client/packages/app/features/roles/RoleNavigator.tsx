@@ -23,7 +23,11 @@ interface RoleNavigatorProps {
 
 function PatientRequired({ onBack }: { onBack: () => void }) {
   return (
-    <YStack p="$6" gap="$4" items="center">
+    <YStack
+      p="$6"
+      gap="$4"
+      items="center"
+    >
       <Text>No authorized patient is selected.</Text>
       <Button onPress={onBack}>Return to patient selection</Button>
     </YStack>
@@ -45,15 +49,19 @@ export function RoleNavigator({
       case 'home':
         return <HomeScreen onNavigate={setCurrentScreen} />
       case 'scanner':
-        return (
-          <ScannerScreen
-            onPatientResolved={setActivePatientUuid}
-          />
-        )
+        return <ScannerScreen onPatientResolved={setActivePatientUuid} />
       case 'dashboard':
-        return role !== 'receptionist' ? <DashboardScreen /> : <HomeScreen onNavigate={setCurrentScreen} />
+        return role !== 'receptionist' ? (
+          <DashboardScreen />
+        ) : (
+          <HomeScreen onNavigate={setCurrentScreen} />
+        )
       case 'break-glass':
-        return role === 'clinician' ? <BreakGlassScreen /> : <HomeScreen onNavigate={setCurrentScreen} />
+        return role === 'clinician' ? (
+          <BreakGlassScreen />
+        ) : (
+          <HomeScreen onNavigate={setCurrentScreen} />
+        )
       case 'consent-history':
         return <ConsentHistoryScreen />
       case 'policy':
@@ -70,11 +78,17 @@ export function RoleNavigator({
           />
         )
       case 'merge':
-        return role === 'admin' ? <MergeAdminScreen /> : <HomeScreen onNavigate={setCurrentScreen} />
+        return role === 'admin' ? (
+          <MergeAdminScreen />
+        ) : (
+          <HomeScreen onNavigate={setCurrentScreen} />
+        )
       case 'transparency':
-        return activePatientUuid
-          ? <PatientTransparencyScreen patientUuid={activePatientUuid} />
-          : <PatientRequired onBack={goHome} />
+        return activePatientUuid ? (
+          <PatientTransparencyScreen patientUuid={activePatientUuid} />
+        ) : (
+          <PatientRequired onBack={goHome} />
+        )
       default:
         return <HomeScreen onNavigate={setCurrentScreen} />
     }
@@ -82,9 +96,26 @@ export function RoleNavigator({
 
   return (
     <YStack flex={1}>
-      <XStack gap="$2" p="$2" justify="flex-end">
-        <Button size="$2" onPress={() => void onRoleRefresh()}>Refresh access</Button>
-        <Button size="$2" onPress={() => { setActivePatientUuid(undefined); onLogout() }}>Sign out</Button>
+      <XStack
+        gap="$2"
+        p="$2"
+        justify="flex-end"
+      >
+        <Button
+          size="$2"
+          onPress={() => void onRoleRefresh()}
+        >
+          Refresh access
+        </Button>
+        <Button
+          size="$2"
+          onPress={() => {
+            setActivePatientUuid(undefined)
+            onLogout()
+          }}
+        >
+          Sign out
+        </Button>
       </XStack>
       {renderScreen()}
     </YStack>

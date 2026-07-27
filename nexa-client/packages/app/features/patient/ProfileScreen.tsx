@@ -78,7 +78,9 @@ function DataRow({ label, value }: { label: string; value: string }) {
   )
 }
 
-function mapEmergencySummaryToRecordResponse(data: EmergencySummaryResponse): PatientRecordResponse {
+function mapEmergencySummaryToRecordResponse(
+  data: EmergencySummaryResponse
+): PatientRecordResponse {
   const categories = data.categories ?? {}
   const allergiesCat = categories['allergies']
   const medsCat = categories['active_medications']
@@ -245,18 +247,24 @@ export function ProfileScreen({ patientId, workflowId }: ProfileScreenProps) {
   }
 
   if (state === 'error' || !record) {
-    return <ErrorState message={errorMessage ?? 'Unable to fetch patient record.'} onRetry={loadRecord} />
+    return (
+      <ErrorState
+        message={errorMessage ?? 'Unable to fetch patient record.'}
+        onRetry={loadRecord}
+      />
+    )
   }
 
   const demographics = getDemographics(record)
   const clinical = getClinical(record)
   const patientName = demographics.name ?? demographics.patient_name
   const bloodType = demographics.bloodType ?? demographics.blood_type
-  const contactInfo =
-    demographics.contactInfo ?? demographics.contact_info ?? demographics.phone
+  const contactInfo = demographics.contactInfo ?? demographics.contact_info ?? demographics.phone
   const medications = asList(clinical.medications ?? clinical.prescriptions ?? record.medications)
   const allergies = asList(clinical.allergies ?? record.allergies)
-  const recentDiagnoses = asList(clinical.recentDiagnoses ?? clinical.recent_diagnoses ?? clinical.diagnoses)
+  const recentDiagnoses = asList(
+    clinical.recentDiagnoses ?? clinical.recent_diagnoses ?? clinical.diagnoses
+  )
 
   return (
     <ScrollView
@@ -289,13 +297,28 @@ export function ProfileScreen({ patientId, workflowId }: ProfileScreenProps) {
         </YStack>
 
         {isEmergency && (
-          <Card width="100%" borderWidth={2} borderColor="$red9" bg="$red3" p="$4">
+          <Card
+            width="100%"
+            borderWidth={2}
+            borderColor="$red9"
+            bg="$red3"
+            p="$4"
+          >
             <YStack gap="$1">
-              <Text color="$red11" fontSize={16} fontWeight="900">
+              <Text
+                color="$red11"
+                fontSize={16}
+                fontWeight="900"
+              >
                 EMERGENCY (BREAK-GLASS) ACCESS
               </Text>
-              <Text color="$red11" fontSize={13} fontWeight="600">
-                Showing only the clinical categories approved for this emergency grant. This access is audited.
+              <Text
+                color="$red11"
+                fontSize={13}
+                fontWeight="600"
+              >
+                Showing only the clinical categories approved for this emergency grant. This access
+                is audited.
               </Text>
             </YStack>
           </Card>
@@ -316,10 +339,22 @@ export function ProfileScreen({ patientId, workflowId }: ProfileScreenProps) {
             >
               Demographics
             </Text>
-            <DataRow label="Name" value={getDisplayValue(patientName)} />
-            <DataRow label="Age" value={getDisplayValue(demographics.age)} />
-            <DataRow label="Blood Type" value={getDisplayValue(bloodType)} />
-            <DataRow label="Contact Info" value={getDisplayValue(contactInfo)} />
+            <DataRow
+              label="Name"
+              value={getDisplayValue(patientName)}
+            />
+            <DataRow
+              label="Age"
+              value={getDisplayValue(demographics.age)}
+            />
+            <DataRow
+              label="Blood Type"
+              value={getDisplayValue(bloodType)}
+            />
+            <DataRow
+              label="Contact Info"
+              value={getDisplayValue(contactInfo)}
+            />
           </YStack>
         </Card>
 
@@ -331,9 +366,18 @@ export function ProfileScreen({ patientId, workflowId }: ProfileScreenProps) {
           >
             Clinical Data
           </Text>
-          <ClinicalBlock title="Medications" items={medications} />
-          <ClinicalBlock title="Allergies" items={allergies} />
-          <ClinicalBlock title="Recent Diagnoses" items={recentDiagnoses} />
+          <ClinicalBlock
+            title="Medications"
+            items={medications}
+          />
+          <ClinicalBlock
+            title="Allergies"
+            items={allergies}
+          />
+          <ClinicalBlock
+            title="Recent Diagnoses"
+            items={recentDiagnoses}
+          />
         </YStack>
       </YStack>
     </ScrollView>

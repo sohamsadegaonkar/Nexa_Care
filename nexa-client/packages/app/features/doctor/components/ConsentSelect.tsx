@@ -19,15 +19,33 @@ export function ConsentSelect<T extends ConsentSelectValue>({
 
   return (
     <YStack gap="$2">
-      <Paragraph color="$color11" fontSize={15}>{label}</Paragraph>
-      <Select value={String(value)} onValueChange={handleValueChange} disablePreventBodyScroll>
-        <Select.Trigger id={id} size="$4" iconAfter={ChevronDown} disabled={disabled}>
+      <Paragraph
+        color="$color11"
+        fontSize={15}
+      >
+        {label}
+      </Paragraph>
+      <Select
+        value={String(value)}
+        onValueChange={handleValueChange}
+        disablePreventBodyScroll
+      >
+        <Select.Trigger
+          id={id}
+          size="$4"
+          iconAfter={ChevronDown}
+          disabled={disabled}
+        >
           <Select.Value placeholder={placeholder ?? `Select ${label.toLowerCase()}`} />
         </Select.Trigger>
         <Select.Content>
           <Select.Viewport>
             {options.map((option, index) => (
-              <Select.Item key={String(option.value)} index={index} value={String(option.value)}>
+              <Select.Item
+                key={String(option.value)}
+                index={index}
+                value={String(option.value)}
+              >
                 <Select.ItemText>{option.label}</Select.ItemText>
               </Select.Item>
             ))}

@@ -19,7 +19,16 @@
 'use client'
 
 import {
-  YStack, H2, Paragraph, Button, Text, Spinner, Card, XStack, Separator, ScrollView,
+  YStack,
+  H2,
+  Paragraph,
+  Button,
+  Text,
+  Spinner,
+  Card,
+  XStack,
+  Separator,
+  ScrollView,
 } from '@my/ui'
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
@@ -61,12 +70,30 @@ export function ReviewQueueScreen() {
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$6">🔒 Session Required</Text>
-        <Paragraph color="$color10" fontSize="$3">
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$6"
+        >
+          🔒 Session Required
+        </Text>
+        <Paragraph
+          color="$color10"
+          fontSize="$3"
+        >
           Please log in to view the review queue.
         </Paragraph>
-        <Button theme="blue" onPress={() => router.push('/doctor/login')}>
+        <Button
+          theme="blue"
+          onPress={() => router.push('/doctor/login')}
+        >
           Go to Login
         </Button>
       </YStack>
@@ -104,14 +131,32 @@ export function ReviewQueueScreen() {
   // ── Missing consent token ────────────────────────────────────────────
   if (!consentToken) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
-        <Paragraph color="$color10" fontSize="$3">
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$6"
+        >
+          🔒 Consent Required
+        </Text>
+        <Paragraph
+          color="$color10"
+          fontSize="$3"
+        >
           {workflowId
             ? 'Access session expired — request access again.'
             : 'An active consent grant with clinical review scope is required.'}
         </Paragraph>
-        <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
+        <Button
+          theme="blue"
+          onPress={() => router.push('/doctor/request-consent')}
+        >
           Request Consent
         </Button>
       </YStack>
@@ -119,47 +164,114 @@ export function ReviewQueueScreen() {
   }
 
   return (
-    <YStack flex={1} backgroundColor="$background" padding="$6" gap="$4" maxWidth={900} marginHorizontal="auto">
+    <YStack
+      flex={1}
+      backgroundColor="$background"
+      padding="$6"
+      gap="$4"
+      maxWidth={900}
+      marginHorizontal="auto"
+    >
       {/* ALPHA badge + header */}
-      <XStack alignItems="center" gap="$2">
-        <H2 color="$color12" fontSize="$7">Review Queue</H2>
-        <Card backgroundColor="$orange4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
-          <Text color="$orange10" fontSize="$2" fontWeight="700" textTransform="uppercase">
+      <XStack
+        alignItems="center"
+        gap="$2"
+      >
+        <H2
+          color="$color12"
+          fontSize="$7"
+        >
+          Review Queue
+        </H2>
+        <Card
+          backgroundColor="$orange4"
+          borderRadius="$4"
+          paddingHorizontal="$2"
+          paddingVertical="$1"
+        >
+          <Text
+            color="$orange10"
+            fontSize="$2"
+            fontWeight="700"
+            textTransform="uppercase"
+          >
             ALPHA
           </Text>
         </Card>
       </XStack>
 
-      <Paragraph color="$color10" fontSize="$3">
-        ALPHA · AI-assisted extraction results require clinical verification
-        before commitment.
+      <Paragraph
+        color="$color10"
+        fontSize="$3"
+      >
+        ALPHA · AI-assisted extraction results require clinical verification before commitment.
       </Paragraph>
 
       <Separator />
 
       {/* Loading state */}
       {loading && (
-        <YStack alignItems="center" paddingVertical="$8">
-          <Spinner size="large" color="$blue10" />
-          <Text color="$color10" fontSize="$3" marginTop="$2">Loading review queue…</Text>
+        <YStack
+          alignItems="center"
+          paddingVertical="$8"
+        >
+          <Spinner
+            size="large"
+            color="$blue10"
+          />
+          <Text
+            color="$color10"
+            fontSize="$3"
+            marginTop="$2"
+          >
+            Loading review queue…
+          </Text>
         </YStack>
       )}
 
       {/* Error state */}
       {error && !loading && (
-        <YStack backgroundColor="$red4" borderRadius="$3" padding="$4" gap="$2">
-          <Text color="$red10" fontSize="$4" fontWeight="600">{error}</Text>
-          <Button size="$2" chromeless onPress={fetchQueue}>Retry</Button>
+        <YStack
+          backgroundColor="$red4"
+          borderRadius="$3"
+          padding="$4"
+          gap="$2"
+        >
+          <Text
+            color="$red10"
+            fontSize="$4"
+            fontWeight="600"
+          >
+            {error}
+          </Text>
+          <Button
+            size="$2"
+            chromeless
+            onPress={fetchQueue}
+          >
+            Retry
+          </Button>
         </YStack>
       )}
 
       {/* Empty state */}
       {!loading && !error && items.length === 0 && (
-        <YStack alignItems="center" paddingVertical="$8">
-          <Text color="$color10" fontSize="$5">No items pending review.</Text>
-          <Paragraph color="$color10" fontSize="$3" marginTop="$2">
-            All flagged fields have been adjudicated or no documents have been
-            processed yet.
+        <YStack
+          alignItems="center"
+          paddingVertical="$8"
+        >
+          <Text
+            color="$color10"
+            fontSize="$5"
+          >
+            No items pending review.
+          </Text>
+          <Paragraph
+            color="$color10"
+            fontSize="$3"
+            marginTop="$2"
+          >
+            All flagged fields have been adjudicated or no documents have been processed yet.
           </Paragraph>
         </YStack>
       )}
@@ -183,31 +295,63 @@ export function ReviewQueueScreen() {
                   pressStyle={{ backgroundColor: '$backgroundPress' }}
                   onPress={() =>
                     router.push(
-                      `/doctor/pipeline/review/${item.job_id}?patient_id=${item.patient_id}&workflow_id=${workflowId}`,
+                      `/doctor/pipeline/review/${item.job_id}?patient_id=${item.patient_id}&workflow_id=${workflowId}`
                     )
                   }
                 >
-                  <XStack justifyContent="space-between" alignItems="center">
-                    <YStack gap="$1" flex={1}>
-                      <Text color="$color12" fontSize="$4" fontWeight="600">
+                  <XStack
+                    justifyContent="space-between"
+                    alignItems="center"
+                  >
+                    <YStack
+                      gap="$1"
+                      flex={1}
+                    >
+                      <Text
+                        color="$color12"
+                        fontSize="$4"
+                        fontWeight="600"
+                      >
                         {item.document_title}
                       </Text>
-                      <XStack gap="$3" alignItems="center">
-                        <Text color="$color10" fontSize="$2">
+                      <XStack
+                        gap="$3"
+                        alignItems="center"
+                      >
+                        <Text
+                          color="$color10"
+                          fontSize="$2"
+                        >
                           Patient: {item.patient_id}
                         </Text>
-                        <Text color="$color10" fontSize="$2">
-                          {item.flagged_fields_count} field{item.flagged_fields_count !== 1 ? 's' : ''} flagged
+                        <Text
+                          color="$color10"
+                          fontSize="$2"
+                        >
+                          {item.flagged_fields_count} field
+                          {item.flagged_fields_count !== 1 ? 's' : ''} flagged
                         </Text>
-                        <Text color="$color10" fontSize="$2">
+                        <Text
+                          color="$color10"
+                          fontSize="$2"
+                        >
                           Queued: {new Date(item.queued_at).toLocaleString()}
                         </Text>
                       </XStack>
                     </YStack>
 
                     {/* Risk badge */}
-                    <Card backgroundColor={colors.bg} borderRadius="$4" paddingHorizontal="$3" paddingVertical="$2">
-                      <Text color={colors.text} fontSize="$3" fontWeight="700">
+                    <Card
+                      backgroundColor={colors.bg}
+                      borderRadius="$4"
+                      paddingHorizontal="$3"
+                      paddingVertical="$2"
+                    >
+                      <Text
+                        color={colors.text}
+                        fontSize="$3"
+                        fontWeight="700"
+                      >
                         {icon} {risk.replace('_', ' ')}
                       </Text>
                     </Card>
@@ -221,7 +365,10 @@ export function ReviewQueueScreen() {
 
       {/* Navigation */}
       <Separator />
-      <Button chromeless onPress={() => router.push('/doctor/dashboard')}>
+      <Button
+        chromeless
+        onPress={() => router.push('/doctor/dashboard')}
+      >
         ← Back to Dashboard
       </Button>
     </YStack>

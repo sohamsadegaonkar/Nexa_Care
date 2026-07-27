@@ -17,7 +17,7 @@ describe('ProviderRouteGuard', () => {
     window.sessionStorage.clear()
     vi.restoreAllMocks()
     vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
-      new ApiError('No provider session.', 401, 'HTTP_ERROR'),
+      new ApiError('No provider session.', 401, 'HTTP_ERROR')
     )
   })
 
@@ -27,13 +27,11 @@ describe('ProviderRouteGuard', () => {
         <ProviderRouteGuard returnTo="/consent-history">
           <span>protected content</span>
         </ProviderRouteGuard>
-      </ProviderAuthProvider>,
+      </ProviderAuthProvider>
     )
 
     await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith(
-        '/doctor/login?returnTo=%2Fconsent-history',
-      )
+      expect(replace).toHaveBeenCalledWith('/doctor/login?returnTo=%2Fconsent-history')
     })
     expect(screen.queryByText('protected content')).toBeNull()
   })
@@ -54,7 +52,7 @@ describe('ProviderRouteGuard', () => {
         <ProviderRouteGuard returnTo="/consent-history">
           <span>protected content</span>
         </ProviderRouteGuard>
-      </ProviderAuthProvider>,
+      </ProviderAuthProvider>
     )
 
     expect(await screen.findByText('protected content')).toBeTruthy()

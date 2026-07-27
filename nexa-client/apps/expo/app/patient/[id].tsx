@@ -18,7 +18,10 @@ export default function Screen() {
           gestureDirection: 'horizontal',
         }}
       />
-      <ProfileScreen patientId={id as string} workflowId={workflow_id ?? null} />
+      <ProfileScreen
+        patientId={id as string}
+        workflowId={workflow_id ?? null}
+      />
     </>
   )
 }

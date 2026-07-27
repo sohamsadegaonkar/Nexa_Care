@@ -37,7 +37,12 @@ export function ConsentSelect<T extends ConsentSelectValue>({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <label htmlFor={id} style={labelStyle}>{label}</label>
+      <label
+        htmlFor={id}
+        style={labelStyle}
+      >
+        {label}
+      </label>
       <select
         id={id}
         aria-label={label}
@@ -55,7 +60,10 @@ export function ConsentSelect<T extends ConsentSelectValue>({
         }}
       >
         {options.map((option) => (
-          <option key={String(option.value)} value={String(option.value)}>
+          <option
+            key={String(option.value)}
+            value={String(option.value)}
+          >
             {option.label}
           </option>
         ))}

@@ -42,7 +42,11 @@ const PURPOSE_OPTIONS: { value: AccessPurpose; label: string; description: strin
 type ConsentScope = 'clinical' | 'full'
 
 const SCOPE_OPTIONS: { value: ConsentScope; label: string; description: string }[] = [
-  { value: 'clinical', label: 'Clinical', description: 'Clinical information required for this care workflow' },
+  {
+    value: 'clinical',
+    label: 'Clinical',
+    description: 'Clinical information required for this care workflow',
+  },
   { value: 'full', label: 'Full Record', description: 'Complete patient record access' },
 ]
 
@@ -63,11 +67,35 @@ export function RequestConsentScreen() {
   // ── Session guard ─────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} bg="$background" justifyContent="center" alignItems="center" gap="$4">
+      <YStack
+        flex={1}
+        bg="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+      >
         <Text fontSize={44}>🔒</Text>
-        <Text fontSize={22} fontWeight="900" color="$color12" textAlign="center">Session Required</Text>
-        <Paragraph textAlign="center" color="$color11">You must be logged in to request consent.</Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/login')}>Go to Login</Button>
+        <Text
+          fontSize={22}
+          fontWeight="900"
+          color="$color12"
+          textAlign="center"
+        >
+          Session Required
+        </Text>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
+          You must be logged in to request consent.
+        </Paragraph>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/login')}
+        >
+          Go to Login
+        </Button>
       </YStack>
     )
   }
@@ -81,27 +109,40 @@ export function RequestConsentScreen() {
   const submissionInFlight = useRef(false)
 
   const handleSubmit = async () => {
-    if (!patientId) { setError('No patient selected.'); return }
+    if (!patientId) {
+      setError('No patient selected.')
+      return
+    }
     const hospitalId = session?.hospital.hospital_id
-    if (!hospitalId) { setError('Provider hospital context is unavailable. Sign in again.'); return }
+    if (!hospitalId) {
+      setError('Provider hospital context is unavailable. Sign in again.')
+      return
+    }
     if (submissionInFlight.current) return
     submissionInFlight.current = true
     setSubmitting(true)
     setError(null)
     try {
-      const data = await NexaApiClient.requestConsent({
-        patient_id: patientId,
-        provider_id: providerId ?? '',
-        purpose: purpose,
-        scope: requestedScope,
-        access_duration_seconds: accessDuration,
-        ...(purposeNote.trim() ? { purpose_note: purposeNote.trim() } : {}),
-      }, hospitalId)
-      router.push(`/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}&patient_id=${encodeURIComponent(patientId)}`)
+      const data = await NexaApiClient.requestConsent(
+        {
+          patient_id: patientId,
+          provider_id: providerId ?? '',
+          purpose: purpose,
+          scope: requestedScope,
+          access_duration_seconds: accessDuration,
+          ...(purposeNote.trim() ? { purpose_note: purposeNote.trim() } : {}),
+        },
+        hospitalId
+      )
+      router.push(
+        `/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}&patient_id=${encodeURIComponent(patientId)}`
+      )
     } catch (caught: unknown) {
-      setError(caught instanceof ApiError
-        ? `Consent request failed: ${caught.message}`
-        : 'Failed to create consent request. Please try again.')
+      setError(
+        caught instanceof ApiError
+          ? `Consent request failed: ${caught.message}`
+          : 'Failed to create consent request. Please try again.'
+      )
     } finally {
       submissionInFlight.current = false
       setSubmitting(false)
@@ -115,24 +156,77 @@ export function RequestConsentScreen() {
 
   return (
     <ScrollView>
-      <YStack flex={1} bg="$background" padding="$5" gap="$5" maxWidth={600} marginHorizontal="auto">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$5"
+        gap="$5"
+        maxWidth={600}
+        marginHorizontal="auto"
+      >
         <YStack>
-          <Text fontSize={26} fontWeight="900" color="$color12">Request Consent</Text>
-          <Paragraph color="$color11" fontSize={15}>
-            Request access to patient health data. The patient will receive a push notification to approve or deny.
+          <Text
+            fontSize={26}
+            fontWeight="900"
+            color="$color12"
+          >
+            Request Consent
+          </Text>
+          <Paragraph
+            color="$color11"
+            fontSize={15}
+          >
+            Request access to patient health data. The patient will receive a push notification to
+            approve or deny.
           </Paragraph>
         </YStack>
 
         {/* Patient info */}
-        <Card padding="$4" backgroundColor="$color2" borderWidth={1} borderColor="$borderColor" gap="$2">
-          <Paragraph color="$color10" fontSize={12} fontWeight="700" textTransform="uppercase">Patient</Paragraph>
-          <Text color="$color12" fontSize={18} fontWeight="700">{patientId || 'No patient selected'}</Text>
+        <Card
+          padding="$4"
+          backgroundColor="$color2"
+          borderWidth={1}
+          borderColor="$borderColor"
+          gap="$2"
+        >
+          <Paragraph
+            color="$color10"
+            fontSize={12}
+            fontWeight="700"
+            textTransform="uppercase"
+          >
+            Patient
+          </Paragraph>
+          <Text
+            color="$color12"
+            fontSize={18}
+            fontWeight="700"
+          >
+            {patientId || 'No patient selected'}
+          </Text>
         </Card>
 
         {/* Provider info */}
-        <Card padding="$4" backgroundColor="$color2" borderWidth={1} borderColor="$borderColor" gap="$2">
-          <Paragraph color="$color10" fontSize={12} fontWeight="700" textTransform="uppercase">Provider</Paragraph>
-          <Text color="$color12" fontSize={16} fontWeight="600">
+        <Card
+          padding="$4"
+          backgroundColor="$color2"
+          borderWidth={1}
+          borderColor="$borderColor"
+          gap="$2"
+        >
+          <Paragraph
+            color="$color10"
+            fontSize={12}
+            fontWeight="700"
+            textTransform="uppercase"
+          >
+            Provider
+          </Paragraph>
+          <Text
+            color="$color12"
+            fontSize={16}
+            fontWeight="600"
+          >
             {providerId || 'Unknown'} · {hospitalName || 'Hospital'}
           </Text>
         </Card>
@@ -147,15 +241,28 @@ export function RequestConsentScreen() {
             onValueChange={setPurpose}
             disabled={submitting}
           />
-          <Paragraph color="$color10" fontSize={13}>
+          <Paragraph
+            color="$color10"
+            fontSize={13}
+          >
             {PURPOSE_OPTIONS.find((o) => o.value === purpose)?.description}
           </Paragraph>
         </YStack>
 
         {/* Purpose note (optional free-text explanation) */}
         <YStack gap="$2">
-          <Paragraph color="$color11" fontSize={15}>Purpose Note (optional)</Paragraph>
-          <Input size="$4" value={purposeNote} onChangeText={setPurposeNote} placeholder="e.g. Diabetes follow-up consultation" />
+          <Paragraph
+            color="$color11"
+            fontSize={15}
+          >
+            Purpose Note (optional)
+          </Paragraph>
+          <Input
+            size="$4"
+            value={purposeNote}
+            onChangeText={setPurposeNote}
+            placeholder="e.g. Diabetes follow-up consultation"
+          />
         </YStack>
 
         {/* Requested scope (controlled selector) */}
@@ -168,7 +275,10 @@ export function RequestConsentScreen() {
             onValueChange={setRequestedScope}
             disabled={submitting}
           />
-          <Paragraph color="$color10" fontSize={13}>
+          <Paragraph
+            color="$color10"
+            fontSize={13}
+          >
             {SCOPE_OPTIONS.find((o) => o.value === requestedScope)?.description}
           </Paragraph>
         </YStack>
@@ -183,23 +293,53 @@ export function RequestConsentScreen() {
             onValueChange={setAccessDuration}
             disabled={submitting}
           />
-          <Paragraph color="$color10" fontSize={13}>
-            Selected: {formatDuration(accessDuration)}. Server enforces minimum 5 min, maximum 60 min.
+          <Paragraph
+            color="$color10"
+            fontSize={13}
+          >
+            Selected: {formatDuration(accessDuration)}. Server enforces minimum 5 min, maximum 60
+            min.
           </Paragraph>
         </YStack>
 
-        {error && <Text color="$red10" fontSize={14}>{error}</Text>}
+        {error && (
+          <Text
+            color="$red10"
+            fontSize={14}
+          >
+            {error}
+          </Text>
+        )}
 
         <XStack gap="$3">
-          <Button theme="blue" size="$4" disabled={submitting || !patientId} onPress={handleSubmit}>
+          <Button
+            theme="blue"
+            size="$4"
+            disabled={submitting || !patientId}
+            onPress={handleSubmit}
+          >
             {submitting ? (
-              <XStack gap="$2" alignItems="center">
-                <Spinner size="small" color="$blue10" />
+              <XStack
+                gap="$2"
+                alignItems="center"
+              >
+                <Spinner
+                  size="small"
+                  color="$blue10"
+                />
                 <Text color="$color12">Sending request...</Text>
               </XStack>
-            ) : 'Request Access'}
+            ) : (
+              'Request Access'
+            )}
           </Button>
-          <Button size="$4" chromeless onPress={() => router.back()}>Cancel</Button>
+          <Button
+            size="$4"
+            chromeless
+            onPress={() => router.back()}
+          >
+            Cancel
+          </Button>
         </XStack>
       </YStack>
     </ScrollView>

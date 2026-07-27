@@ -92,7 +92,9 @@ describe('ScannerScreen Doctor Polling', () => {
 
   it('stops polling and auto-navigates on approval', async () => {
     vi.mocked(requestPushApproval).mockResolvedValue({ request_id: requestId })
-    vi.mocked(getPushRequestStatus).mockResolvedValueOnce({ status: 'pending' } as any).mockResolvedValueOnce({ status: 'approved' } as any)
+    vi.mocked(getPushRequestStatus)
+      .mockResolvedValueOnce({ status: 'pending' } as any)
+      .mockResolvedValueOnce({ status: 'approved' } as any)
     vi.mocked(claimApprovedAccess).mockResolvedValue({
       patient_id: patientId,
       consent_token: 'token-ok',
@@ -109,18 +111,19 @@ describe('ScannerScreen Doctor Polling', () => {
 
     await waitFor(() => expect(screen.getByText(/Waiting for Patient Approval/i)).toBeTruthy())
 
-
-    await waitFor(() => {
-      expect(screen.getByText(/Request Approved/i)).toBeTruthy()
-      expect(claimApprovedAccess).toHaveBeenCalledWith(requestId)
-      expect(setCapabilityMock).toHaveBeenCalledWith(
-        expect.objectContaining({ workflowId: 'wf-test-id', patientId, token: 'token-ok' })
-      )
-      expect(pushMock).toHaveBeenCalledWith(`/patient/${patientId}?workflow_id=wf-test-id`)
-      // DEFECT 3: the raw token must never appear in a navigated URL.
-      expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining('token-ok'))
-    }, { timeout: 6500 })
-
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Request Approved/i)).toBeTruthy()
+        expect(claimApprovedAccess).toHaveBeenCalledWith(requestId)
+        expect(setCapabilityMock).toHaveBeenCalledWith(
+          expect.objectContaining({ workflowId: 'wf-test-id', patientId, token: 'token-ok' })
+        )
+        expect(pushMock).toHaveBeenCalledWith(`/patient/${patientId}?workflow_id=wf-test-id`)
+        // DEFECT 3: the raw token must never appear in a navigated URL.
+        expect(pushMock).not.toHaveBeenCalledWith(expect.stringContaining('token-ok'))
+      },
+      { timeout: 6500 }
+    )
   })
 
   it('handles denial state and stops polling', async () => {
@@ -134,11 +137,13 @@ describe('ScannerScreen Doctor Polling', () => {
 
     await waitFor(() => expect(screen.getByText(/Waiting for Patient Approval/i)).toBeTruthy())
 
-
-    await waitFor(() => {
-      expect(screen.getByText(/Request Denied/i)).toBeTruthy()
-      expect(screen.getByText(/Try Again/i)).toBeTruthy()
-    }, { timeout: 3500 })
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Request Denied/i)).toBeTruthy()
+        expect(screen.getByText(/Try Again/i)).toBeTruthy()
+      },
+      { timeout: 3500 }
+    )
 
     expect(getPushRequestStatus).toHaveBeenCalledTimes(1)
   })

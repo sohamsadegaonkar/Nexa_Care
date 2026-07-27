@@ -1,4 +1,3 @@
-
 import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface PatientMergeRequest {
@@ -14,10 +13,7 @@ export interface PatientMergeResponse {
   canonical_patient_uuid: string
 }
 
-export type MergeErrorCode =
-  | 'MERGE_INVALID_REQUEST'
-  | 'MERGE_UNAUTHORIZED'
-  | 'MERGE_FAILED'
+export type MergeErrorCode = 'MERGE_INVALID_REQUEST' | 'MERGE_UNAUTHORIZED' | 'MERGE_FAILED'
 
 export class MergeError extends Error {
   public readonly code: MergeErrorCode
@@ -53,11 +49,7 @@ export async function mergePatients(
   } catch (error: unknown) {
     if (error instanceof ApiError) {
       const status = error.status
-      throw new MergeError(
-        error.message || 'Merge failed',
-        'MERGE_FAILED',
-        status
-      )
+      throw new MergeError(error.message || 'Merge failed', 'MERGE_FAILED', status)
     }
     throw new MergeError('Unable to perform merge', 'MERGE_FAILED')
   }

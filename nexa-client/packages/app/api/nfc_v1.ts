@@ -1,4 +1,3 @@
-
 import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface NfcResolveRequest {
@@ -28,11 +27,7 @@ export class NfcResolveError extends Error {
   public readonly code: NfcResolveErrorCode
   public readonly status?: number
 
-  constructor(
-    message: string,
-    code: NfcResolveErrorCode,
-    status?: number
-  ) {
+  constructor(message: string, code: NfcResolveErrorCode, status?: number) {
     super(message)
     this.name = 'NfcResolveError'
     this.code = code

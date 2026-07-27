@@ -9,12 +9,14 @@ const mocks = vi.hoisted(() => ({
 }))
 
 const patientId = '123e4567-e89b-12d3-a456-426614174001'
-const patientPayload = Buffer.from(JSON.stringify({
-  sub: patientId,
-  patient_id: patientId,
-  exp: Math.floor(Date.now() / 1000) + 3600,
-  jti: 'device-test-session',
-})).toString('base64url')
+const patientPayload = Buffer.from(
+  JSON.stringify({
+    sub: patientId,
+    patient_id: patientId,
+    exp: Math.floor(Date.now() / 1000) + 3600,
+    jti: 'device-test-session',
+  })
+).toString('base64url')
 const patientAccessToken = `header.${patientPayload}.signature`
 
 vi.mock('expo-secure-store', () => ({
@@ -79,9 +81,7 @@ describe('physical-device enrollment prerequisites', () => {
   })
 
   it('fingerprints decoded DER bytes rather than the base64 text', async () => {
-    await expect(fingerprintDevicePublicKey('AQID')).resolves.toBe(
-      `ab${'00'.repeat(31)}`,
-    )
+    await expect(fingerprintDevicePublicKey('AQID')).resolves.toBe(`ab${'00'.repeat(31)}`)
   })
 
   it('uses Expo secure randomness, enrolls, and retains only device state', async () => {
@@ -107,7 +107,7 @@ describe('physical-device enrollment prerequisites', () => {
         device_label: 'Test Android',
         platform: 'android',
         device_public_key: expect.any(String),
-      }),
+      })
     )
     expect(mocks.storage.has(DEVICE_PRIVATE_KEY_STORAGE_KEY)).toBe(true)
     expect(mocks.storage.get(DEVICE_ID_STORAGE_KEY)).toBe('device-1')
@@ -116,7 +116,7 @@ describe('physical-device enrollment prerequisites', () => {
 
   it('fails before key generation and network when enrollment authorization is absent', async () => {
     await expect(generateAndEnrollDevice()).rejects.toThrow(
-      'Device enrollment authorization is missing or expired',
+      'Device enrollment authorization is missing or expired'
     )
     expect(mocks.post).not.toHaveBeenCalled()
     expect(mocks.storage.has(DEVICE_PRIVATE_KEY_STORAGE_KEY)).toBe(false)
@@ -134,7 +134,7 @@ describe('physical-device enrollment prerequisites', () => {
     mocks.secureStoreAvailable = false
 
     await expect(generateAndEnrollDevice()).rejects.toThrow(
-      'Install a development build that includes expo-secure-store',
+      'Install a development build that includes expo-secure-store'
     )
     expect(mocks.post).not.toHaveBeenCalled()
   })

@@ -1,6 +1,18 @@
 'use client'
 
-import { Button, Card, H2, H4, Input, Paragraph, Sheet, Spinner, Text, XStack, YStack } from '@my/ui'
+import {
+  Button,
+  Card,
+  H2,
+  H4,
+  Input,
+  Paragraph,
+  Sheet,
+  Spinner,
+  Text,
+  XStack,
+  YStack,
+} from '@my/ui'
 import { RadioReceiver, AlertTriangle, XCircle, Clock, CheckCircle2 } from '@tamagui/lucide-icons'
 import { useRouter } from 'solito/navigation'
 import { useEffect, useState, useCallback, useRef } from 'react'
@@ -18,24 +30,27 @@ const PURPOSE_OPTIONS = [
   { label: 'Lab Review', value: 'LAB_REVIEW' },
 ]
 
-export function ScannerScreen({ 
+export function ScannerScreen({
   onPatientResolved,
-  isDev = false
-}: { 
+  isDev = false,
+}: {
   onPatientResolved?: (patientId: string) => void
   isDev?: boolean
 }) {
   const [currentPatientId, setCurrentPatientId] = useState<string | null>(null)
-  const [redirectInfo, setRedirectInfo] = useState<{ canonicalId: string; isRedirected: boolean } | null>(null)
-  const { 
-    status, 
-    patientId, 
-    canonicalPatientId, 
-    isRedirected, 
-    cardStatus, 
-    errorMessage, 
-    isScanning, 
-    startScan 
+  const [redirectInfo, setRedirectInfo] = useState<{
+    canonicalId: string
+    isRedirected: boolean
+  } | null>(null)
+  const {
+    status,
+    patientId,
+    canonicalPatientId,
+    isRedirected,
+    cardStatus,
+    errorMessage,
+    isScanning,
+    startScan,
   } = useNfcScanner()
   const router = useRouter()
   const isWeb = Platform.OS === 'web'
@@ -51,14 +66,16 @@ export function ScannerScreen({
 
   // Polling states
   const [pollingRequestId, setPollingRequestId] = useState<string | null>(null)
-  const [pollStatus, setPollStatus] = useState<'pending' | 'approved' | 'denied' | 'expired' | 'error'>('pending')
+  const [pollStatus, setPollStatus] = useState<
+    'pending' | 'approved' | 'denied' | 'expired' | 'error'
+  >('pending')
   const [secondsLeft, setSecondsLeft] = useState(90)
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (status === 'success' && patientId) {
       setCurrentPatientId(patientId)
-      
+
       if (isRedirected && canonicalPatientId) {
         setRedirectInfo({ canonicalId: canonicalPatientId, isRedirected: true })
       } else {
@@ -84,18 +101,18 @@ export function ScannerScreen({
   // Dev-only: Simulate a tombstoned card (fully wired)
   const simulateTombstonedCard = () => {
     if (!isDev) return
-    
-    const tombstonedPatientId = "PAT-TOMBSTONED-001"
-    const canonicalPatientId = "PAT-CANONICAL-042"
-    
+
+    const tombstonedPatientId = 'PAT-TOMBSTONED-001'
+    const canonicalPatientId = 'PAT-CANONICAL-042'
+
     setCurrentPatientId(tombstonedPatientId)
-    setRedirectInfo({ 
-      canonicalId: canonicalPatientId, 
-      isRedirected: true 
+    setRedirectInfo({
+      canonicalId: canonicalPatientId,
+      isRedirected: true,
     })
-    
+
     onPatientResolved?.(tombstonedPatientId)
-    
+
     // Show visual feedback that this is a tombstoned card
     setShowMergedBanner(true)
     setShowConsentModal(true)
@@ -105,7 +122,11 @@ export function ScannerScreen({
     void startScan()
   }
 
-  const openAuthorizedRecord = (grant: { consentToken: string; scope: string[]; expiresAt: string }) => {
+  const openAuthorizedRecord = (grant: {
+    consentToken: string
+    scope: string[]
+    expiresAt: string
+  }) => {
     if (!effectivePatientId) return
     const workflowId = generateWorkflowId()
     setCapability({
@@ -200,9 +221,9 @@ export function ScannerScreen({
     pollIntervalRef.current = setInterval(async () => {
       try {
         const data = await getPushRequestStatus(pollingRequestId)
-        
+
         // Update countdown from server time if available, or locally
-        setSecondsLeft(prev => (prev > 0 ? prev - 2 : 0))
+        setSecondsLeft((prev) => (prev > 0 ? prev - 2 : 0))
 
         if (data.status !== 'pending') {
           setPollStatus(data.status === 'timeout' ? 'expired' : data.status)
@@ -231,7 +252,7 @@ export function ScannerScreen({
   // ─────────────────────────────────────────────
   if (pollingRequestId) {
     return (
-      <DoctorWaitingScreen 
+      <DoctorWaitingScreen
         requestId={pollingRequestId}
         status={pollStatus}
         secondsLeft={secondsLeft}
@@ -254,34 +275,69 @@ export function ScannerScreen({
   // MAIN SCANNER UI
   // ─────────────────────────────────────────────
   return (
-    <YStack flex={1} minHeight="100%" backgroundColor="$background" padding="$5" gap="$5" alignItems="center" justifyContent="center">
-      <YStack width="100%" maxWidth={520} gap="$5" alignItems="center">
-        {status === 'success' && patientId && isRedirected && canonicalPatientId && showMergedBanner && (
-          <MergedPatientBanner 
-            originalId={patientId} 
-            canonicalId={canonicalPatientId} 
-            onDismiss={() => setShowMergedBanner(false)} 
-          />
-        )}
+    <YStack
+      flex={1}
+      minHeight="100%"
+      backgroundColor="$background"
+      padding="$5"
+      gap="$5"
+      alignItems="center"
+      justifyContent="center"
+    >
+      <YStack
+        width="100%"
+        maxWidth={520}
+        gap="$5"
+        alignItems="center"
+      >
+        {status === 'success' &&
+          patientId &&
+          isRedirected &&
+          canonicalPatientId &&
+          showMergedBanner && (
+            <MergedPatientBanner
+              originalId={patientId}
+              canonicalId={canonicalPatientId}
+              onDismiss={() => setShowMergedBanner(false)}
+            />
+          )}
 
-        {status === 'success' && (cardStatus === 'inactive' || cardStatus === 'lost') && showInactiveBanner && (
-          <InactiveCardBanner 
-            status={cardStatus} 
-            onDismiss={() => setShowInactiveBanner(false)} 
-          />
-        )}
+        {status === 'success' &&
+          (cardStatus === 'inactive' || cardStatus === 'lost') &&
+          showInactiveBanner && (
+            <InactiveCardBanner
+              status={cardStatus}
+              onDismiss={() => setShowInactiveBanner(false)}
+            />
+          )}
 
         {/* Scanner UI remains the same */}
         {status === 'idle' && (
-          <YStack gap="$4" alignItems="center">
+          <YStack
+            gap="$4"
+            alignItems="center"
+          >
             {isWeb ? (
               <ScannerIcon pulsing={false} />
             ) : (
-              <YStack gap="$3" alignItems="center">
-                <Button circular chromeless size="$10" onPress={handleNativeScan}>
+              <YStack
+                gap="$3"
+                alignItems="center"
+              >
+                <Button
+                  circular
+                  chromeless
+                  size="$10"
+                  onPress={handleNativeScan}
+                >
                   <ScannerIcon pulsing />
                 </Button>
-                <Text color="$color12" fontSize={20} fontWeight="800" text="center">
+                <Text
+                  color="$color12"
+                  fontSize={20}
+                  fontWeight="800"
+                  text="center"
+                >
                   NFC Reader
                 </Text>
               </YStack>
@@ -290,22 +346,56 @@ export function ScannerScreen({
         )}
 
         {status === 'scanning' && (
-          <XStack gap="$3" alignItems="center" justifyContent="center">
-            <Spinner size="large" color="$blue11" />
-            <Text color="$color12" fontSize={18} fontWeight="700" text="center">
+          <XStack
+            gap="$3"
+            alignItems="center"
+            justifyContent="center"
+          >
+            <Spinner
+              size="large"
+              color="$blue11"
+            />
+            <Text
+              color="$color12"
+              fontSize={18}
+              fontWeight="700"
+              text="center"
+            >
               Hold card to back of phone...
             </Text>
           </XStack>
         )}
 
         {status === 'success' && patientId && (
-          <Card width="100%" borderWidth={2} padding="$5" backgroundColor="$color2" borderColor="$green9">
+          <Card
+            width="100%"
+            borderWidth={2}
+            padding="$5"
+            backgroundColor="$color2"
+            borderColor="$green9"
+          >
             <YStack gap="$2">
-              <Text color="$green11" fontSize={15} fontWeight="800">Resolved Patient ID</Text>
-              <Text color="$color12" fontSize={24} fontWeight="900">{effectivePatientId}</Text>
-              
+              <Text
+                color="$green11"
+                fontSize={15}
+                fontWeight="800"
+              >
+                Resolved Patient ID
+              </Text>
+              <Text
+                color="$color12"
+                fontSize={24}
+                fontWeight="900"
+              >
+                {effectivePatientId}
+              </Text>
+
               {isRedirected && canonicalPatientId && (
-                <Text color="$orange11" fontSize={14} fontWeight="700">
+                <Text
+                  color="$orange11"
+                  fontSize={14}
+                  fontWeight="700"
+                >
                   → (Scanned: {patientId})
                 </Text>
               )}
@@ -314,18 +404,38 @@ export function ScannerScreen({
         )}
 
         {status === 'error' && errorMessage && (
-          <Text width="100%" color="$red11" fontSize={17} fontWeight="800" text="center">
+          <Text
+            width="100%"
+            color="$red11"
+            fontSize={17}
+            fontWeight="800"
+            text="center"
+          >
             {errorMessage}
           </Text>
         )}
 
         {isWeb ? (
-          <Button width="100%" maxWidth={320} size="$5" theme="blue" disabled={isScanning} onPress={handleWebSimulation}>
+          <Button
+            width="100%"
+            maxWidth={320}
+            size="$5"
+            theme="blue"
+            disabled={isScanning}
+            onPress={handleWebSimulation}
+          >
             Simulate NFC Tap
           </Button>
         ) : (
           status !== 'idle' && (
-            <Button width="100%" maxWidth={320} size="$5" theme="blue" disabled={isScanning} onPress={handleNativeScan}>
+            <Button
+              width="100%"
+              maxWidth={320}
+              size="$5"
+              theme="blue"
+              disabled={isScanning}
+              onPress={handleNativeScan}
+            >
               NFC Reader
             </Button>
           )
@@ -333,11 +443,11 @@ export function ScannerScreen({
 
         {/* Dev-only Tombstone Test Button */}
         {isDev && isWeb && (
-          <Button 
-            width="100%" 
+          <Button
+            width="100%"
             maxWidth={320}
-            size="$4" 
-            theme="orange" 
+            size="$4"
+            theme="orange"
             onPress={simulateTombstonedCard}
           >
             [DEV] Simulate Tombstoned Card
@@ -361,65 +471,113 @@ export function ScannerScreen({
 
 // ScannerIcon and ConsentAccessSheet remain unchanged (kept for brevity)
 
-function MergedPatientBanner({ 
-  originalId, 
-  canonicalId, 
-  onDismiss 
-}: { 
-  originalId: string; 
-  canonicalId: string; 
-  onDismiss: () => void 
+function MergedPatientBanner({
+  originalId,
+  canonicalId,
+  onDismiss,
+}: {
+  originalId: string
+  canonicalId: string
+  onDismiss: () => void
 }) {
   return (
-    <YStack 
+    <YStack
       width="100%"
-      borderWidth={2} 
-      borderColor="$yellow8" 
-      backgroundColor="$yellow3" 
-      borderRadius="$4" 
+      borderWidth={2}
+      borderColor="$yellow8"
+      backgroundColor="$yellow3"
+      borderRadius="$4"
       padding="$3"
       gap="$2"
       onPress={onDismiss}
     >
-      <XStack alignItems="center" gap="$2">
-        <AlertTriangle color="$yellow10" size={20} />
-        <H4 color="$yellow10" fontSize="$4">Record Merged</H4>
+      <XStack
+        alignItems="center"
+        gap="$2"
+      >
+        <AlertTriangle
+          color="$yellow10"
+          size={20}
+        />
+        <H4
+          color="$yellow10"
+          fontSize="$4"
+        >
+          Record Merged
+        </H4>
       </XStack>
-      <Paragraph color="$yellow11" fontSize="$3">
+      <Paragraph
+        color="$yellow11"
+        fontSize="$3"
+      >
         ⚠️ This patient record has been merged. Displaying canonical record.
       </Paragraph>
-      <XStack gap="$2" alignItems="center">
-        <Text fontWeight="700" fontSize="$2" color="$yellow11">Original ID: {originalId}</Text>
-        <Text fontSize="$2" color="$yellow11">→</Text>
-        <Text fontWeight="700" fontSize="$2" color="$yellow11">Canonical ID: {canonicalId}</Text>
+      <XStack
+        gap="$2"
+        alignItems="center"
+      >
+        <Text
+          fontWeight="700"
+          fontSize="$2"
+          color="$yellow11"
+        >
+          Original ID: {originalId}
+        </Text>
+        <Text
+          fontSize="$2"
+          color="$yellow11"
+        >
+          →
+        </Text>
+        <Text
+          fontWeight="700"
+          fontSize="$2"
+          color="$yellow11"
+        >
+          Canonical ID: {canonicalId}
+        </Text>
       </XStack>
     </YStack>
   )
 }
 
-function InactiveCardBanner({ 
-  status, 
-  onDismiss 
-}: { 
-  status: 'inactive' | 'lost'; 
-  onDismiss: () => void 
+function InactiveCardBanner({
+  status,
+  onDismiss,
+}: {
+  status: 'inactive' | 'lost'
+  onDismiss: () => void
 }) {
   return (
-    <YStack 
+    <YStack
       width="100%"
-      borderWidth={2} 
-      borderColor="$red8" 
-      backgroundColor="$red3" 
-      borderRadius="$4" 
+      borderWidth={2}
+      borderColor="$red8"
+      backgroundColor="$red3"
+      borderRadius="$4"
       padding="$3"
       gap="$2"
       onPress={onDismiss}
     >
-      <XStack alignItems="center" gap="$2">
-        <XCircle color="$red10" size={20} />
-        <H4 color="$red10" fontSize="$4">Card {status === 'inactive' ? 'Inactive' : 'Lost'}</H4>
+      <XStack
+        alignItems="center"
+        gap="$2"
+      >
+        <XCircle
+          color="$red10"
+          size={20}
+        />
+        <H4
+          color="$red10"
+          fontSize="$4"
+        >
+          Card {status === 'inactive' ? 'Inactive' : 'Lost'}
+        </H4>
       </XStack>
-      <Paragraph color="$red11" fontSize="$3">
+      <Paragraph
+        color="$red11"
+        fontSize="$3"
+      >
         🚫 This card has been reported as {status}. Please contact the administrator.
       </Paragraph>
     </YStack>
@@ -429,13 +587,25 @@ function InactiveCardBanner({
 function ScannerIcon({ pulsing }: { pulsing: boolean }) {
   const [pulseUp, setPulseUp] = useState(false)
   useEffect(() => {
-    if (!pulsing) { setPulseUp(false); return }
-    const id = setInterval(() => setPulseUp(c => !c), 850)
+    if (!pulsing) {
+      setPulseUp(false)
+      return
+    }
+    const id = setInterval(() => setPulseUp((c) => !c), 850)
     return () => clearInterval(id)
   }, [pulsing])
-  return <YStack scale={pulsing && pulseUp ? 1.08 : 1} opacity={pulsing && !pulseUp ? 0.82 : 1}>
-    <RadioReceiver size={92} color="$color12" strokeWidth={2.5} />
-  </YStack>
+  return (
+    <YStack
+      scale={pulsing && pulseUp ? 1.08 : 1}
+      opacity={pulsing && !pulseUp ? 0.82 : 1}
+    >
+      <RadioReceiver
+        size={92}
+        color="$color12"
+        strokeWidth={2.5}
+      />
+    </YStack>
+  )
 }
 
 interface DoctorWaitingScreenProps {
@@ -451,30 +621,71 @@ function DoctorWaitingScreen(props: DoctorWaitingScreenProps) {
   const { requestId, status, secondsLeft, onCancel, onRetry, onUseStandard } = props
 
   return (
-    <YStack flex={1} alignItems="center" justifyContent="center" padding="$6" gap="$6" backgroundColor="$background">
+    <YStack
+      flex={1}
+      alignItems="center"
+      justifyContent="center"
+      padding="$6"
+      gap="$6"
+      backgroundColor="$background"
+    >
       {status === 'pending' && (
         <>
           <H2 text="center">Waiting for Patient Approval</H2>
-          <Paragraph text="center" color="$color11">
+          <Paragraph
+            text="center"
+            color="$color11"
+          >
             A consent notification has been sent to the patient's device.
           </Paragraph>
-          <Spinner size="large" color="$blue10" />
-          
-          <YStack alignItems="center" gap="$1">
-            <XStack alignItems="center" gap="$2">
-              <Clock size={16} color="$yellow10" />
-              <Text fontWeight="800" color="$yellow10">{secondsLeft}s remaining</Text>
+          <Spinner
+            size="large"
+            color="$blue10"
+          />
+
+          <YStack
+            alignItems="center"
+            gap="$1"
+          >
+            <XStack
+              alignItems="center"
+              gap="$2"
+            >
+              <Clock
+                size={16}
+                color="$yellow10"
+              />
+              <Text
+                fontWeight="800"
+                color="$yellow10"
+              >
+                {secondsLeft}s remaining
+              </Text>
             </XStack>
-            <Text fontSize={12} color="$color10">Request ID: {requestId}</Text>
+            <Text
+              fontSize={12}
+              color="$color10"
+            >
+              Request ID: {requestId}
+            </Text>
           </YStack>
 
-          <Button mt="$4" chromeless onPress={onCancel}>Cancel Request</Button>
+          <Button
+            mt="$4"
+            chromeless
+            onPress={onCancel}
+          >
+            Cancel Request
+          </Button>
         </>
       )}
 
       {status === 'approved' && (
         <>
-          <CheckCircle2 size={64} color="$green10" />
+          <CheckCircle2
+            size={64}
+            color="$green10"
+          />
           <H2 color="$green10">Request Approved</H2>
           <Paragraph>Preparing record for viewing...</Paragraph>
           <Spinner color="$green10" />
@@ -483,34 +694,75 @@ function DoctorWaitingScreen(props: DoctorWaitingScreenProps) {
 
       {status === 'denied' && (
         <>
-          <XCircle size={64} color="$red10" />
+          <XCircle
+            size={64}
+            color="$red10"
+          />
           <H2 color="$red10">Request Denied</H2>
           <Paragraph text="center">Patient denied the consent request.</Paragraph>
-          <XStack gap="$3" mt="$4">
-            <Button theme="blue" onPress={onRetry}>Try Again</Button>
-            <Button chromeless onPress={onUseStandard}>Use Standard Consent</Button>
+          <XStack
+            gap="$3"
+            mt="$4"
+          >
+            <Button
+              theme="blue"
+              onPress={onRetry}
+            >
+              Try Again
+            </Button>
+            <Button
+              chromeless
+              onPress={onUseStandard}
+            >
+              Use Standard Consent
+            </Button>
           </XStack>
         </>
       )}
 
       {status === 'expired' && (
         <>
-          <Clock size={64} color="$yellow10" />
+          <Clock
+            size={64}
+            color="$yellow10"
+          />
           <H2 color="$yellow10">Request Timed Out</H2>
           <Paragraph text="center">Patient did not respond in time.</Paragraph>
-          <XStack gap="$3" mt="$4">
-            <Button theme="blue" onPress={onRetry}>Retry</Button>
-            <Button variant="outlined" onPress={onUseStandard}>Use Standard Consent</Button>
+          <XStack
+            gap="$3"
+            mt="$4"
+          >
+            <Button
+              theme="blue"
+              onPress={onRetry}
+            >
+              Retry
+            </Button>
+            <Button
+              variant="outlined"
+              onPress={onUseStandard}
+            >
+              Use Standard Consent
+            </Button>
           </XStack>
         </>
       )}
 
       {status === 'error' && (
         <>
-          <AlertTriangle size={64} color="$red10" />
+          <AlertTriangle
+            size={64}
+            color="$red10"
+          />
           <H2 color="$red10">System Error</H2>
           <Paragraph>Unable to verify approval status.</Paragraph>
-          <Button mt="$4" theme="blue" onPress={onRetry}>Retry</Button>
+          <Button
+            mt="$4"
+            theme="blue"
+            onPress={onRetry}
+          >
+            Retry
+          </Button>
         </>
       )}
     </YStack>
@@ -529,38 +781,133 @@ interface ConsentAccessSheetProps {
 }
 
 function ConsentAccessSheet(props: ConsentAccessSheetProps) {
-  const { patientId, open, selectedPurpose, loading, errorMessage, onOpenChange, onPurposeChange, onSubmit } = props
+  const {
+    patientId,
+    open,
+    selectedPurpose,
+    loading,
+    errorMessage,
+    onOpenChange,
+    onPurposeChange,
+    onSubmit,
+  } = props
   return (
-    <Sheet modal open={open} onOpenChange={onOpenChange} snapPoints={[68]} dismissOnSnapToBottom={!loading}>
-      <Sheet.Overlay backgroundColor="$shadow6" opacity={0.72} />
+    <Sheet
+      modal
+      open={open}
+      onOpenChange={onOpenChange}
+      snapPoints={[68]}
+      dismissOnSnapToBottom={!loading}
+    >
+      <Sheet.Overlay
+        backgroundColor="$shadow6"
+        opacity={0.72}
+      />
       <Sheet.Handle backgroundColor="$color8" />
-      <Sheet.Frame backgroundColor="$background" padding="$5" gap="$5">
+      <Sheet.Frame
+        backgroundColor="$background"
+        padding="$5"
+        gap="$5"
+      >
         <YStack gap="$2">
-          <Text color="$color12" fontSize={24} fontWeight="900">Patient Identity Verified</Text>
-          <Text color="$color11" fontSize={16} fontWeight="700">Declare purpose of access</Text>
+          <Text
+            color="$color12"
+            fontSize={24}
+            fontWeight="900"
+          >
+            Patient Identity Verified
+          </Text>
+          <Text
+            color="$color11"
+            fontSize={16}
+            fontWeight="700"
+          >
+            Declare purpose of access
+          </Text>
         </YStack>
         {patientId && (
-          <Card width="100%" borderWidth={2} borderColor="$green8" backgroundColor="$color2" padding="$4">
+          <Card
+            width="100%"
+            borderWidth={2}
+            borderColor="$green8"
+            backgroundColor="$color2"
+            padding="$4"
+          >
             <YStack gap="$1">
-              <Text color="$green11" fontSize={14} fontWeight="900">Verified Patient ID</Text>
-              <Text color="$color12" fontSize={18} fontWeight="900">{patientId}</Text>
+              <Text
+                color="$green11"
+                fontSize={14}
+                fontWeight="900"
+              >
+                Verified Patient ID
+              </Text>
+              <Text
+                color="$color12"
+                fontSize={18}
+                fontWeight="900"
+              >
+                {patientId}
+              </Text>
             </YStack>
           </Card>
         )}
         <YStack gap="$3">
-          <Text color="$color12" fontSize={15} fontWeight="900">Purpose of Access</Text>
-          <XStack gap="$2" flexWrap="wrap">
-            {PURPOSE_OPTIONS.map(opt => (
-              <Button key={opt.value} size="$4" theme={selectedPurpose === opt.value ? 'blue' : undefined} disabled={loading} onPress={() => onPurposeChange(opt.value)}>
+          <Text
+            color="$color12"
+            fontSize={15}
+            fontWeight="900"
+          >
+            Purpose of Access
+          </Text>
+          <XStack
+            gap="$2"
+            flexWrap="wrap"
+          >
+            {PURPOSE_OPTIONS.map((opt) => (
+              <Button
+                key={opt.value}
+                size="$4"
+                theme={selectedPurpose === opt.value ? 'blue' : undefined}
+                disabled={loading}
+                onPress={() => onPurposeChange(opt.value)}
+              >
                 {opt.label}
               </Button>
             ))}
           </XStack>
-          <Input size="$5" value={selectedPurpose} disabled={loading} onChangeText={onPurposeChange} />
+          <Input
+            size="$5"
+            value={selectedPurpose}
+            disabled={loading}
+            onChangeText={onPurposeChange}
+          />
         </YStack>
-        {errorMessage && <Text color="$red11" fontSize={16} fontWeight="900">{errorMessage}</Text>}
-        <Button size="$5" theme="blue" disabled={loading || !patientId} onPress={onSubmit}>
-          {loading ? <XStack gap="$2" alignItems="center"><Spinner color="$color12" /><Text>Generating Token...</Text></XStack> : 'Generate Token & View Record'}
+        {errorMessage && (
+          <Text
+            color="$red11"
+            fontSize={16}
+            fontWeight="900"
+          >
+            {errorMessage}
+          </Text>
+        )}
+        <Button
+          size="$5"
+          theme="blue"
+          disabled={loading || !patientId}
+          onPress={onSubmit}
+        >
+          {loading ? (
+            <XStack
+              gap="$2"
+              alignItems="center"
+            >
+              <Spinner color="$color12" />
+              <Text>Generating Token...</Text>
+            </XStack>
+          ) : (
+            'Generate Token & View Record'
+          )}
         </Button>
       </Sheet.Frame>
     </Sheet>

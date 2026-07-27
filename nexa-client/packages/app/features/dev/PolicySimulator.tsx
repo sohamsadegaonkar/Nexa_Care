@@ -2,7 +2,7 @@
 
 import { Button, Card, Text, XStack, YStack } from '@my/ui'
 import { useState } from 'react'
-import { ConsentAssurance } from '../../api/consent_v1'
+import type { ConsentAssurance } from '../../api/consent_v1'
 import { updatePatientPolicy } from '../../api/policy'
 
 interface PolicySimulatorProps {
@@ -14,7 +14,7 @@ const POLICIES: ConsentAssurance[] = [
   'standard',
   'push_approved',
   'biometric_confirmed',
-  'standard_fallback_from_push'
+  'standard_fallback_from_push',
 ]
 
 export function PolicySimulator({ patientUuid, onPolicyChange }: PolicySimulatorProps) {
@@ -24,8 +24,8 @@ export function PolicySimulator({ patientUuid, onPolicyChange }: PolicySimulator
   const setPolicy = async (policy: ConsentAssurance) => {
     setLoading(true)
     try {
-      await updatePatientPolicy(patientUuid, policy, { 
-        headers: { 'X-Dev-Simulator': 'true' } 
+      await updatePatientPolicy(patientUuid, policy, {
+        headers: { 'X-Dev-Simulator': 'true' },
       })
       setCurrentPolicy(policy)
       onPolicyChange?.(policy)
@@ -41,14 +41,32 @@ export function PolicySimulator({ patientUuid, onPolicyChange }: PolicySimulator
   if (process.env.NODE_ENV === 'production') return null
 
   return (
-    <Card p="$4" bg="$color2" borderWidth={1} borderColor="$borderColor" mt="$4">
+    <Card
+      p="$4"
+      bg="$color2"
+      borderWidth={1}
+      borderColor="$borderColor"
+      mt="$4"
+    >
       <YStack gap="$3">
-        <Text fontSize={14} fontWeight="700" color="$color11">
+        <Text
+          fontSize={14}
+          fontWeight="700"
+          color="$color11"
+        >
           [DEV] Policy Simulator
         </Text>
-        <Text fontSize={12} color="$color10">Patient: {patientUuid}</Text>
+        <Text
+          fontSize={12}
+          color="$color10"
+        >
+          Patient: {patientUuid}
+        </Text>
 
-        <XStack gap="$2" flexWrap="wrap">
+        <XStack
+          gap="$2"
+          flexWrap="wrap"
+        >
           {POLICIES.map((policy) => (
             <Button
               key={policy}

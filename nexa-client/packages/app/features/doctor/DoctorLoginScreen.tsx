@@ -1,16 +1,6 @@
 'use client'
 
-import {
-  Button,
-  H1,
-  H4,
-  Input,
-  Paragraph,
-  Separator,
-  Spinner,
-  Text,
-  YStack,
-} from '@my/ui'
+import { Button, H1, H4, Input, Paragraph, Separator, Spinner, Text, YStack } from '@my/ui'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProviderAuth } from './ProviderAuthContext'
@@ -26,15 +16,7 @@ function safeReturnTo(value: string | null): string {
 export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScreenProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const {
-    status,
-    hydrated,
-    login,
-    verifyMfa,
-    cancelMfa,
-    loginError,
-    loggingIn,
-  } = useProviderAuth()
+  const { status, hydrated, login, verifyMfa, cancelMfa, loginError, loggingIn } = useProviderAuth()
   const demoMode = process.env.NEXT_PUBLIC_DEMO_MODE === 'true'
   const [email, setEmail] = useState(demoMode ? 'demo.doctor@nexacare.in' : '')
   const [password, setPassword] = useState('')
@@ -50,8 +32,14 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
   const handleLogin = useCallback(async () => {
     if (submittingRef.current) return
     setLocalError(null)
-    if (!email.trim()) { setLocalError('Email or login identifier is required.'); return }
-    if (!password) { setLocalError('Password is required.'); return }
+    if (!email.trim()) {
+      setLocalError('Email or login identifier is required.')
+      return
+    }
+    if (!password) {
+      setLocalError('Password is required.')
+      return
+    }
     submittingRef.current = true
     try {
       const result = await login(email, password)
@@ -91,8 +79,16 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
 
   if (!hydrated) {
     return (
-      <YStack flex={1} bg="$background" justifyContent="center" alignItems="center">
-        <Spinner size="large" color="$blue10" />
+      <YStack
+        flex={1}
+        bg="$background"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
       </YStack>
     )
   }
@@ -101,17 +97,45 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
 
   if (status === 'mfa_required') {
     return (
-      <YStack flex={1} bg="$background" justifyContent="center" alignItems="center" padding="$6">
-        <YStack width="100%" maxWidth={440} gap="$4">
-          <YStack alignItems="center" gap="$2">
-            <H4 color="$color12" fontSize={22}>Verify Provider</H4>
-            <Paragraph color="$color10" fontSize={15} textAlign="center">
+      <YStack
+        flex={1}
+        bg="$background"
+        justifyContent="center"
+        alignItems="center"
+        padding="$6"
+      >
+        <YStack
+          width="100%"
+          maxWidth={440}
+          gap="$4"
+        >
+          <YStack
+            alignItems="center"
+            gap="$2"
+          >
+            <H4
+              color="$color12"
+              fontSize={22}
+            >
+              Verify Provider
+            </H4>
+            <Paragraph
+              color="$color10"
+              fontSize={15}
+              textAlign="center"
+            >
               Enter the current code from your authenticator app.
             </Paragraph>
           </YStack>
           <YStack gap="$3">
             <YStack gap="$1">
-              <Text color="$color11" fontSize={13} fontWeight="700">Authenticator Code</Text>
+              <Text
+                color="$color11"
+                fontSize={13}
+                fontWeight="700"
+              >
+                Authenticator Code
+              </Text>
               <Input
                 size="$4"
                 placeholder="000000"
@@ -124,8 +148,17 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
               />
             </YStack>
             {displayError ? (
-              <YStack backgroundColor="$red4" borderRadius="$3" padding="$3">
-                <Text color="$red10" fontSize={14}>{displayError}</Text>
+              <YStack
+                backgroundColor="$red4"
+                borderRadius="$3"
+                padding="$3"
+              >
+                <Text
+                  color="$red10"
+                  fontSize={14}
+                >
+                  {displayError}
+                </Text>
               </YStack>
             ) : null}
             <Button
@@ -134,9 +167,20 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
               disabled={loggingIn || totpCode.trim().length < 6}
               onPress={handleVerifyMfa}
             >
-              {loggingIn ? <Spinner color="$blue10" size="small" /> : 'Verify'}
+              {loggingIn ? (
+                <Spinner
+                  color="$blue10"
+                  size="small"
+                />
+              ) : (
+                'Verify'
+              )}
             </Button>
-            <Button size="$3" chromeless onPress={backToLogin}>
+            <Button
+              size="$3"
+              chromeless
+              onPress={backToLogin}
+            >
               Back to Sign In
             </Button>
           </YStack>
@@ -146,18 +190,51 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
   }
 
   return (
-    <YStack flex={1} bg="$background" justifyContent="center" alignItems="center" padding="$6">
-      <YStack width="100%" maxWidth={440} gap="$4">
-        <YStack alignItems="center" gap="$2">
-          <H1 color="$color12" fontSize={36}>Nexa Care</H1>
-          <Paragraph color="$color10" fontSize={18}>Provider Login</Paragraph>
+    <YStack
+      flex={1}
+      bg="$background"
+      justifyContent="center"
+      alignItems="center"
+      padding="$6"
+    >
+      <YStack
+        width="100%"
+        maxWidth={440}
+        gap="$4"
+      >
+        <YStack
+          alignItems="center"
+          gap="$2"
+        >
+          <H1
+            color="$color12"
+            fontSize={36}
+          >
+            Nexa Care
+          </H1>
+          <Paragraph
+            color="$color10"
+            fontSize={18}
+          >
+            Provider Login
+          </Paragraph>
           {demoMode ? (
-            <Text color="$orange10" fontSize={13} fontWeight="700">Demo mode — credentials are supplied separately</Text>
+            <Text
+              color="$orange10"
+              fontSize={13}
+              fontWeight="700"
+            >
+              Demo mode — credentials are supplied separately
+            </Text>
           ) : null}
         </YStack>
         <YStack gap="$3">
           <YStack gap="$1">
-            <Text color="$color11" fontSize={13} fontWeight="700">
+            <Text
+              color="$color11"
+              fontSize={13}
+              fontWeight="700"
+            >
               Email or Login Identifier
             </Text>
             <Input
@@ -170,7 +247,13 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
             />
           </YStack>
           <YStack gap="$1">
-            <Text color="$color11" fontSize={13} fontWeight="700">Password</Text>
+            <Text
+              color="$color11"
+              fontSize={13}
+              fontWeight="700"
+            >
+              Password
+            </Text>
             <Input
               size="$4"
               placeholder="Enter password"
@@ -182,12 +265,33 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
             />
           </YStack>
           {displayError ? (
-            <YStack backgroundColor="$red4" borderRadius="$3" padding="$3">
-              <Text color="$red10" fontSize={14}>{displayError}</Text>
+            <YStack
+              backgroundColor="$red4"
+              borderRadius="$3"
+              padding="$3"
+            >
+              <Text
+                color="$red10"
+                fontSize={14}
+              >
+                {displayError}
+              </Text>
             </YStack>
           ) : null}
-          <Button theme="blue" size="$4" disabled={loggingIn} onPress={handleLogin}>
-            {loggingIn ? <Spinner color="$blue10" size="small" /> : 'Sign In'}
+          <Button
+            theme="blue"
+            size="$4"
+            disabled={loggingIn}
+            onPress={handleLogin}
+          >
+            {loggingIn ? (
+              <Spinner
+                color="$blue10"
+                size="small"
+              />
+            ) : (
+              'Sign In'
+            )}
           </Button>
         </YStack>
 

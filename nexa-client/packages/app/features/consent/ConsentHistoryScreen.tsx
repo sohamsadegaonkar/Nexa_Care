@@ -1,14 +1,7 @@
 'use client'
 
 import { NexaApiClient } from '../../utils/apiClient'
-import {
-  Card,
-  Text,
-  YStack,
-  XStack,
-  ScrollView,
-  Button,
-} from '@my/ui'
+import { Card, Text, YStack, XStack, ScrollView, Button } from '@my/ui'
 import { Clock, UserCheck } from '@tamagui/lucide-icons'
 import { useState, useEffect } from 'react'
 
@@ -42,13 +35,16 @@ export function ConsentHistoryScreen() {
     fetchHistory()
   }, [])
 
-  const filtered = history.filter((item) =>
-    filter === 'all' ? true : item.type === filter
-  )
+  const filtered = history.filter((item) => (filter === 'all' ? true : item.type === filter))
 
   if (loading) {
     return (
-      <YStack flex={1} items="center" justify="center" bg="$background">
+      <YStack
+        flex={1}
+        items="center"
+        justify="center"
+        bg="$background"
+      >
         <Text color="$color11">Loading consent history...</Text>
       </YStack>
     )
@@ -56,7 +52,13 @@ export function ConsentHistoryScreen() {
 
   if (error) {
     return (
-      <YStack flex={1} items="center" justify="center" bg="$background" gap="$3">
+      <YStack
+        flex={1}
+        items="center"
+        justify="center"
+        bg="$background"
+        gap="$3"
+      >
         <Text color="$red10">{error}</Text>
         <Button onPress={() => window.location.reload()}>Try Again</Button>
       </YStack>
@@ -64,9 +66,18 @@ export function ConsentHistoryScreen() {
   }
 
   return (
-    <YStack flex={1} bg="$background" p="$5" gap="$5">
+    <YStack
+      flex={1}
+      bg="$background"
+      p="$5"
+      gap="$5"
+    >
       <YStack gap="$2">
-        <Text fontSize={26} fontWeight="900" color="$color12">
+        <Text
+          fontSize={26}
+          fontWeight="900"
+          color="$color12"
+        >
           Consent History
         </Text>
         <Text color="$color11">Audit trail of issued consent tokens</Text>
@@ -88,7 +99,11 @@ export function ConsentHistoryScreen() {
       <ScrollView flex={1}>
         <YStack gap="$3">
           {filtered.length === 0 ? (
-            <Text color="$color11" text="center" pt="$8">
+            <Text
+              color="$color11"
+              text="center"
+              pt="$8"
+            >
               No consent records found.
             </Text>
           ) : (
@@ -101,15 +116,27 @@ export function ConsentHistoryScreen() {
                 borderColor="$borderColor"
               >
                 <YStack gap="$3">
-                  <XStack justify="space-between" items="center">
-                    <XStack gap="$2" items="center">
-                      <UserCheck size={18} color="$blue10" />
-                      <Text fontWeight="800" color="$color12">
+                  <XStack
+                    justify="space-between"
+                    items="center"
+                  >
+                    <XStack
+                      gap="$2"
+                      items="center"
+                    >
+                      <UserCheck
+                        size={18}
+                        color="$blue10"
+                      />
+                      <Text
+                        fontWeight="800"
+                        color="$color12"
+                      >
                         {record.patient_id}
                       </Text>
                     </XStack>
-                    <Text 
-                      fontSize={12} 
+                    <Text
+                      fontSize={12}
                       color={record.type === 'break-glass' ? '$red10' : '$green10'}
                       fontWeight="700"
                     >
@@ -117,18 +144,42 @@ export function ConsentHistoryScreen() {
                     </Text>
                   </XStack>
 
-                  <Text color="$color11" fontSize={15}>
-                    Purpose: <Text color="$color12" fontWeight="700">{record.purpose}</Text>
+                  <Text
+                    color="$color11"
+                    fontSize={15}
+                  >
+                    Purpose:{' '}
+                    <Text
+                      color="$color12"
+                      fontWeight="700"
+                    >
+                      {record.purpose}
+                    </Text>
                   </Text>
 
-                  <XStack gap="$4" flexWrap="wrap">
-                    <XStack gap="$1.5" items="center">
-                      <Clock size={15} color="$color10" />
-                      <Text fontSize={13} color="$color11">
+                  <XStack
+                    gap="$4"
+                    flexWrap="wrap"
+                  >
+                    <XStack
+                      gap="$1.5"
+                      items="center"
+                    >
+                      <Clock
+                        size={15}
+                        color="$color10"
+                      />
+                      <Text
+                        fontSize={13}
+                        color="$color11"
+                      >
                         Issued: {record.issued_at}
                       </Text>
                     </XStack>
-                    <Text fontSize={13} color="$color11">
+                    <Text
+                      fontSize={13}
+                      color="$color11"
+                    >
                       Expires: {record.expires_at}
                     </Text>
                   </XStack>

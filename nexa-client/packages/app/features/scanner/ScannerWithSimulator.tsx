@@ -3,7 +3,7 @@
 import { ScannerScreen } from './screen'
 import { PolicySimulator } from '../dev/PolicySimulator'
 import { useState } from 'react'
-import { ConsentAssurance } from '../../api/consent_v1'
+import type { ConsentAssurance } from '../../api/consent_v1'
 
 export function ScannerWithSimulator() {
   const [currentPatient, setCurrentPatient] = useState<string | null>(null)
@@ -15,13 +15,13 @@ export function ScannerWithSimulator() {
 
   return (
     <>
-      <ScannerScreen 
+      <ScannerScreen
         onPatientResolved={handlePatientResolved}
         isDev={true}
       />
-      
+
       {currentPatient && (
-        <PolicySimulator 
+        <PolicySimulator
           patientUuid={currentPatient}
           onPolicyChange={setCurrentPolicy}
         />

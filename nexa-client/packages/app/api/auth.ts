@@ -15,10 +15,13 @@ export async function verifyMergeChallenge(
   challengeToken: string,
   totpCode: string
 ): Promise<{ challenge_token: string; verified: boolean }> {
-  const res = await apiClient.post<{ challenge_token: string; verified: boolean }>('/api/v2/auth/challenge/merge/verify', {
-    challenge_token: challengeToken,
-    totp_code: totpCode,
-  })
+  const res = await apiClient.post<{ challenge_token: string; verified: boolean }>(
+    '/api/v2/auth/challenge/merge/verify',
+    {
+      challenge_token: challengeToken,
+      totp_code: totpCode,
+    }
+  )
   return res.data
 }
 

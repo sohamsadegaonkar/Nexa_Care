@@ -2,7 +2,7 @@
 
 import { Button, Card, Text, XStack, YStack } from '@my/ui'
 import { useState } from 'react'
-import { ConsentAssurance } from '../../api/consent_v1'
+import type { ConsentAssurance } from '../../api/consent_v1'
 
 interface PolicyScreenProps {
   currentPolicy: ConsentAssurance
@@ -24,25 +24,34 @@ export function PolicyScreen({ currentPolicy, patientUuid, onPolicyChange }: Pol
     setLoading(true)
     try {
       await onPolicyChange(selected)
-      
+
       // Persist to backend if patientUuid is provided
       if (patientUuid) {
         const { updatePatientPolicy } = await import('../../api/policy')
         await updatePatientPolicy(patientUuid, selected)
       }
-      
+
       alert(`Policy saved: ${selected}`)
     } catch (e) {
-      alert("Failed to save policy")
+      alert('Failed to save policy')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <YStack flex={1} bg="$background" p="$5" gap="$6">
+    <YStack
+      flex={1}
+      bg="$background"
+      p="$5"
+      gap="$6"
+    >
       <YStack gap="$2">
-        <Text fontSize={26} fontWeight="900" color="$color12">
+        <Text
+          fontSize={26}
+          fontWeight="900"
+          color="$color12"
+        >
           Consent Assurance Policy
         </Text>
         <Text color="$color11">You control how your records are accessed</Text>
@@ -60,10 +69,17 @@ export function PolicyScreen({ currentPolicy, patientUuid, onPolicyChange }: Pol
             onPress={() => setSelected(option.value)}
           >
             <YStack gap="$1">
-              <Text fontSize={18} fontWeight="800" color="$color12">
+              <Text
+                fontSize={18}
+                fontWeight="800"
+                color="$color12"
+              >
                 {option.label}
               </Text>
-              <Text color="$color11" fontSize={15}>
+              <Text
+                color="$color11"
+                fontSize={15}
+              >
                 {option.desc}
               </Text>
             </YStack>
@@ -80,7 +96,11 @@ export function PolicyScreen({ currentPolicy, patientUuid, onPolicyChange }: Pol
         {loading ? 'Saving...' : 'Save Policy'}
       </Button>
 
-      <Text fontSize={13} color="$color10" text="center">
+      <Text
+        fontSize={13}
+        color="$color10"
+        text="center"
+      >
         Standard is always available. Upgrades require your approval.
       </Text>
     </YStack>

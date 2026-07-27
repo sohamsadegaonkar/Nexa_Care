@@ -1,8 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server'
+import { type NextRequest, NextResponse } from 'next/server'
 
 export function middleware(request: NextRequest) {
   const nonce = btoa(crypto.randomUUID())
-  const apiOrigin = process.env.NEXT_PUBLIC_API_URL ? new URL(process.env.NEXT_PUBLIC_API_URL).origin : ''
+  const apiOrigin = process.env.NEXT_PUBLIC_API_URL
+    ? new URL(process.env.NEXT_PUBLIC_API_URL).origin
+    : ''
   const csp = [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
@@ -24,8 +26,13 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [{ source: '/((?!api|_next/static|_next/image|favicon.ico).*)', missing: [
-    { type: 'header', key: 'next-router-prefetch' },
-    { type: 'header', key: 'purpose', value: 'prefetch' },
-  ] }],
+  matcher: [
+    {
+      source: '/((?!api|_next/static|_next/image|favicon.ico).*)',
+      missing: [
+        { type: 'header', key: 'next-router-prefetch' },
+        { type: 'header', key: 'purpose', value: 'prefetch' },
+      ],
+    },
+  ],
 }

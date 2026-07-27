@@ -18,7 +18,9 @@ describe('capability URL contract', () => {
   it.each(routeFiles)('%s never reads or constructs a bearer-token URL', (relativePath) => {
     const source = readFileSync(resolve(repo, relativePath), 'utf8')
     expect(source).not.toMatch(/[?&](?:consentToken|consent_token|capability|accessGrant)=/)
-    expect(source).not.toMatch(/searchParams\.get\(['"](?:consentToken|consent_token|capability|accessGrant)['"]\)/)
+    expect(source).not.toMatch(
+      /searchParams\.get\(['"](?:consentToken|consent_token|capability|accessGrant)['"]\)/
+    )
   })
 
   it('passes only patientId and workflowId from the Next patient route', () => {
@@ -28,9 +30,12 @@ describe('capability URL contract', () => {
     expect(source).toContain('workflowId={workflowId}')
   })
 
-  it.each(routeFiles.slice(3))('%s resolves the token from the capability store', (relativePath) => {
-    const source = readFileSync(resolve(repo, relativePath), 'utf8')
-    expect(source).toMatch(/useCapability\(workflowId\)/)
-    expect(source).toContain('Access session expired')
-  })
+  it.each(routeFiles.slice(3))(
+    '%s resolves the token from the capability store',
+    (relativePath) => {
+      const source = readFileSync(resolve(repo, relativePath), 'utf8')
+      expect(source).toMatch(/useCapability\(workflowId\)/)
+      expect(source).toContain('Access session expired')
+    }
+  )
 })

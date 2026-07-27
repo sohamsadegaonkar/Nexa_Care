@@ -25,9 +25,7 @@
 
 'use client'
 
-import {
-  YStack, XStack, Text, Button, Card, ScrollView,
-} from '@my/ui'
+import { YStack, XStack, Text, Button, Card, ScrollView } from '@my/ui'
 import { useMemo } from 'react'
 
 // ── Types ──────────────────────────────────────────────────────────────
@@ -92,8 +90,18 @@ function BBoxOverlay({
 
   return (
     <g
+      aria-label={`Select ${field.field_name}`}
       onClick={onClick}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onClick()
+        }
+      }}
+      // biome-ignore lint/a11y/useSemanticElements: SVG groups have no native button equivalent.
+      role="button"
       style={{ cursor: 'pointer' }}
+      tabIndex={0}
     >
       {/* Fill rectangle */}
       <rect
@@ -161,11 +169,19 @@ function PageThumbnail({
         borderWidth={1}
         borderColor="$borderColor"
       >
-        <Text color="$color10" fontSize="$2" fontWeight="700">
+        <Text
+          color="$color10"
+          fontSize="$2"
+          fontWeight="700"
+        >
           {pageNum}
         </Text>
       </YStack>
-      <Text color={hasNeedsReview ? '$orange10' : '$color10'} fontSize="$1" fontWeight="600">
+      <Text
+        color={hasNeedsReview ? '$orange10' : '$color10'}
+        fontSize="$1"
+        fontWeight="600"
+      >
         {fieldCount} field{fieldCount !== 1 ? 's' : ''}
       </Text>
     </Card>
@@ -185,7 +201,7 @@ export function DocumentPreview({
   // ── Fields on current page ─────────────────────────────────────────
   const pageFields = useMemo(
     () => fields.filter((f) => f.source_page === currentPage),
-    [fields, currentPage],
+    [fields, currentPage]
   )
 
   const pageHasNeedsReview = pageFields.some((f) => f.status === 'needs_review')
@@ -222,11 +238,20 @@ export function DocumentPreview({
   }, [pageFields])
 
   return (
-    <YStack flex={1} gap="$2">
+    <YStack
+      flex={1}
+      gap="$2"
+    >
       {/* ── Page thumbnails sidebar ─────────────────────────────────── */}
       {totalPages > 1 && (
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <XStack gap="$2" paddingBottom="$2">
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+        >
+          <XStack
+            gap="$2"
+            paddingBottom="$2"
+          >
             {pageThumbnails.map((t) => (
               <PageThumbnail
                 key={t.page}
@@ -266,7 +291,13 @@ export function DocumentPreview({
           }}
         >
           {/* Page content placeholder background */}
-          <rect x="0" y="0" width="100" height="100" fill="#fafafa" />
+          <rect
+            x="0"
+            y="0"
+            width="100"
+            height="100"
+            fill="#fafafa"
+          />
 
           {/* Simulated document text lines for visual context */}
           {Array.from({ length: 20 }, (_, i) => (
@@ -306,7 +337,10 @@ export function DocumentPreview({
           borderWidth={1}
           borderColor="$borderColor"
         >
-          <Text color="$color10" fontSize="$2">
+          <Text
+            color="$color10"
+            fontSize="$2"
+          >
             Page {currentPage} of {totalPages}
           </Text>
         </YStack>
@@ -333,9 +367,17 @@ export function DocumentPreview({
 
       {/* ── Legend ───────────────────────────────────────────────────── */}
       {legendItems.length > 0 && (
-        <XStack gap="$3" flexWrap="wrap" paddingHorizontal="$1">
+        <XStack
+          gap="$3"
+          flexWrap="wrap"
+          paddingHorizontal="$1"
+        >
           {legendItems.map((item) => (
-            <XStack key={item.status} alignItems="center" gap="$1">
+            <XStack
+              key={item.status}
+              alignItems="center"
+              gap="$1"
+            >
               <YStack
                 width={12}
                 height={12}
@@ -345,7 +387,11 @@ export function DocumentPreview({
                 borderStyle={item.dash as any}
                 backgroundColor={(item.color + '22') as any}
               />
-              <Text color="$color10" fontSize="$1" textTransform="uppercase">
+              <Text
+                color="$color10"
+                fontSize="$1"
+                textTransform="uppercase"
+              >
                 {item.status}
               </Text>
             </XStack>
@@ -354,7 +400,11 @@ export function DocumentPreview({
       )}
 
       {/* ── Page navigation ─────────────────────────────────────────── */}
-      <XStack justifyContent="center" alignItems="center" gap="$3">
+      <XStack
+        justifyContent="center"
+        alignItems="center"
+        gap="$3"
+      >
         <Button
           size="$2"
           disabled={currentPage <= 1}
@@ -362,7 +412,10 @@ export function DocumentPreview({
         >
           ◀ Prev
         </Button>
-        <Text color="$color10" fontSize="$3">
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
           Page {currentPage} / {totalPages}
         </Text>
         <Button

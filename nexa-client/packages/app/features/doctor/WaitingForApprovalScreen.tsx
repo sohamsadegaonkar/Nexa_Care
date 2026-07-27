@@ -37,12 +37,23 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
 
-type ConsentState = 'pending' | 'approved' | 'denied' | 'expired' | 'timeout' | 'cancelled' | 'delivery_failed' | 'error' | 'unauthorized' | 'not_found' | 'forbidden'
+type ConsentState =
+  | 'pending'
+  | 'approved'
+  | 'denied'
+  | 'expired'
+  | 'timeout'
+  | 'cancelled'
+  | 'delivery_failed'
+  | 'error'
+  | 'unauthorized'
+  | 'not_found'
+  | 'forbidden'
 
 // ── Adaptive polling intervals ──────────────────────────────────────────────
-const POLL_FAST_MS = 2000     // First 20 seconds
-const POLL_MEDIUM_MS = 5000   // 20–60 seconds
-const POLL_SLOW_MS = 10000    // After 60 seconds
+const POLL_FAST_MS = 2000 // First 20 seconds
+const POLL_MEDIUM_MS = 5000 // 20–60 seconds
+const POLL_SLOW_MS = 10000 // After 60 seconds
 const FAST_CUTOFF_S = 20
 const MEDIUM_CUTOFF_S = 60
 
@@ -99,14 +110,17 @@ export function WaitingForApprovalScreen() {
 
   // ── Schedule next poll with adaptive backoff ──────────────────────────
 
-  const scheduleNextPoll = useCallback((pollFn: () => Promise<void>) => {
-    if (!pollingActiveRef.current) return
-    if (intervalRef.current !== null) clearTimeout(intervalRef.current)
-    const delay = getPollInterval()
-    intervalRef.current = setTimeout(async () => {
-      await pollFn()
-    }, delay) as unknown as ReturnType<typeof setTimeout>
-  }, [getPollInterval])
+  const scheduleNextPoll = useCallback(
+    (pollFn: () => Promise<void>) => {
+      if (!pollingActiveRef.current) return
+      if (intervalRef.current !== null) clearTimeout(intervalRef.current)
+      const delay = getPollInterval()
+      intervalRef.current = setTimeout(async () => {
+        await pollFn()
+      }, delay) as unknown as ReturnType<typeof setTimeout>
+    },
+    [getPollInterval]
+  )
 
   // ── Poll consent request status ───────────────────────────────────────
 
@@ -128,13 +142,22 @@ export function WaitingForApprovalScreen() {
       setDeliveryStatus(nextDeliveryStatus)
       setConsentState(newStatus as ConsentState)
       if (newStatus === 'delivery_failed') {
-        setError(data.delivery_error || 'Could not deliver notification. Ask the patient to open the app or retry.')
+        setError(
+          data.delivery_error ||
+            'Could not deliver notification. Ask the patient to open the app or retry.'
+        )
       } else if (nextDeliveryStatus === 'sent') {
         setError(null)
       }
 
       // Stop polling on any terminal state
-      if (newStatus === 'approved' || newStatus === 'denied' || newStatus === 'expired' || newStatus === 'timeout' || newStatus === 'cancelled') {
+      if (
+        newStatus === 'approved' ||
+        newStatus === 'denied' ||
+        newStatus === 'expired' ||
+        newStatus === 'timeout' ||
+        newStatus === 'cancelled'
+      ) {
         stopAllTimers()
         return
       }
@@ -255,9 +278,13 @@ export function WaitingForApprovalScreen() {
         if (!active) return
         claimInFlightRef.current = false
         setConsentState('error')
-        setError(claimError instanceof Error ? claimError.message : 'Unable to claim approved access.')
+        setError(
+          claimError instanceof Error ? claimError.message : 'Unable to claim approved access.'
+        )
       })
-    return () => { active = false }
+    return () => {
+      active = false
+    }
   }, [consentState, hospitalId, requestId, router, setAccessGrant])
 
   // ── Helpers ───────────────────────────────────────────────────────────
@@ -297,26 +324,83 @@ export function WaitingForApprovalScreen() {
 
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <Lock size={64} color="$red10" />
-        <H4 textAlign="center" color="$color12">Session Required</H4>
-        <Paragraph textAlign="center" color="$color11">You must be logged in to view consent status.</Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/login')}>Go to Login</Button>
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <Lock
+          size={64}
+          color="$red10"
+        />
+        <H4
+          textAlign="center"
+          color="$color12"
+        >
+          Session Required
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
+          You must be logged in to view consent status.
+        </Paragraph>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/login')}
+        >
+          Go to Login
+        </Button>
       </YStack>
     )
   }
 
   if (consentState === 'error') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <ShieldAlert size={64} color="$red10" />
-        <H4 textAlign="center" color="$red10">Status Check Failed</H4>
-        <Paragraph textAlign="center" color="$color11" maxWidth={420}>
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <ShieldAlert
+          size={64}
+          color="$red10"
+        />
+        <H4
+          textAlign="center"
+          color="$red10"
+        >
+          Status Check Failed
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+          maxWidth={420}
+        >
           {error || 'Unable to check consent status. Please try again later.'}
         </Paragraph>
         <XStack gap="$3">
-          <Button theme="blue" size="$4" onPress={handleRetry}>New Request</Button>
-          <Button size="$4" chromeless onPress={() => router.push('/doctor/login')}>Return to Login</Button>
+          <Button
+            theme="blue"
+            size="$4"
+            onPress={handleRetry}
+          >
+            New Request
+          </Button>
+          <Button
+            size="$4"
+            chromeless
+            onPress={() => router.push('/doctor/login')}
+          >
+            Return to Login
+          </Button>
         </XStack>
       </YStack>
     )
@@ -326,13 +410,34 @@ export function WaitingForApprovalScreen() {
 
   if (consentState === 'approved') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <CheckCircle size={64} color="$green10" />
-        <H4 textAlign="center" color="$green10">Access Approved</H4>
-        <Paragraph textAlign="center" color="$color11">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <CheckCircle
+          size={64}
+          color="$green10"
+        />
+        <H4
+          textAlign="center"
+          color="$green10"
+        >
+          Access Approved
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
           The patient has approved your request. Redirecting to patient record...
         </Paragraph>
-        <Spinner size="small" color="$green10" />
+        <Spinner
+          size="small"
+          color="$green10"
+        />
       </YStack>
     )
   }
@@ -341,13 +446,35 @@ export function WaitingForApprovalScreen() {
 
   if (consentState === 'denied') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <XCircle size={64} color="$red10" />
-        <H4 textAlign="center" color="$red10">Access Denied</H4>
-        <Paragraph textAlign="center" color="$color11">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <XCircle
+          size={64}
+          color="$red10"
+        />
+        <H4
+          textAlign="center"
+          color="$red10"
+        >
+          Access Denied
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
           The patient denied this consent request. No data was shared.
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/dashboard')}>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/dashboard')}
+        >
           Back to Dashboard
         </Button>
       </YStack>
@@ -358,15 +485,43 @@ export function WaitingForApprovalScreen() {
 
   if (consentState === 'expired' || consentState === 'timeout' || consentState === 'not_found') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <Clock size={64} color="$yellow10" />
-        <H4 textAlign="center" color="$yellow10">Request Expired</H4>
-        <Paragraph textAlign="center" color="$color11">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <Clock
+          size={64}
+          color="$yellow10"
+        />
+        <H4
+          textAlign="center"
+          color="$yellow10"
+        >
+          Request Expired
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
           The patient did not respond in time. You can create a new request.
         </Paragraph>
         <XStack gap="$3">
-          <Button theme="blue" size="$4" onPress={handleRetry}>New Request</Button>
-          <Button size="$4" chromeless onPress={() => router.push('/doctor/dashboard')}>
+          <Button
+            theme="blue"
+            size="$4"
+            onPress={handleRetry}
+          >
+            New Request
+          </Button>
+          <Button
+            size="$4"
+            chromeless
+            onPress={() => router.push('/doctor/dashboard')}
+          >
             Back to Dashboard
           </Button>
         </XStack>
@@ -374,21 +529,56 @@ export function WaitingForApprovalScreen() {
     )
   }
 
-
   // ── Render: Delivery Failed ──────────────────────────────────────────
 
   if (consentState === 'delivery_failed') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <ShieldAlert size={64} color="$yellow10" />
-        <H4 textAlign="center" color="$yellow10">Notification Not Delivered</H4>
-        <Paragraph textAlign="center" color="$color11" maxWidth={420}>
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <ShieldAlert
+          size={64}
+          color="$yellow10"
+        />
+        <H4
+          textAlign="center"
+          color="$yellow10"
+        >
+          Notification Not Delivered
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+          maxWidth={420}
+        >
           Could not deliver notification. Ask the patient to open the app or retry.
         </Paragraph>
-        {error && <Text color="$red10" fontSize={14}>{error}</Text>}
+        {error && (
+          <Text
+            color="$red10"
+            fontSize={14}
+          >
+            {error}
+          </Text>
+        )}
         <XStack gap="$3">
-          <Button theme="blue" size="$4" onPress={handleRetry}>Retry</Button>
-          <Button size="$4" chromeless onPress={() => router.push('/doctor/dashboard')}>
+          <Button
+            theme="blue"
+            size="$4"
+            onPress={handleRetry}
+          >
+            Retry
+          </Button>
+          <Button
+            size="$4"
+            chromeless
+            onPress={() => router.push('/doctor/dashboard')}
+          >
             Back to Dashboard
           </Button>
         </XStack>
@@ -400,13 +590,35 @@ export function WaitingForApprovalScreen() {
 
   if (consentState === 'cancelled') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <ShieldOff size={64} color="$color11" />
-        <H4 textAlign="center" color="$color11">Request Cancelled</H4>
-        <Paragraph textAlign="center" color="$color11">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <ShieldOff
+          size={64}
+          color="$color11"
+        />
+        <H4
+          textAlign="center"
+          color="$color11"
+        >
+          Request Cancelled
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
           The consent request has been cancelled. The patient can no longer approve it.
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/dashboard')}>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/dashboard')}
+        >
           Back to Dashboard
         </Button>
       </YStack>
@@ -417,13 +629,35 @@ export function WaitingForApprovalScreen() {
 
   if (consentState === 'unauthorized') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <Lock size={64} color="$red10" />
-        <H4 textAlign="center" color="$red10">Session Expired</H4>
-        <Paragraph textAlign="center" color="$color11">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <Lock
+          size={64}
+          color="$red10"
+        />
+        <H4
+          textAlign="center"
+          color="$red10"
+        >
+          Session Expired
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
           {error || 'Your session has expired. Please log in again.'}
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/login')}>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/login')}
+        >
           Return to Login
         </Button>
       </YStack>
@@ -434,13 +668,35 @@ export function WaitingForApprovalScreen() {
 
   if (consentState === 'forbidden') {
     return (
-      <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-        <ShieldAlert size={64} color="$red10" />
-        <H4 textAlign="center" color="$red10">Not Authorized</H4>
-        <Paragraph textAlign="center" color="$color11">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$6"
+        gap="$4"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <ShieldAlert
+          size={64}
+          color="$red10"
+        />
+        <H4
+          textAlign="center"
+          color="$red10"
+        >
+          Not Authorized
+        </H4>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
           {error || 'You are not authorized to view this consent request.'}
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/dashboard')}>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/dashboard')}
+        >
           Back to Dashboard
         </Button>
       </YStack>
@@ -450,38 +706,98 @@ export function WaitingForApprovalScreen() {
   // ── Render: Waiting ──────────────────────────────────────────────────
 
   return (
-    <YStack flex={1} bg="$background" padding="$6" gap="$4" justifyContent="center" alignItems="center">
-      <Spinner size="large" color="$blue10" />
-      <H4 textAlign="center" color="$color12">Waiting for Patient Approval</H4>
-      <Paragraph textAlign="center" color="$color11" maxWidth={400}>
+    <YStack
+      flex={1}
+      bg="$background"
+      padding="$6"
+      gap="$4"
+      justifyContent="center"
+      alignItems="center"
+    >
+      <Spinner
+        size="large"
+        color="$blue10"
+      />
+      <H4
+        textAlign="center"
+        color="$color12"
+      >
+        Waiting for Patient Approval
+      </H4>
+      <Paragraph
+        textAlign="center"
+        color="$color11"
+        maxWidth={400}
+      >
         {deliveryStatus === 'sent'
           ? 'Notification sent. Waiting for the patient to approve or deny.'
           : 'Notification queued. Waiting for delivery and patient response.'}
       </Paragraph>
 
       {/* Request ID display */}
-      <Card padding="$4" backgroundColor="$color2" borderWidth={1} borderColor="$borderColor" gap="$2">
-        <Paragraph color="$color10" fontSize={12} fontWeight="700" textTransform="uppercase">
+      <Card
+        padding="$4"
+        backgroundColor="$color2"
+        borderWidth={1}
+        borderColor="$borderColor"
+        gap="$2"
+      >
+        <Paragraph
+          color="$color10"
+          fontSize={12}
+          fontWeight="700"
+          textTransform="uppercase"
+        >
           Request ID
         </Paragraph>
-        <Text color="$color12" fontSize={16} fontWeight="700">
+        <Text
+          color="$color12"
+          fontSize={16}
+          fontWeight="700"
+        >
           {requestId || '—'}
         </Text>
       </Card>
 
       {/* Elapsed timer */}
-      <Text color="$color10" fontSize={18} fontWeight="700">
+      <Text
+        color="$color10"
+        fontSize={18}
+        fontWeight="700"
+      >
         Elapsed: {formatElapsed(elapsed)}
       </Text>
 
       {/* Polling rate indicator */}
-      <Text color="$color9" fontSize={12}>
-        Polling every {elapsedRef.current < FAST_CUTOFF_S ? '2' : elapsedRef.current < MEDIUM_CUTOFF_S ? '5' : '10'}s
+      <Text
+        color="$color9"
+        fontSize={12}
+      >
+        Polling every{' '}
+        {elapsedRef.current < FAST_CUTOFF_S
+          ? '2'
+          : elapsedRef.current < MEDIUM_CUTOFF_S
+            ? '5'
+            : '10'}
+        s
       </Text>
 
-      {error && <Text color="$red10" fontSize={14}>{error}</Text>}
+      {error && (
+        <Text
+          color="$red10"
+          fontSize={14}
+        >
+          {error}
+        </Text>
+      )}
 
-      <Button size="$3" chromeless onPress={handleCancelRequest} marginTop="$4" disabled={cancelling}>
+      <Button
+        size="$3"
+        chromeless
+        onPress={handleCancelRequest}
+        marginTop="$4"
+        disabled={cancelling}
+      >
         {cancelling ? 'Cancelling...' : 'Cancel Request'}
       </Button>
     </YStack>

@@ -32,7 +32,7 @@ function terminateProcessTree(child) {
 }
 
 const startedAt = Date.now()
-console.log(`Starting Next production build verification (timeout: ${BUILD_TIMEOUT_MS / 1000}s).`)
+console.info(`Starting Next production build verification (timeout: ${BUILD_TIMEOUT_MS / 1000}s).`)
 
 const child = spawn(process.execPath, [yarnPath, 'build'], {
   cwd: nextAppRoot,
@@ -48,7 +48,9 @@ child.stderr.pipe(process.stderr)
 let timedOut = false
 const timeout = setTimeout(() => {
   timedOut = true
-  console.error(`Next production build exceeded ${BUILD_TIMEOUT_MS / 1000}s; terminating its process tree.`)
+  console.error(
+    `Next production build exceeded ${BUILD_TIMEOUT_MS / 1000}s; terminating its process tree.`
+  )
   terminateProcessTree(child)
 }, BUILD_TIMEOUT_MS)
 
@@ -77,5 +79,5 @@ child.once('close', (code, signal) => {
     return
   }
 
-  console.log(`Next production build verification passed in ${durationSeconds}s.`)
+  console.info(`Next production build verification passed in ${durationSeconds}s.`)
 })

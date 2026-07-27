@@ -7,7 +7,11 @@ import {
   type CapabilityGrant,
 } from './capabilityStore'
 
-function grant(workflowId: string, token: string, expiresAt = '2099-01-01T00:00:00.000Z'): CapabilityGrant {
+function grant(
+  workflowId: string,
+  token: string,
+  expiresAt = '2099-01-01T00:00:00.000Z'
+): CapabilityGrant {
   return {
     workflowId,
     patientId: `patient-${workflowId}`,

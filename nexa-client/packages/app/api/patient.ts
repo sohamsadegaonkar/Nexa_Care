@@ -1,4 +1,3 @@
-
 import { apiClient, ApiError, type ApiResponse } from '../utils/apiClient'
 
 export interface PatientDemographics {
@@ -78,15 +77,15 @@ export async function fetchPatientRecord(
   }
 
   try {
-    const response = await apiClient.get<
-      PatientRecordResponse,
-      ApiResponse<PatientRecordResponse>
-    >(`/api/v2/patient/${encodeURIComponent(normalizedPatientId)}/record`, {
-      headers: {
-        'X-Consent-Token': normalizedConsentToken,
-        'X-Consent-Purpose': normalizedPurpose,
-      },
-    })
+    const response = await apiClient.get<PatientRecordResponse, ApiResponse<PatientRecordResponse>>(
+      `/api/v2/patient/${encodeURIComponent(normalizedPatientId)}/record`,
+      {
+        headers: {
+          'X-Consent-Token': normalizedConsentToken,
+          'X-Consent-Purpose': normalizedPurpose,
+        },
+      }
+    )
 
     return response.data
   } catch (error: unknown) {

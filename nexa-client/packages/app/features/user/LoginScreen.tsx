@@ -1,15 +1,7 @@
 'use client'
 
 import { NexaApiClient } from '../../utils/apiClient'
-import {
-  Button,
-  Input,
-  Text,
-  YStack,
-  XStack,
-  Card,
-  Spinner,
-} from '@my/ui'
+import { Button, Input, Text, YStack, XStack, Card, Spinner } from '@my/ui'
 import { useState } from 'react'
 
 interface LoginScreenProps {
@@ -67,21 +59,36 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
   }
 
   return (
-    <YStack flex={1} bg="$background" justify="center" items="center" p="$5">
-      <Card 
-        width="100%" 
-        maxW={420} 
-        p="$6" 
-        gap="$5" 
-        bg="$color2" 
-        borderWidth={1} 
+    <YStack
+      flex={1}
+      bg="$background"
+      justify="center"
+      items="center"
+      p="$5"
+    >
+      <Card
+        width="100%"
+        maxW={420}
+        p="$6"
+        gap="$5"
+        bg="$color2"
+        borderWidth={1}
         borderColor="$borderColor"
       >
         <YStack gap="$2">
-          <Text fontSize={28} fontWeight="900" color="$color12" text="center">
+          <Text
+            fontSize={28}
+            fontWeight="900"
+            color="$color12"
+            text="center"
+          >
             Nexa Care
           </Text>
-          <Text color="$color11" text="center" fontSize={16}>
+          <Text
+            color="$color11"
+            text="center"
+            fontSize={16}
+          >
             Provider Login
           </Text>
         </YStack>
@@ -105,7 +112,11 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
             />
 
             {error && (
-              <Text color="$red11" fontSize={14} text="center">
+              <Text
+                color="$red11"
+                fontSize={14}
+                text="center"
+              >
                 {error}
               </Text>
             )}
@@ -121,7 +132,11 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           </YStack>
         ) : (
           <YStack gap="$4">
-            <Text color="$color11" text="center" fontSize={15}>
+            <Text
+              color="$color11"
+              text="center"
+              fontSize={15}
+            >
               Enter your 6-digit MFA code
             </Text>
             <Input
@@ -134,14 +149,18 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
               text="center"
             />
             {error && (
-              <Text color="$red11" fontSize={14} text="center">
+              <Text
+                color="$red11"
+                fontSize={14}
+                text="center"
+              >
                 {error}
               </Text>
             )}
-            <Button 
-              theme="blue" 
-              size="$5" 
-              onPress={handleMfaVerify} 
+            <Button
+              theme="blue"
+              size="$5"
+              onPress={handleMfaVerify}
               disabled={loading}
             >
               {loading ? <Spinner color="$color12" /> : 'Verify MFA'}

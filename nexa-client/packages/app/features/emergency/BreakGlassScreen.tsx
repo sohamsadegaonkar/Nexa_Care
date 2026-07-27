@@ -1,15 +1,6 @@
 'use client'
 
-import {
-  Button,
-  Card,
-  Input,
-  Text,
-  TextArea,
-  YStack,
-  XStack,
-  Spinner,
-} from '@my/ui'
+import { Button, Card, Input, Text, TextArea, YStack, XStack, Spinner } from '@my/ui'
 import { AlertTriangle } from '@tamagui/lucide-icons'
 import { useState } from 'react'
 import { NexaApiClient } from '../../utils/apiClient'
@@ -45,11 +36,7 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
     setError(null)
 
     try {
-      const result = await requestBreakGlassConsent(
-        patientId.trim(),
-        reasonCode,
-        freeText.trim()
-      )
+      const result = await requestBreakGlassConsent(patientId.trim(), reasonCode, freeText.trim())
       setSuccess(true)
       onConsentIssued?.(patientId.trim(), result.consent_token)
     } catch (err: any) {
@@ -94,14 +81,29 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
         p="$6"
         gap="$4"
       >
-        <AlertTriangle size={64} color="$orange11" />
-        <Text fontSize={24} fontWeight="900" color="$color12" text="center">
+        <AlertTriangle
+          size={64}
+          color="$orange11"
+        />
+        <Text
+          fontSize={24}
+          fontWeight="900"
+          color="$color12"
+          text="center"
+        >
           Emergency Access Granted
         </Text>
-        <Text color="$color11" text="center" maxW={320}>
+        <Text
+          color="$color11"
+          text="center"
+          maxW={320}
+        >
           Break-glass consent token issued. This action has been audited.
         </Text>
-        <Button theme="blue" onPress={() => window.location.reload()}>
+        <Button
+          theme="blue"
+          onPress={() => window.location.reload()}
+        >
           Return to Home
         </Button>
       </YStack>
@@ -109,21 +111,51 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
   }
 
   return (
-    <YStack flex={1} bg="$background" p="$5" gap="$5">
-      <YStack gap="$2" items="center">
-        <AlertTriangle size={48} color="$red11" />
-        <Text fontSize={26} fontWeight="900" color="$color12">
+    <YStack
+      flex={1}
+      bg="$background"
+      p="$5"
+      gap="$5"
+    >
+      <YStack
+        gap="$2"
+        items="center"
+      >
+        <AlertTriangle
+          size={48}
+          color="$red11"
+        />
+        <Text
+          fontSize={26}
+          fontWeight="900"
+          color="$color12"
+        >
           Emergency Break-Glass
         </Text>
-        <Text color="$red11" text="center" fontSize={15}>
+        <Text
+          color="$red11"
+          text="center"
+          fontSize={15}
+        >
           This action is fully audited and should only be used in true emergencies.
         </Text>
       </YStack>
 
-      <Card p="$5" bg="$color2" borderWidth={2} borderColor="$red8" gap="$5">
+      <Card
+        p="$5"
+        bg="$color2"
+        borderWidth={2}
+        borderColor="$red8"
+        gap="$5"
+      >
         <YStack gap="$4">
           <YStack gap="$2">
-            <Text color="$color11" fontWeight="700">Patient ID</Text>
+            <Text
+              color="$color11"
+              fontWeight="700"
+            >
+              Patient ID
+            </Text>
             <Input
               placeholder="PAT-XXXX-XXXX"
               value={patientId}
@@ -134,8 +166,16 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
           </YStack>
 
           <YStack gap="$2">
-            <Text color="$color11" fontWeight="700">Reason Code</Text>
-            <XStack gap="$2" flexWrap="wrap">
+            <Text
+              color="$color11"
+              fontWeight="700"
+            >
+              Reason Code
+            </Text>
+            <XStack
+              gap="$2"
+              flexWrap="wrap"
+            >
               {BREAK_GLASS_REASON_OPTIONS.map((opt) => (
                 <Button
                   key={opt.value}
@@ -150,7 +190,12 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
           </YStack>
 
           <YStack gap="$2">
-            <Text color="$color11" fontWeight="700">Justification (required)</Text>
+            <Text
+              color="$color11"
+              fontWeight="700"
+            >
+              Justification (required)
+            </Text>
             <TextArea
               placeholder="Describe the emergency situation..."
               value={freeText}
@@ -161,7 +206,10 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
         </YStack>
 
         {error && (
-          <Text color="$red11" fontSize={14}>
+          <Text
+            color="$red11"
+            fontSize={14}
+          >
             {error}
           </Text>
         )}
@@ -176,7 +224,12 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
               maxLength={6}
               secureTextEntry
             />
-            <Button onPress={handleStepUp} disabled={loading}>Verify MFA and continue</Button>
+            <Button
+              onPress={handleStepUp}
+              disabled={loading}
+            >
+              Verify MFA and continue
+            </Button>
           </YStack>
         )}
 
@@ -188,7 +241,10 @@ export function BreakGlassScreen({ onConsentIssued }: BreakGlassScreenProps) {
           onPress={handleBreakGlass}
         >
           {loading ? (
-            <XStack gap="$2" items="center">
+            <XStack
+              gap="$2"
+              items="center"
+            >
               <Spinner color="$color12" /> Issuing Emergency Token...
             </XStack>
           ) : (

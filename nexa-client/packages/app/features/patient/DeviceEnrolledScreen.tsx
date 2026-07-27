@@ -50,9 +50,7 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
         const response = await getDevices()
         if (cancelled) return
         // Find the matching device in the list
-        const match = response.devices?.find(
-          (d: DeviceInfo) => d.device_id === deviceId,
-        )
+        const match = response.devices?.find((d: DeviceInfo) => d.device_id === deviceId)
         setDeviceInfo(match ?? response.devices?.[0] ?? null)
       } catch {
         if (!cancelled) {
@@ -86,9 +84,8 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
     return () => clearTimeout(timer)
   }, [countdown, router])
 
-  const fingerprint = deviceId.length > 12
-    ? `${deviceId.slice(0, 6)}···${deviceId.slice(-6)}`
-    : deviceId
+  const fingerprint =
+    deviceId.length > 12 ? `${deviceId.slice(0, 6)}···${deviceId.slice(-6)}` : deviceId
 
   const deviceLabel = deviceInfo?.device_label ?? 'This Device'
   const deviceStatus = deviceInfo?.status ?? 'active'
@@ -99,16 +96,31 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
     : new Date(enrolledAt).toLocaleDateString()
 
   return (
-    <YStack f={1} bg="$background" p="$4" gap="$4" jc="center" ai="center">
+    <YStack
+      f={1}
+      bg="$background"
+      p="$4"
+      gap="$4"
+      jc="center"
+      ai="center"
+    >
       <Text fontSize={56}>✅</Text>
 
-      <H2 col="$color" ta="center">
+      <H2
+        col="$color"
+        ta="center"
+      >
         Device Secured!
       </H2>
 
-      <Paragraph col="$colorSubdued" ta="center" size="$5" mw={320}>
-        Your device is now linked to your Nexa Care account. Only this
-        device can approve data access requests.
+      <Paragraph
+        col="$colorSubdued"
+        ta="center"
+        size="$5"
+        mw={320}
+      >
+        Your device is now linked to your Nexa Care account. Only this device can approve data
+        access requests.
       </Paragraph>
 
       <YStack
@@ -119,28 +131,98 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
         w="100%"
         mw={360}
       >
-        <YStack fd="row" jc="space-between">
-          <Paragraph col="$colorSubdued" size="$3">Device</Paragraph>
-          <Text col="$color" size="$3" fontWeight="600">{deviceLabel}</Text>
+        <YStack
+          fd="row"
+          jc="space-between"
+        >
+          <Paragraph
+            col="$colorSubdued"
+            size="$3"
+          >
+            Device
+          </Paragraph>
+          <Text
+            col="$color"
+            size="$3"
+            fontWeight="600"
+          >
+            {deviceLabel}
+          </Text>
         </YStack>
-        <YStack fd="row" jc="space-between">
-          <Paragraph col="$colorSubdued" size="$3">Device ID</Paragraph>
-          <Text col="$color" fontFamily="$mono" size="$3">{fingerprint}</Text>
+        <YStack
+          fd="row"
+          jc="space-between"
+        >
+          <Paragraph
+            col="$colorSubdued"
+            size="$3"
+          >
+            Device ID
+          </Paragraph>
+          <Text
+            col="$color"
+            fontFamily="$mono"
+            size="$3"
+          >
+            {fingerprint}
+          </Text>
         </YStack>
-        <YStack fd="row" jc="space-between">
-          <Paragraph col="$colorSubdued" size="$3">Platform</Paragraph>
-          <Text col="$color" size="$3">{platformLabel}</Text>
+        <YStack
+          fd="row"
+          jc="space-between"
+        >
+          <Paragraph
+            col="$colorSubdued"
+            size="$3"
+          >
+            Platform
+          </Paragraph>
+          <Text
+            col="$color"
+            size="$3"
+          >
+            {platformLabel}
+          </Text>
         </YStack>
-        <YStack fd="row" jc="space-between">
-          <Paragraph col="$colorSubdued" size="$3">Enrolled</Paragraph>
-          <Text col="$color" size="$3">{enrolledDate}</Text>
+        <YStack
+          fd="row"
+          jc="space-between"
+        >
+          <Paragraph
+            col="$colorSubdued"
+            size="$3"
+          >
+            Enrolled
+          </Paragraph>
+          <Text
+            col="$color"
+            size="$3"
+          >
+            {enrolledDate}
+          </Text>
         </YStack>
-        <YStack fd="row" jc="space-between">
-          <Paragraph col="$colorSubdued" size="$3">Status</Paragraph>
+        <YStack
+          fd="row"
+          jc="space-between"
+        >
+          <Paragraph
+            col="$colorSubdued"
+            size="$3"
+          >
+            Status
+          </Paragraph>
           {loadingStatus ? (
-            <Spinner size="small" color="$blue10" />
+            <Spinner
+              size="small"
+              color="$blue10"
+            />
           ) : statusError ? (
-            <Text col="$orange10" size="$3">{statusError}</Text>
+            <Text
+              col="$orange10"
+              size="$3"
+            >
+              {statusError}
+            </Text>
           ) : (
             <Text
               col={isTrusted ? '$green10' : '$red10'}
@@ -153,10 +235,14 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
         </YStack>
       </YStack>
 
-      <Paragraph col="$orange10" ta="center" size="$2" mw={320}>
-        ALPHA: P-256 keypair generated client-side and private key stored
-        in platform secure storage. Not yet: hardware-backed non-exportable
-        signing key with biometric-gated key usage.
+      <Paragraph
+        col="$orange10"
+        ta="center"
+        size="$2"
+        mw={320}
+      >
+        ALPHA: P-256 keypair generated client-side and private key stored in platform secure
+        storage. Not yet: hardware-backed non-exportable signing key with biometric-gated key usage.
       </Paragraph>
 
       <Button

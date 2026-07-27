@@ -50,7 +50,17 @@ export default function BiometricApprovalScreen({
   const requestId = requestIdProp ?? params.requestId ?? ''
 
   const [challenge, setChallenge] = useState<ConsentChallenge | null>(null)
-  const [status, setStatus] = useState<'loading' | 'prompt' | 'setup-required' | 'authenticating' | 'signing' | 'submitting' | 'checking' | 'error' | 'expired'>('loading')
+  const [status, setStatus] = useState<
+    | 'loading'
+    | 'prompt'
+    | 'setup-required'
+    | 'authenticating'
+    | 'signing'
+    | 'submitting'
+    | 'checking'
+    | 'error'
+    | 'expired'
+  >('loading')
   const [error, setError] = useState<string | null>(null)
   const [setupRequiresLogin, setSetupRequiresLogin] = useState(false)
 
@@ -95,7 +105,9 @@ export default function BiometricApprovalScreen({
     }
 
     load()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [requestId, resetToAccessHistory])
 
   const handleBiometricAuth = async () => {
@@ -107,9 +119,10 @@ export default function BiometricApprovalScreen({
       const receipt: ConsentReceipt = {
         grantId: challenge.request_id,
         providerName: challenge.provider_name,
-        scope: typeof challenge.scope === 'string'
-          ? challenge.scope.split(',').map((s) => s.trim())
-          : challenge.scope,
+        scope:
+          typeof challenge.scope === 'string'
+            ? challenge.scope.split(',').map((s) => s.trim())
+            : challenge.scope,
         expiresAt: challenge.expires_at,
       }
       onApproved?.(receipt)
@@ -167,9 +180,23 @@ export default function BiometricApprovalScreen({
   // ── Render: Loading ──────────────────────────────────────────────────
   if (status === 'loading') {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center">
-        <Spinner size="large" color="$blue10" />
-        <Paragraph col="$colorSubdued" size="$4" mt="$3">Loading request...</Paragraph>
+      <YStack
+        f={1}
+        bg="$background"
+        jc="center"
+        ai="center"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
+        <Paragraph
+          col="$colorSubdued"
+          size="$4"
+          mt="$3"
+        >
+          Loading request...
+        </Paragraph>
       </YStack>
     )
   }
@@ -177,13 +204,33 @@ export default function BiometricApprovalScreen({
   // ── Render: Expired ──────────────────────────────────────────────────
   if (status === 'expired') {
     return (
-      <YStack f={1} bg="$background" p="$4" gap="$4" jc="center" ai="center">
+      <YStack
+        f={1}
+        bg="$background"
+        p="$4"
+        gap="$4"
+        jc="center"
+        ai="center"
+      >
         <Text fontSize={56}>⏰</Text>
-        <H2 col="$color" ta="center">Request Expired</H2>
-        <Paragraph col="$colorSubdued" ta="center" size="$4">
+        <H2
+          col="$color"
+          ta="center"
+        >
+          Request Expired
+        </H2>
+        <Paragraph
+          col="$colorSubdued"
+          ta="center"
+          size="$4"
+        >
           {error ?? 'This consent request has expired. No action is needed.'}
         </Paragraph>
-        <Button theme="blue" size="$4" onPress={resetToAccessHistory}>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={resetToAccessHistory}
+        >
           Go to Access History
         </Button>
       </YStack>
@@ -192,32 +239,73 @@ export default function BiometricApprovalScreen({
 
   if (status === 'checking') {
     return (
-      <YStack f={1} bg="$background" jc="center" ai="center" gap="$3">
-        <Spinner size="large" color="$blue10" />
-        <H2 col="$color" ta="center">Checking approval status</H2>
-        <Paragraph col="$colorSubdued" ta="center">Confirming whether the signed approval reached Nexa Care…</Paragraph>
+      <YStack
+        f={1}
+        bg="$background"
+        jc="center"
+        ai="center"
+        gap="$3"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
+        <H2
+          col="$color"
+          ta="center"
+        >
+          Checking approval status
+        </H2>
+        <Paragraph
+          col="$colorSubdued"
+          ta="center"
+        >
+          Confirming whether the signed approval reached Nexa Care…
+        </Paragraph>
       </YStack>
     )
   }
 
   if (status === 'setup-required') {
     return (
-      <YStack f={1} bg="$background" p="$4" gap="$4" jc="center" ai="center">
+      <YStack
+        f={1}
+        bg="$background"
+        p="$4"
+        gap="$4"
+        jc="center"
+        ai="center"
+      >
         <Text fontSize={56}>🔐</Text>
-        <H2 col="$color" ta="center">Secure This Device</H2>
-        <Paragraph col="$colorSubdued" ta="center" size="$4">
+        <H2
+          col="$color"
+          ta="center"
+        >
+          Secure This Device
+        </H2>
+        <Paragraph
+          col="$colorSubdued"
+          ta="center"
+          size="$4"
+        >
           {error ?? 'Secure this device to approve consent requests.'}
         </Paragraph>
         <Button
           theme="blue"
           size="$4"
-          onPress={() => router.replace(
-            setupRequiresLogin ? '/patient/login' : '/patient/secure-device',
-          )}
+          onPress={() =>
+            router.replace(setupRequiresLogin ? '/patient/login' : '/patient/secure-device')
+          }
         >
           {setupRequiresLogin ? 'Sign In and Secure Device' : 'Set Up or Retry Device'}
         </Button>
-        <Button size="$4" chromeless onPress={handleCancel}>Go Back</Button>
+        <Button
+          size="$4"
+          chromeless
+          onPress={handleCancel}
+        >
+          Go Back
+        </Button>
       </YStack>
     )
   }
@@ -225,26 +313,65 @@ export default function BiometricApprovalScreen({
   // ── Render: Prompt ───────────────────────────────────────────────────
   if (status === 'prompt') {
     return (
-      <YStack f={1} bg="$background" p="$4" gap="$4" jc="center" ai="center">
+      <YStack
+        f={1}
+        bg="$background"
+        p="$4"
+        gap="$4"
+        jc="center"
+        ai="center"
+      >
         <Text fontSize={56}>👆</Text>
-        <H2 col="$color" ta="center">Verify Your Approval</H2>
-        <Paragraph col="$colorSubdued" ta="center" size="$4" mw={320}>
-          Use Face ID or your fingerprint to confirm that you approve
-          this data access request.
+        <H2
+          col="$color"
+          ta="center"
+        >
+          Verify Your Approval
+        </H2>
+        <Paragraph
+          col="$colorSubdued"
+          ta="center"
+          size="$4"
+          mw={320}
+        >
+          Use Face ID or your fingerprint to confirm that you approve this data access request.
         </Paragraph>
-        <Paragraph col="$orange10" ta="center" size="$2" mw={320}>
-          ALPHA: P-256 keypair generated client-side and private key stored
-          in platform secure storage. Not yet: hardware-backed non-exportable
-          signing key with biometric-gated key usage.
+        <Paragraph
+          col="$orange10"
+          ta="center"
+          size="$2"
+          mw={320}
+        >
+          ALPHA: P-256 keypair generated client-side and private key stored in platform secure
+          storage. Not yet: hardware-backed non-exportable signing key with biometric-gated key
+          usage.
         </Paragraph>
         {error !== null ? (
-          <Text col="$red10" ta="center" size="$3">{error}</Text>
+          <Text
+            col="$red10"
+            ta="center"
+            size="$3"
+          >
+            {error}
+          </Text>
         ) : null}
-        <YStack gap="$3" w="100%" mt="$4">
-          <Button theme="blue" size="$4" onPress={handleBiometricAuth}>
+        <YStack
+          gap="$3"
+          w="100%"
+          mt="$4"
+        >
+          <Button
+            theme="blue"
+            size="$4"
+            onPress={handleBiometricAuth}
+          >
             Authenticate
           </Button>
-          <Button size="$4" chromeless onPress={handleCancel}>
+          <Button
+            size="$4"
+            chromeless
+            onPress={handleCancel}
+          >
             Cancel
           </Button>
         </YStack>
@@ -271,26 +398,71 @@ export default function BiometricApprovalScreen({
     const label = labels[status]
 
     return (
-      <YStack f={1} bg="$background" p="$4" gap="$3" jc="center" ai="center">
-        <Spinner size="large" color="$blue10" />
-        <H2 col="$color" ta="center">{label.title}</H2>
-        <Paragraph col="$colorSubdued" ta="center" size="$3">{label.subtitle}</Paragraph>
+      <YStack
+        f={1}
+        bg="$background"
+        p="$4"
+        gap="$3"
+        jc="center"
+        ai="center"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
+        <H2
+          col="$color"
+          ta="center"
+        >
+          {label.title}
+        </H2>
+        <Paragraph
+          col="$colorSubdued"
+          ta="center"
+          size="$3"
+        >
+          {label.subtitle}
+        </Paragraph>
       </YStack>
     )
   }
 
   // ── Render: Error ────────────────────────────────────────────────────
   return (
-    <YStack f={1} bg="$background" p="$4" gap="$3" jc="center" ai="center">
+    <YStack
+      f={1}
+      bg="$background"
+      p="$4"
+      gap="$3"
+      jc="center"
+      ai="center"
+    >
       <Text fontSize={56}>❌</Text>
-      <H2 col="$color" ta="center">Approval Failed</H2>
-      <Paragraph col="$colorSubdued" ta="center" size="$4">
+      <H2
+        col="$color"
+        ta="center"
+      >
+        Approval Failed
+      </H2>
+      <Paragraph
+        col="$colorSubdued"
+        ta="center"
+        size="$4"
+      >
         {error ?? 'Something went wrong. Please try again.'}
       </Paragraph>
-      <Button theme="blue" size="$4" onPress={handleBiometricAuth}>
+      <Button
+        theme="blue"
+        size="$4"
+        onPress={handleBiometricAuth}
+      >
         Try Again
       </Button>
-      <Button size="$4" chromeless onPress={handleCancel}>
+      <Button
+        size="$4"
+        chromeless
+        onPress={handleCancel}
+      >
         Go Back
       </Button>
     </YStack>

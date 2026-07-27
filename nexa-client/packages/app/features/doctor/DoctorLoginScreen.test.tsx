@@ -3,10 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import { ApiError, NexaApiClient } from '../../utils/apiClient'
 import { DoctorLoginScreen } from './DoctorLoginScreen'
-import {
-  ProviderAuthProvider,
-  useProviderAuth,
-} from './ProviderAuthContext'
+import { ProviderAuthProvider, useProviderAuth } from './ProviderAuthContext'
 
 const replace = vi.fn()
 const push = vi.fn()
@@ -36,7 +33,7 @@ function renderLogin(showEntryOptions = true) {
   return renderWithTamagui(
     <ProviderAuthProvider>
       <DoctorLoginScreen showEntryOptions={showEntryOptions} />
-    </ProviderAuthProvider>,
+    </ProviderAuthProvider>
   )
 }
 
@@ -60,7 +57,7 @@ describe('provider login state machine', () => {
     returnTo = null
     window.sessionStorage.clear()
     vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
-      new ApiError('No provider session.', 401, 'HTTP_ERROR'),
+      new ApiError('No provider session.', 401, 'HTTP_ERROR')
     )
   })
 
@@ -79,7 +76,9 @@ describe('provider login state machine', () => {
     vi.stubEnv('NEXT_PUBLIC_DEMO_MODE', 'true')
     renderLogin()
     expect(await screen.findByText(/Demo mode/)).toBeTruthy()
-    expect(screen.getByPlaceholderText('doctor@hospital.com')).toHaveValue('demo.doctor@nexacare.in')
+    expect(screen.getByPlaceholderText('doctor@hospital.com')).toHaveValue(
+      'demo.doctor@nexacare.in'
+    )
     expect(screen.getByPlaceholderText('Enter password')).toHaveValue('')
   })
 
@@ -110,7 +109,9 @@ describe('provider login state machine', () => {
 
   it('verifies MFA through the cookie session and establishes the provider session', async () => {
     vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
-    const verify = vi.spyOn(NexaApiClient, 'providerWebMfaVerify').mockResolvedValue(authenticatedLogin)
+    const verify = vi
+      .spyOn(NexaApiClient, 'providerWebMfaVerify')
+      .mockResolvedValue(authenticatedLogin)
     vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     renderLogin()
     await submitCredentials()
@@ -125,7 +126,7 @@ describe('provider login state machine', () => {
 
   it('maps invalid credentials without exposing backend details', async () => {
     vi.spyOn(NexaApiClient, 'providerWebLogin').mockRejectedValue(
-      new ApiError('backend authentication detail', 401, 'HTTP_ERROR'),
+      new ApiError('backend authentication detail', 401, 'HTTP_ERROR')
     )
     renderLogin()
     await submitCredentials()
@@ -136,7 +137,7 @@ describe('provider login state machine', () => {
   it('keeps the MFA step active for an invalid authenticator code', async () => {
     vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
     vi.spyOn(NexaApiClient, 'providerWebMfaVerify').mockRejectedValue(
-      new ApiError('Invalid authenticator code.', 401, 'HTTP_ERROR'),
+      new ApiError('Invalid authenticator code.', 401, 'HTTP_ERROR')
     )
     renderLogin()
     await submitCredentials()
@@ -152,7 +153,7 @@ describe('provider login state machine', () => {
   it('keeps the fail-closed MFA step active when its server session expires', async () => {
     vi.spyOn(NexaApiClient, 'providerWebLogin').mockResolvedValue({ status: 'mfa_required' })
     vi.spyOn(NexaApiClient, 'providerWebMfaVerify').mockRejectedValue(
-      new ApiError('MFA session expired. Sign in again.', 401, 'HTTP_ERROR'),
+      new ApiError('MFA session expired. Sign in again.', 401, 'HTTP_ERROR')
     )
     renderLogin()
     await submitCredentials()
@@ -167,7 +168,9 @@ describe('provider login state machine', () => {
 
   it('prevents duplicate password submissions', async () => {
     let resolveLogin!: (value: typeof authenticatedLogin) => void
-    const pending = new Promise<typeof authenticatedLogin>((resolve) => { resolveLogin = resolve })
+    const pending = new Promise<typeof authenticatedLogin>((resolve) => {
+      resolveLogin = resolve
+    })
     const login = vi.spyOn(NexaApiClient, 'providerWebLogin').mockReturnValue(pending)
     vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
     renderLogin()
@@ -230,14 +233,16 @@ describe('provider session hydration', () => {
     vi.restoreAllMocks()
     window.sessionStorage.clear()
     vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
-      new ApiError('No provider session.', 401, 'HTTP_ERROR'),
+      new ApiError('No provider session.', 401, 'HTTP_ERROR')
     )
   })
 
   it('leaves an unauthenticated refresh at login state', async () => {
     window.sessionStorage.clear()
     renderWithTamagui(
-      <ProviderAuthProvider><AuthenticatedValue /></ProviderAuthProvider>,
+      <ProviderAuthProvider>
+        <AuthenticatedValue />
+      </ProviderAuthProvider>
     )
     expect(await screen.findByText('false')).toBeTruthy()
   })

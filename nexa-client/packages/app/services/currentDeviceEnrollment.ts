@@ -15,10 +15,7 @@ import {
   getStoredDevicePublicKey,
   setDeviceId,
 } from './deviceKeys'
-import {
-  clearPatientAuthSession,
-  DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY,
-} from './patientAuthSession'
+import { clearPatientAuthSession, DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY } from './patientAuthSession'
 
 export type CurrentDeviceErrorCode =
   | 'SETUP_REQUIRED'
@@ -32,7 +29,7 @@ export class CurrentDeviceError extends Error {
     message: string,
     public readonly code: CurrentDeviceErrorCode,
     public readonly status = 0,
-    public readonly retryable = false,
+    public readonly retryable = false
   ) {
     super(message)
     this.name = 'CurrentDeviceError'
@@ -86,21 +83,21 @@ function mapError(error: unknown): CurrentDeviceError {
       return new CurrentDeviceError(
         'Your session or device enrollment authorization expired. Sign in with OTP again.',
         'REAUTH_REQUIRED',
-        401,
+        401
       )
     }
     if (error.status === 409) {
       return new CurrentDeviceError(
         'This device could not be enrolled. Revoke an unused device or retry after the current enrollment finishes.',
         'DEVICE_CONFLICT',
-        409,
+        409
       )
     }
     if (error.status === 400 || error.status === 422) {
       return new CurrentDeviceError(
         'The device enrollment request was rejected. Sign in again before retrying setup.',
         'INVALID_ENROLLMENT',
-        error.status,
+        error.status
       )
     }
     if (error.status === 0 || error.isRetryable) {
@@ -108,19 +105,19 @@ function mapError(error: unknown): CurrentDeviceError {
         'Unable to reach Nexa Care while securing this device. Check your connection and retry.',
         'NETWORK_ERROR',
         error.status,
-        true,
+        true
       )
     }
   }
   return new CurrentDeviceError(
     error instanceof Error ? error.message : 'Device enrollment failed.',
-    'INVALID_ENROLLMENT',
+    'INVALID_ENROLLMENT'
   )
 }
 
 async function enrollInstallation(
   metadata: LocalInstallationMetadata,
-  options: EnsureCurrentDeviceOptions,
+  options: EnsureCurrentDeviceOptions
 ): Promise<EnrollDeviceResponse> {
   if (enrollmentInFlight) return enrollmentInFlight
   enrollmentInFlight = (async () => {
@@ -129,7 +126,7 @@ async function enrollInstallation(
       throw new CurrentDeviceError(
         'Secure this device by signing in with a fresh OTP.',
         'REAUTH_REQUIRED',
-        401,
+        401
       )
     }
     options.onStage?.('generating')
@@ -158,13 +155,13 @@ async function enrollInstallation(
  * active matching server device_id. Another patient device never satisfies it.
  */
 export async function ensureCurrentDeviceEnrollment(
-  options: EnsureCurrentDeviceOptions = {},
+  options: EnsureCurrentDeviceOptions = {}
 ): Promise<CurrentDeviceEnrollment> {
   if (!(await getAuthToken())) {
     const error = new CurrentDeviceError(
       'Your patient session expired. Sign in with OTP again.',
       'REAUTH_REQUIRED',
-      401,
+      401
     )
     await clearPatientAuthSession('expired')
     throw error
@@ -178,7 +175,7 @@ export async function ensureCurrentDeviceEnrollment(
           (device) =>
             device.device_id === metadata.deviceId &&
             device.status === 'active' &&
-            device.public_key_fingerprint === metadata.keyFingerprint,
+            device.public_key_fingerprint === metadata.keyFingerprint
         )
       : undefined
 
@@ -195,7 +192,7 @@ export async function ensureCurrentDeviceEnrollment(
     if (options.allowEnrollment === false) {
       throw new CurrentDeviceError(
         'Secure this device to approve consent requests.',
-        'SETUP_REQUIRED',
+        'SETUP_REQUIRED'
       )
     }
 
@@ -208,7 +205,7 @@ export async function ensureCurrentDeviceEnrollment(
     if (!enrolledMetadata.keyFingerprint) {
       throw new CurrentDeviceError(
         'The local signing key is unavailable after enrollment.',
-        'SETUP_REQUIRED',
+        'SETUP_REQUIRED'
       )
     }
     return {

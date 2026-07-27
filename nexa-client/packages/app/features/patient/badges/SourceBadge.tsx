@@ -25,7 +25,11 @@ export default function SourceBadge({ source, confidence }: SourceBadgeProps) {
         ai="center"
         gap="$1"
       >
-        <Text col="$green10" size="$1" fontWeight="600">
+        <Text
+          col="$green10"
+          size="$1"
+          fontWeight="600"
+        >
           Manual entry
         </Text>
       </XStack>
@@ -33,9 +37,8 @@ export default function SourceBadge({ source, confidence }: SourceBadgeProps) {
   }
 
   // AI-extracted — always show confidence if available
-  const label = confidence != null
-    ? `AI-extracted, ${Math.round(confidence)}% confidence`
-    : 'AI-extracted'
+  const label =
+    confidence != null ? `AI-extracted, ${Math.round(confidence)}% confidence` : 'AI-extracted'
 
   return (
     <XStack
@@ -46,7 +49,11 @@ export default function SourceBadge({ source, confidence }: SourceBadgeProps) {
       ai="center"
       gap="$1"
     >
-      <Text col="$blue10" size="$1" fontWeight="600">
+      <Text
+        col="$blue10"
+        size="$1"
+        fontWeight="600"
+      >
         {label}
       </Text>
     </XStack>

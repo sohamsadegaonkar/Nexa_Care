@@ -37,7 +37,8 @@ vi.mock('./deviceKeys', () => ({
   DEVICE_PRIVATE_KEY_STORAGE_KEY: 'private-key-alias',
   getDeviceId: vi.fn(async () => mocks.localDeviceId),
   getStoredDevicePublicKey: vi.fn(async () =>
-    mocks.publicKey ? { publicKeyDerBase64: mocks.publicKey } : null),
+    mocks.publicKey ? { publicKeyDerBase64: mocks.publicKey } : null
+  ),
   fingerprintDevicePublicKey: vi.fn(async () => 'public-key-fingerprint'),
   getDevices: vi.fn(async () => ({ patient_id: 'patient-1', devices: mocks.serverDevices })),
   generateDeviceKeypair: mocks.generate.mockImplementation(async () => {
@@ -102,11 +103,13 @@ describe('current installation enrollment reconciliation', () => {
   it('does not enroll when local device_id, local key, and active server row match', async () => {
     mocks.localDeviceId = 'current-device'
     mocks.publicKey = 'current-public-key'
-    mocks.serverDevices = [{
-      device_id: 'current-device',
-      status: 'active',
-      public_key_fingerprint: 'public-key-fingerprint',
-    }]
+    mocks.serverDevices = [
+      {
+        device_id: 'current-device',
+        status: 'active',
+        public_key_fingerprint: 'public-key-fingerprint',
+      },
+    ]
     const { ensureCurrentDeviceEnrollment } = await service()
     const result = await ensureCurrentDeviceEnrollment()
     expect(result).toMatchObject({ deviceId: 'current-device', enrolledNow: false })
@@ -129,11 +132,13 @@ describe('current installation enrollment reconciliation', () => {
   it('re-enrolls when device_id matches but the local key fingerprint does not', async () => {
     mocks.localDeviceId = 'current-device'
     mocks.publicKey = 'replacement-public-key'
-    mocks.serverDevices = [{
-      device_id: 'current-device',
-      status: 'active',
-      public_key_fingerprint: 'old-public-key-fingerprint',
-    }]
+    mocks.serverDevices = [
+      {
+        device_id: 'current-device',
+        status: 'active',
+        public_key_fingerprint: 'old-public-key-fingerprint',
+      },
+    ]
     const { ensureCurrentDeviceEnrollment } = await service()
     await ensureCurrentDeviceEnrollment()
     expect(mocks.enroll).toHaveBeenCalledOnce()
@@ -141,11 +146,13 @@ describe('current installation enrollment reconciliation', () => {
 
   it('creates a fresh key and device identity when the local private key is missing', async () => {
     mocks.localDeviceId = 'stale-device'
-    mocks.serverDevices = [{
-      device_id: 'stale-device',
-      status: 'active',
-      public_key_fingerprint: 'different-fingerprint',
-    }]
+    mocks.serverDevices = [
+      {
+        device_id: 'stale-device',
+        status: 'active',
+        public_key_fingerprint: 'different-fingerprint',
+      },
+    ]
     const { ensureCurrentDeviceEnrollment } = await service()
     await ensureCurrentDeviceEnrollment()
     expect(mocks.deleteDeviceKey).toHaveBeenCalledOnce()
@@ -155,18 +162,24 @@ describe('current installation enrollment reconciliation', () => {
 
   it('deduplicates concurrent enrollment attempts and React-style remount retries', async () => {
     let finish!: (value: unknown) => void
-    mocks.enroll.mockReturnValue(new Promise((resolve) => { finish = resolve }))
+    mocks.enroll.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
     const { ensureCurrentDeviceEnrollment } = await service()
     const first = ensureCurrentDeviceEnrollment()
     const second = ensureCurrentDeviceEnrollment()
     await vi.waitFor(() => expect(mocks.enroll).toHaveBeenCalledOnce())
     finish({ device_id: 'new-device', patient_id: 'patient-1', status: 'active', enrolled_at: '' })
     await Promise.all([first, second])
-    mocks.serverDevices = [{
-      device_id: 'new-device',
-      status: 'active',
-      public_key_fingerprint: 'public-key-fingerprint',
-    }]
+    mocks.serverDevices = [
+      {
+        device_id: 'new-device',
+        status: 'active',
+        public_key_fingerprint: 'public-key-fingerprint',
+      },
+    ]
     await ensureCurrentDeviceEnrollment()
     expect(mocks.enroll).toHaveBeenCalledOnce()
   })
@@ -176,7 +189,8 @@ describe('current installation enrollment reconciliation', () => {
     const { ApiError } = await import('../utils/apiClient')
     mocks.enroll.mockRejectedValue(new ApiError('expired', 401, 'REAUTH_REQUIRED'))
     await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'REAUTH_REQUIRED', status: 401,
+      code: 'REAUTH_REQUIRED',
+      status: 401,
     })
     expect(mocks.clearSession).toHaveBeenCalledWith('expired')
   })
@@ -186,7 +200,8 @@ describe('current installation enrollment reconciliation', () => {
     const { ApiError } = await import('../utils/apiClient')
     mocks.enroll.mockRejectedValue(new ApiError('maximum devices', 409, 'CONFLICT'))
     await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'DEVICE_CONFLICT', status: 409,
+      code: 'DEVICE_CONFLICT',
+      status: 409,
     })
   })
 
@@ -194,16 +209,17 @@ describe('current installation enrollment reconciliation', () => {
     mocks.enrollmentToken = null
     const { ensureCurrentDeviceEnrollment } = await service()
     await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'REAUTH_REQUIRED', status: 401,
+      code: 'REAUTH_REQUIRED',
+      status: 401,
     })
     expect(mocks.enroll).not.toHaveBeenCalled()
   })
 
   it('reports setup before biometrics when enrollment is disallowed', async () => {
     const { ensureCurrentDeviceEnrollment } = await service()
-    await expect(
-      ensureCurrentDeviceEnrollment({ allowEnrollment: false }),
-    ).rejects.toMatchObject({ code: 'SETUP_REQUIRED' })
+    await expect(ensureCurrentDeviceEnrollment({ allowEnrollment: false })).rejects.toMatchObject({
+      code: 'SETUP_REQUIRED',
+    })
     expect(mocks.enroll).not.toHaveBeenCalled()
   })
 

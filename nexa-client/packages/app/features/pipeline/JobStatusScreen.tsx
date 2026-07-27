@@ -19,9 +19,7 @@
 
 'use client'
 
-import {
-  YStack, H2, Button, Text, Spinner, Card, XStack, Separator, Progress,
-} from '@my/ui'
+import { YStack, H2, Button, Text, Spinner, Card, XStack, Separator, Progress } from '@my/ui'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams, useParams } from 'next/navigation'
 import { NexaApiClient, type ExtractionJobStatusResponse, ApiError } from '../../utils/apiClient'
@@ -32,7 +30,13 @@ import { useCapability } from '../../services/capabilityStore'
 const POLL_INTERVAL_MS = 2_000
 
 /** Terminal job statuses — polling stops when reached. */
-const TERMINAL_STATUSES = ['auto_approved', 'review_required', 'review_pending', 'failed', 'committed']
+const TERMINAL_STATUSES = [
+  'auto_approved',
+  'review_required',
+  'review_pending',
+  'failed',
+  'committed',
+]
 
 /**
  * Display labels for job status lifecycle.
@@ -87,12 +91,30 @@ export function JobStatusScreen() {
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$6">🔒 Session Required</Text>
-        <Text color="$color10" fontSize="$3">
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$6"
+        >
+          🔒 Session Required
+        </Text>
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
           Please log in to view job status.
         </Text>
-        <Button theme="blue" onPress={() => router.push('/doctor/login')}>
+        <Button
+          theme="blue"
+          onPress={() => router.push('/doctor/login')}
+        >
           Go to Login
         </Button>
       </YStack>
@@ -102,14 +124,32 @@ export function JobStatusScreen() {
   // ── Missing consent token guard ──────────────────────────────────────
   if (!consentToken) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
-        <Text color="$color10" fontSize="$3">
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$6"
+        >
+          🔒 Consent Required
+        </Text>
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
           {workflowId
             ? 'Access session expired — request access again.'
             : 'You must have an active consent grant to view pipeline job status.'}
         </Text>
-        <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
+        <Button
+          theme="blue"
+          onPress={() => router.push('/doctor/request-consent')}
+        >
           Request Consent
         </Button>
       </YStack>
@@ -176,9 +216,24 @@ export function JobStatusScreen() {
   // ── Loading state ────────────────────────────────────────────────────
   if (loading && !job) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Spinner size="large" color="$blue10" />
-        <Text color="$color10" fontSize="$3">Loading job status…</Text>
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
+          Loading job status…
+        </Text>
       </YStack>
     )
   }
@@ -186,9 +241,28 @@ export function JobStatusScreen() {
   // ── Error state ──────────────────────────────────────────────────────
   if (error && !job) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$5">{error}</Text>
-        <Button theme="blue" onPress={() => { setLoading(true); setError(null); fetchJob(); }}>
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$5"
+        >
+          {error}
+        </Text>
+        <Button
+          theme="blue"
+          onPress={() => {
+            setLoading(true)
+            setError(null)
+            fetchJob()
+          }}
+        >
           Retry
         </Button>
       </YStack>
@@ -204,20 +278,47 @@ export function JobStatusScreen() {
   const isFailed = job?.status === 'failed'
 
   return (
-    <YStack flex={1} backgroundColor="$background" padding="$6" gap="$4" maxWidth={900} marginHorizontal="auto">
+    <YStack
+      flex={1}
+      backgroundColor="$background"
+      padding="$6"
+      gap="$4"
+      maxWidth={900}
+      marginHorizontal="auto"
+    >
       {/* ALPHA badge + header */}
-      <XStack alignItems="center" gap="$2">
-        <H2 color="$color12" fontSize="$7">Extraction Job</H2>
-        <Card backgroundColor="$orange4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
-          <Text color="$orange10" fontSize="$2" fontWeight="700" textTransform="uppercase">
+      <XStack
+        alignItems="center"
+        gap="$2"
+      >
+        <H2
+          color="$color12"
+          fontSize="$7"
+        >
+          Extraction Job
+        </H2>
+        <Card
+          backgroundColor="$orange4"
+          borderRadius="$4"
+          paddingHorizontal="$2"
+          paddingVertical="$1"
+        >
+          <Text
+            color="$orange10"
+            fontSize="$2"
+            fontWeight="700"
+            textTransform="uppercase"
+          >
             ALPHA
           </Text>
         </Card>
       </XStack>
 
-      <Text color="$color10" fontSize="$3">
-        ALPHA · AI-assisted extraction results require clinical verification
-        before commitment.
+      <Text
+        color="$color10"
+        fontSize="$3"
+      >
+        ALPHA · AI-assisted extraction results require clinical verification before commitment.
       </Text>
 
       <Separator />
@@ -226,22 +327,36 @@ export function JobStatusScreen() {
       <Card
         padding="$4"
         backgroundColor={
-          isFailed ? '$red4' :
-          isReviewPending ? '$orange4' :
-          hasLegacyAutoApproval ? '$red4' :
-          '$blue4'
+          isFailed
+            ? '$red4'
+            : isReviewPending
+              ? '$orange4'
+              : hasLegacyAutoApproval
+                ? '$red4'
+                : '$blue4'
         }
         borderRadius="$4"
         gap="$2"
       >
-        <XStack alignItems="center" gap="$3">
+        <XStack
+          alignItems="center"
+          gap="$3"
+        >
           <Text fontSize="$6">{statusInfo.icon}</Text>
           <YStack gap="$1">
-            <Text color={statusInfo.color} fontSize="$5" fontWeight="700">
+            <Text
+              color={statusInfo.color}
+              fontSize="$5"
+              fontWeight="700"
+            >
               {statusInfo.label}
             </Text>
-            <Text color="$color10" fontSize="$2">
-              Job ID: {job?.job_id ?? '—'} · Type: {job?.document_type ?? '—'} · Patient: {patientId}
+            <Text
+              color="$color10"
+              fontSize="$2"
+            >
+              Job ID: {job?.job_id ?? '—'} · Type: {job?.document_type ?? '—'} · Patient:{' '}
+              {patientId}
             </Text>
           </YStack>
         </XStack>
@@ -249,18 +364,46 @@ export function JobStatusScreen() {
 
       {/* ── Progress bar ──────────────────────────────────────────────── */}
       <YStack gap="$2">
-        <XStack justifyContent="space-between" alignItems="center">
-          <Text color="$color12" fontSize="$3" fontWeight="600">Extraction Progress</Text>
-          <XStack alignItems="center" gap="$2">
-            <Text color="$color10" fontSize="$3">{progressPct}%</Text>
-            {pollingActive && <Spinner size="small" color="$blue10" />}
+        <XStack
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Text
+            color="$color12"
+            fontSize="$3"
+            fontWeight="600"
+          >
+            Extraction Progress
+          </Text>
+          <XStack
+            alignItems="center"
+            gap="$2"
+          >
+            <Text
+              color="$color10"
+              fontSize="$3"
+            >
+              {progressPct}%
+            </Text>
+            {pollingActive && (
+              <Spinner
+                size="small"
+                color="$blue10"
+              />
+            )}
           </XStack>
         </XStack>
-        <Progress value={progressPct} size="$3">
+        <Progress
+          value={progressPct}
+          size="$3"
+        >
           <Progress.Indicator />
         </Progress>
         {/* Status lifecycle dots */}
-        <XStack justifyContent="space-between" marginTop="$1">
+        <XStack
+          justifyContent="space-between"
+          marginTop="$1"
+        >
           {['Queued', 'Extracting', 'Scored', 'Review'].map((step, idx) => {
             const thresholds = [10, 40, 80, 90]
             const active = progressPct >= thresholds[idx]
@@ -279,21 +422,64 @@ export function JobStatusScreen() {
       </YStack>
 
       {/* ── Field summary (shown when scored or beyond) ────────────────── */}
-      {(autoApproved + needsReview) > 0 && (
+      {autoApproved + needsReview > 0 && (
         <YStack gap="$3">
-          <Text color="$color12" fontSize="$3" fontWeight="600">Field Summary</Text>
+          <Text
+            color="$color12"
+            fontSize="$3"
+            fontWeight="600"
+          >
+            Field Summary
+          </Text>
           <XStack gap="$4">
-            <Card flex={1} padding="$3" backgroundColor="$red4" borderRadius="$4" alignItems="center">
-              <Text color="$red10" fontSize="$6" fontWeight="700">{autoApproved}</Text>
-              <Text color="$red10" fontSize="$2">Legacy blocked</Text>
+            <Card
+              flex={1}
+              padding="$3"
+              backgroundColor="$red4"
+              borderRadius="$4"
+              alignItems="center"
+            >
+              <Text
+                color="$red10"
+                fontSize="$6"
+                fontWeight="700"
+              >
+                {autoApproved}
+              </Text>
+              <Text
+                color="$red10"
+                fontSize="$2"
+              >
+                Legacy blocked
+              </Text>
             </Card>
-            <Card flex={1} padding="$3" backgroundColor="$orange4" borderRadius="$4" alignItems="center">
-              <Text color="$orange10" fontSize="$6" fontWeight="700">{needsReview}</Text>
-              <Text color="$orange10" fontSize="$2">Need Review</Text>
+            <Card
+              flex={1}
+              padding="$3"
+              backgroundColor="$orange4"
+              borderRadius="$4"
+              alignItems="center"
+            >
+              <Text
+                color="$orange10"
+                fontSize="$6"
+                fontWeight="700"
+              >
+                {needsReview}
+              </Text>
+              <Text
+                color="$orange10"
+                fontSize="$2"
+              >
+                Need Review
+              </Text>
             </Card>
           </XStack>
           {job?.overall_confidence != null && (
-            <Text color="$color10" fontSize="$2">
+            <Text
+              color="$color10"
+              fontSize="$2"
+            >
               Overall confidence: {(job.overall_confidence * 100).toFixed(0)}%
             </Text>
           )}
@@ -302,24 +488,50 @@ export function JobStatusScreen() {
 
       {/* ── Polling indicator ──────────────────────────────────────────── */}
       {pollingActive && !error && (
-        <XStack alignItems="center" gap="$2">
-          <Spinner size="small" color="$blue10" />
-          <Text color="$color10" fontSize="$2">Polling every 2s for updates…</Text>
+        <XStack
+          alignItems="center"
+          gap="$2"
+        >
+          <Spinner
+            size="small"
+            color="$blue10"
+          />
+          <Text
+            color="$color10"
+            fontSize="$2"
+          >
+            Polling every 2s for updates…
+          </Text>
         </XStack>
       )}
 
       {/* ── Error (non-blocking) ───────────────────────────────────────── */}
       {error && job && (
-        <Card backgroundColor="$red4" borderRadius="$3" padding="$3">
-          <Text color="$red10" fontSize="$3">{error}</Text>
+        <Card
+          backgroundColor="$red4"
+          borderRadius="$3"
+          padding="$3"
+        >
+          <Text
+            color="$red10"
+            fontSize="$3"
+          >
+            {error}
+          </Text>
         </Card>
       )}
 
       {/* ── Navigation ────────────────────────────────────────────────── */}
       <Separator />
 
-      <XStack justifyContent="space-between" alignItems="center">
-        <Button chromeless onPress={() => router.push('/doctor/pipeline/upload')}>
+      <XStack
+        justifyContent="space-between"
+        alignItems="center"
+      >
+        <Button
+          chromeless
+          onPress={() => router.push('/doctor/pipeline/upload')}
+        >
           ← Upload Another
         </Button>
 
@@ -327,16 +539,17 @@ export function JobStatusScreen() {
           <Button
             theme="orange"
             size="$4"
-            onPress={() =>
-              router.push(`/doctor/pipeline/review-queue?workflow_id=${workflowId}`)
-            }
+            onPress={() => router.push(`/doctor/pipeline/review-queue?workflow_id=${workflowId}`)}
           >
             Go to Review Queue →
           </Button>
         )}
 
         {hasLegacyAutoApproval && (
-          <Text color="$red10" fontSize="$3">
+          <Text
+            color="$red10"
+            fontSize="$3"
+          >
             This legacy job is blocked. Quarantine and reprocess it before clinical review.
           </Text>
         )}
@@ -347,7 +560,7 @@ export function JobStatusScreen() {
             size="$4"
             onPress={() =>
               router.push(
-                `/doctor/pipeline/upload?patient_id=${patientId}&workflow_id=${workflowId}`,
+                `/doctor/pipeline/upload?patient_id=${patientId}&workflow_id=${workflowId}`
               )
             }
           >

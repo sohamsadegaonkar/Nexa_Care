@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 import { LoginScreen } from '../features/user/LoginScreen'
-import { RoleNavigator, UserRole } from '../features/roles/RoleNavigator'
+import { RoleNavigator, type UserRole } from '../features/roles/RoleNavigator'
 import { getMyRole } from '../api/role'
 import { setAuthTokenProvider } from '../utils/apiClient'
 

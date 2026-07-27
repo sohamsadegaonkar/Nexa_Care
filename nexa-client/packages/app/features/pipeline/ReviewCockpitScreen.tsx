@@ -28,11 +28,25 @@
 'use client'
 
 import {
-  YStack, H2, Button, Text, Spinner, Card, XStack, Separator, ScrollView, Progress,
+  YStack,
+  H2,
+  Button,
+  Text,
+  Spinner,
+  Card,
+  XStack,
+  Separator,
+  ScrollView,
+  Progress,
 } from '@my/ui'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useRouter, useSearchParams, useParams } from 'next/navigation'
-import { NexaApiClient, type ExtractionJobStatusResponse, type ExtractedField, ApiError } from '../../utils/apiClient'
+import {
+  NexaApiClient,
+  type ExtractionJobStatusResponse,
+  type ExtractedField,
+  ApiError,
+} from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
 import { FieldCard } from './FieldCard'
 import { DocumentPreview, type BBoxField } from './DocumentPreview'
@@ -61,12 +75,30 @@ export function ReviewCockpitScreen() {
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$6">🔒 Session Required</Text>
-        <Text color="$color10" fontSize="$3">
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$6"
+        >
+          🔒 Session Required
+        </Text>
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
           Please log in to review fields.
         </Text>
-        <Button theme="blue" onPress={() => router.push('/doctor/login')}>
+        <Button
+          theme="blue"
+          onPress={() => router.push('/doctor/login')}
+        >
           Go to Login
         </Button>
       </YStack>
@@ -76,14 +108,32 @@ export function ReviewCockpitScreen() {
   // ── Missing consent token guard ──────────────────────────────────────
   if (!consentToken) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$6">🔒 Consent Required</Text>
-        <Text color="$color10" fontSize="$3">
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$6"
+        >
+          🔒 Consent Required
+        </Text>
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
           {workflowId
             ? 'Access session expired — request access again.'
             : 'You must have an active consent grant to review fields.'}
         </Text>
-        <Button theme="blue" onPress={() => router.push('/doctor/request-consent')}>
+        <Button
+          theme="blue"
+          onPress={() => router.push('/doctor/request-consent')}
+        >
           Request Consent
         </Button>
       </YStack>
@@ -128,7 +178,7 @@ export function ReviewCockpitScreen() {
   const reviewStats = useMemo(() => {
     const needsReview = fields.filter((f) => f.status === 'needs_review')
     const adjudicated = fields.filter(
-      (f) => f.status === 'approved' || f.status === 'edited' || f.status === 'rejected',
+      (f) => f.status === 'approved' || f.status === 'edited' || f.status === 'rejected'
     )
     const autoApproved = fields.filter((f) => f.status === 'auto_approved')
     const totalReviewable = needsReview.length + adjudicated.length + autoApproved.length
@@ -138,7 +188,8 @@ export function ReviewCockpitScreen() {
       adjudicated: adjudicated.length,
       autoApproved: autoApproved.length,
       allReviewed: needsReview.length === 0 && autoApproved.length === 0,
-      progressPct: totalReviewable > 0 ? Math.round((adjudicated.length / totalReviewable) * 100) : 100,
+      progressPct:
+        totalReviewable > 0 ? Math.round((adjudicated.length / totalReviewable) * 100) : 100,
     }
   }, [fields])
 
@@ -160,7 +211,7 @@ export function ReviewCockpitScreen() {
         status: f.status,
         risk_level: f.risk_level,
       })),
-    [fields],
+    [fields]
   )
 
   // ── Field update handler ─────────────────────────────────────────────
@@ -168,13 +219,11 @@ export function ReviewCockpitScreen() {
     (fieldId: string, newStatus: string, _finalValue: string) => {
       setFields((prev) =>
         prev.map((f) =>
-          f.field_id === fieldId
-            ? { ...f, status: newStatus as ExtractedField['status'] }
-            : f,
-        ),
+          f.field_id === fieldId ? { ...f, status: newStatus as ExtractedField['status'] } : f
+        )
       )
     },
-    [],
+    []
   )
 
   // ── Source page click handler — from FieldCard → jump preview to page ─
@@ -199,10 +248,31 @@ export function ReviewCockpitScreen() {
   // ── Loading state ────────────────────────────────────────────────────
   if (loading) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Spinner size="large" color="$blue10" />
-        <Text color="$color10" fontSize="$3">Loading job details…</Text>
-        <Button chromeless size="$2" onPress={fetchJob}>Retry</Button>
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
+        <Text
+          color="$color10"
+          fontSize="$3"
+        >
+          Loading job details…
+        </Text>
+        <Button
+          chromeless
+          size="$2"
+          onPress={fetchJob}
+        >
+          Retry
+        </Button>
       </YStack>
     )
   }
@@ -210,15 +280,36 @@ export function ReviewCockpitScreen() {
   // ── Error state ──────────────────────────────────────────────────────
   if (error && !job) {
     return (
-      <YStack flex={1} backgroundColor="$background" justifyContent="center" alignItems="center" gap="$4" padding="$6">
-        <Text color="$red10" fontSize="$5">{error}</Text>
-        <Button theme="blue" onPress={fetchJob}>Retry</Button>
+      <YStack
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+        padding="$6"
+      >
+        <Text
+          color="$red10"
+          fontSize="$5"
+        >
+          {error}
+        </Text>
+        <Button
+          theme="blue"
+          onPress={fetchJob}
+        >
+          Retry
+        </Button>
       </YStack>
     )
   }
 
   return (
-    <YStack flex={1} backgroundColor="$background" height="100vh">
+    <YStack
+      flex={1}
+      backgroundColor="$background"
+      height="100vh"
+    >
       {/* ── Header bar ───────────────────────────────────────────────── */}
       <XStack
         padding="$3"
@@ -228,66 +319,131 @@ export function ReviewCockpitScreen() {
         borderBottomWidth={1}
         borderBottomColor="$borderColor"
       >
-        <XStack alignItems="center" gap="$3">
-          <H2 color="$color12" fontSize="$5">Review Cockpit</H2>
-          <Card backgroundColor="$orange4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
-            <Text color="$orange10" fontSize="$1" fontWeight="700" textTransform="uppercase">
+        <XStack
+          alignItems="center"
+          gap="$3"
+        >
+          <H2
+            color="$color12"
+            fontSize="$5"
+          >
+            Review Cockpit
+          </H2>
+          <Card
+            backgroundColor="$orange4"
+            borderRadius="$4"
+            paddingHorizontal="$2"
+            paddingVertical="$1"
+          >
+            <Text
+              color="$orange10"
+              fontSize="$1"
+              fontWeight="700"
+              textTransform="uppercase"
+            >
               ALPHA
             </Text>
           </Card>
         </XStack>
 
-        <XStack alignItems="center" gap="$3">
-          <Text color="$color10" fontSize="$2">
+        <XStack
+          alignItems="center"
+          gap="$3"
+        >
+          <Text
+            color="$color10"
+            fontSize="$2"
+          >
             Job: {job?.job_id ?? '—'}
           </Text>
-          <Text color="$color10" fontSize="$2">
+          <Text
+            color="$color10"
+            fontSize="$2"
+          >
             Patient: {patientId}
           </Text>
-          <Text color="$color10" fontSize="$2">
+          <Text
+            color="$color10"
+            fontSize="$2"
+          >
             Confidence: {((job?.overall_confidence ?? 0) * 100).toFixed(0)}%
           </Text>
         </XStack>
       </XStack>
 
       {/* ALPHA notice */}
-      <YStack backgroundColor="$orange2" padding="$2" alignItems="center">
-        <Text color="$orange10" fontSize="$2">
-          ALPHA · AI-assisted extraction results require clinical verification
-          before commitment.
+      <YStack
+        backgroundColor="$orange2"
+        padding="$2"
+        alignItems="center"
+      >
+        <Text
+          color="$orange10"
+          fontSize="$2"
+        >
+          ALPHA · AI-assisted extraction results require clinical verification before commitment.
         </Text>
       </YStack>
 
       {/* ── Review progress bar ──────────────────────────────────────── */}
-      <YStack paddingHorizontal="$4" paddingVertical="$2" gap="$1">
-        <XStack justifyContent="space-between" alignItems="center">
-          <Text color="$color12" fontSize="$2" fontWeight="600">
+      <YStack
+        paddingHorizontal="$4"
+        paddingVertical="$2"
+        gap="$1"
+      >
+        <XStack
+          justifyContent="space-between"
+          alignItems="center"
+        >
+          <Text
+            color="$color12"
+            fontSize="$2"
+            fontWeight="600"
+          >
             Review Progress
           </Text>
-          <XStack alignItems="center" gap="$2">
-            <Text color={
-              reviewStats.allReviewed ? '$green10' : '$orange10'
-            } fontSize="$2" fontWeight="600">
+          <XStack
+            alignItems="center"
+            gap="$2"
+          >
+            <Text
+              color={reviewStats.allReviewed ? '$green10' : '$orange10'}
+              fontSize="$2"
+              fontWeight="600"
+            >
               {reviewStats.adjudicated}/{reviewStats.adjudicated + reviewStats.needsReview} reviewed
             </Text>
             {reviewStats.allReviewed && (
-              <Card backgroundColor="$green4" borderRadius="$4" paddingHorizontal="$2" paddingVertical="$1">
-                <Text color="$green10" fontSize="$1" fontWeight="700">
+              <Card
+                backgroundColor="$green4"
+                borderRadius="$4"
+                paddingHorizontal="$2"
+                paddingVertical="$1"
+              >
+                <Text
+                  color="$green10"
+                  fontSize="$1"
+                  fontWeight="700"
+                >
                   ✓ All Reviewed
                 </Text>
               </Card>
             )}
           </XStack>
         </XStack>
-        <Progress value={reviewStats.progressPct} size="$2">
-          <Progress.Indicator
-            backgroundColor={reviewStats.allReviewed ? '$green10' : '$blue10'}
-          />
+        <Progress
+          value={reviewStats.progressPct}
+          size="$2"
+        >
+          <Progress.Indicator backgroundColor={reviewStats.allReviewed ? '$green10' : '$blue10'} />
         </Progress>
       </YStack>
 
       {/* ── Main split layout ────────────────────────────────────────── */}
-      <XStack flex={1} height="100%">
+      <XStack
+        flex={1}
+        height="100%"
+      >
         {/* Left: Document preview with bounding-box overlays */}
         <YStack
           flex={1}
@@ -299,7 +455,13 @@ export function ReviewCockpitScreen() {
           padding="$3"
           gap="$2"
         >
-          <Text color="$color12" fontSize="$3" fontWeight="600">Original Document</Text>
+          <Text
+            color="$color12"
+            fontSize="$3"
+            fontWeight="600"
+          >
+            Original Document
+          </Text>
 
           <DocumentPreview
             totalPages={totalPages}
@@ -312,24 +474,54 @@ export function ReviewCockpitScreen() {
         </YStack>
 
         {/* Right: Field cards */}
-        <YStack flex={1} margin="$2" borderRadius="$4" gap="$2">
-          <Text color="$color12" fontSize="$3" fontWeight="600" paddingHorizontal="$2">
+        <YStack
+          flex={1}
+          margin="$2"
+          borderRadius="$4"
+          gap="$2"
+        >
+          <Text
+            color="$color12"
+            fontSize="$3"
+            fontWeight="600"
+            paddingHorizontal="$2"
+          >
             Extracted Fields ({fields.length})
           </Text>
 
           {fields.length === 0 ? (
-            <YStack alignItems="center" paddingVertical="$8">
-              <Text color="$color10" fontSize="$4">No extracted fields found.</Text>
-              <Text color="$color10" fontSize="$2" marginTop="$2">
+            <YStack
+              alignItems="center"
+              paddingVertical="$8"
+            >
+              <Text
+                color="$color10"
+                fontSize="$4"
+              >
+                No extracted fields found.
+              </Text>
+              <Text
+                color="$color10"
+                fontSize="$2"
+                marginTop="$2"
+              >
                 The extraction job may still be processing.
               </Text>
-              <Button size="$2" chromeless marginTop="$3" onPress={fetchJob}>
+              <Button
+                size="$2"
+                chromeless
+                marginTop="$3"
+                onPress={fetchJob}
+              >
                 Refresh
               </Button>
             </YStack>
           ) : (
             <ScrollView flex={1}>
-              <YStack gap="$3" padding="$2">
+              <YStack
+                gap="$3"
+                padding="$2"
+              >
                 {/* Needs review fields first */}
                 {fields
                   .filter((f) => f.status === 'needs_review')
@@ -354,7 +546,11 @@ export function ReviewCockpitScreen() {
                 {/* Legacy auto-approved fields are blocked pending quarantine/reprocessing. */}
                 {fields.filter((f) => f.status === 'auto_approved').length > 0 && (
                   <YStack gap="$2">
-                    <Text color="$color10" fontSize="$2" textTransform="uppercase">
+                    <Text
+                      color="$color10"
+                      fontSize="$2"
+                      textTransform="uppercase"
+                    >
                       Legacy auto-approved — blocked ({reviewStats.autoApproved})
                     </Text>
                     {fields
@@ -380,7 +576,11 @@ export function ReviewCockpitScreen() {
                 {/* Already adjudicated fields */}
                 {reviewStats.adjudicated > 0 && (
                   <YStack gap="$2">
-                    <Text color="$color10" fontSize="$2" textTransform="uppercase">
+                    <Text
+                      color="$color10"
+                      fontSize="$2"
+                      textTransform="uppercase"
+                    >
                       Reviewed ({reviewStats.adjudicated})
                     </Text>
                     {fields
@@ -388,7 +588,7 @@ export function ReviewCockpitScreen() {
                         (f) =>
                           f.status === 'approved' ||
                           f.status === 'edited' ||
-                          f.status === 'rejected',
+                          f.status === 'rejected'
                       )
                       .map((field) => (
                         <YStack
@@ -429,9 +629,16 @@ export function ReviewCockpitScreen() {
           ← Back to Queue
         </Button>
 
-        <XStack alignItems="center" gap="$3">
-          <Text color="$color10" fontSize="$3">
-            Progress: {reviewStats.adjudicated}/{reviewStats.needsReview + reviewStats.adjudicated} reviewed
+        <XStack
+          alignItems="center"
+          gap="$3"
+        >
+          <Text
+            color="$color10"
+            fontSize="$3"
+          >
+            Progress: {reviewStats.adjudicated}/{reviewStats.needsReview + reviewStats.adjudicated}{' '}
+            reviewed
           </Text>
 
           {reviewStats.allReviewed && reviewStats.needsReview + reviewStats.adjudicated > 0 ? (
@@ -440,7 +647,7 @@ export function ReviewCockpitScreen() {
               size="$3"
               onPress={() =>
                 router.push(
-                  `/doctor/pipeline/commit/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`,
+                  `/doctor/pipeline/commit/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`
                 )
               }
             >

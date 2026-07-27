@@ -27,7 +27,7 @@ test('Next.js dev server starts', async () => {
     // Wait for the server to start (adjust timeout as needed)
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
-        reject(new Error("Timeout waiting for dev server to start\n\nDev output:\n" + output))
+        reject(new Error('Timeout waiting for dev server to start\n\nDev output:\n' + output))
       }, 30000)
 
       const handleReadyOutput = (data: Buffer): void => {

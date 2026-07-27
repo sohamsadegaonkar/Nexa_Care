@@ -78,9 +78,7 @@ export async function issueRoutineConsentV1(
 /**
  * Issue emergency break-glass consent (v1.0)
  */
-export async function issueBreakGlassV1(
-  payload: BreakGlassRequest
-): Promise<ConsentResponse> {
+export async function issueBreakGlassV1(payload: BreakGlassRequest): Promise<ConsentResponse> {
   try {
     const response = await apiClient.post<
       ConsentResponse,
@@ -90,11 +88,7 @@ export async function issueBreakGlassV1(
     return response.data
   } catch (error: unknown) {
     if (error instanceof ApiError) {
-      throw new ConsentError(
-        error.message || 'Break-glass failed',
-        'CONSENT_FAILED',
-        error.status
-      )
+      throw new ConsentError(error.message || 'Break-glass failed', 'CONSENT_FAILED', error.status)
     }
     throw new ConsentError('Break-glass request failed', 'CONSENT_FAILED')
   }

@@ -14,11 +14,7 @@ vi.mock('../../api/auth', () => ({
 
 vi.mock('../../api/merge', () => ({
   mergePatients: vi.fn(),
-  MergeError: class extends Error {
-    constructor(message: string) {
-      super(message)
-    }
-  },
+  MergeError: class extends Error {},
 }))
 
 describe('MergeAdminScreen', () => {
@@ -41,9 +37,15 @@ describe('MergeAdminScreen', () => {
 
     renderWithTamagui(<MergeAdminScreen />)
 
-    fireEvent.change(screen.getByPlaceholderText(/Old Patient UUID/i), { target: { value: 'old-uuid' } })
-    fireEvent.change(screen.getByPlaceholderText(/Canonical Patient UUID/i), { target: { value: 'new-uuid' } })
-    fireEvent.change(screen.getByPlaceholderText(/Reason for merge/i), { target: { value: 'test reason' } })
+    fireEvent.change(screen.getByPlaceholderText(/Old Patient UUID/i), {
+      target: { value: 'old-uuid' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Canonical Patient UUID/i), {
+      target: { value: 'new-uuid' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Reason for merge/i), {
+      target: { value: 'test reason' },
+    })
 
     fireEvent.click(screen.getByRole('button', { name: /INITIATE MERGE/i }))
 
@@ -71,9 +73,15 @@ describe('MergeAdminScreen', () => {
 
     renderWithTamagui(<MergeAdminScreen />)
 
-    fireEvent.change(screen.getByPlaceholderText(/Old Patient UUID/i), { target: { value: 'old-uuid' } })
-    fireEvent.change(screen.getByPlaceholderText(/Canonical Patient UUID/i), { target: { value: 'new-uuid' } })
-    fireEvent.change(screen.getByPlaceholderText(/Reason for merge/i), { target: { value: 'test reason' } })
+    fireEvent.change(screen.getByPlaceholderText(/Old Patient UUID/i), {
+      target: { value: 'old-uuid' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Canonical Patient UUID/i), {
+      target: { value: 'new-uuid' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Reason for merge/i), {
+      target: { value: 'test reason' },
+    })
 
     fireEvent.click(screen.getByRole('button', { name: /INITIATE MERGE/i }))
 
@@ -101,9 +109,15 @@ describe('MergeAdminScreen', () => {
 
     renderWithTamagui(<MergeAdminScreen />)
 
-    fireEvent.change(screen.getByPlaceholderText(/Old Patient UUID/i), { target: { value: 'old-uuid' } })
-    fireEvent.change(screen.getByPlaceholderText(/Canonical Patient UUID/i), { target: { value: 'new-uuid' } })
-    fireEvent.change(screen.getByPlaceholderText(/Reason for merge/i), { target: { value: 'test reason' } })
+    fireEvent.change(screen.getByPlaceholderText(/Old Patient UUID/i), {
+      target: { value: 'old-uuid' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Canonical Patient UUID/i), {
+      target: { value: 'new-uuid' },
+    })
+    fireEvent.change(screen.getByPlaceholderText(/Reason for merge/i), {
+      target: { value: 'test reason' },
+    })
 
     fireEvent.click(screen.getByRole('button', { name: /INITIATE MERGE/i }))
 

@@ -6,8 +6,12 @@ export interface PushApprovalRequest {
   purpose: string
   scope: string
 }
-export interface PushApprovalResponse { request_id: string }
-export async function requestPushApproval(payload: PushApprovalRequest): Promise<PushApprovalResponse> {
+export interface PushApprovalResponse {
+  request_id: string
+}
+export async function requestPushApproval(
+  payload: PushApprovalRequest
+): Promise<PushApprovalResponse> {
   const { data } = await apiClient.post<PushApprovalResponse>('/api/v2/consent/request', payload)
   return data
 }
@@ -17,7 +21,9 @@ export interface PushApprovalStatusResponse {
   status: 'pending' | 'approved' | 'denied' | 'expired' | 'timeout'
 }
 export async function getPushRequestStatus(requestId: string): Promise<PushApprovalStatusResponse> {
-  const { data } = await apiClient.get<PushApprovalStatusResponse>(`/api/v2/consent/status/${requestId}`)
+  const { data } = await apiClient.get<PushApprovalStatusResponse>(
+    `/api/v2/consent/status/${requestId}`
+  )
   return data
 }
 

@@ -22,8 +22,16 @@ export function ProviderRouteGuard({ children, returnTo }: ProviderRouteGuardPro
 
   if (!hydrated || !isAuthenticated) {
     return (
-      <YStack flex={1} bg="$background" justifyContent="center" alignItems="center">
-        <Spinner size="large" color="$blue10" />
+      <YStack
+        flex={1}
+        bg="$background"
+        justifyContent="center"
+        alignItems="center"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
       </YStack>
     )
   }

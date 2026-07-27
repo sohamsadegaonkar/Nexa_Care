@@ -33,7 +33,11 @@ export default function RiskBadge({ level }: RiskBadgeProps) {
       py="$1"
       ai="center"
     >
-      <Text col={style.color} size="$1" fontWeight="700">
+      <Text
+        col={style.color}
+        size="$1"
+        fontWeight="700"
+      >
         {style.label}
       </Text>
     </XStack>

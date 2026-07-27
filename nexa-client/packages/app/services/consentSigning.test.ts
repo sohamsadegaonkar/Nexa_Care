@@ -59,7 +59,9 @@ describe('current-device signed approval', () => {
     mocks.biometrics.mockReset().mockResolvedValue(undefined)
     mocks.sign.mockReset().mockResolvedValue('ecdsa-signature')
     mocks.approve.mockReset().mockResolvedValue({
-      request_id: 'request-1', status: 'approved', responded_at: 'now',
+      request_id: 'request-1',
+      status: 'approved',
+      responded_at: 'now',
     })
   })
 
@@ -67,23 +69,25 @@ describe('current-device signed approval', () => {
     await approveWithBiometric(challenge)
     expect(mocks.ensure).toHaveBeenCalledWith({ allowEnrollment: false })
     expect(mocks.ensure.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.biometrics.mock.invocationCallOrder[0]!,
+      mocks.biometrics.mock.invocationCallOrder[0]!
     )
     expect(mocks.biometrics.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.sign.mock.invocationCallOrder[0]!,
+      mocks.sign.mock.invocationCallOrder[0]!
     )
   })
 
   it('submits the signature with the exact current installation device_id', async () => {
     await approveWithBiometric(challenge)
-    expect(mocks.approve).toHaveBeenCalledWith(expect.objectContaining({
-      request_id: 'request-1',
-      patient_id: 'patient-1',
-      decision: 'approved',
-      challenge_nonce: 'nonce-1',
-      signature: 'ecdsa-signature',
-      device_id: 'current-device',
-    }))
+    expect(mocks.approve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        request_id: 'request-1',
+        patient_id: 'patient-1',
+        decision: 'approved',
+        challenge_nonce: 'nonce-1',
+        signature: 'ecdsa-signature',
+        device_id: 'current-device',
+      })
+    )
   })
 
   it('never invokes biometrics, signing, or submission when setup is required', async () => {

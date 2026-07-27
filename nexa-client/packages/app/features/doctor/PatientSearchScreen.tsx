@@ -55,11 +55,35 @@ export function PatientSearchScreen() {
   // ── Session guard ─────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
-      <YStack flex={1} bg="$background" justifyContent="center" alignItems="center" gap="$4">
+      <YStack
+        flex={1}
+        bg="$background"
+        justifyContent="center"
+        alignItems="center"
+        gap="$4"
+      >
         <Text fontSize={44}>🔒</Text>
-        <Text fontSize={22} fontWeight="900" color="$color12" textAlign="center">Session Required</Text>
-        <Paragraph textAlign="center" color="$color11">You must be logged in to search patients.</Paragraph>
-        <Button theme="blue" size="$4" onPress={() => router.push('/doctor/login')}>Go to Login</Button>
+        <Text
+          fontSize={22}
+          fontWeight="900"
+          color="$color12"
+          textAlign="center"
+        >
+          Session Required
+        </Text>
+        <Paragraph
+          textAlign="center"
+          color="$color11"
+        >
+          You must be logged in to search patients.
+        </Paragraph>
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/login')}
+        >
+          Go to Login
+        </Button>
       </YStack>
     )
   }
@@ -107,9 +131,10 @@ export function PatientSearchScreen() {
   const handleRequestAccess = useCallback(() => {
     if (!resolved) return
     // If the patient was merged, always use canonical_patient_id
-    const targetId = resolved.is_redirected && resolved.canonical_patient_id
-      ? resolved.canonical_patient_id
-      : resolved.patient_id
+    const targetId =
+      resolved.is_redirected && resolved.canonical_patient_id
+        ? resolved.canonical_patient_id
+        : resolved.patient_id
     router.push(`/doctor/request-consent?patient_id=${encodeURIComponent(targetId)}`)
   }, [resolved, router])
 
@@ -122,34 +147,88 @@ export function PatientSearchScreen() {
   // ── Render: Resolved patient ───────────────────────────────────────────
 
   if (step === 'resolved' && resolved) {
-    const displayId = resolved.is_redirected && resolved.canonical_patient_id
-      ? resolved.canonical_patient_id
-      : resolved.patient_id
+    const displayId =
+      resolved.is_redirected && resolved.canonical_patient_id
+        ? resolved.canonical_patient_id
+        : resolved.patient_id
 
     return (
-      <YStack flex={1} bg="$background" padding="$5" gap="$5" maxWidth={600} marginHorizontal="auto">
+      <YStack
+        flex={1}
+        bg="$background"
+        padding="$5"
+        gap="$5"
+        maxWidth={600}
+        marginHorizontal="auto"
+      >
         <YStack>
-          <Text fontSize={26} fontWeight="900" color="$color12">Patient Found</Text>
-          <Paragraph color="$color11" fontSize={15}>
+          <Text
+            fontSize={26}
+            fontWeight="900"
+            color="$color12"
+          >
+            Patient Found
+          </Text>
+          <Paragraph
+            color="$color11"
+            fontSize={15}
+          >
             {mode === 'nfc' ? 'NFC card resolved successfully.' : 'Patient identified.'}
           </Paragraph>
         </YStack>
 
         {/* Merged-patient redirect warning */}
         {resolved.is_redirected && (
-          <Card padding="$4" backgroundColor="$orange4" borderWidth={2} borderColor="$orange8" gap="$2">
-            <Text color="$orange10" fontSize={16} fontWeight="700">
+          <Card
+            padding="$4"
+            backgroundColor="$orange4"
+            borderWidth={2}
+            borderColor="$orange8"
+            gap="$2"
+          >
+            <Text
+              color="$orange10"
+              fontSize={16}
+              fontWeight="700"
+            >
               ⚠️ Patient Record Merged
             </Text>
-            <Paragraph color="$orange9" fontSize={14} marginTop="$2">
-              This card was previously linked to a patient record that has been
-              merged. All operations will use the canonical patient ID.
+            <Paragraph
+              color="$orange9"
+              fontSize={14}
+              marginTop="$2"
+            >
+              This card was previously linked to a patient record that has been merged. All
+              operations will use the canonical patient ID.
             </Paragraph>
-            <YStack marginTop="$2" gap="$1">
-              <Text color="$color11" fontSize={12}>Original patient ID:</Text>
-              <Text color="$color12" fontSize={14}>{resolved.patient_id}</Text>
-              <Text color="$color11" fontSize={12} marginTop="$1">Canonical patient ID:</Text>
-              <Text color="$orange10" fontSize={14} fontWeight="700">
+            <YStack
+              marginTop="$2"
+              gap="$1"
+            >
+              <Text
+                color="$color11"
+                fontSize={12}
+              >
+                Original patient ID:
+              </Text>
+              <Text
+                color="$color12"
+                fontSize={14}
+              >
+                {resolved.patient_id}
+              </Text>
+              <Text
+                color="$color11"
+                fontSize={12}
+                marginTop="$1"
+              >
+                Canonical patient ID:
+              </Text>
+              <Text
+                color="$orange10"
+                fontSize={14}
+                fontWeight="700"
+              >
                 {resolved.canonical_patient_id}
               </Text>
             </YStack>
@@ -157,20 +236,41 @@ export function PatientSearchScreen() {
         )}
 
         {/* Patient ID display */}
-        <Card padding="$4" backgroundColor="$backgroundHover" gap="$2">
-          <Paragraph color="$color11" fontSize={12} textTransform="uppercase" letterSpacing={1}>
+        <Card
+          padding="$4"
+          backgroundColor="$backgroundHover"
+          gap="$2"
+        >
+          <Paragraph
+            color="$color11"
+            fontSize={12}
+            textTransform="uppercase"
+            letterSpacing={1}
+          >
             Patient ID
           </Paragraph>
-          <Text color="$color12" fontSize={18} fontWeight="600">
+          <Text
+            color="$color12"
+            fontSize={18}
+            fontWeight="600"
+          >
             {displayId}
           </Text>
         </Card>
 
         <XStack gap="$3">
-          <Button theme="blue" size="$4" onPress={handleRequestAccess}>
+          <Button
+            theme="blue"
+            size="$4"
+            onPress={handleRequestAccess}
+          >
             Request Access
           </Button>
-          <Button size="$4" chromeless onPress={handleBack}>
+          <Button
+            size="$4"
+            chromeless
+            onPress={handleBack}
+          >
             Search Again
           </Button>
         </XStack>
@@ -181,10 +281,26 @@ export function PatientSearchScreen() {
   // ── Render: Search input ───────────────────────────────────────────────
 
   return (
-    <YStack flex={1} bg="$background" padding="$5" gap="$5" maxWidth={700} marginHorizontal="auto">
+    <YStack
+      flex={1}
+      bg="$background"
+      padding="$5"
+      gap="$5"
+      maxWidth={700}
+      marginHorizontal="auto"
+    >
       <YStack>
-        <Text fontSize={26} fontWeight="900" color="$color12">Patient Search</Text>
-        <Paragraph color="$color11" fontSize={15}>
+        <Text
+          fontSize={26}
+          fontWeight="900"
+          color="$color12"
+        >
+          Patient Search
+        </Text>
+        <Paragraph
+          color="$color11"
+          fontSize={15}
+        >
           {mode === 'nfc'
             ? 'Enter the NFC card UID from the patient card.'
             : 'Enter a patient ID or name to find their record.'}
@@ -212,7 +328,10 @@ export function PatientSearchScreen() {
       <Separator />
 
       {/* Search input */}
-      <XStack gap="$3" alignItems="center">
+      <XStack
+        gap="$3"
+        alignItems="center"
+      >
         <Input
           flex={1}
           size="$4"
@@ -235,26 +354,54 @@ export function PatientSearchScreen() {
       </XStack>
 
       {loading && (
-        <YStack alignItems="center" padding="$4">
-          <Spinner size="large" color="$blue10" />
+        <YStack
+          alignItems="center"
+          padding="$4"
+        >
+          <Spinner
+            size="large"
+            color="$blue10"
+          />
           {mode === 'nfc' && (
-            <Paragraph color="$color11" fontSize={14} marginTop="$2">Resolving NFC card...</Paragraph>
+            <Paragraph
+              color="$color11"
+              fontSize={14}
+              marginTop="$2"
+            >
+              Resolving NFC card...
+            </Paragraph>
           )}
         </YStack>
       )}
 
       {error && (
-        <Card padding="$3" backgroundColor="$red4" borderRadius="$3">
-          <Text color="$red10" fontSize={14}>{error}</Text>
+        <Card
+          padding="$3"
+          backgroundColor="$red4"
+          borderRadius="$3"
+        >
+          <Text
+            color="$red10"
+            fontSize={14}
+          >
+            {error}
+          </Text>
         </Card>
       )}
 
       {/* NFC mode hint */}
       {mode === 'nfc' && !loading && !error && (
-        <Card padding="$3" backgroundColor="$blue4" borderRadius="$3">
-          <Text color="$blue10" fontSize={14}>
-            ALPHA: NFC card UID is entered manually in this demo. Production will
-            use native NFC tap.
+        <Card
+          padding="$3"
+          backgroundColor="$blue4"
+          borderRadius="$3"
+        >
+          <Text
+            color="$blue10"
+            fontSize={14}
+          >
+            ALPHA: NFC card UID is entered manually in this demo. Production will use native NFC
+            tap.
           </Text>
         </Card>
       )}
