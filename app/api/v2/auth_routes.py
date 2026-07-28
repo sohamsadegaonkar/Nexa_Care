@@ -53,7 +53,7 @@ from app.services.provider_auth_service import (
 
 from app.core.redis import get_async_redis_client
 from app.core.session_binding import provider_session_binding
-from app.core.config import get_otp_rate_limit_config, get_runtime_environment
+from app.core.config import get_otp_rate_limit_config
 from app.core.rate_limiter import atomic_fixed_window
 from app.core.client_ip import resolve_client_ip
 from app.core.supabase import get_supabase_client
@@ -392,32 +392,49 @@ class ProviderWebMfaRequest(BaseModel):
 
 
 def _set_web_auth_cookies(response: Response, token: str, expires_at: datetime) -> None:
-    secure = get_runtime_environment().is_production_like
     max_age = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
     response.set_cookie(
         "nexa_provider_session",
         token,
         max_age=max_age,
-        secure=secure,
+        secure=True,
         httponly=True,
-        samesite="lax",
+        samesite="none",
         path="/api/v2",
     )
     response.set_cookie(
         "nexa_csrf",
         secrets.token_urlsafe(24),
         max_age=max_age,
-        secure=secure,
+        secure=True,
         httponly=False,
-        samesite="lax",
+        samesite="none",
         path="/",
     )
 
 
 def _clear_web_auth_cookies(response: Response) -> None:
-    response.delete_cookie("nexa_provider_session", path="/api/v2")
-    response.delete_cookie("nexa_mfa_pending", path="/api/v2/auth/web")
-    response.delete_cookie("nexa_csrf", path="/")
+    response.delete_cookie(
+        "nexa_provider_session",
+        path="/api/v2",
+        secure=True,
+        httponly=True,
+        samesite="none",
+    )
+    response.delete_cookie(
+        "nexa_mfa_pending",
+        path="/api/v2/auth/web",
+        secure=True,
+        httponly=True,
+        samesite="none",
+    )
+    response.delete_cookie(
+        "nexa_csrf",
+        path="/",
+        secure=True,
+        httponly=False,
+        samesite="none",
+    )
 
 
 def _status_for_failure(failure: ProviderAuthFailure) -> int:
@@ -638,24 +655,23 @@ async def provider_web_login(
 ) -> ProviderWebLoginState:
     """Browser login: bearer material is written only to HttpOnly cookies."""
     login_result = await provider_login(payload, request, db, None)
-    secure = get_runtime_environment().is_production_like
     if isinstance(login_result, ProviderLoginMfaRequiredResponse):
         response.set_cookie(
             "nexa_mfa_pending",
             login_result.mfa_token,
             max_age=300,
-            secure=secure,
+            secure=True,
             httponly=True,
-            samesite="strict",
+            samesite="none",
             path="/api/v2/auth/web",
         )
         response.set_cookie(
             "nexa_csrf",
             secrets.token_urlsafe(24),
             max_age=300,
-            secure=secure,
+            secure=True,
             httponly=False,
-            samesite="strict",
+            samesite="none",
             path="/",
         )
         return ProviderWebLoginState(status="mfa_required")
@@ -681,7 +697,13 @@ async def provider_web_mfa_verify(
         db,
         None,
     )
-    response.delete_cookie("nexa_mfa_pending", path="/api/v2/auth/web")
+    response.delete_cookie(
+        "nexa_mfa_pending",
+        path="/api/v2/auth/web",
+        secure=True,
+        httponly=True,
+        samesite="none",
+    )
     _set_web_auth_cookies(response, result.access_token, result.expires_at)
     return ProviderWebLoginState(status="authenticated", expires_at=result.expires_at)
 

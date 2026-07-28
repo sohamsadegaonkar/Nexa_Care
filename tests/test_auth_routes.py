@@ -3,20 +3,25 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 import uuid
 import unittest
 from unittest.mock import AsyncMock, patch
 from types import SimpleNamespace
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials
 
 from app.api.v2.auth_routes import (
+    ProviderLoginMfaRequiredResponse,
     ProviderLoginRequest,
     ProviderMfaVerifyRequest,
+    _clear_web_auth_cookies,
+    _set_web_auth_cookies,
     provider_login,
     provider_mfa_verify,
     provider_refresh,
+    provider_web_login,
 )
 from app.core.dependencies import get_current_provider
 from app.models.provider import AffiliationType
@@ -36,6 +41,14 @@ from app.services.provider_auth_service import (
 
 def run(coro):
     return asyncio.run(coro)
+
+
+def set_cookie_headers(response: Response) -> list[str]:
+    return [
+        value.decode("latin-1")
+        for key, value in response.raw_headers
+        if key.lower() == b"set-cookie"
+    ]
 
 
 class MockRequest:
@@ -132,6 +145,79 @@ class TestProviderLoginRoute(unittest.TestCase):
         self.assertEqual(
             mock_audit.await_args.kwargs["event_type"], "PROVIDER_LOGIN_FAILED"
         )
+
+
+class TestProviderWebCookies(unittest.TestCase):
+    def test_session_and_csrf_cookies_support_cross_site_production(self) -> None:
+        response = Response()
+
+        _set_web_auth_cookies(
+            response,
+            "session-token",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+        )
+
+        cookies = set_cookie_headers(response)
+        self.assertEqual(len(cookies), 2)
+        for cookie in cookies:
+            self.assertIn("Secure", cookie)
+            self.assertIn("SameSite=none", cookie)
+        session_cookie = next(
+            cookie for cookie in cookies if cookie.startswith("nexa_provider_session=")
+        )
+        csrf_cookie = next(
+            cookie for cookie in cookies if cookie.startswith("nexa_csrf=")
+        )
+        self.assertIn("HttpOnly", session_cookie)
+        self.assertNotIn("HttpOnly", csrf_cookie)
+
+    @patch("app.api.v2.auth_routes.provider_login", new_callable=AsyncMock)
+    def test_mfa_pending_and_csrf_cookies_support_cross_site_production(
+        self, mock_login
+    ) -> None:
+        mock_login.return_value = ProviderLoginMfaRequiredResponse(
+            detail="MFA verification required",
+            mfa_token="mfa-pending-token",
+        )
+        response = Response()
+
+        result = run(
+            provider_web_login(
+                ProviderLoginRequest(
+                    login_identifier="provider@example.com",
+                    password="secret",
+                ),
+                MockRequest(),
+                response,
+                AsyncMock(),
+            )
+        )
+
+        self.assertEqual(result.status, "mfa_required")
+        cookies = set_cookie_headers(response)
+        self.assertEqual(len(cookies), 2)
+        for cookie in cookies:
+            self.assertIn("Secure", cookie)
+            self.assertIn("SameSite=none", cookie)
+        pending_cookie = next(
+            cookie for cookie in cookies if cookie.startswith("nexa_mfa_pending=")
+        )
+        csrf_cookie = next(
+            cookie for cookie in cookies if cookie.startswith("nexa_csrf=")
+        )
+        self.assertIn("HttpOnly", pending_cookie)
+        self.assertNotIn("HttpOnly", csrf_cookie)
+
+    def test_cleared_web_cookies_retain_cross_site_security_attributes(self) -> None:
+        response = Response()
+
+        _clear_web_auth_cookies(response)
+
+        cookies = set_cookie_headers(response)
+        self.assertEqual(len(cookies), 3)
+        for cookie in cookies:
+            self.assertIn("Secure", cookie)
+            self.assertIn("SameSite=none", cookie)
 
 
 class TestGetCurrentProvider(unittest.TestCase):
