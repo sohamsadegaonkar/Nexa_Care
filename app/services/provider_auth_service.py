@@ -68,6 +68,10 @@ _TOTP_VALID_WINDOW = 1
 logger = logging.getLogger("nexa_logger")
 
 
+class ProviderSessionStoreUnavailable(RuntimeError):
+    """Provider session revocation could not be durably applied."""
+
+
 class ProviderAuthFailure(str, enum.Enum):
     """Machine-readable provider authentication failure causes."""
 
@@ -413,9 +417,13 @@ async def delete_provider_session_token(token: str) -> None:
             if hasattr(delete_result, "__await__"):
                 await delete_result
     except Exception as exc:
-        logger.warning(
-            "Provider session deletion failed", extra={"error_type": type(exc).__name__}
+        logger.error(
+            "Provider session deletion unavailable",
+            extra={"error_type": type(exc).__name__},
         )
+        raise ProviderSessionStoreUnavailable(
+            "Provider session revocation is unavailable"
+        ) from exc
 
 
 async def refresh_provider_session_token(

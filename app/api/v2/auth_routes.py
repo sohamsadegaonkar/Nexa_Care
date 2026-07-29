@@ -40,6 +40,7 @@ from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
+    ProviderSessionStoreUnavailable,
     authenticate_provider_password,
     complete_mfa_login,
     delete_provider_session_token,
@@ -740,8 +741,14 @@ async def provider_web_logout(
     provider: ProviderContext = Depends(get_current_provider),
     session_token: str | None = Cookie(default=None, alias="nexa_provider_session"),
 ) -> None:
-    if session_token:
-        await delete_provider_session_token(session_token)
+    try:
+        if session_token:
+            await delete_provider_session_token(session_token)
+    except ProviderSessionStoreUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "PROVIDER_SESSION_REVOCATION_UNAVAILABLE"},
+        ) from exc
     _clear_web_auth_cookies(response)
     await append_audit_log(
         audit_context=current_audit_context(AuditDomain.AUTH),
@@ -909,7 +916,13 @@ async def provider_logout(
 ) -> None:
     """Invalidate the current Bearer session token."""
 
-    await delete_provider_session_token(credentials.credentials)
+    try:
+        await delete_provider_session_token(credentials.credentials)
+    except ProviderSessionStoreUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "PROVIDER_SESSION_REVOCATION_UNAVAILABLE"},
+        ) from exc
     await append_audit_log(
         audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,

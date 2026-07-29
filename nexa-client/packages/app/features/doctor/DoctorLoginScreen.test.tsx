@@ -1,7 +1,8 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import { ApiError, NexaApiClient } from '../../utils/apiClient'
+import * as apiClientModule from '../../utils/apiClient'
 import { DoctorLoginScreen } from './DoctorLoginScreen'
 import { ProviderAuthProvider, useProviderAuth } from './ProviderAuthContext'
 
@@ -244,6 +245,24 @@ describe('provider session hydration', () => {
         <AuthenticatedValue />
       </ProviderAuthProvider>
     )
+    expect(await screen.findByText('false')).toBeTruthy()
+  })
+
+  it('clears provider state when an authenticated request returns 401', async () => {
+    let reauthenticate: (() => void) | null = null
+    vi.spyOn(apiClientModule, 'setApiErrorHandlers').mockImplementation((handler) => {
+      reauthenticate = handler
+    })
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
+    renderWithTamagui(
+      <ProviderAuthProvider>
+        <AuthenticatedValue />
+      </ProviderAuthProvider>
+    )
+
+    expect(await screen.findByText('true')).toBeTruthy()
+    expect(reauthenticate).not.toBeNull()
+    act(() => reauthenticate?.())
     expect(await screen.findByText('false')).toBeTruthy()
   })
 })

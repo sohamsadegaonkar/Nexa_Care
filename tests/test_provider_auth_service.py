@@ -27,6 +27,8 @@ from app.services.provider_auth_service import (
     hash_provider_password,
     normalize_provider_login_identifier,
     revoke_provider_auth_sessions,
+    delete_provider_session_token,
+    ProviderSessionStoreUnavailable,
     refresh_provider_session_token,
     resolve_provider_session_context,
 )
@@ -286,6 +288,15 @@ class TestProviderPasswordAuthentication(unittest.TestCase):
 
 
 class TestProviderSessionRevocation(unittest.TestCase):
+    @patch("app.services.provider_auth_service.get_redis_client")
+    def test_logout_fails_closed_when_session_store_is_unavailable(
+        self, mock_redis
+    ) -> None:
+        mock_redis.side_effect = RuntimeError("redis unavailable")
+
+        with self.assertRaises(ProviderSessionStoreUnavailable):
+            run(delete_provider_session_token("runtime-token"))
+
     @patch("app.services.provider_auth_service.get_redis_client")
     def test_revokes_bearer_and_pending_mfa_for_only_target_provider(
         self, mock_redis

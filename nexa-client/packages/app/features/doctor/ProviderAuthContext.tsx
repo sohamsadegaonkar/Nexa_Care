@@ -13,6 +13,7 @@ import {
   ApiError,
   NexaApiClient,
   setAuthTokenProvider,
+  setApiErrorHandlers,
   setProviderCookieAuthEnabled,
 } from '../../utils/apiClient'
 import { clearAllCapabilities } from '../../services/capabilityStore'
@@ -132,6 +133,21 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     void hydrate()
     return () => setProviderCookieAuthEnabled(false)
   }, [hydrate])
+
+  useEffect(() => {
+    setApiErrorHandlers(
+      () => {
+        clearAllCapabilities()
+        clearAllAdjudicationWorkflows()
+        setSession(null)
+        setAccessGrantState(null)
+        setMfaDetail(null)
+        setStatus('unauthenticated')
+      },
+      () => undefined
+    )
+    return () => setApiErrorHandlers(null, null)
+  }, [])
 
   const login = useCallback(
     (email: string, password: string): Promise<LoginResult> => {

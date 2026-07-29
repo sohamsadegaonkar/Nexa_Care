@@ -142,6 +142,27 @@ describe('shared API transport', () => {
     expect(error).not.toHaveBeenCalled()
   })
 
+  it('notifies the registered re-authentication handler on authenticated 401', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ detail: 'Session expired' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { apiClient, setApiErrorHandlers, setAuthTokenProvider } = await loadClient()
+    const reauthenticate = vi.fn()
+    setAuthTokenProvider(() => 'runtime-session')
+    setApiErrorHandlers(reauthenticate, null)
+
+    await expect(apiClient.get('/api/v2/protected')).rejects.toMatchObject({
+      status: 401,
+      code: 'REAUTH_REQUIRED',
+    })
+
+    expect(reauthenticate).toHaveBeenCalledOnce()
+  })
+
   it('attaches bearer authentication and the hospital UUID to consent requests', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(

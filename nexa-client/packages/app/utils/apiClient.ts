@@ -542,7 +542,10 @@ export type ErrorToastHandler = (message: string, retryable?: boolean) => void
 let onReAuthRequired: ReAuthHandler | null = null
 let onErrorToast: ErrorToastHandler | null = null
 
-export function setApiErrorHandlers(reAuth: ReAuthHandler, toast: ErrorToastHandler): void {
+export function setApiErrorHandlers(
+  reAuth: ReAuthHandler | null,
+  toast: ErrorToastHandler | null
+): void {
   onReAuthRequired = reAuth
   onErrorToast = toast
 }
