@@ -1,10 +1,11 @@
 """Canonical Auto-Approval Decision Engine (Workstream 5, Days 9–11).
 
-Single source of truth for whether a candidate AI extraction may be
-auto-approved or must route to human steward review.  WS4's
+Legacy compatibility rules for the older ``ExtractedField`` contract. This
+module is not called by the runtime extraction orchestrator and is not the
+canonical field-evidence lane evaluator. WS4's
 ``can_auto_approve()`` in ``app/services/pipeline_safety.py`` delegates
-to ``should_auto_approve()`` here; no other module may implement
-auto-approval logic.
+to ``should_auto_approve()`` here. New routing decisions use
+``app.services.extraction_decision_engine``.
 
 Rules (Alpha v2.0.0-alpha)
 --------------------------
@@ -116,8 +117,7 @@ def _extract_validation_diagnostics(
 def should_auto_approve(field: ExtractedField) -> AutoApprovalDecision:
     """Evaluate the canonical auto-approval decision for an extracted field.
 
-    This is the **single source of truth**.  All callers (including WS4's
-    ``can_auto_approve``) must delegate here.
+    Compatibility evaluation for the legacy ``ExtractedField`` contract.
     """
     fname = str(getattr(field, "field_name", "")).strip().lower()
 

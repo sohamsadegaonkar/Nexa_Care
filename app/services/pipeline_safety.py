@@ -1,10 +1,8 @@
 """AI Ingestion Pipeline Safety & Auto-Approval Guardrails (Workstream 4 & 5).
 
-Thin compatibility shim that delegates to the canonical auto-approval
-decision engine in ``app/ai/auto_approval.py``.  All auto-approval logic
-lives in :func:`should_auto_approve`; this wrapper preserves the existing
-``can_auto_approve()`` return-type contract (``bool``) used by the pipeline
-orchestrator.
+This module is not used by the runtime pipeline orchestrator. It preserves the
+older boolean contract while three-lane field-evidence routing is owned by
+``app.services.extraction_decision_engine``.
 """
 
 from __future__ import annotations
@@ -16,7 +14,6 @@ from app.models.extracted_field import ExtractedField
 def can_auto_approve(field: ExtractedField) -> bool:
     """Determine whether an extracted field qualifies for auto-approval.
 
-    Delegates to :func:`should_auto_approve` (the single source of truth)
-    and returns the boolean decision.
+    Delegate to the compatibility evaluator and return its boolean result.
     """
     return should_auto_approve(field).auto_approve

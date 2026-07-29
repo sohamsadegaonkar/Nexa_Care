@@ -124,9 +124,14 @@ understanding; WS5 is the safety net.
 | Confidence Scorer | heuristic ± on extractor confidence | Format conformance bonus / malus |
 | Risk Classifier | field-type catalog + escalation rules | Base tier by category, +1 on abnormal / validation failure / conflict, allergy never below HIGH |
 | Conflict Detector | value comparison + cross-reactivity | Sugar Δ >15, BP mismatch (after stripping "mmHg"), HbA1c / heart rate / SpO2 / temperature / weight thresholds, same-unit generic lab discrepancies, incompatible generic lab units, allergy↔medication contraindication, penicillin + "-cillin" |
-| Auto-Approval Engine | threshold decision matrix | Single source of truth, no other module may implement auto-approval logic |
+| Legacy Auto-Approval Engine | compatibility-only threshold matrix for the older `ExtractedField` contract | Not used by the runtime orchestrator and not authoritative for canonical field evidence |
 
 ---
+
+The two-branch auto-approval diagram above documents the legacy
+`ExtractedField` compatibility design. It is not the current canonical
+field-evidence routing contract and is not wired into the runtime orchestrator.
+The authoritative pure three-lane evaluator is documented below.
 
 ## Security
 
@@ -276,9 +281,48 @@ milestone.
 Completeness helpers report structural evidence facts and machine-readable
 issues only. They do not approve clinical truth or return an auto-commit,
 source-only, or quarantine lane. Incomplete evidence is representable but
-cannot be silently promoted. The three-lane decision engine is a later
-milestone, and runtime auto-commit remains disabled.
+cannot be silently promoted. Runtime auto-commit remains disabled.
 
 Catalog coverage remains a threat specification. Executable coverage is
 declared only when a test exercises the production contract or adapter;
 Scenario 17 continues to exercise the production clinical/audit transaction.
+
+## Immutable three-lane decision contract
+
+Milestone 2 adds the immutable decision representation in
+`app/models/extraction_decision.py` and the pure evaluator in
+`app/services/extraction_decision_engine.py`. The evaluator is the canonical
+authority for decisions over `ExtractedFieldEvidence`; the older
+`should_auto_approve()` helper is retained only for compatibility tests over
+the pre-evidence `ExtractedField` type and is not called by the runtime
+orchestrator.
+
+The decision contract pins one evidence-contract version, one policy version,
+the expected patient/tenant/organization/source/job/attempt bindings, stable
+reason codes, canonical policy and evidence SHA-256 digests, evaluator version,
+and optional linkage to an earlier immutable decision. Re-evaluation creates a
+new decision ID and links to the earlier decision; it never mutates or mixes
+the earlier policy snapshot.
+
+Lane precedence is deterministic and fail closed:
+
+1. **QUARANTINE** takes precedence for invalid inputs, identity or tenant
+   mismatch, missing source binding/hash, tampering, conflicting evidence,
+   partial provider output, verifier disagreement, inactive consent, erasure
+   in progress, unsupported versions, or unresolved supersession. It is a
+   decision result, not a persisted quarantine record.
+2. **SOURCE_ONLY** represents authentic, correctly bound source evidence that
+   cannot qualify for automatic clinical commitment because field confidence,
+   visual/model/verifier evidence, normalization, permitted clinical risk, or
+   the feature flag is insufficient. It does not mean approved, clinically
+   verified, persisted, or committed.
+3. **AUTO_COMMIT** is structurally reachable only when a caller supplies an
+   explicit enabled policy and every approved requirement passes. The
+   production/default policy remains `auto_commit_enabled=False`, and this
+   milestone neither installs nor invokes an enabled runtime policy.
+
+Evidence representation, decision evaluation, and persistence remain separate
+layers. The evaluator performs no database, network, audit-delivery, logging,
+or persistence work. Milestone 2 does not persist source-only or quarantine
+records, create review queues, write clinical records, change the public API,
+or add a migration.

@@ -193,6 +193,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.POLICY_EVIDENCE, EvidenceGroup.LIFECYCLE},
         "The authorization that permitted protected processing ceases to be valid before the job completes.",
         "Stop further protected processing, deny commit and source access, and preserve only the minimum audit evidence permitted by policy.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_extraction_decision_engine.py::test_inactive_consent_and_erasure_in_progress_quarantine",
     ),
     _scenario(
         17,
@@ -211,6 +213,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.LIFECYCLE, EvidenceGroup.POLICY_EVIDENCE},
         "An erasure or deletion state becomes authoritative while extraction is processing.",
         "Give erasure state precedence, stop further processing and commitment, and retain only legally or policy-required minimal audit evidence.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_extraction_decision_engine.py::test_inactive_consent_and_erasure_in_progress_quarantine",
     ),
     _scenario(
         19,
