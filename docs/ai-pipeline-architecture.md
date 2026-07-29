@@ -396,6 +396,18 @@ row. An accepted current submission is the sole authority for the locked,
 single-transaction clinical/timeline/audit-outbox commit, and records use
 `human_adjudicated` provenance with null AI confidence.
 
+Milestone 4.1 makes the stored case review-session identifier authoritative for
+submission, supersession, source access, and commit. Idempotency hashes bind to
+that session. Only explicit `clinician` and `clinical_reviewer` roles may enter
+or commit clinical values; generic administration remains limited to
+non-clinical visibility. Audit-safe reason codes come from a bounded,
+outcome-specific enum and never accept reviewer prose or clinical values.
+Before submission or commit, the service reconstructs the case, job, document,
+route and decision graph instead of trusting duplicated columns. PostgreSQL
+constraints additionally enforce positive versions/attempts, SHA-256 lengths,
+paired nullable source bindings, restrictive resource references, and
+same-case accepted-submission ownership.
+
 Jobs with no supported clinical candidates have no fabricated field decision
 or routing row. They may receive an explicit document-level case whose routing
 and decision bindings are null. The frontend review workspace remains a later

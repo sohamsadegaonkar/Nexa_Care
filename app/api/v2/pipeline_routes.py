@@ -29,6 +29,7 @@ from typing import Any
 from fastapi import (
     APIRouter,
     BackgroundTasks,
+    Body,
     Depends,
     File,
     Form,
@@ -38,7 +39,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,7 +50,13 @@ from app.core.document_processing_gate import (
 from app.core.database import get_db_session, get_session_factory
 from app.core.dependencies import get_current_provider
 from app.models.extracted_field import ExtractedField
-from app.models.adjudication import AdjudicatedClinicalField, AdjudicationOutcome
+from app.models.adjudication import (
+    IDEMPOTENCY_KEY_PATTERN,
+    REVIEW_SESSION_PATTERN,
+    AdjudicatedClinicalField,
+    AdjudicationOutcome,
+    AdjudicationReasonCode,
+)
 from app.models.patient_records import TimelineEvent
 from app.models.pipeline import (
     DocumentStorage,
@@ -105,17 +112,27 @@ class CommitJobRequest(BaseModel):
 
 class CreateAdjudicationCaseRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    review_session_id: str
-    idempotency_key: str
+    review_session_id: str = Field(
+        min_length=8, max_length=96, pattern=REVIEW_SESSION_PATTERN
+    )
+    idempotency_key: str = Field(
+        min_length=8, max_length=192, pattern=IDEMPOTENCY_KEY_PATTERN
+    )
 
 
 class AdjudicationSubmissionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    review_session_id: str
-    idempotency_key: str
+    review_session_id: str = Field(
+        min_length=8, max_length=96, pattern=REVIEW_SESSION_PATTERN
+    )
+    idempotency_key: str = Field(
+        min_length=8, max_length=192, pattern=IDEMPOTENCY_KEY_PATTERN
+    )
     outcome: AdjudicationOutcome
     fields: list[AdjudicatedClinicalField] = Field(default_factory=list)
-    reason_codes: list[str] = Field(default_factory=list)
+    reason_codes: list[AdjudicationReasonCode] = Field(
+        default_factory=list, max_length=4
+    )
     supersedes_submission_id: uuid.UUID | None = None
 
 
@@ -966,11 +983,18 @@ def _adjudication_failure(exc: AdjudicationError) -> HTTPException:
         "ADJUDICATION_ROLE_REQUIRED",
         "ADJUDICATION_CONSENT_INACTIVE",
     }
+    malformed = {
+        "ADJUDICATION_SESSION_INVALID",
+        "ADJUDICATION_IDEMPOTENCY_KEY_INVALID",
+        "ADJUDICATION_PAYLOAD_INVALID",
+    }
     return HTTPException(
         status_code=404
         if exc.code in not_found
         else 403
         if exc.code in denied
+        else 422
+        if exc.code in malformed
         else 409,
         detail={"error_code": exc.code},
     )
@@ -1085,14 +1109,31 @@ async def get_adjudication_case(
     return _case_response(row)
 
 
-@router.post("/adjudication-cases/{case_id}/submissions", status_code=201)
+@router.post(
+    "/adjudication-cases/{case_id}/submissions",
+    status_code=201,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "application/json": {
+                    "schema": AdjudicationSubmissionRequest.model_json_schema()
+                }
+            },
+        }
+    },
+)
 async def create_adjudication_submission(
     case_id: str,
-    payload: AdjudicationSubmissionRequest,
+    raw_payload: dict[str, Any] = Body(...),
     provider: ProviderContext = Depends(get_current_provider),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
+        try:
+            payload = AdjudicationSubmissionRequest.model_validate(raw_payload)
+        except ValidationError as exc:
+            raise AdjudicationError("ADJUDICATION_PAYLOAD_INVALID") from exc
         row = await submit_adjudication_case(
             db,
             case_id=_parse_uuid(case_id),
@@ -1128,12 +1169,16 @@ async def create_adjudication_submission(
 @router.post("/adjudication-submissions/{submission_id}/commit")
 async def commit_human_adjudication(
     submission_id: str,
+    x_review_session_id: str = Header(alias="X-Review-Session-ID"),
     provider: ProviderContext = Depends(get_current_provider),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
         case = await commit_adjudication_submission(
-            db, submission_id=_parse_uuid(submission_id), provider=provider
+            db,
+            submission_id=_parse_uuid(submission_id),
+            provider=provider,
+            review_session_id=x_review_session_id,
         )
         await db.commit()
         return {
@@ -1154,12 +1199,16 @@ async def commit_human_adjudication(
 @router.get("/adjudication-cases/{case_id}/source")
 async def get_adjudication_source(
     case_id: str,
+    x_review_session_id: str = Header(alias="X-Review-Session-ID"),
     provider: ProviderContext = Depends(get_current_provider),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
         content, content_type = await read_source_document(
-            db, case_id=_parse_uuid(case_id), provider=provider
+            db,
+            case_id=_parse_uuid(case_id),
+            provider=provider,
+            review_session_id=x_review_session_id,
         )
         await db.commit()
         return Response(

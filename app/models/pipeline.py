@@ -18,6 +18,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -415,7 +416,6 @@ class AdjudicationCaseRecord(Base, UUIDPrimaryKeyMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     accepted_submission_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
-        ForeignKey("adjudication_submissions.id", ondelete="RESTRICT", use_alter=True),
         nullable=True,
     )
     clinical_committed_at: Mapped[datetime | None] = mapped_column(
@@ -443,6 +443,18 @@ class AdjudicationCaseRecord(Base, UUIDPrimaryKeyMixin):
             "(routing_id IS NOT NULL AND decision_id IS NOT NULL)",
             name="ck_adjudication_cases_source_binding",
         ),
+        CheckConstraint("version > 0", name="ck_adjudication_cases_version_positive"),
+        CheckConstraint(
+            "char_length(operation_hash) = 64",
+            name="ck_adjudication_cases_operation_hash_length",
+        ),
+        ForeignKeyConstraint(
+            ["id", "accepted_submission_id"],
+            ["adjudication_submissions.case_id", "adjudication_submissions.id"],
+            name="fk_adjudication_cases_accepted_submission_same_case",
+            ondelete="RESTRICT",
+            use_alter=True,
+        ),
         UniqueConstraint("idempotency_key", name="uq_adjudication_cases_idempotency"),
         Index("ix_adjudication_cases_tenant_status", "tenant_id", "status"),
         Index("ix_adjudication_cases_reviewer_status", "reviewer_id", "status"),
@@ -464,14 +476,24 @@ class AdjudicationSubmissionRecord(Base, UUIDPrimaryKeyMixin):
     patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     source_document_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
     )
-    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     routing_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_routing.id", ondelete="RESTRICT"),
+        nullable=True,
     )
     decision_id: Mapped[uuid.UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_decisions.id", ondelete="RESTRICT"),
+        nullable=True,
     )
     reviewer_id: Mapped[str] = mapped_column(String(64), nullable=False)
     reviewer_organization_id: Mapped[uuid.UUID] = mapped_column(
@@ -508,6 +530,19 @@ class AdjudicationSubmissionRecord(Base, UUIDPrimaryKeyMixin):
             "'NEEDS_SPECIALIST_REVIEW', 'SUPERSEDED')",
             name="ck_adjudication_submissions_outcome",
         ),
+        CheckConstraint(
+            "(routing_id IS NULL AND decision_id IS NULL) OR "
+            "(routing_id IS NOT NULL AND decision_id IS NOT NULL)",
+            name="ck_adjudication_submissions_source_binding",
+        ),
+        CheckConstraint(
+            "attempt_number > 0",
+            name="ck_adjudication_submissions_attempt_positive",
+        ),
+        CheckConstraint(
+            "char_length(content_hash) = 64",
+            name="ck_adjudication_submissions_content_hash_length",
+        ),
         UniqueConstraint(
             "idempotency_key", name="uq_adjudication_submissions_idempotency"
         ),
@@ -515,6 +550,11 @@ class AdjudicationSubmissionRecord(Base, UUIDPrimaryKeyMixin):
             "case_id",
             "attempt_number",
             name="uq_adjudication_submissions_case_attempt",
+        ),
+        UniqueConstraint(
+            "case_id",
+            "id",
+            name="uq_adjudication_submissions_case_id_id",
         ),
         Index("ix_adjudication_submissions_case", "case_id"),
         Index("ix_adjudication_submissions_reviewer", "reviewer_id"),
