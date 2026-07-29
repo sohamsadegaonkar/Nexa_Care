@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from app.models.extracted_field import ExtractedField, ValidationResult
 from app.models.pipeline import PipelineCommit
+from app.security.audit_context import AuditContext, AuditDomain
 from app.services.record_ingestion import ingest_extracted_fields
 
 PATIENT_ID = "11111111-1111-4111-8111-111111111111"
@@ -43,11 +44,14 @@ def field(**overrides):
 
 
 async def ingest(db, value):
-    with patch(
-        "app.services.record_ingestion.append_audit_log_or_503", new=AsyncMock()
-    ):
+    with patch("app.services.record_ingestion.enqueue_audit_event", new=AsyncMock()):
         return await ingest_extracted_fields(
-            PATIENT_ID, JOB_ID, [value], db, PROVIDER_ID
+            PATIENT_ID,
+            JOB_ID,
+            [value],
+            db,
+            PROVIDER_ID,
+            AuditContext.for_tenant(tenant_id="tenant-1", domain=AuditDomain.PIPELINE),
         )
 
 
@@ -112,11 +116,16 @@ async def test_unsupported_field_type_is_rejected(db):
 
 @pytest.mark.asyncio
 async def test_invalid_patient_or_job_identifier_is_rejected_before_write(db):
-    with patch(
-        "app.services.record_ingestion.append_audit_log_or_503", new=AsyncMock()
-    ):
+    with patch("app.services.record_ingestion.enqueue_audit_event", new=AsyncMock()):
         with pytest.raises(HTTPException) as exc:
             await ingest_extracted_fields(
-                "not-a-uuid", JOB_ID, [field()], db, PROVIDER_ID
+                "not-a-uuid",
+                JOB_ID,
+                [field()],
+                db,
+                PROVIDER_ID,
+                AuditContext.for_tenant(
+                    tenant_id="tenant-1", domain=AuditDomain.PIPELINE
+                ),
             )
     assert exc.value.status_code == 422
