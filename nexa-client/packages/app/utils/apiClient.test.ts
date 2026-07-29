@@ -437,4 +437,29 @@ describe('adjudication API contract', () => {
     expect(url).not.toContain('/jobs/')
     expect(init.headers['X-Review-Session-ID']).toBe('review-session-secret')
   })
+
+  it('rotates a pending session through a body-only recovery endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          case_id: 'case-1',
+          status: 'PENDING',
+          version: 2,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-token')
+
+    await NexaApiClient.recoverAdjudicationSession('case-1', 'review-session-new')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toBe(
+      'https://native.example.test/api/v2/pipeline/adjudication-cases/case-1/recover-session'
+    )
+    expect(url).not.toContain('review-session-new')
+    expect(JSON.parse(init.body)).toEqual({ review_session_id: 'review-session-new' })
+  })
 })

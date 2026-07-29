@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   bindAdjudicationWorkflow,
   clearAllAdjudicationWorkflows,
+  completeAdjudicationCreation,
   createIdempotencyKey,
   createReviewSessionId,
   getAdjudicationWorkflow,
+  prepareAdjudicationCreation,
   prepareAdjudicationMutation,
 } from './adjudicationWorkflowStore'
 
@@ -31,6 +33,18 @@ describe('memory-only adjudication workflow state', () => {
     const changed = prepareAdjudicationMutation('case-1', 'changed-content')
     expect(retry).toBe(first)
     expect(changed).not.toBe(first)
+  })
+
+  it('retains creation credentials after response loss and rotates them when input changes', () => {
+    const first = prepareAdjudicationCreation('route:route-1')
+    const retry = prepareAdjudicationCreation('route:route-1')
+    expect(retry).toEqual(first)
+
+    const changed = prepareAdjudicationCreation('route:route-2')
+    expect(changed.reviewSessionId).not.toBe(first.reviewSessionId)
+    expect(changed.idempotencyKey).not.toBe(first.idempotencyKey)
+    completeAdjudicationCreation('route:route-2')
+    expect(prepareAdjudicationCreation('route:route-2')).not.toEqual(changed)
   })
 
   it('has no durable recovery after process-memory state is cleared', () => {

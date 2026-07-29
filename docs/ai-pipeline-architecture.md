@@ -4,14 +4,23 @@
 
 ---
 
-## What We Are
+## Current Clinical-Ingestion Authority
 
-Privacy-first health-record platform. A provider uploads a clinical
-document (lab report, prescription, discharge summary). Our pipeline
-extracts the medical data, validates it, scores confidence, classifies
-risk, and detects conflicts. Runtime auto-commit is disabled; extracted
-clinical candidates require human adjudication. PII is encrypted with
-leaves the vault unredacted.
+Nexa Care is a privacy-first health-record platform. The current safe
+source-adjudication path is:
+
+```text
+SOURCE_ONLY
+-> protected source review
+-> immutable human submission
+-> accepted-submission clinical commit
+```
+
+A SOURCE_ONLY decision is not an AI clinical proposal. The clinician reads the
+authorized archived source and manually enters only a supported structured
+vital or laboratory result. Runtime AUTO_COMMIT remains force-disabled.
+Confidence thresholds, mock extraction, and the legacy extracted-field review
+queue are not clinical-ingestion authorities.
 
 ---
 
@@ -37,14 +46,19 @@ leaves the vault unredacted.
 
 | API | Wired? | What It Does |
 |---|---|---|
-| Document AI / VLM | **Placeholder** — mock when `DOCUMENT_AI_API_KEY` absent | Hosted Vision-Language Model for OCR + structured extraction from clinical documents. Intentionally no local PyTorch or Transformers — the API server runs GPU-free. |
+| Document AI / VLM | **Provider integration pending** | External extraction output is untrusted input and cannot become clinical truth without the current evidence and adjudication boundaries. |
 | Supabase Auth | ✅ Yes | JWT verification, user management |
 | Supabase PostgREST | ✅ Yes | Immutable hash-chained audit ledger writes |
 | Redis | ✅ Yes | Rate limiting, session store, Celery broker |
 
 ---
 
-## Pipeline Flow
+## Historical Compatibility Flow (Non-Authoritative)
+
+The following diagram describes the older `ExtractedField` compatibility
+pipeline. It is retained for historical context only. It does not describe the
+current SOURCE_ONLY clinical-ingestion authority, and its mock/threshold paths
+must not be used for clinical commit.
 
 ```
   Provider uploads document (PDF / image)

@@ -39,6 +39,13 @@ describe('adjudication clinical form contract', () => {
     })
   })
 
+  it('rejects ambiguous scalar blood pressure', () => {
+    expect(validateClinicalEntry({ ...base, vitalType: 'BLOOD_PRESSURE' as never })).toEqual({
+      ok: false,
+      message: expect.stringContaining('supported'),
+    })
+  })
+
   it.each([
     [{ ...base, numericValue: 'NaN' }, 'finite numeric'],
     [{ ...base, numericValue: 'Infinity' }, 'finite numeric'],

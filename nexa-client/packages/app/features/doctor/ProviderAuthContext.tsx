@@ -25,6 +25,7 @@ export interface ProviderIdentity {
   specialty: string | null
   contact_email: string
   role: string
+  roles: string[]
 }
 export interface HospitalInfo {
   hospital_id: string
@@ -55,6 +56,7 @@ export interface ProviderAuthState {
   displayName: string | null
   hospitalName: string | null
   role: string | null
+  roles: string[]
   mfaDetail: string | null
   loginError: string | null
   loggingIn: boolean
@@ -103,6 +105,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
           specialty: null,
           contact_email: '',
           role: primaryRole(data.roles),
+          roles: data.roles,
         },
         hospital: {
           hospital_id: String(data.hospital_id),
@@ -217,6 +220,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     displayName: session?.provider.display_name ?? null,
     hospitalName: session?.hospital.display_name ?? null,
     role: session?.provider.role ?? null,
+    roles: session?.provider.roles ?? [],
     mfaDetail,
     loginError,
     loggingIn,

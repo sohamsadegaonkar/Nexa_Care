@@ -63,6 +63,18 @@ def test_vital_and_lab_are_strict_finite_typed_payloads():
     assert "confidence" not in submission.model_dump(mode="json")
 
 
+def test_scalar_blood_pressure_is_not_a_supported_new_submission():
+    with pytest.raises(ValidationError):
+        VitalClinicalField(
+            vital_type="BLOOD_PRESSURE",
+            reviewer_entered_value=120.0,
+            normalized_value=120.0,
+            unit="mmHg",
+            effective_at=datetime.now(timezone.utc),
+            provenance_type="HUMAN_TRANSCRIBED",
+        )
+
+
 @pytest.mark.parametrize(
     "payload",
     [

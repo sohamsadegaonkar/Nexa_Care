@@ -320,7 +320,7 @@ export type AdjudicationReasonCode =
 export type AdjudicatedClinicalField =
   | {
       kind: 'VITAL'
-      vital_type: 'BLOOD_PRESSURE' | 'HEART_RATE' | 'TEMPERATURE' | 'SPO2' | 'RESPIRATORY_RATE'
+      vital_type: 'HEART_RATE' | 'TEMPERATURE' | 'SPO2' | 'RESPIRATORY_RATE'
       reviewer_entered_value: number
       normalized_value: number
       unit: string
@@ -1100,6 +1100,19 @@ export const NexaApiClient = {
     return request<AdjudicationCaseResponse>(
       `/api/v2/pipeline/adjudication-cases/${encodeURIComponent(caseId)}`,
       { method: 'GET' }
+    )
+  },
+
+  recoverAdjudicationSession(
+    caseId: string,
+    reviewSessionId: string
+  ): Promise<AdjudicationCaseResponse> {
+    return request<AdjudicationCaseResponse>(
+      `/api/v2/pipeline/adjudication-cases/${encodeURIComponent(caseId)}/recover-session`,
+      {
+        method: 'POST',
+        body: JSON.stringify({ review_session_id: reviewSessionId }),
+      }
     )
   },
 

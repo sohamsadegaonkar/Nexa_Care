@@ -67,6 +67,8 @@ function safeActionError(reason: unknown): { message: string; terminal: boolean 
     'ADJUDICATION_CONSENT_INACTIVE',
     'ADJUDICATION_ACCESS_DENIED',
     'ADJUDICATION_VERSION_UNSUPPORTED',
+    'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
+    'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
   ])
   if (terminalCodes.has(reason.code ?? '') || reason.status === 403) {
     return {
@@ -97,7 +99,7 @@ export function AdjudicationReviewScreen() {
   const params = useParams<{ caseId: string }>()
   const caseId = String(params.caseId)
   const router = useRouter()
-  const { hydrated, isAuthenticated, role } = useProviderAuth()
+  const { hydrated, isAuthenticated, roles } = useProviderAuth()
   const workflow = useAdjudicationWorkflow(caseId)
   const [draft, setDraft] = useState<ClinicalEntryDraft>(INITIAL_DRAFT)
   const [outcome, setOutcome] = useState<AdjudicationOutcome>('ACCEPTED')
@@ -105,7 +107,9 @@ export function AdjudicationReviewScreen() {
   const [confirmation, setConfirmation] = useState<AdjudicatedClinicalField[] | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const clinicallyQualified = role === 'clinician' || role === 'clinical_reviewer'
+  const clinicallyQualified = roles.some((role) =>
+    ['clinician', 'clinical_reviewer'].includes(role)
+  )
 
   useEffect(() => {
     if (hydrated && !isAuthenticated) router.replace('/doctor/login')

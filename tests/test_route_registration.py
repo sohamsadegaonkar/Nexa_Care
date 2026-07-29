@@ -154,6 +154,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/pipeline/jobs/{job_id}/document-adjudication-cases"),
     ("GET", "/api/v2/pipeline/adjudication-cases"),
     ("GET", "/api/v2/pipeline/adjudication-cases/{case_id}"),
+    ("POST", "/api/v2/pipeline/adjudication-cases/{case_id}/recover-session"),
     ("POST", "/api/v2/pipeline/adjudication-cases/{case_id}/submissions"),
     ("POST", "/api/v2/pipeline/adjudication-submissions/{submission_id}/commit"),
     ("GET", "/api/v2/pipeline/adjudication-cases/{case_id}/source"),

@@ -36,7 +36,11 @@ from app.models.pipeline import (
 from app.models.provider_context import ProviderContext
 from app.security.audit_context import AuditContext, AuditDomain
 from app.security.document_processing_policy import DocumentProcessingOperation
-from app.security.erasure_registry import check_erasure_registry
+from app.security.erasure_registry import (
+    ErasureRegistryUnavailable,
+    _PatientErasedSignal,
+    check_erasure_registry,
+)
 from app.services.approved_access_capability import (
     validate_live_document_processing_request,
 )
@@ -84,7 +88,35 @@ async def _live_access(
     )
     if capability is None or operation.value not in capability.allowed_operations:
         raise AdjudicationError("ADJUDICATION_CONSENT_INACTIVE")
-    await check_erasure_registry(str(job.patient_id), db)
+    try:
+        await check_erasure_registry(str(job.patient_id), db)
+    except _PatientErasedSignal as exc:
+        await enqueue_audit_event(
+            db,
+            audit_context=_audit_context(job.tenant_id),
+            idempotency_key=f"adjudication-access-blocked:{operation.value}:{uuid.uuid4()}",
+            actor_id=provider.actor_uid,
+            event_type="ADJUDICATION_ACCESS_REJECTED",
+            target_id=str(job.id),
+            patient_id=str(job.patient_id),
+            metadata={"operation": operation.value, "reason": "ERASURE_ACCESS_BLOCKED"},
+        )
+        raise AdjudicationError("ADJUDICATION_ERASURE_ACCESS_BLOCKED") from exc
+    except ErasureRegistryUnavailable as exc:
+        await enqueue_audit_event(
+            db,
+            audit_context=_audit_context(job.tenant_id),
+            idempotency_key=f"adjudication-registry-unavailable:{operation.value}:{uuid.uuid4()}",
+            actor_id=provider.actor_uid,
+            event_type="ADJUDICATION_ACCESS_REJECTED",
+            target_id=str(job.id),
+            patient_id=str(job.patient_id),
+            metadata={
+                "operation": operation.value,
+                "reason": "ERASURE_REGISTRY_UNAVAILABLE",
+            },
+        )
+        raise AdjudicationError("ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE") from exc
 
 
 def _audit_context(tenant_id: uuid.UUID) -> AuditContext:
@@ -582,6 +614,55 @@ async def submit_case(
         },
     )
     return row
+
+
+async def rotate_review_session(
+    db: AsyncSession,
+    *,
+    case_id: uuid.UUID,
+    provider: ProviderContext,
+    new_review_session_id: str,
+) -> AdjudicationCaseRecord:
+    """Replace a lost session only for its still-pending original reviewer."""
+    _reviewer_role(provider)
+    new_session = _validate_session(new_review_session_id)
+    case = (
+        await db.execute(
+            select(AdjudicationCaseRecord)
+            .where(AdjudicationCaseRecord.id == case_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if case is None:
+        raise AdjudicationError("ADJUDICATION_CASE_NOT_FOUND")
+    if (
+        case.status != AdjudicationOutcome.PENDING.value
+        or case.resolved_at is not None
+        or case.accepted_submission_id is not None
+        or case.clinical_committed_at is not None
+    ):
+        raise AdjudicationError("ADJUDICATION_RECOVERY_NOT_ALLOWED")
+    job, _ = await _revalidate_case_graph(db, case=case, provider=provider)
+    await _live_access(
+        db,
+        job=job,
+        provider=provider,
+        operation=DocumentProcessingOperation.REVIEW_EXTRACTED_FIELDS,
+    )
+    case.review_session_id = new_session
+    case.version += 1
+    await enqueue_audit_event(
+        db,
+        audit_context=_audit_context(case.tenant_id),
+        idempotency_key=f"adjudication-session-rotated:{case.id}:{case.version}",
+        actor_id=provider.actor_uid,
+        event_type="ADJUDICATION_REVIEW_SESSION_ROTATED",
+        target_id=str(case.id),
+        patient_id=str(case.patient_id),
+        metadata={"version": case.version},
+    )
+    await db.flush()
+    return case
 
 
 async def commit_submission(

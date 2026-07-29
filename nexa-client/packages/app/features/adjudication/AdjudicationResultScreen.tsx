@@ -16,14 +16,16 @@ export function AdjudicationResultScreen() {
   const params = useParams<{ caseId: string }>()
   const caseId = String(params.caseId)
   const router = useRouter()
-  const { hydrated, isAuthenticated, role } = useProviderAuth()
+  const { hydrated, isAuthenticated, roles } = useProviderAuth()
   const workflow = useAdjudicationWorkflow(caseId)
   const [caseDetail, setCaseDetail] = useState<AdjudicationCaseResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirming, setConfirming] = useState(false)
   const [committing, setCommitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const clinicallyQualified = role === 'clinician' || role === 'clinical_reviewer'
+  const clinicallyQualified = roles.some((role) =>
+    ['clinician', 'clinical_reviewer'].includes(role)
+  )
 
   useEffect(() => {
     if (hydrated && !isAuthenticated) router.replace('/doctor/login')
@@ -68,9 +70,12 @@ export function AdjudicationResultScreen() {
       if (
         reason instanceof ApiError &&
         (reason.status === 403 ||
-          ['ADJUDICATION_SESSION_MISMATCH', 'ADJUDICATION_CONSENT_INACTIVE'].includes(
-            reason.code ?? ''
-          ))
+          [
+            'ADJUDICATION_SESSION_MISMATCH',
+            'ADJUDICATION_CONSENT_INACTIVE',
+            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
+            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
+          ].includes(reason.code ?? ''))
       ) {
         clearAdjudicationWorkflow(caseId)
         setError('Commit access expired. Reopen the authorized workflow.')

@@ -14,13 +14,7 @@ export const REASONS_BY_OUTCOME: Record<AdjudicationOutcome, readonly Adjudicati
   ],
 }
 
-export const VITAL_TYPES = [
-  'BLOOD_PRESSURE',
-  'HEART_RATE',
-  'TEMPERATURE',
-  'SPO2',
-  'RESPIRATORY_RATE',
-] as const
+export const VITAL_TYPES = ['HEART_RATE', 'TEMPERATURE', 'SPO2', 'RESPIRATORY_RATE'] as const
 
 export type ClinicalEntryDraft = {
   kind: 'VITAL' | 'LAB_RESULT'

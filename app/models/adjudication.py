@@ -71,7 +71,6 @@ class _FrozenModel(BaseModel):
 class VitalClinicalField(_FrozenModel):
     kind: Literal["VITAL"] = "VITAL"
     vital_type: Literal[
-        "BLOOD_PRESSURE",
         "HEART_RATE",
         "TEMPERATURE",
         "SPO2",

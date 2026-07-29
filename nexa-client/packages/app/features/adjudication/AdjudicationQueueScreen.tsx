@@ -14,13 +14,14 @@ import {
   YStack,
 } from '@my/ui'
 import { useRouter } from 'next/navigation'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, NexaApiClient, type AdjudicationCaseResponse } from '../../utils/apiClient'
 import {
   bindAdjudicationWorkflow,
-  createIdempotencyKey,
+  completeAdjudicationCreation,
   createReviewSessionId,
   getAdjudicationWorkflow,
+  prepareAdjudicationCreation,
 } from '../../services/adjudicationWorkflowStore'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
 
@@ -33,14 +34,17 @@ const STATUS_LABELS: Record<AdjudicationCaseResponse['status'], string> = {
 
 export function AdjudicationQueueScreen() {
   const router = useRouter()
-  const { hydrated, isAuthenticated, role } = useProviderAuth()
+  const { hydrated, isAuthenticated, roles } = useProviderAuth()
   const [cases, setCases] = useState<AdjudicationCaseResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [routingId, setRoutingId] = useState('')
   const [jobId, setJobId] = useState('')
   const [creating, setCreating] = useState<'route' | 'job' | null>(null)
-  const clinicallyQualified = role === 'clinician' || role === 'clinical_reviewer'
+  const creatingRef = useRef(false)
+  const clinicallyQualified = roles.some((role) =>
+    ['clinician', 'clinical_reviewer'].includes(role)
+  )
 
   const loadCases = useCallback(async () => {
     setLoading(true)
@@ -64,30 +68,44 @@ export function AdjudicationQueueScreen() {
   }, [hydrated, isAuthenticated, loadCases, router])
 
   const createCase = async (source: 'route' | 'job') => {
-    if (creating || !clinicallyQualified) return
+    if (creatingRef.current || !clinicallyQualified) return
     const sourceId = (source === 'route' ? routingId : jobId).trim()
     if (!sourceId) {
       setError(`Enter the eligible ${source === 'route' ? 'routing' : 'job'} reference.`)
       return
     }
+    creatingRef.current = true
     setCreating(source)
     setError(null)
+    const fingerprint = `${source}:${sourceId}`
+    const operation = prepareAdjudicationCreation(fingerprint)
     try {
-      const reviewSessionId = createReviewSessionId()
       const payload = {
-        review_session_id: reviewSessionId,
-        idempotency_key: createIdempotencyKey(),
+        review_session_id: operation.reviewSessionId,
+        idempotency_key: operation.idempotencyKey,
       }
       const created =
         source === 'route'
           ? await NexaApiClient.createAdjudicationCaseFromRoute(sourceId, payload)
           : await NexaApiClient.createDocumentAdjudicationCase(sourceId, payload)
-      bindAdjudicationWorkflow(created.case_id, reviewSessionId)
+      bindAdjudicationWorkflow(created.case_id, operation.reviewSessionId)
+      completeAdjudicationCreation(fingerprint)
       router.push(`/doctor/pipeline/adjudication/${encodeURIComponent(created.case_id)}/review`)
     } catch (reason) {
       if (reason instanceof ApiError) {
         if (reason.code === 'ADJUDICATION_CONSENT_INACTIVE') {
+          completeAdjudicationCreation(fingerprint)
           setError('Document-review consent is no longer active. Request access again.')
+          return
+        }
+        if (
+          [
+            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
+            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
+          ].includes(reason.code ?? '')
+        ) {
+          completeAdjudicationCreation(fingerprint)
+          setError('Protected review access is unavailable. Request authorized access again.')
           return
         }
         if (reason.code === 'ADJUDICATION_ROUTE_INELIGIBLE') {
@@ -97,6 +115,7 @@ export function AdjudicationQueueScreen() {
       }
       setError('The adjudication case could not be created.')
     } finally {
+      creatingRef.current = false
       setCreating(null)
     }
   }
@@ -245,6 +264,46 @@ export function AdjudicationQueueScreen() {
                   }
                 >
                   {workflow.submission ? 'View result' : 'Continue review'}
+                </Button>
+              ) : item.status === 'PENDING' && clinicallyQualified ? (
+                <Button
+                  disabled={creating !== null}
+                  onPress={() => {
+                    if (creatingRef.current) return
+                    creatingRef.current = true
+                    setCreating('route')
+                    setError(null)
+                    const reviewSessionId = createReviewSessionId()
+                    void NexaApiClient.recoverAdjudicationSession(item.case_id, reviewSessionId)
+                      .then(() => {
+                        bindAdjudicationWorkflow(item.case_id, reviewSessionId)
+                        router.push(
+                          `/doctor/pipeline/adjudication/${encodeURIComponent(item.case_id)}/review`
+                        )
+                      })
+                      .catch((reason) => {
+                        if (
+                          reason instanceof ApiError &&
+                          [
+                            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
+                            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
+                            'ADJUDICATION_CONSENT_INACTIVE',
+                          ].includes(reason.code ?? '')
+                        ) {
+                          setError(
+                            'Protected review access is unavailable. Request authorized access again.'
+                          )
+                        } else {
+                          setError('The pending review session could not be recovered.')
+                        }
+                      })
+                      .finally(() => {
+                        creatingRef.current = false
+                        setCreating(null)
+                      })
+                  }}
+                >
+                  Recover pending review
                 </Button>
               ) : (
                 <Paragraph

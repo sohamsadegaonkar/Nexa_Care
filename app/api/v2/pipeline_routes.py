@@ -77,6 +77,7 @@ from app.services.adjudication import (
     AdjudicationError,
     commit_submission as commit_adjudication_submission,
     create_case as create_adjudication_case,
+    rotate_review_session as rotate_adjudication_review_session,
     read_source_document,
     submit_case as submit_adjudication_case,
 )
@@ -134,6 +135,13 @@ class AdjudicationSubmissionRequest(BaseModel):
         default_factory=list, max_length=4
     )
     supersedes_submission_id: uuid.UUID | None = None
+
+
+class RecoverAdjudicationSessionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    review_session_id: str = Field(
+        min_length=8, max_length=96, pattern=REVIEW_SESSION_PATTERN
+    )
 
 
 def _parse_uuid(id_str: str) -> uuid.UUID:
@@ -982,6 +990,7 @@ def _adjudication_failure(exc: AdjudicationError) -> HTTPException:
         "ADJUDICATION_ACCESS_DENIED",
         "ADJUDICATION_ROLE_REQUIRED",
         "ADJUDICATION_CONSENT_INACTIVE",
+        "ADJUDICATION_ERASURE_ACCESS_BLOCKED",
     }
     malformed = {
         "ADJUDICATION_SESSION_INVALID",
@@ -995,9 +1004,23 @@ def _adjudication_failure(exc: AdjudicationError) -> HTTPException:
         if exc.code in denied
         else 422
         if exc.code in malformed
+        else 503
+        if exc.code == "ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE"
         else 409,
         detail={"error_code": exc.code},
     )
+
+
+async def _finish_adjudication_failure(
+    db: AsyncSession, exc: AdjudicationError
+) -> None:
+    if exc.code in {
+        "ADJUDICATION_ERASURE_ACCESS_BLOCKED",
+        "ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE",
+    }:
+        await db.commit()
+    else:
+        await db.rollback()
 
 
 def _case_response(case: AdjudicationCaseRecord) -> dict[str, Any]:
@@ -1037,7 +1060,7 @@ async def create_routing_adjudication_case(
         await db.commit()
         return _case_response(case)
     except AdjudicationError as exc:
-        await db.rollback()
+        await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
     except Exception:
         await db.rollback()
@@ -1062,7 +1085,7 @@ async def create_document_adjudication_case(
         await db.commit()
         return _case_response(case)
     except AdjudicationError as exc:
-        await db.rollback()
+        await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
     except Exception:
         await db.rollback()
@@ -1107,6 +1130,30 @@ async def get_adjudication_case(
     if row is None:
         raise HTTPException(404, detail={"error_code": "ADJUDICATION_CASE_NOT_FOUND"})
     return _case_response(row)
+
+
+@router.post("/adjudication-cases/{case_id}/recover-session")
+async def recover_adjudication_session(
+    case_id: str,
+    payload: RecoverAdjudicationSessionRequest,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        case = await rotate_adjudication_review_session(
+            db,
+            case_id=_parse_uuid(case_id),
+            provider=provider,
+            new_review_session_id=payload.review_session_id,
+        )
+        await db.commit()
+        return _case_response(case)
+    except AdjudicationError as exc:
+        await _finish_adjudication_failure(db, exc)
+        raise _adjudication_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise
 
 
 @router.post(
@@ -1159,7 +1206,7 @@ async def create_adjudication_submission(
             ),
         }
     except AdjudicationError as exc:
-        await db.rollback()
+        await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
     except Exception:
         await db.rollback()
@@ -1189,7 +1236,7 @@ async def commit_human_adjudication(
             "provenance": "human_adjudicated",
         }
     except AdjudicationError as exc:
-        await db.rollback()
+        await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
     except Exception:
         await db.rollback()
@@ -1217,7 +1264,7 @@ async def get_adjudication_source(
             headers={"Cache-Control": "private, no-store", "Pragma": "no-cache"},
         )
     except AdjudicationError as exc:
-        await db.rollback()
+        await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
     except Exception:
         await db.rollback()

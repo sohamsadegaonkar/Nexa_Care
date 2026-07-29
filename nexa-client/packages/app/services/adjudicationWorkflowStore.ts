@@ -14,6 +14,12 @@ type PendingMutation = {
   idempotencyKey: string
 }
 
+export type AdjudicationCreationOperation = {
+  fingerprint: string
+  reviewSessionId: string
+  idempotencyKey: string
+}
+
 export type AdjudicationWorkflow = {
   caseId: string
   reviewSessionId: string
@@ -25,6 +31,7 @@ export type AdjudicationWorkflow = {
 type Listener = () => void
 
 const workflows = new Map<string, AdjudicationWorkflow>()
+let creationOperation: AdjudicationCreationOperation | null = null
 const listeners = new Set<Listener>()
 
 function notify(): void {
@@ -45,6 +52,20 @@ export function createReviewSessionId(): string {
 
 export function createIdempotencyKey(): string {
   return secureIdentifier('request')
+}
+
+export function prepareAdjudicationCreation(fingerprint: string): AdjudicationCreationOperation {
+  if (creationOperation?.fingerprint === fingerprint) return creationOperation
+  creationOperation = {
+    fingerprint,
+    reviewSessionId: createReviewSessionId(),
+    idempotencyKey: createIdempotencyKey(),
+  }
+  return creationOperation
+}
+
+export function completeAdjudicationCreation(fingerprint: string): void {
+  if (creationOperation?.fingerprint === fingerprint) creationOperation = null
 }
 
 export function bindAdjudicationWorkflow(caseId: string, reviewSessionId: string): void {
@@ -102,6 +123,7 @@ export function clearAdjudicationWorkflow(caseId: string): void {
 }
 
 export function clearAllAdjudicationWorkflows(): void {
+  creationOperation = null
   if (workflows.size === 0) return
   workflows.clear()
   notify()

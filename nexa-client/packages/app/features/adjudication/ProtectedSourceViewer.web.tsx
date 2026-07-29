@@ -34,9 +34,13 @@ export function ProtectedSourceViewer({
         if (!active) return
         if (
           reason instanceof ApiError &&
-          ['ADJUDICATION_SESSION_MISMATCH', 'ADJUDICATION_CONSENT_INACTIVE', 'FORBIDDEN'].includes(
-            reason.code ?? ''
-          )
+          [
+            'ADJUDICATION_SESSION_MISMATCH',
+            'ADJUDICATION_CONSENT_INACTIVE',
+            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
+            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
+            'FORBIDDEN',
+          ].includes(reason.code ?? '')
         ) {
           onTerminalAccessFailure()
           setError('Source access expired. Reopen the review through the authorized workflow.')
