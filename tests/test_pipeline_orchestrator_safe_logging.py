@@ -36,13 +36,17 @@ class _FakeScalarResult:
     def scalar_one_or_none(self):
         return self._value
 
+    def scalar_one(self):
+        return self._value
+
 
 class _FakeDB:
     """Minimal AsyncSession stand-in: first execute() returns the job,
     second returns the document, then raises inside document extraction."""
 
     def __init__(self, job: ExtractionJob, document: DocumentStorageRecord):
-        self._results = [job, document]
+        self._results = [job, document, job]
+        self.rollbacks = 0
 
     async def execute(self, *_args, **_kwargs):
         return _FakeScalarResult(self._results.pop(0))
@@ -52,6 +56,9 @@ class _FakeDB:
 
     async def flush(self):
         return None
+
+    async def rollback(self):
+        self.rollbacks += 1
 
 
 def _make_job_and_document() -> tuple[ExtractionJob, DocumentStorageRecord]:
@@ -140,7 +147,7 @@ async def test_internal_failure_log_never_leaks_exception_text(
 
 
 @pytest.mark.asyncio
-async def test_document_only_confidence_fails_before_staging_field_persistence():
+async def test_document_only_confidence_routes_source_only_without_staging():
     job, document = _make_job_and_document()
     db = _FakeDB(job, document)
     fake_storage = AsyncMock()
@@ -171,9 +178,85 @@ async def test_document_only_confidence_fails_before_staging_field_persistence()
             "app.services.pipeline_orchestrator.append_audit_log_or_503",
             AsyncMock(return_value=True),
         ),
+        patch(
+            "app.services.pipeline_orchestrator.validate_live_document_processing_request",
+            AsyncMock(return_value=object()),
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.check_erasure_registry",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.evaluate_and_persist_lane",
+            AsyncMock(
+                return_value=type(
+                    "Result",
+                    (),
+                    {"routing": type("Route", (), {"lane": "SOURCE_ONLY"})()},
+                )()
+            ),
+        ) as persist,
+        patch(
+            "app.services.pipeline_orchestrator.enqueue_audit_event",
+            AsyncMock(return_value=None),
+        ),
     ):
         result = await process_extraction_job(str(job.id), db)
 
-    assert result["status"] == "validation_failed"
-    assert result["error_code"] == "FIELD_EVIDENCE_INCOMPLETE"
-    assert job.status == "validation_failed"
+    assert result["status"] == "source_only"
+    assert job.status == "source_only"
+    evidence = persist.await_args.kwargs["evidence"]
+    assert evidence.model.document_confidence == 0.99
+    assert evidence.model.field_confidence is None
+
+
+@pytest.mark.asyncio
+async def test_routing_failure_rolls_back_before_terminal_job_update():
+    job, document = _make_job_and_document()
+    job.authorization_provider_id = "doctor-1"
+    job.consent_request_id = "workflow-1"
+    db = _FakeDB(job, document)
+    fake_storage = AsyncMock()
+    fake_storage.get_document_bytes = AsyncMock(return_value=b"%PDF-1.7")
+    fake_extractor = AsyncMock()
+    fake_extractor.extract_bytes = AsyncMock(
+        return_value=ExtractedMedicalDocument(
+            patient_name="",
+            aadhaar_abha_id="",
+            phone="",
+            diagnoses=["Synthetic diagnosis"],
+            lab_results=[],
+            prescriptions=[],
+            extraction_confidence=0.8,
+        )
+    )
+    with (
+        patch(
+            "app.services.pipeline_orchestrator.get_document_storage",
+            return_value=fake_storage,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.get_medical_document_extractor",
+            return_value=fake_extractor,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.append_audit_log_or_503",
+            AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.validate_live_document_processing_request",
+            AsyncMock(return_value=object()),
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.check_erasure_registry",
+            AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.evaluate_and_persist_lane",
+            AsyncMock(side_effect=RuntimeError("forced safe routing failure")),
+        ),
+    ):
+        result = await process_extraction_job(str(job.id), db)
+    assert db.rollbacks == 1
+    assert result["status"] == "extraction_failed_terminal"
+    assert result["error_code"] == "EXTRACTION_INTERNAL_ERROR"

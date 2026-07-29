@@ -172,6 +172,74 @@ async def invalidate_request(request_id: str) -> None:
         ) from exc
 
 
+async def validate_live_document_processing_request(
+    *,
+    request_id: str,
+    patient_id: str,
+    provider_id: str,
+    hospital_id: str,
+) -> ApprovedAccessCapability | None:
+    """Recheck the authoritative live grant by its server-bound request ID."""
+    try:
+        redis = get_async_redis_client()
+        digest = await redis.get(_claim_key(request_id))
+        if isinstance(digest, bytes):
+            digest = digest.decode("utf-8")
+        if not isinstance(digest, str):
+            return None
+        payload = _decode(await redis.get(_capability_key(digest)))
+        request_data = _decode(await redis.get(f"consent_request:{request_id}"))
+    except Exception as exc:
+        raise ApprovedAccessStoreUnavailable(
+            "Approved access store is unavailable"
+        ) from exc
+    if payload is None or request_data is None:
+        return None
+    now = datetime.now(timezone.utc)
+    try:
+        expires_at = datetime.fromisoformat(str(payload["expires_at"]))
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    except (KeyError, TypeError, ValueError):
+        return None
+    expected = {
+        "request_id": request_id,
+        "patient_id": patient_id,
+        "provider_id": provider_id,
+        "hospital_id": hospital_id,
+    }
+    if (
+        request_data.get("status") != "approved"
+        or now >= expires_at
+        or any(str(payload.get(key)) != str(value) for key, value in expected.items())
+        or any(
+            str(request_data.get(key)) != str(value) for key, value in expected.items()
+        )
+        or payload.get("purpose") != DOCUMENT_PROCESSING_PURPOSE
+        or payload.get("scope") != DOCUMENT_PROCESSING_SCOPE
+        or payload.get("grant_type") != DOCUMENT_PROCESSING_GRANT_TYPE
+    ):
+        return None
+    return ApprovedAccessCapability(
+        patient_id=patient_id,
+        clinician_id=provider_id,
+        hospital_id=hospital_id,
+        request_id=request_id,
+        purpose=DOCUMENT_PROCESSING_PURPOSE,
+        scope=[DOCUMENT_PROCESSING_SCOPE],
+        is_break_glass=False,
+        reason_code=None,
+        issued_at=str(payload["issued_at"]),
+        expires_at=expires_at.isoformat(),
+        grant_type=DOCUMENT_PROCESSING_GRANT_TYPE,
+        allowed_operations=tuple(
+            str(operation)
+            for operation in payload.get("allowed_operations", [])
+            if isinstance(operation, str)
+        ),
+    )
+
+
 async def _load_live_capability(
     *,
     token: str,

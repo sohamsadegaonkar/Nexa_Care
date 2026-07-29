@@ -32,7 +32,7 @@ def test_document_upload_to_fail_closed_evidence_commit_seam():
     ingestion = (ROOT / "app/services/record_ingestion.py").read_text(encoding="utf-8")
     assert "get_document_storage" in routes
     assert "process_extraction_job" in routes
-    assert "FIELD_EVIDENCE_INCOMPLETE" in orchestrator
-    assert "has_genuine_field_confidence" in orchestrator
+    assert "evaluate_and_persist_lane" in orchestrator
+    assert '"source_only"' in orchestrator
     assert 'not in {"approved", "edited"}' in ingestion
     assert "CLIENT_SUPPLIED_COMMIT_FIELDS_FORBIDDEN" in routes

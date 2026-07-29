@@ -25,8 +25,10 @@ from app.models.patient_records import (
 from app.models.patient_tombstone import PatientTombstone
 from app.models.pipeline import (
     DocumentStorage,
+    ExtractionDecisionRecord,
     ExtractedFieldRecord,
     ExtractionJob,
+    ExtractionRoutingRecord,
     FieldCorrection,
     PipelineCommit,
     ReviewQueueItem,
@@ -86,6 +88,8 @@ __all__ = [
     "NexaVault",
     "DocumentStorage",
     "ExtractionJob",
+    "ExtractionDecisionRecord",
+    "ExtractionRoutingRecord",
     "ExtractedFieldRecord",
     "FieldCorrection",
     "PipelineCommit",

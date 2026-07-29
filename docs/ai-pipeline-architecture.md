@@ -323,6 +323,56 @@ Lane precedence is deterministic and fail closed:
 
 Evidence representation, decision evaluation, and persistence remain separate
 layers. The evaluator performs no database, network, audit-delivery, logging,
-or persistence work. Milestone 2 does not persist source-only or quarantine
-records, create review queues, write clinical records, change the public API,
-or add a migration.
+or persistence work.
+
+## Durable safe-lane routing
+
+Milestone 3 adds two pipeline tables through
+`20260729_extract_lane_route`: append-only `extraction_decisions` and separate
+operational `extraction_routing`. A decision row stores only contract and
+evaluator versions, opaque bindings, ordered reason codes, safe hashes,
+timestamps, lane, and optional earlier-decision linkage. It never stores raw or
+normalized clinical values, source text, filenames, provider exceptions, or
+document bytes. The routing row references the existing encrypted
+`DocumentStorage` artifact instead of duplicating it.
+
+`SOURCE_ONLY` creates `SOURCE_RETAINED` routing metadata. It means the
+authentic, patient/tenant-bound source remains retained under its existing
+storage policy; it is not approved, clinically verified, placed in the legacy
+review queue, or written to clinical truth. Current provider output supplies
+document confidence but no genuine field confidence, page, bounding box,
+source text, model version, or verifier agreement. After live consent and
+erasure rechecks, that honest output therefore aggregates to a `source_only`
+job without creating `ExtractedFieldRecord`, `ReviewQueueItem`, or
+`PipelineCommit` rows.
+
+`QUARANTINE` creates `QUARANTINE_PENDING` metadata with a review deadline.
+The deterministic escalation service locks the route and can transition only
+an expired pending item to `QUARANTINE_ESCALATED`; it never changes the
+immutable decision or creates clinical data. No scheduler or adjudication UI is
+introduced.
+
+The orchestrator serializes attempts by locking the extraction job. For each
+candidate it revalidates live consent through the existing approved-access
+store, checks the authoritative erasure registry, adapts canonical evidence,
+evaluates the three-lane policy, and stages the decision, route, job status,
+and tenant-bound audit-outbox events in one caller-owned transaction. Any
+write or outbox failure rolls back that entire routing transaction. Any
+quarantine field makes the job `quarantined`; otherwise current candidates
+aggregate to `source_only`. A complete response with no supported candidates
+uses the explicit `source_only` terminal outcome and cannot become
+`ready_for_commit`.
+
+The runtime persistence boundary rejects `AUTO_COMMIT` even if a synthetic
+enabled policy can produce it in a unit test. Database constraints additionally
+allow only `SOURCE_ONLY` and `QUARANTINE` decision/routing lanes and require the
+stored feature flag to remain false. The manual commit route explicitly rejects
+source-only and quarantined jobs, while preserving existing explicitly
+approved/edited legacy-field compatibility. Human adjudication UI remains a
+later milestone.
+
+Catalog membership remains specification coverage. Runtime-tested flags are
+updated only when executable tests exercise the production control; this
+milestone preserves the existing declared runtime scenario set without
+claiming real PostgreSQL, Redis, object-storage, provider, KMS, or device
+evidence.

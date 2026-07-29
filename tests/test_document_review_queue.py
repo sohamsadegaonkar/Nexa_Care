@@ -11,8 +11,8 @@ def test_incomplete_extracted_field_is_not_persisted_or_queued_for_review():
     orchestrator = (ROOT / "app/services/pipeline_orchestrator.py").read_text(
         encoding="utf-8"
     )
-    assert "FIELD_EVIDENCE_INCOMPLETE" in orchestrator
-    assert "has_genuine_field_confidence" in orchestrator
+    assert "evaluate_and_persist_lane" in orchestrator
+    assert '"source_only"' in orchestrator
     assert "ReviewQueueItem(" not in orchestrator
 
 

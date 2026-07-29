@@ -49,6 +49,8 @@ class CurrentExtractionBinding(BaseModel):
     model_name: str | None = None
     model_version: str | None = None
     consent_reference: str | None = None
+    consent_state: SnapshotState = SnapshotState.UNKNOWN
+    erasure_state: SnapshotState = SnapshotState.UNKNOWN
 
 
 def adapt_current_extracted_field(
@@ -125,8 +127,8 @@ def adapt_current_extracted_field(
             extracted_at=binding.extracted_at,
             source_received_at=binding.source_received_at,
             partial_provider_response=False,
-            consent_state=SnapshotState.UNKNOWN,
+            consent_state=binding.consent_state,
             consent_reference=binding.consent_reference,
-            erasure_state=SnapshotState.UNKNOWN,
+            erasure_state=binding.erasure_state,
         ),
     )

@@ -163,7 +163,7 @@ Validation query:
 Forward-fix strategy:
 ```
 
-Current head is `20260727_doc_process_bind`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
+Current head is `20260729_extract_lane_route`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
 
 ## 11. Frontend standard
 

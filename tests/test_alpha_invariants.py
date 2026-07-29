@@ -28,8 +28,8 @@ def test_extracted_fields_default_to_review_and_never_auto_commit():
 def test_orchestrator_never_marks_extraction_auto_approved():
     code = (ROOT / "app/services/pipeline_orchestrator.py").read_text(encoding="utf-8")
     assert "auto_approved" not in code
-    assert "FIELD_EVIDENCE_INCOMPLETE" in code
-    assert "has_genuine_field_confidence" in code
+    assert '"source_only"' in code
+    assert "evaluate_and_persist_lane" in code
 
 
 def test_legacy_push_decision_route_is_absent():

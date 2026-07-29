@@ -788,6 +788,14 @@ async def commit_extraction_job(
         raise HTTPException(
             status_code=409, detail={"error_code": "JOB_ALREADY_COMMITTED"}
         )
+    if job.status == "source_only":
+        raise HTTPException(
+            status_code=409, detail={"error_code": "SOURCE_ONLY_NOT_COMMITTABLE"}
+        )
+    if job.status == "quarantined":
+        raise HTTPException(
+            status_code=409, detail={"error_code": "QUARANTINED_JOB_NOT_COMMITTABLE"}
+        )
     if job.status not in {"review_pending", "ready_for_commit"}:
         raise HTTPException(
             status_code=409, detail={"error_code": "JOB_NOT_READY_FOR_COMMIT"}

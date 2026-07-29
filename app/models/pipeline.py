@@ -14,6 +14,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -234,4 +235,141 @@ class FieldCorrection(Base, UUIDPrimaryKeyMixin):
     corrected_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     corrected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
+    )
+
+
+class ExtractionDecisionRecord(Base, UUIDPrimaryKeyMixin):
+    """Append-only safe projection of an extraction lane decision."""
+
+    __tablename__ = "extraction_decisions"
+
+    decision_contract_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    evidence_contract_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempt_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    lane: Mapped[str] = mapped_column(String(24), nullable=False)
+    reason_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_configuration_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    evaluated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    evaluator_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    auto_commit_feature_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    earlier_decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_decisions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "lane IN ('SOURCE_ONLY', 'QUARANTINE')",
+            name="ck_extraction_decisions_safe_lane",
+        ),
+        CheckConstraint(
+            "auto_commit_feature_enabled = false",
+            name="ck_extraction_decisions_auto_commit_disabled",
+        ),
+        Index("ix_extraction_decisions_tenant_patient", "tenant_id", "patient_id"),
+        Index("ix_extraction_decisions_job_lane", "job_id", "lane"),
+        Index("ix_extraction_decisions_evidence", "evidence_id"),
+    )
+
+
+class ExtractionRoutingRecord(Base, UUIDPrimaryKeyMixin):
+    """Mutable operational routing state separated from immutable decisions."""
+
+    __tablename__ = "extraction_routing"
+
+    decision_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_decisions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    lane: Mapped[str] = mapped_column(String(24), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    routed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    quarantine_review_deadline: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    escalated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolution_reference: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_key: Mapped[str] = mapped_column(String(192), nullable=False)
+    operation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "lane IN ('SOURCE_ONLY', 'QUARANTINE')",
+            name="ck_extraction_routing_safe_lane",
+        ),
+        CheckConstraint(
+            "status IN ('SOURCE_RETAINED', 'QUARANTINE_PENDING', "
+            "'QUARANTINE_ESCALATED')",
+            name="ck_extraction_routing_status",
+        ),
+        CheckConstraint(
+            "(lane = 'SOURCE_ONLY' AND status = 'SOURCE_RETAINED' "
+            "AND quarantine_review_deadline IS NULL) OR "
+            "(lane = 'QUARANTINE' AND status IN "
+            "('QUARANTINE_PENDING', 'QUARANTINE_ESCALATED') "
+            "AND quarantine_review_deadline IS NOT NULL)",
+            name="ck_extraction_routing_lane_state",
+        ),
+        CheckConstraint(
+            "(status = 'QUARANTINE_ESCALATED' AND escalated_at IS NOT NULL) OR "
+            "(status <> 'QUARANTINE_ESCALATED' AND escalated_at IS NULL)",
+            name="ck_extraction_routing_escalation_time",
+        ),
+        UniqueConstraint("decision_id", name="uq_extraction_routing_decision"),
+        UniqueConstraint("idempotency_key", name="uq_extraction_routing_idempotency"),
+        Index("ix_extraction_routing_tenant_patient", "tenant_id", "patient_id"),
+        Index("ix_extraction_routing_job_lane", "job_id", "lane"),
+        Index(
+            "ix_extraction_routing_unresolved_quarantine",
+            "status",
+            "quarantine_review_deadline",
+        ),
     )

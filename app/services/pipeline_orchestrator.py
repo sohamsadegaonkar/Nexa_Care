@@ -18,6 +18,8 @@ from app.ai.extractor import DocumentExtractionError, get_medical_document_extra
 from app.core.config import get_document_extraction_config
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.pipeline import ExtractionJob
+from app.models.extraction_decision import ExtractionDecisionPolicy
+from app.models.field_evidence import SnapshotState
 from app.models.shards import NexaVault
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.observability.safe_exceptions import log_safe_exception
@@ -26,6 +28,13 @@ from app.services.extraction_evidence_adapter import (
     CurrentExtractionBinding,
     adapt_current_extracted_field,
 )
+from app.services.approved_access_capability import (
+    ApprovedAccessStoreUnavailable,
+    validate_live_document_processing_request,
+)
+from app.security.erasure_registry import check_erasure_registry
+from app.services.audit_outbox import enqueue_audit_event
+from app.services.extraction_routing import evaluate_and_persist_lane
 from app.services.crypto_kms import (
     EncryptedField,
     EncryptionError,
@@ -39,8 +48,15 @@ class ExtractedIdentityMismatch(RuntimeError):
     pass
 
 
-class IncompleteFieldEvidence(RuntimeError):
-    """Current provider output cannot safely enter staging persistence."""
+async def _rollback_and_reload_job(
+    db: AsyncSession, job_uuid: uuid.UUID
+) -> ExtractionJob:
+    await db.rollback()
+    return (
+        await db.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_uuid).with_for_update()
+        )
+    ).scalar_one()
 
 
 async def _validate_extracted_identity(
@@ -125,6 +141,8 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         "review_pending",
         "ready_for_commit",
         "committed",
+        "source_only",
+        "quarantined",
     }:
         return {"job_id": str(job.id), "status": job.status, "idempotent": True}
     now = datetime.now(timezone.utc)
@@ -184,6 +202,34 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         del document_bytes
         await _validate_extracted_identity(extracted, job.patient_id, db)
 
+        consent_active = False
+        try:
+            if all(
+                (
+                    job.consent_request_id,
+                    job.authorization_provider_id,
+                    job.tenant_id,
+                )
+            ):
+                consent_active = (
+                    await validate_live_document_processing_request(
+                        request_id=str(job.consent_request_id),
+                        patient_id=str(job.patient_id),
+                        provider_id=str(job.authorization_provider_id),
+                        hospital_id=str(job.tenant_id),
+                    )
+                    is not None
+                )
+        except ApprovedAccessStoreUnavailable:
+            consent_active = False
+
+        erasure_clear = False
+        try:
+            await check_erasure_registry(str(job.patient_id), db)
+            erasure_clear = True
+        except Exception:
+            erasure_clear = False
+
         job.status = "extracted"
         await db.flush()
         job.status = "validation_pending"
@@ -215,55 +261,124 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                         model_name=None,
                         model_version=job.extractor_version,
                         consent_reference=job.consent_request_id,
+                        consent_state=(
+                            SnapshotState.ACTIVE
+                            if consent_active
+                            else SnapshotState.INACTIVE
+                        ),
+                        erasure_state=(
+                            SnapshotState.NOT_REQUESTED
+                            if erasure_clear
+                            else SnapshotState.IN_PROGRESS
+                        ),
                     ),
                 )
             )
 
-        # The staging schema requires a numeric field confidence. The current
-        # provider exposes document confidence only, so writing these candidates
-        # would require fabricating confidence. Fail before staging persistence;
-        # a later milestone may route this immutable evidence without changing it.
-        if any(
-            not evidence.model.has_genuine_field_confidence
-            for evidence in evidence_records
-        ):
-            raise IncompleteFieldEvidence()
+        if not evidence_records:
+            job.status = (
+                "source_only" if consent_active and erasure_clear else "quarantined"
+            )
+            if job.status == "quarantined":
+                job.error_code = "LIVE_PROCESSING_AUTHORIZATION_BLOCKED"
+            job.completed_at = datetime.now(timezone.utc)
+            await enqueue_audit_event(
+                db,
+                audit_context=audit_context,
+                idempotency_key=f"extraction:{job.id}:{job.attempt_count}:empty-source",
+                actor_id=job.uploader_id or "SYSTEM_PIPELINE",
+                event_type="EXTRACTION_JOB_ROUTED",
+                target_id=str(job.id),
+                patient_id=str(job.patient_id),
+                metadata={
+                    "job_id": str(job.id),
+                    "document_id": str(job.document_id),
+                    "lane": (
+                        "SOURCE_ONLY" if job.status == "source_only" else "QUARANTINE"
+                    ),
+                    "candidate_count": 0,
+                },
+            )
+            await db.commit()
+            return {
+                "job_id": str(job.id),
+                "status": job.status,
+                "source_only_count": 0,
+            }
 
-        review_count = 0
-        job.status = "ready_for_commit"
-        job.completed_at = datetime.now(timezone.utc)
-        await db.commit()
-        await append_audit_log_or_503(
+        results = []
+        routed_at = datetime.now(timezone.utc)
+        for evidence in evidence_records:
+            policy = ExtractionDecisionPolicy(
+                patient_id=str(job.patient_id),
+                tenant_id=str(job.tenant_id),
+                organization_id=str(job.tenant_id),
+                source_document_id=str(job.document_id),
+                evidence_id=evidence.evidence_id,
+                job_id=str(job.id),
+                workflow_id=str(job.consent_request_id),
+                request_id=str(job.request_id),
+                attempt_id=f"{job.id}:{job.attempt_count}",
+            )
+            results.append(
+                await evaluate_and_persist_lane(
+                    db,
+                    evidence=evidence,
+                    policy=policy,
+                    job=job,
+                    audit_context=audit_context,
+                    actor_id=job.uploader_id or "SYSTEM_PIPELINE",
+                    evaluated_at=routed_at,
+                    quarantine_review_deadline=(
+                        routed_at if not consent_active or not erasure_clear else None
+                    ),
+                )
+            )
+
+        quarantine_count = sum(
+            result.routing.lane == "QUARANTINE" for result in results
+        )
+        source_only_count = sum(
+            result.routing.lane == "SOURCE_ONLY" for result in results
+        )
+        job.status = "quarantined" if quarantine_count else "source_only"
+        job.error_code = "EXTRACTION_EVIDENCE_QUARANTINED" if quarantine_count else None
+        job.completed_at = routed_at
+        await enqueue_audit_event(
+            db,
             audit_context=audit_context,
-            actor_uid=job.uploader_id or "SYSTEM_PIPELINE",
-            event_type="EXTRACTION_JOB_VALIDATED",
+            idempotency_key=f"extraction:{job.id}:{job.attempt_count}:routed",
+            actor_id=job.uploader_id or "SYSTEM_PIPELINE",
+            event_type="EXTRACTION_JOB_ROUTED",
             target_id=str(job.id),
-            status="SUCCESS",
+            patient_id=str(job.patient_id),
             metadata={
-                "patient_id": str(job.patient_id),
-                "tenant_id": str(job.tenant_id),
-                "request_id": job.request_id,
-                "review_count": review_count,
+                "job_id": str(job.id),
+                "document_id": str(job.document_id),
+                "status": job.status,
+                "source_only_count": source_only_count,
+                "quarantine_count": quarantine_count,
             },
         )
+        await db.commit()
         return {
             "job_id": str(job.id),
             "status": job.status,
-            "needs_review_count": review_count,
+            "source_only_count": source_only_count,
+            "quarantine_count": quarantine_count,
         }
     except ExtractedIdentityMismatch:
+        job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "identity_mismatch"
         job.error_code = "EXTRACTED_IDENTITY_MISMATCH"
         job.retryable = False
-    except IncompleteFieldEvidence:
-        job.status = "validation_failed"
-        job.error_code = "FIELD_EVIDENCE_INCOMPLETE"
-        job.retryable = False
     except EncryptionError:
+        job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "validation_failed"
         job.error_code = "IDENTITY_VALIDATION_UNAVAILABLE"
         job.retryable = False
     except DocumentExtractionError as exc:
+        job = await _rollback_and_reload_job(db, job_uuid)
         retry_budget = get_document_extraction_config().max_attempts
         exhausted = exc.retryable and job.attempt_count >= retry_budget
         job.status = (
@@ -276,10 +391,12 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job.error_code = exc.error_code
         job.retryable = exc.retryable and not exhausted
     except DocumentStorageError:
+        job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "extraction_failed_terminal"
         job.error_code = "DOCUMENT_STORAGE_UNAVAILABLE"
         job.retryable = False
     except Exception as exc:
+        job = await _rollback_and_reload_job(db, job_uuid)
         log_safe_exception(
             logger,
             exc,
