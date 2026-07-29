@@ -63,6 +63,7 @@ from app.security.document_processing_policy import DocumentProcessingOperation
 from app.services.pipeline_orchestrator import process_extraction_job
 from app.services.record_ingestion import ingest_extracted_fields
 from app.services.document_storage import get_document_storage
+from app.services.audit_outbox import enqueue_audit_event
 
 logger = logging.getLogger("nexa_logger")
 
@@ -852,40 +853,60 @@ async def commit_extraction_job(
             )
         )
 
-    # ALPHA: Use server-derived patient_id for record ingestion, never payload.patient_id
-    if approved_models:
-        await ingest_extracted_fields(
-            patient_id=server_pid,
-            job_id=job_id,
-            approved_fields=approved_models,
-            db=db,
-            committed_by=provider.actor_uid,
-        )
-
-    # Update job status (already loaded above)
-    job.status = "committed"
-
+    audit_context = current_audit_context(AuditDomain.PIPELINE)
+    audit_metadata = {
+        "workflow_id": job.consent_request_id,
+        "request_id": job.request_id,
+        "document_id": str(job.document_id),
+        "patient_id": server_pid,
+        "tenant_id": str(job.tenant_id) if job.tenant_id is not None else None,
+    }
+    cnt = len(approved_models)
     committed_at = datetime.now(timezone.utc)
     tl = TimelineEvent(
         patient_id=job.patient_id,
         event_type="PIPELINE_COMMIT",
+        event_ref_id=job_uuid,
         occurred_at=committed_at,
         source="ai_pipeline",
         summary="Reviewed document extraction committed",
     )
-    db.add(tl)
-    await db.commit()
 
-    cnt = len(approved_models)
+    try:
+        # The route owns the only commit: clinical rows, timelines, job state,
+        # commit marker, and every required audit event succeed or roll back together.
+        if approved_models:
+            await ingest_extracted_fields(
+                patient_id=server_pid,
+                job_id=job_id,
+                approved_fields=approved_models,
+                db=db,
+                committed_by=provider.actor_uid,
+                audit_context=audit_context,
+                audit_metadata=audit_metadata,
+            )
 
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PIPELINE),
-        actor_uid=provider.actor_uid,
-        event_type="JOB_COMMITTED",
-        target_id=job_id,
-        status="SUCCESS",
-        metadata={"fields_committed": cnt},
-    )
+        job.status = "committed"
+        db.add(tl)
+        await enqueue_audit_event(
+            db,
+            audit_context=audit_context,
+            idempotency_key=f"pipeline:{job_id}:committed",
+            actor_id=provider.actor_uid,
+            event_type="JOB_COMMITTED",
+            target_id=job_id,
+            patient_id=server_pid,
+            metadata={"fields_committed": cnt, **audit_metadata},
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        if isinstance(exc, HTTPException):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CLINICAL_COMMIT_AUDIT_UNAVAILABLE"},
+        ) from exc
 
     return {
         "job_id": job_id,

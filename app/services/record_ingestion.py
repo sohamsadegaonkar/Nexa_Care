@@ -7,7 +7,7 @@ provenance enforcement, idempotency per job, and hard-auditing.
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
+from app.security.audit_context import AuditContext
 
 import logging
 import uuid
@@ -25,7 +25,7 @@ from app.models.patient_records import (
     Vitals,
 )
 from app.models.pipeline import PipelineCommit
-from app.observability.audit_ledger import append_audit_log_or_503
+from app.services.audit_outbox import enqueue_audit_event
 
 logger = logging.getLogger("nexa_logger")
 
@@ -60,6 +60,8 @@ async def ingest_extracted_fields(
     approved_fields: list[ExtractedField],
     db: AsyncSession,
     committed_by: str,
+    audit_context: AuditContext,
+    audit_metadata: dict[str, str | None] | None = None,
 ) -> IngestionResult:
     """Ingest approved AI extraction fields into patient sub-models with full provenance."""
     pid_uuid = _parse_uuid(patient_id)
@@ -250,12 +252,15 @@ async def ingest_extracted_fields(
         db.add(te)
         te_cnt += 1
 
-        # Hard-audit EXTRACTED_DATA_INGESTED
-        await append_audit_log_or_503(
-            audit_context=current_audit_context(AuditDomain.PIPELINE),
-            actor_uid=str(patient_id),
+        # Stage the required field audit in the caller-owned clinical transaction.
+        await enqueue_audit_event(
+            db,
+            audit_context=audit_context,
+            idempotency_key=f"pipeline:{job_id}:field:{field.field_id}:ingested",
+            actor_id=committed_by,
             event_type="EXTRACTED_DATA_INGESTED",
             target_id=str(field.field_id),
+            patient_id=patient_id,
             status="SUCCESS",
             metadata={
                 "job_id": job_id,
@@ -263,6 +268,7 @@ async def ingest_extracted_fields(
                 "target_model": target_model,
                 "confidence": field.confidence,
                 "risk_level": field.risk_level,
+                **(audit_metadata or {}),
             },
         )
 

@@ -341,12 +341,17 @@ def test_commit_rejects_high_risk_auto_approved_field(
             "app.core.consent_gate",
             "app.api.v2.pipeline_routes",
             "app.observability.audit_ledger",
-            "app.services.record_ingestion",
             "app.services.pipeline_orchestrator",
         ):
             stack.enter_context(
                 patch(f"{mod}.append_audit_log_or_503", return_value=None)
             )
+        stack.enter_context(
+            patch(
+                "app.services.record_ingestion.enqueue_audit_event",
+                new_callable=AsyncMock,
+            )
+        )
         stack.enter_context(
             patch("app.observability.audit_ledger.append_audit_log", return_value=None)
         )
@@ -437,12 +442,17 @@ def test_commit_rejects_critical_risk_auto_approved_field(
             "app.core.consent_gate",
             "app.api.v2.pipeline_routes",
             "app.observability.audit_ledger",
-            "app.services.record_ingestion",
             "app.services.pipeline_orchestrator",
         ):
             stack.enter_context(
                 patch(f"{mod}.append_audit_log_or_503", return_value=None)
             )
+        stack.enter_context(
+            patch(
+                "app.services.record_ingestion.enqueue_audit_event",
+                new_callable=AsyncMock,
+            )
+        )
         stack.enter_context(
             patch("app.observability.audit_ledger.append_audit_log", return_value=None)
         )

@@ -150,12 +150,20 @@ async def process_outbox_batch(
 
     for row in rows:
         try:
+            payload = row["payload"] if isinstance(row["payload"], dict) else {}
+            metadata = dict(payload.get("metadata", payload))
+            for binding in ("tenant_id", "hospital_id", "audit_domain"):
+                if payload.get(binding) is not None:
+                    metadata.setdefault(binding, payload[binding])
             success = await append_audit_log_for_stored_partition(
                 actor_uid=row["actor_id"],
                 event_type=row["event_type"],
-                target_id=row["patient_id"] or row["tenant_id"] or str(row["event_id"]),
-                status="SUCCESS",
-                metadata=row["payload"] if isinstance(row["payload"], dict) else None,
+                target_id=payload.get("target_id")
+                or row["patient_id"]
+                or row["tenant_id"]
+                or str(row["event_id"]),
+                status=payload.get("status", "SUCCESS"),
+                metadata=metadata,
                 idempotency_key=row["idempotency_key"],
                 stored_partition=row["chain_partition"],
             )

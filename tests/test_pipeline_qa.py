@@ -52,4 +52,6 @@ def test_no_fabricated_clinical_default_survives_commit_route():
 
 
 def test_commit_audits_success():
-    assert 'event_type="PIPELINE_COMMIT"' in CODE
+    assert 'event_type="JOB_COMMITTED"' in CODE
+    assert "enqueue_audit_event(" in CODE
+    assert CODE.index("enqueue_audit_event(") < CODE.rindex("await db.commit()")

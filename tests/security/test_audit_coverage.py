@@ -302,7 +302,7 @@ def test_pipeline_commit_produces_audit(
     ).read_text(encoding="utf-8")
     commit = source[source.index("async def commit_extraction_job") :]
     assert 'event_type="JOB_COMMITTED"' in commit
-    assert "await append_audit_log_or_503" in commit
+    assert "await enqueue_audit_event" in commit
 
 
 def test_audit_hash_chain_detects_tampering():

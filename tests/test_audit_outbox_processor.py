@@ -72,7 +72,18 @@ async def test_empty_queue_is_a_no_op():
 
 @pytest.mark.asyncio
 async def test_successful_events_are_appended_and_marked_processed():
-    rows = [_row(), _row()]
+    rows = [
+        _row(
+            payload={
+                "target_id": "clinical-field-1",
+                "status": "SUCCESS",
+                "metadata": {"job_id": "job-1", "workflow_id": "workflow-1"},
+                "hospital_id": "hospital-1",
+                "audit_domain": "pipeline",
+            }
+        ),
+        _row(),
+    ]
     db = _FakeDB(rows)
     with patch(
         "app.services.audit_outbox_processor.append_audit_log_for_stored_partition",
@@ -87,6 +98,13 @@ async def test_successful_events_are_appended_and_marked_processed():
     for call in mock_append.await_args_list:
         assert call.kwargs["stored_partition"] == "tenant:test-tenant:policy"
         assert call.kwargs["idempotency_key"]
+    assert mock_append.await_args_list[0].kwargs["target_id"] == "clinical-field-1"
+    assert mock_append.await_args_list[0].kwargs["metadata"]["workflow_id"] == (
+        "workflow-1"
+    )
+    assert mock_append.await_args_list[0].kwargs["metadata"]["hospital_id"] == (
+        "hospital-1"
+    )
 
     processed_sql = [sql for sql, _ in db.executed if "status = 'processed'" in sql]
     assert len(processed_sql) == 2
