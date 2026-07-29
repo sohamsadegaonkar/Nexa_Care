@@ -24,6 +24,8 @@ from app.models.patient_records import (
 )
 from app.models.patient_tombstone import PatientTombstone
 from app.models.pipeline import (
+    AdjudicationCaseRecord,
+    AdjudicationSubmissionRecord,
     DocumentStorage,
     ExtractionDecisionRecord,
     ExtractedFieldRecord,
@@ -87,6 +89,8 @@ __all__ = [
     "NexaClinical",
     "NexaVault",
     "DocumentStorage",
+    "AdjudicationCaseRecord",
+    "AdjudicationSubmissionRecord",
     "ExtractionJob",
     "ExtractionDecisionRecord",
     "ExtractionRoutingRecord",

@@ -25,7 +25,7 @@ def test_migration_is_current_single_head() -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260729_extract_lane_route"]
+    assert script.get_heads() == ["20260730_source_adjudicate"]
     assert (
         script.get_revision("20260715_patient_auth_identity").down_revision
         == "20260714_provider_schema"

@@ -373,3 +373,149 @@ class ExtractionRoutingRecord(Base, UUIDPrimaryKeyMixin):
             "quarantine_review_deadline",
         ),
     )
+
+
+class AdjudicationCaseRecord(Base, UUIDPrimaryKeyMixin):
+    """Mutable workflow state for one authorized archived-source review."""
+
+    __tablename__ = "adjudication_cases"
+
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    routing_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_routing.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_decisions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    reviewer_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer_organization_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    reviewer_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    review_session_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    accepted_submission_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("adjudication_submissions.id", ondelete="RESTRICT", use_alter=True),
+        nullable=True,
+    )
+    clinical_committed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(192), nullable=False)
+    operation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    contract_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('PENDING', 'ACCEPTED', 'REJECTED', "
+            "'NEEDS_SPECIALIST_REVIEW')",
+            name="ck_adjudication_cases_status",
+        ),
+        CheckConstraint(
+            "(routing_id IS NULL AND decision_id IS NULL) OR "
+            "(routing_id IS NOT NULL AND decision_id IS NOT NULL)",
+            name="ck_adjudication_cases_source_binding",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_adjudication_cases_idempotency"),
+        Index("ix_adjudication_cases_tenant_status", "tenant_id", "status"),
+        Index("ix_adjudication_cases_reviewer_status", "reviewer_id", "status"),
+        Index("ix_adjudication_cases_patient", "patient_id"),
+        Index("ix_adjudication_cases_job", "job_id"),
+    )
+
+
+class AdjudicationSubmissionRecord(Base, UUIDPrimaryKeyMixin):
+    """Immutable protected reviewer submission."""
+
+    __tablename__ = "adjudication_submissions"
+
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("adjudication_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    routing_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    reviewer_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer_organization_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    reviewer_role: Mapped[str] = mapped_column(String(32), nullable=False)
+    review_session_id: Mapped[str] = mapped_column(String(96), nullable=False)
+    attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    clinical_payload: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+    supersedes_submission_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("adjudication_submissions.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    submitted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    contract_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(192), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "outcome IN ('ACCEPTED', 'REJECTED', "
+            "'NEEDS_SPECIALIST_REVIEW', 'SUPERSEDED')",
+            name="ck_adjudication_submissions_outcome",
+        ),
+        UniqueConstraint(
+            "idempotency_key", name="uq_adjudication_submissions_idempotency"
+        ),
+        UniqueConstraint(
+            "case_id",
+            "attempt_number",
+            name="uq_adjudication_submissions_case_attempt",
+        ),
+        Index("ix_adjudication_submissions_case", "case_id"),
+        Index("ix_adjudication_submissions_reviewer", "reviewer_id"),
+    )

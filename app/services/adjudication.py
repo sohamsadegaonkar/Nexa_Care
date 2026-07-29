@@ -1,0 +1,603 @@
+"""Consent-bound human adjudication and clinical commit boundary."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import uuid
+from datetime import datetime, timezone
+
+from pydantic import TypeAdapter
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.models.adjudication import (
+    ADJUDICATION_CONTRACT_VERSION,
+    ADJUDICATION_POLICY_VERSION,
+    AdjudicatedClinicalField,
+    AdjudicationOutcome,
+    AdjudicationSubmission,
+    LabClinicalField,
+    VitalClinicalField,
+)
+from app.models.patient_records import LabResult, TimelineEvent, Vitals
+from app.models.pipeline import (
+    AdjudicationCaseRecord,
+    AdjudicationSubmissionRecord,
+    DocumentStorage,
+    ExtractionDecisionRecord,
+    ExtractionJob,
+    ExtractionRoutingRecord,
+)
+from app.models.provider_context import ProviderContext
+from app.security.audit_context import AuditContext, AuditDomain
+from app.security.document_processing_policy import DocumentProcessingOperation
+from app.security.erasure_registry import check_erasure_registry
+from app.services.approved_access_capability import (
+    validate_live_document_processing_request,
+)
+from app.services.audit_outbox import enqueue_audit_event
+from app.services.document_storage import get_document_storage
+
+REVIEWER_ROLES = frozenset({"clinician", "clinical_reviewer", "admin"})
+_FIELD_ADAPTER = TypeAdapter(list[AdjudicatedClinicalField])
+
+
+class AdjudicationError(RuntimeError):
+    """Stable, value-free adjudication failure."""
+
+    def __init__(self, code: str):
+        self.code = code
+        super().__init__(code)
+
+
+def _reviewer_role(provider: ProviderContext) -> str:
+    roles = REVIEWER_ROLES.intersection(provider.affiliation.roles)
+    if not roles:
+        raise AdjudicationError("ADJUDICATION_ROLE_REQUIRED")
+    return sorted(roles)[0]
+
+
+async def _live_access(
+    db: AsyncSession,
+    *,
+    job: ExtractionJob,
+    provider: ProviderContext,
+    operation: DocumentProcessingOperation,
+) -> None:
+    if (
+        job.tenant_id != provider.hospital.hospital_id
+        or str(job.authorization_provider_id) != provider.actor_uid
+        or not job.consent_request_id
+    ):
+        raise AdjudicationError("ADJUDICATION_ACCESS_DENIED")
+    capability = await validate_live_document_processing_request(
+        request_id=job.consent_request_id,
+        patient_id=str(job.patient_id),
+        provider_id=provider.actor_uid,
+        hospital_id=str(provider.hospital.hospital_id),
+    )
+    if capability is None or operation.value not in capability.allowed_operations:
+        raise AdjudicationError("ADJUDICATION_CONSENT_INACTIVE")
+    await check_erasure_registry(str(job.patient_id), db)
+
+
+def _audit_context(tenant_id: uuid.UUID) -> AuditContext:
+    return AuditContext.for_tenant(
+        tenant_id=str(tenant_id), domain=AuditDomain.PIPELINE
+    )
+
+
+def _operation_hash(payload: dict) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+async def create_case(
+    db: AsyncSession,
+    *,
+    provider: ProviderContext,
+    idempotency_key: str,
+    review_session_id: str,
+    routing_id: uuid.UUID | None = None,
+    job_id: uuid.UUID | None = None,
+) -> AdjudicationCaseRecord:
+    """Create an ordinary SOURCE_ONLY case, including honest zero-candidate cases."""
+    _reviewer_role(provider)
+    if bool(routing_id) == bool(job_id):
+        raise AdjudicationError("ADJUDICATION_SOURCE_AMBIGUOUS")
+
+    route = decision = None
+    if routing_id:
+        route = (
+            await db.execute(
+                select(ExtractionRoutingRecord)
+                .where(ExtractionRoutingRecord.id == routing_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if route is None:
+            raise AdjudicationError("ADJUDICATION_ROUTE_NOT_FOUND")
+        if route.lane != "SOURCE_ONLY" or route.status != "SOURCE_RETAINED":
+            raise AdjudicationError("ADJUDICATION_ROUTE_INELIGIBLE")
+        decision = (
+            await db.execute(
+                select(ExtractionDecisionRecord).where(
+                    ExtractionDecisionRecord.id == route.decision_id
+                )
+            )
+        ).scalar_one_or_none()
+        job_id = route.job_id
+    job = (
+        await db.execute(
+            select(ExtractionJob).where(ExtractionJob.id == job_id).with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise AdjudicationError("ADJUDICATION_JOB_NOT_FOUND")
+    document = (
+        await db.execute(
+            select(DocumentStorage).where(DocumentStorage.id == job.document_id)
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise AdjudicationError("ADJUDICATION_SOURCE_NOT_FOUND")
+    if route:
+        if (
+            decision is None
+            or decision.lane != "SOURCE_ONLY"
+            or decision.auto_commit_feature_enabled
+            or route.job_id != decision.job_id
+            or route.patient_id != decision.patient_id
+            or route.tenant_id != decision.tenant_id
+            or route.source_document_id != decision.source_document_id
+        ):
+            raise AdjudicationError("ADJUDICATION_BINDING_MISMATCH")
+    else:
+        decision_count = (
+            await db.execute(
+                select(func.count(ExtractionDecisionRecord.id)).where(
+                    ExtractionDecisionRecord.job_id == job.id
+                )
+            )
+        ).scalar_one()
+        if decision_count:
+            raise AdjudicationError("DOCUMENT_REVIEW_REQUIRES_ZERO_CANDIDATES")
+    if (
+        document.id != job.document_id
+        or document.patient_id != job.patient_id
+        or document.tenant_id != job.tenant_id
+        or (route and route.source_document_id != document.id)
+    ):
+        raise AdjudicationError("ADJUDICATION_BINDING_MISMATCH")
+    if job.status != "source_only":
+        raise AdjudicationError("ADJUDICATION_JOB_INELIGIBLE")
+    await _live_access(
+        db,
+        job=job,
+        provider=provider,
+        operation=DocumentProcessingOperation.REVIEW_EXTRACTED_FIELDS,
+    )
+
+    payload = {
+        "routing_id": str(routing_id) if routing_id else None,
+        "job_id": str(job.id),
+        "review_session_id": review_session_id,
+        "reviewer_id": provider.actor_uid,
+    }
+    digest = _operation_hash(payload)
+    existing = (
+        await db.execute(
+            select(AdjudicationCaseRecord).where(
+                AdjudicationCaseRecord.idempotency_key == idempotency_key
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        if existing.operation_hash != digest:
+            raise AdjudicationError("ADJUDICATION_IDEMPOTENCY_COLLISION")
+        return existing
+    unresolved = (
+        await db.execute(
+            select(AdjudicationCaseRecord).where(
+                AdjudicationCaseRecord.job_id == job.id,
+                AdjudicationCaseRecord.routing_id == routing_id,
+                AdjudicationCaseRecord.status == "PENDING",
+            )
+        )
+    ).scalar_one_or_none()
+    if unresolved:
+        raise AdjudicationError("ADJUDICATION_CASE_CONFLICT")
+    now = datetime.now(timezone.utc)
+    role = _reviewer_role(provider)
+    case = AdjudicationCaseRecord(
+        patient_id=job.patient_id,
+        tenant_id=job.tenant_id,
+        organization_id=job.tenant_id,
+        source_document_id=document.id,
+        job_id=job.id,
+        routing_id=route.id if route else None,
+        decision_id=decision.id if decision else None,
+        reviewer_id=provider.actor_uid,
+        reviewer_organization_id=provider.hospital.hospital_id,
+        reviewer_role=role,
+        review_session_id=review_session_id,
+        status=AdjudicationOutcome.PENDING.value,
+        version=1,
+        idempotency_key=idempotency_key,
+        operation_hash=digest,
+        contract_version=ADJUDICATION_CONTRACT_VERSION,
+        policy_version=ADJUDICATION_POLICY_VERSION,
+        created_at=now,
+    )
+    db.add(case)
+    await db.flush()
+    await enqueue_audit_event(
+        db,
+        audit_context=_audit_context(case.tenant_id),
+        idempotency_key=f"adjudication-case:{case.id}",
+        actor_id=provider.actor_uid,
+        event_type="ADJUDICATION_CASE_CREATED",
+        target_id=str(case.id),
+        patient_id=str(case.patient_id),
+        metadata={"version": case.version, "document_level": route is None},
+    )
+    return case
+
+
+async def submit_case(
+    db: AsyncSession,
+    *,
+    case_id: uuid.UUID,
+    provider: ProviderContext,
+    review_session_id: str,
+    outcome: AdjudicationOutcome,
+    fields: list[dict],
+    reason_codes: list[str],
+    idempotency_key: str,
+    supersedes_submission_id: uuid.UUID | None = None,
+) -> AdjudicationSubmissionRecord:
+    """Persist one immutable, canonical reviewer submission."""
+    role = _reviewer_role(provider)
+    case = (
+        await db.execute(
+            select(AdjudicationCaseRecord)
+            .where(AdjudicationCaseRecord.id == case_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if case is None:
+        raise AdjudicationError("ADJUDICATION_CASE_NOT_FOUND")
+    if case.reviewer_id != provider.actor_uid:
+        raise AdjudicationError("ADJUDICATION_ACCESS_DENIED")
+    if outcome in {AdjudicationOutcome.PENDING, AdjudicationOutcome.SUPERSEDED}:
+        raise AdjudicationError("ADJUDICATION_OUTCOME_INVALID")
+    job = (
+        await db.execute(select(ExtractionJob).where(ExtractionJob.id == case.job_id))
+    ).scalar_one()
+    await _live_access(
+        db,
+        job=job,
+        provider=provider,
+        operation=DocumentProcessingOperation.ADJUDICATE_EXTRACTED_FIELD,
+    )
+    if case.tenant_id != provider.hospital.hospital_id:
+        raise AdjudicationError("ADJUDICATION_ACCESS_DENIED")
+    parsed = _FIELD_ADAPTER.validate_python(fields, strict=True)
+    now = datetime.now(timezone.utc)
+    attempt = (
+        await db.execute(
+            select(func.count(AdjudicationSubmissionRecord.id)).where(
+                AdjudicationSubmissionRecord.case_id == case.id
+            )
+        )
+    ).scalar_one() + 1
+    submission_id = uuid.uuid4()
+    AdjudicationSubmission(
+        submission_id=str(submission_id),
+        case_id=str(case.id),
+        patient_id=str(case.patient_id),
+        tenant_id=str(case.tenant_id),
+        source_document_id=str(case.source_document_id),
+        job_id=str(case.job_id),
+        routing_id=str(case.routing_id) if case.routing_id else None,
+        decision_id=str(case.decision_id) if case.decision_id else None,
+        reviewer_id=provider.actor_uid,
+        reviewer_organization_id=str(provider.hospital.hospital_id),
+        reviewer_role=role,
+        review_session_id=review_session_id,
+        attempt_number=attempt,
+        outcome=outcome,
+        fields=tuple(parsed),
+        supersedes_submission_id=(
+            str(supersedes_submission_id) if supersedes_submission_id else None
+        ),
+        submitted_at=now,
+        resolved_at=now,
+        reason_codes=tuple(reason_codes),
+    )
+    # Exclude server-generated identifiers/timestamps so an identical caller
+    # retry has an identical protected content hash.
+    digest = _operation_hash(
+        {
+            "case_id": str(case.id),
+            "patient_id": str(case.patient_id),
+            "tenant_id": str(case.tenant_id),
+            "source_document_id": str(case.source_document_id),
+            "job_id": str(case.job_id),
+            "routing_id": str(case.routing_id) if case.routing_id else None,
+            "decision_id": str(case.decision_id) if case.decision_id else None,
+            "reviewer_id": provider.actor_uid,
+            "reviewer_organization_id": str(provider.hospital.hospital_id),
+            "reviewer_role": role,
+            "review_session_id": review_session_id,
+            "outcome": outcome.value,
+            "fields": [item.model_dump(mode="json") for item in parsed],
+            "supersedes_submission_id": (
+                str(supersedes_submission_id) if supersedes_submission_id else None
+            ),
+            "reason_codes": reason_codes,
+            "contract_version": ADJUDICATION_CONTRACT_VERSION,
+            "policy_version": ADJUDICATION_POLICY_VERSION,
+        }
+    )
+    existing = (
+        await db.execute(
+            select(AdjudicationSubmissionRecord).where(
+                AdjudicationSubmissionRecord.idempotency_key == idempotency_key
+            )
+        )
+    ).scalar_one_or_none()
+    if existing:
+        if existing.content_hash != digest:
+            raise AdjudicationError("ADJUDICATION_IDEMPOTENCY_COLLISION")
+        return existing
+    if case.status != "PENDING" and supersedes_submission_id is None:
+        raise AdjudicationError("ADJUDICATION_ALREADY_RESOLVED")
+    if supersedes_submission_id:
+        prior = (
+            await db.execute(
+                select(AdjudicationSubmissionRecord).where(
+                    AdjudicationSubmissionRecord.id == supersedes_submission_id,
+                    AdjudicationSubmissionRecord.case_id == case.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if prior is None or case.accepted_submission_id != prior.id:
+            raise AdjudicationError("ADJUDICATION_SUPERSESSION_INVALID")
+        if case.clinical_committed_at is not None:
+            raise AdjudicationError("ADJUDICATION_ALREADY_COMMITTED")
+    row = AdjudicationSubmissionRecord(
+        id=submission_id,
+        case_id=case.id,
+        patient_id=case.patient_id,
+        tenant_id=case.tenant_id,
+        source_document_id=case.source_document_id,
+        job_id=case.job_id,
+        routing_id=case.routing_id,
+        decision_id=case.decision_id,
+        reviewer_id=provider.actor_uid,
+        reviewer_organization_id=provider.hospital.hospital_id,
+        reviewer_role=role,
+        review_session_id=review_session_id,
+        attempt_number=attempt,
+        outcome=outcome.value,
+        clinical_payload=[item.model_dump(mode="json") for item in parsed],
+        supersedes_submission_id=supersedes_submission_id,
+        submitted_at=now,
+        resolved_at=now,
+        contract_version=ADJUDICATION_CONTRACT_VERSION,
+        policy_version=ADJUDICATION_POLICY_VERSION,
+        reason_codes=reason_codes,
+        content_hash=digest,
+        idempotency_key=idempotency_key,
+        created_at=now,
+    )
+    db.add(row)
+    case.status = outcome.value
+    case.version += 1
+    case.resolved_at = now
+    case.accepted_submission_id = (
+        submission_id if outcome is AdjudicationOutcome.ACCEPTED else None
+    )
+    await db.flush()
+    event = (
+        "ADJUDICATION_SUBMISSION_SUPERSEDED"
+        if supersedes_submission_id
+        else {
+            AdjudicationOutcome.ACCEPTED: "ADJUDICATION_SUBMISSION_ACCEPTED",
+            AdjudicationOutcome.REJECTED: "ADJUDICATION_SUBMISSION_REJECTED",
+            AdjudicationOutcome.NEEDS_SPECIALIST_REVIEW: (
+                "ADJUDICATION_SPECIALIST_REQUESTED"
+            ),
+        }[outcome]
+    )
+    await enqueue_audit_event(
+        db,
+        audit_context=_audit_context(case.tenant_id),
+        idempotency_key=f"adjudication-submission:{row.id}",
+        actor_id=provider.actor_uid,
+        event_type=event,
+        target_id=str(row.id),
+        patient_id=str(case.patient_id),
+        metadata={
+            "outcome": outcome.value,
+            "field_categories": sorted({item.kind for item in parsed}),
+            "reason_codes": reason_codes,
+            "supersedes_submission_id": (
+                str(supersedes_submission_id) if supersedes_submission_id else None
+            ),
+        },
+    )
+    return row
+
+
+async def commit_submission(
+    db: AsyncSession,
+    *,
+    submission_id: uuid.UUID,
+    provider: ProviderContext,
+) -> AdjudicationCaseRecord:
+    """Commit accepted human data exactly once in the caller transaction."""
+    _reviewer_role(provider)
+    submission = (
+        await db.execute(
+            select(AdjudicationSubmissionRecord)
+            .where(AdjudicationSubmissionRecord.id == submission_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if submission is None:
+        raise AdjudicationError("ADJUDICATION_SUBMISSION_NOT_FOUND")
+    case = (
+        await db.execute(
+            select(AdjudicationCaseRecord)
+            .where(AdjudicationCaseRecord.id == submission.case_id)
+            .with_for_update()
+        )
+    ).scalar_one()
+    if case.reviewer_id != provider.actor_uid:
+        raise AdjudicationError("ADJUDICATION_ACCESS_DENIED")
+    if case.clinical_committed_at is not None:
+        if case.accepted_submission_id == submission.id:
+            return case
+        raise AdjudicationError("ADJUDICATION_ALREADY_COMMITTED")
+    if (
+        submission.outcome != "ACCEPTED"
+        or case.status != "ACCEPTED"
+        or case.accepted_submission_id != submission.id
+    ):
+        raise AdjudicationError("ADJUDICATION_NOT_ACCEPTED")
+    bindings = (
+        "patient_id",
+        "tenant_id",
+        "source_document_id",
+        "job_id",
+        "routing_id",
+        "decision_id",
+    )
+    if any(getattr(case, key) != getattr(submission, key) for key in bindings):
+        raise AdjudicationError("ADJUDICATION_BINDING_MISMATCH")
+    job = (
+        await db.execute(select(ExtractionJob).where(ExtractionJob.id == case.job_id))
+    ).scalar_one()
+    await _live_access(
+        db,
+        job=job,
+        provider=provider,
+        operation=DocumentProcessingOperation.COMMIT_VERIFIED_FIELDS,
+    )
+    # JSONB round-trips aware datetimes as ISO strings; Pydantic still applies
+    # the same closed union and clinical validators during reconstruction.
+    fields = _FIELD_ADAPTER.validate_python(submission.clinical_payload)
+    now = datetime.now(timezone.utc)
+    for field in fields:
+        if isinstance(field, VitalClinicalField):
+            record = Vitals(
+                patient_id=case.patient_id,
+                type=field.vital_type,
+                value=str(field.normalized_value),
+                unit=field.unit,
+                recorded_at=field.effective_at,
+                source="human_adjudicated",
+                confidence=None,
+                risk_level="LOW_RISK",
+                source_document_id=case.source_document_id,
+            )
+            event_type = "vital_human_adjudicated"
+        elif isinstance(field, LabClinicalField):
+            record = LabResult(
+                patient_id=case.patient_id,
+                test_name=field.test_name,
+                value=str(field.normalized_value),
+                unit=field.unit,
+                reference_range=field.reference_range,
+                is_abnormal=field.is_abnormal,
+                recorded_at=field.effective_at,
+                source="human_adjudicated",
+                confidence=None,
+                risk_level="MEDIUM_RISK",
+                source_document_id=case.source_document_id,
+            )
+            event_type = "lab_human_adjudicated"
+        db.add(record)
+        await db.flush()
+        db.add(
+            TimelineEvent(
+                patient_id=case.patient_id,
+                event_type=event_type,
+                event_ref_id=record.id,
+                occurred_at=field.effective_at,
+                source="human_adjudicated",
+                summary="Human-adjudicated archived document observation",
+            )
+        )
+    case.clinical_committed_at = now
+    await enqueue_audit_event(
+        db,
+        audit_context=_audit_context(case.tenant_id),
+        idempotency_key=f"adjudication-commit:{submission.id}",
+        actor_id=provider.actor_uid,
+        event_type="ADJUDICATION_CLINICAL_COMMIT_COMPLETED",
+        target_id=str(submission.id),
+        patient_id=str(case.patient_id),
+        metadata={"field_count": len(fields), "provenance": "human_adjudicated"},
+    )
+    await db.flush()
+    return case
+
+
+async def read_source_document(
+    db: AsyncSession,
+    *,
+    case_id: uuid.UUID,
+    provider: ProviderContext,
+) -> tuple[bytes, str]:
+    """Return authorized bytes directly; never expose a durable storage reference."""
+    _reviewer_role(provider)
+    case = (
+        await db.execute(
+            select(AdjudicationCaseRecord).where(AdjudicationCaseRecord.id == case_id)
+        )
+    ).scalar_one_or_none()
+    if case is None:
+        raise AdjudicationError("ADJUDICATION_CASE_NOT_FOUND")
+    if case.reviewer_id != provider.actor_uid:
+        raise AdjudicationError("ADJUDICATION_ACCESS_DENIED")
+    job = (
+        await db.execute(select(ExtractionJob).where(ExtractionJob.id == case.job_id))
+    ).scalar_one()
+    await _live_access(
+        db,
+        job=job,
+        provider=provider,
+        operation=DocumentProcessingOperation.READ_DOCUMENT_SOURCE,
+    )
+    document = (
+        await db.execute(
+            select(DocumentStorage).where(
+                DocumentStorage.id == case.source_document_id,
+                DocumentStorage.patient_id == case.patient_id,
+                DocumentStorage.tenant_id == case.tenant_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if document is None:
+        raise AdjudicationError("ADJUDICATION_SOURCE_NOT_FOUND")
+    content = await get_document_storage().get_document_bytes(
+        document.storage_ref,
+        tenant_id=str(case.tenant_id),
+        patient_id=str(case.patient_id),
+    )
+    await enqueue_audit_event(
+        db,
+        audit_context=_audit_context(case.tenant_id),
+        idempotency_key=f"adjudication-source:{case.id}:{uuid.uuid4()}",
+        actor_id=provider.actor_uid,
+        event_type="ADJUDICATION_SOURCE_ACCESSED",
+        target_id=str(case.id),
+        patient_id=str(case.patient_id),
+        metadata={"content_type": document.content_type},
+    )
+    return content, document.content_type

@@ -38,7 +38,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,9 +49,11 @@ from app.core.document_processing_gate import (
 from app.core.database import get_db_session, get_session_factory
 from app.core.dependencies import get_current_provider
 from app.models.extracted_field import ExtractedField
+from app.models.adjudication import AdjudicatedClinicalField, AdjudicationOutcome
 from app.models.patient_records import TimelineEvent
 from app.models.pipeline import (
     DocumentStorage,
+    AdjudicationCaseRecord,
     ExtractedFieldRecord,
     ExtractionJob,
     FieldCorrection,
@@ -64,6 +66,13 @@ from app.services.pipeline_orchestrator import process_extraction_job
 from app.services.record_ingestion import ingest_extracted_fields
 from app.services.document_storage import get_document_storage
 from app.services.audit_outbox import enqueue_audit_event
+from app.services.adjudication import (
+    AdjudicationError,
+    commit_submission as commit_adjudication_submission,
+    create_case as create_adjudication_case,
+    read_source_document,
+    submit_case as submit_adjudication_case,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -92,6 +101,22 @@ class CommitJobRequest(BaseModel):
     patient_id: str | None = None
     encounter_summary: str | None = None
     fields: list[dict[str, Any]] | None = None
+
+
+class CreateAdjudicationCaseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    review_session_id: str
+    idempotency_key: str
+
+
+class AdjudicationSubmissionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    review_session_id: str
+    idempotency_key: str
+    outcome: AdjudicationOutcome
+    fields: list[AdjudicatedClinicalField] = Field(default_factory=list)
+    reason_codes: list[str] = Field(default_factory=list)
+    supersedes_submission_id: uuid.UUID | None = None
 
 
 def _parse_uuid(id_str: str) -> uuid.UUID:
@@ -926,3 +951,225 @@ async def commit_extraction_job(
         "ledger_tx_hash": None,
         "committed_at": committed_at.isoformat(),
     }
+
+
+def _adjudication_failure(exc: AdjudicationError) -> HTTPException:
+    not_found = {
+        "ADJUDICATION_CASE_NOT_FOUND",
+        "ADJUDICATION_JOB_NOT_FOUND",
+        "ADJUDICATION_ROUTE_NOT_FOUND",
+        "ADJUDICATION_SOURCE_NOT_FOUND",
+        "ADJUDICATION_SUBMISSION_NOT_FOUND",
+    }
+    denied = {
+        "ADJUDICATION_ACCESS_DENIED",
+        "ADJUDICATION_ROLE_REQUIRED",
+        "ADJUDICATION_CONSENT_INACTIVE",
+    }
+    return HTTPException(
+        status_code=404
+        if exc.code in not_found
+        else 403
+        if exc.code in denied
+        else 409,
+        detail={"error_code": exc.code},
+    )
+
+
+def _case_response(case: AdjudicationCaseRecord) -> dict[str, Any]:
+    return {
+        "case_id": str(case.id),
+        "patient_id": str(case.patient_id),
+        "tenant_id": str(case.tenant_id),
+        "source_document_id": str(case.source_document_id),
+        "job_id": str(case.job_id),
+        "routing_id": str(case.routing_id) if case.routing_id else None,
+        "decision_id": str(case.decision_id) if case.decision_id else None,
+        "reviewer_id": case.reviewer_id,
+        "reviewer_role": case.reviewer_role,
+        "status": case.status,
+        "version": case.version,
+        "created_at": case.created_at,
+        "resolved_at": case.resolved_at,
+        "clinical_committed_at": case.clinical_committed_at,
+    }
+
+
+@router.post("/routing/{routing_id}/adjudication-cases", status_code=201)
+async def create_routing_adjudication_case(
+    routing_id: str,
+    payload: CreateAdjudicationCaseRequest,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        case = await create_adjudication_case(
+            db,
+            provider=provider,
+            routing_id=_parse_uuid(routing_id),
+            idempotency_key=payload.idempotency_key,
+            review_session_id=payload.review_session_id,
+        )
+        await db.commit()
+        return _case_response(case)
+    except AdjudicationError as exc:
+        await db.rollback()
+        raise _adjudication_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.post("/jobs/{job_id}/document-adjudication-cases", status_code=201)
+async def create_document_adjudication_case(
+    job_id: str,
+    payload: CreateAdjudicationCaseRequest,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        case = await create_adjudication_case(
+            db,
+            provider=provider,
+            job_id=_parse_uuid(job_id),
+            idempotency_key=payload.idempotency_key,
+            review_session_id=payload.review_session_id,
+        )
+        await db.commit()
+        return _case_response(case)
+    except AdjudicationError as exc:
+        await db.rollback()
+        raise _adjudication_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.get("/adjudication-cases")
+async def list_adjudication_cases(
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    if not {"clinician", "clinical_reviewer", "admin"}.intersection(
+        provider.affiliation.roles
+    ):
+        raise HTTPException(403, detail={"error_code": "ADJUDICATION_ROLE_REQUIRED"})
+    rows = (
+        await db.execute(
+            select(AdjudicationCaseRecord).where(
+                AdjudicationCaseRecord.tenant_id == provider.hospital.hospital_id,
+                AdjudicationCaseRecord.reviewer_id == provider.actor_uid,
+            )
+        )
+    ).scalars()
+    return [_case_response(row) for row in rows]
+
+
+@router.get("/adjudication-cases/{case_id}")
+async def get_adjudication_case(
+    case_id: str,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    row = (
+        await db.execute(
+            select(AdjudicationCaseRecord).where(
+                AdjudicationCaseRecord.id == _parse_uuid(case_id),
+                AdjudicationCaseRecord.tenant_id == provider.hospital.hospital_id,
+                AdjudicationCaseRecord.reviewer_id == provider.actor_uid,
+            )
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(404, detail={"error_code": "ADJUDICATION_CASE_NOT_FOUND"})
+    return _case_response(row)
+
+
+@router.post("/adjudication-cases/{case_id}/submissions", status_code=201)
+async def create_adjudication_submission(
+    case_id: str,
+    payload: AdjudicationSubmissionRequest,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        row = await submit_adjudication_case(
+            db,
+            case_id=_parse_uuid(case_id),
+            provider=provider,
+            review_session_id=payload.review_session_id,
+            outcome=payload.outcome,
+            fields=[field.model_dump(mode="python") for field in payload.fields],
+            reason_codes=payload.reason_codes,
+            idempotency_key=payload.idempotency_key,
+            supersedes_submission_id=payload.supersedes_submission_id,
+        )
+        await db.commit()
+        return {
+            "submission_id": str(row.id),
+            "case_id": str(row.case_id),
+            "outcome": row.outcome,
+            "attempt_number": row.attempt_number,
+            "content_hash": row.content_hash,
+            "supersedes_submission_id": (
+                str(row.supersedes_submission_id)
+                if row.supersedes_submission_id
+                else None
+            ),
+        }
+    except AdjudicationError as exc:
+        await db.rollback()
+        raise _adjudication_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.post("/adjudication-submissions/{submission_id}/commit")
+async def commit_human_adjudication(
+    submission_id: str,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        case = await commit_adjudication_submission(
+            db, submission_id=_parse_uuid(submission_id), provider=provider
+        )
+        await db.commit()
+        return {
+            "submission_id": submission_id,
+            "case_id": str(case.id),
+            "status": "committed",
+            "committed_at": case.clinical_committed_at,
+            "provenance": "human_adjudicated",
+        }
+    except AdjudicationError as exc:
+        await db.rollback()
+        raise _adjudication_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise
+
+
+@router.get("/adjudication-cases/{case_id}/source")
+async def get_adjudication_source(
+    case_id: str,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        content, content_type = await read_source_document(
+            db, case_id=_parse_uuid(case_id), provider=provider
+        )
+        await db.commit()
+        return Response(
+            content=content,
+            media_type=content_type,
+            headers={"Cache-Control": "private, no-store", "Pragma": "no-cache"},
+        )
+    except AdjudicationError as exc:
+        await db.rollback()
+        raise _adjudication_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise

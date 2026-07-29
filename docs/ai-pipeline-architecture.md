@@ -376,3 +376,27 @@ updated only when executable tests exercise the production control; this
 milestone preserves the existing declared runtime scenario set without
 claiming real PostgreSQL, Redis, object-storage, provider, KMS, or device
 evidence.
+### Human source adjudication
+
+An extraction decision records the evidence-policy result; routing records its
+operational lane; neither is a clinical approval. Only a `SOURCE_ONLY` route in
+`SOURCE_RETAINED` state may open an ordinary adjudication case. `QUARANTINE` and
+runtime `AUTO_COMMIT` remain excluded.
+
+The reviewer must have an authorized clinical review role and live
+document-processing consent. Source bytes are retrieved through the encrypted
+document store and returned only by the case-scoped, no-store endpoint; storage
+references and permanent URLs are never exposed. Consent, tenant/patient
+bindings, and the erasure registry are checked again at submission and commit.
+
+Reviewer submissions are immutable, strictly typed vital or laboratory
+artifacts with canonical hashes. Human verification is provenance, not an AI
+confidence score. Corrections supersede an earlier submission by adding a new
+row. An accepted current submission is the sole authority for the locked,
+single-transaction clinical/timeline/audit-outbox commit, and records use
+`human_adjudicated` provenance with null AI confidence.
+
+Jobs with no supported clinical candidates have no fabricated field decision
+or routing row. They may receive an explicit document-level case whose routing
+and decision bindings are null. The frontend review workspace remains a later
+milestone.
