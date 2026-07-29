@@ -11,6 +11,7 @@ import {
   useAdjudicationWorkflow,
 } from '../../services/adjudicationWorkflowStore'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
+import { isTerminalAdjudicationAccessError } from './adjudicationAccess'
 
 export function AdjudicationResultScreen() {
   const params = useParams<{ caseId: string }>()
@@ -41,8 +42,14 @@ export function AdjudicationResultScreen() {
       .then((result) => {
         if (active) setCaseDetail(result)
       })
-      .catch(() => {
-        if (active) setError('The current adjudication result could not be loaded.')
+      .catch((reason) => {
+        if (!active) return
+        if (isTerminalAdjudicationAccessError(reason)) {
+          clearAdjudicationWorkflow(caseId)
+          setError('Result access expired. Reopen the authorized workflow.')
+          return
+        }
+        setError('The current adjudication result could not be loaded.')
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -67,16 +74,7 @@ export function AdjudicationResultScreen() {
       )
       setConfirming(false)
     } catch (reason) {
-      if (
-        reason instanceof ApiError &&
-        (reason.status === 403 ||
-          [
-            'ADJUDICATION_SESSION_MISMATCH',
-            'ADJUDICATION_CONSENT_INACTIVE',
-            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
-            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
-          ].includes(reason.code ?? ''))
-      ) {
+      if (isTerminalAdjudicationAccessError(reason)) {
         clearAdjudicationWorkflow(caseId)
         setError('Commit access expired. Reopen the authorized workflow.')
       } else if (reason instanceof ApiError && reason.code === 'ADJUDICATION_NOT_ACCEPTED') {

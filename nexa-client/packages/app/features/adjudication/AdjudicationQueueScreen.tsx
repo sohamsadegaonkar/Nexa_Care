@@ -18,12 +18,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { ApiError, NexaApiClient, type AdjudicationCaseResponse } from '../../utils/apiClient'
 import {
   bindAdjudicationWorkflow,
+  clearAllAdjudicationWorkflows,
   completeAdjudicationCreation,
   createReviewSessionId,
   getAdjudicationWorkflow,
   prepareAdjudicationCreation,
 } from '../../services/adjudicationWorkflowStore'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
+import { isTerminalAdjudicationAccessError } from './adjudicationAccess'
 
 const STATUS_LABELS: Record<AdjudicationCaseResponse['status'], string> = {
   PENDING: 'Pending source review',
@@ -52,6 +54,11 @@ export function AdjudicationQueueScreen() {
     try {
       setCases(await NexaApiClient.listAdjudicationCases())
     } catch (reason) {
+      if (isTerminalAdjudicationAccessError(reason)) {
+        clearAllAdjudicationWorkflows()
+        setError('Adjudication access is no longer authorized. Sign in or request access again.')
+        return
+      }
       if (reason instanceof ApiError && reason.status === 401) {
         router.replace('/doctor/login')
         return
@@ -92,20 +99,16 @@ export function AdjudicationQueueScreen() {
       completeAdjudicationCreation(fingerprint)
       router.push(`/doctor/pipeline/adjudication/${encodeURIComponent(created.case_id)}/review`)
     } catch (reason) {
+      if (isTerminalAdjudicationAccessError(reason)) {
+        completeAdjudicationCreation(fingerprint)
+        clearAllAdjudicationWorkflows()
+        setError('Protected review access is unavailable. Request authorized access again.')
+        return
+      }
       if (reason instanceof ApiError) {
         if (reason.code === 'ADJUDICATION_CONSENT_INACTIVE') {
           completeAdjudicationCreation(fingerprint)
           setError('Document-review consent is no longer active. Request access again.')
-          return
-        }
-        if (
-          [
-            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
-            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
-          ].includes(reason.code ?? '')
-        ) {
-          completeAdjudicationCreation(fingerprint)
-          setError('Protected review access is unavailable. Request authorized access again.')
           return
         }
         if (reason.code === 'ADJUDICATION_ROUTE_INELIGIBLE') {
@@ -282,14 +285,8 @@ export function AdjudicationQueueScreen() {
                         )
                       })
                       .catch((reason) => {
-                        if (
-                          reason instanceof ApiError &&
-                          [
-                            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
-                            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
-                            'ADJUDICATION_CONSENT_INACTIVE',
-                          ].includes(reason.code ?? '')
-                        ) {
+                        if (isTerminalAdjudicationAccessError(reason)) {
+                          clearAllAdjudicationWorkflows()
                           setError(
                             'Protected review access is unavailable. Request authorized access again.'
                           )

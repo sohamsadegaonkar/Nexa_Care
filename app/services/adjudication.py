@@ -578,6 +578,10 @@ async def submit_case(
         created_at=now,
     )
     db.add(row)
+    # Materialize the immutable submission before the case points at it. The
+    # same-case composite FK is intentionally non-deferrable, and both flushes
+    # remain inside the caller-owned transaction.
+    await db.flush()
     case.status = outcome.value
     case.version += 1
     case.resolved_at = now
@@ -730,7 +734,12 @@ async def commit_submission(
     # JSONB round-trips aware datetimes as ISO strings; Pydantic still applies
     # the same closed union and clinical validators during reconstruction.
     try:
-        fields = _FIELD_ADAPTER.validate_python(submission.clinical_payload)
+        # JSONB returns ISO timestamps as JSON strings. Validate through
+        # Pydantic's JSON boundary so strict models deserialize datetime values
+        # without weakening the protected clinical schema.
+        fields = _FIELD_ADAPTER.validate_json(
+            json.dumps(submission.clinical_payload)
+        )
         reasons = _REASON_ADAPTER.validate_python(submission.reason_codes)
         AdjudicationSubmission(
             submission_id=str(submission.id),

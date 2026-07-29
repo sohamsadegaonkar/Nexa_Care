@@ -63,8 +63,9 @@ async def real_redis():
 
 @pytest.mark.asyncio
 async def test_signed_challenge_is_consumed_atomically_once(real_redis):
-    request_id = str(uuid.uuid4())
-    nonce = uuid.uuid4().hex
+    prefix = os.getenv("TEST_REDIS_PREFIX", "")
+    request_id = f"{prefix}{uuid.uuid4()}"
+    nonce = f"{prefix}{uuid.uuid4().hex}"
     request_key = f"consent_request:{request_id}"
     nonce_key = f"biometric_nonce:{nonce}:used"
     pending = {"status": "pending", "challenge_nonce": nonce}
@@ -86,8 +87,9 @@ async def test_signed_challenge_is_consumed_atomically_once(real_redis):
 
 @pytest.mark.asyncio
 async def test_expired_challenge_fails_closed(real_redis):
-    request_id = str(uuid.uuid4())
-    nonce = uuid.uuid4().hex
+    prefix = os.getenv("TEST_REDIS_PREFIX", "")
+    request_id = f"{prefix}{uuid.uuid4()}"
+    nonce = f"{prefix}{uuid.uuid4().hex}"
     assert (
         await _resolve_signed_approval_atomic(
             real_redis,

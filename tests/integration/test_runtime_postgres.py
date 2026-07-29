@@ -19,11 +19,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient_policy import PatientPolicy
 from app.observability.audit_ledger import read_patient_access_history_events
-from app.services.audit_outbox_processor import _CLAIM_SQL
 from app.services.policy_service import PolicyService
 
 
 pytestmark = pytest.mark.postgres
+
+_CLAIM_EXACT_OUTBOX_SQL = text(
+    """
+    WITH candidate AS (
+        SELECT id
+        FROM public.audit_outbox
+        WHERE id = :id
+          AND status IN ('pending', 'processing')
+          AND available_at <= now()
+          AND (status = 'pending' OR lease_expires_at <= now())
+        FOR UPDATE SKIP LOCKED
+    )
+    UPDATE public.audit_outbox AS outbox
+    SET status = 'processing',
+        processing_started_at = now(),
+        lease_expires_at = now() + make_interval(secs => :lease_seconds),
+        worker_id = :worker_id
+    FROM candidate
+    WHERE outbox.id = candidate.id
+    RETURNING outbox.*
+    """
+)
 
 
 @pytest.fixture
@@ -446,9 +467,12 @@ async def test_mutation_idempotency_scope_constraint(postgres_engine):
 @pytest.mark.asyncio
 async def test_outbox_active_lease_is_not_double_claimed(postgres_engine):
     outbox_id = uuid.uuid4()
+    unrelated_id = uuid.uuid4()
     params = {
         "id": outbox_id,
+        "unrelated_id": unrelated_id,
         "idempotency_key": f"postgres-lease-{uuid.uuid4().hex}",
+        "unrelated_key": f"postgres-unrelated-{uuid.uuid4().hex}",
         "partition": f"tenant:{uuid.uuid4()}:policy",
     }
     async with postgres_engine.begin() as connection:
@@ -465,14 +489,28 @@ async def test_outbox_active_lease_is_not_double_claimed(postgres_engine):
             ),
             params,
         )
+        await connection.execute(
+            text(
+                """
+            INSERT INTO public.audit_outbox
+                (id, event_id, idempotency_key, chain_partition, event_type, actor_id,
+                 tenant_id, patient_id, payload, status, attempt_count, available_at, created_at)
+            VALUES
+                (:unrelated_id, gen_random_uuid(), :unrelated_key, :partition,
+                 'POSTGRES_UNRELATED_PENDING', 'test-worker', 'test-tenant', NULL,
+                 '{}'::jsonb, 'pending', 0, now(), now())
+            """
+            ),
+            params,
+        )
     try:
         async with postgres_engine.begin() as first:
             first_rows = (
                 (
                     await first.execute(
-                        _CLAIM_SQL,
+                        _CLAIM_EXACT_OUTBOX_SQL,
                         {
-                            "batch_size": 1,
+                            "id": outbox_id,
                             "lease_seconds": 60,
                             "worker_id": "worker-one",
                         },
@@ -485,9 +523,9 @@ async def test_outbox_active_lease_is_not_double_claimed(postgres_engine):
             second_rows = (
                 (
                     await second.execute(
-                        _CLAIM_SQL,
+                        _CLAIM_EXACT_OUTBOX_SQL,
                         {
-                            "batch_size": 1,
+                            "id": outbox_id,
                             "lease_seconds": 60,
                             "worker_id": "worker-two",
                         },
@@ -497,12 +535,19 @@ async def test_outbox_active_lease_is_not_double_claimed(postgres_engine):
                 .all()
             )
         assert [row["id"] for row in first_rows] == [outbox_id]
-        assert all(row["id"] != outbox_id for row in second_rows)
+        assert second_rows == []
+        async with postgres_engine.connect() as connection:
+            assert (
+                await connection.execute(
+                    text("SELECT status FROM public.audit_outbox WHERE id = :id"),
+                    {"id": unrelated_id},
+                )
+            ).scalar_one() == "pending"
     finally:
         async with postgres_engine.begin() as connection:
             await connection.execute(
-                text("DELETE FROM public.audit_outbox WHERE id = :id"),
-                {"id": outbox_id},
+                text("DELETE FROM public.audit_outbox WHERE id = ANY(:ids)"),
+                {"ids": [outbox_id, unrelated_id]},
             )
 
 
@@ -530,9 +575,9 @@ async def test_expired_outbox_lease_is_reclaimed(postgres_engine):
             rows = (
                 (
                     await connection.execute(
-                        _CLAIM_SQL,
+                        _CLAIM_EXACT_OUTBOX_SQL,
                         {
-                            "batch_size": 1,
+                            "id": outbox_id,
                             "lease_seconds": 60,
                             "worker_id": "replacement-worker",
                         },

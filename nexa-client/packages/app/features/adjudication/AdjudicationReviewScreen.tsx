@@ -38,6 +38,7 @@ import {
   validateReasonCodes,
 } from './adjudicationContract'
 import { ProtectedSourceViewer } from './ProtectedSourceViewer'
+import { isTerminalAdjudicationAccessError } from './adjudicationAccess'
 
 const INITIAL_DRAFT: ClinicalEntryDraft = {
   kind: 'VITAL',
@@ -62,15 +63,10 @@ function safeActionError(reason: unknown): { message: string; terminal: boolean 
   if (!(reason instanceof ApiError)) {
     return { message: 'The submission could not be completed. Try again safely.', terminal: false }
   }
-  const terminalCodes = new Set([
-    'ADJUDICATION_SESSION_MISMATCH',
-    'ADJUDICATION_CONSENT_INACTIVE',
-    'ADJUDICATION_ACCESS_DENIED',
-    'ADJUDICATION_VERSION_UNSUPPORTED',
-    'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
-    'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
-  ])
-  if (terminalCodes.has(reason.code ?? '') || reason.status === 403) {
+  if (
+    isTerminalAdjudicationAccessError(reason) ||
+    reason.code === 'ADJUDICATION_VERSION_UNSUPPORTED'
+  ) {
     return {
       message: 'Review access is no longer valid. Reopen the authorized workflow.',
       terminal: true,

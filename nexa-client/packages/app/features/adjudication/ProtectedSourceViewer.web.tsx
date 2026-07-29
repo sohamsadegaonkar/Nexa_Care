@@ -2,7 +2,8 @@
 
 import { Paragraph, Spinner, YStack } from '@my/ui'
 import { useEffect, useState } from 'react'
-import { ApiError, NexaApiClient } from '../../utils/apiClient'
+import { NexaApiClient } from '../../utils/apiClient'
+import { isTerminalAdjudicationAccessError } from './adjudicationAccess'
 
 export function ProtectedSourceViewer({
   caseId,
@@ -32,16 +33,7 @@ export function ProtectedSourceViewer({
       })
       .catch((reason: unknown) => {
         if (!active) return
-        if (
-          reason instanceof ApiError &&
-          [
-            'ADJUDICATION_SESSION_MISMATCH',
-            'ADJUDICATION_CONSENT_INACTIVE',
-            'ADJUDICATION_ERASURE_ACCESS_BLOCKED',
-            'ADJUDICATION_ERASURE_REGISTRY_UNAVAILABLE',
-            'FORBIDDEN',
-          ].includes(reason.code ?? '')
-        ) {
+        if (isTerminalAdjudicationAccessError(reason)) {
           onTerminalAccessFailure()
           setError('Source access expired. Reopen the review through the authorized workflow.')
           return
