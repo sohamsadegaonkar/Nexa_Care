@@ -7,16 +7,7 @@ an executable runtime regression exists or that a production control is done.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
-
-
-class EvidenceGroup(str, Enum):
-    IDENTITY = "IDENTITY"
-    CLINICAL_VALUE = "CLINICAL_VALUE"
-    VISUAL_EVIDENCE = "VISUAL_EVIDENCE"
-    MODEL_EVIDENCE = "MODEL_EVIDENCE"
-    POLICY_EVIDENCE = "POLICY_EVIDENCE"
-    LIFECYCLE = "LIFECYCLE"
+from app.models.field_evidence import EvidenceGroup
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +57,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.MODEL_EVIDENCE},
         "OCR produces an incorrect field value while the provider reports convincing confidence for the document as a whole.",
         "Reject the value from clinical truth and require genuine field-level evidence and human adjudication; document confidence must never be copied into field confidence.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_1_document_confidence_never_becomes_field_confidence",
     ),
     _scenario(
         2,
@@ -74,6 +67,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.VISUAL_EVIDENCE},
         "The extracted field cites a page that does not contain its claimed source.",
         "Treat the field as unverifiable, prevent clinical commitment, and preserve the page mismatch for review.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_2_missing_page_is_not_complete_visual_evidence",
     ),
     _scenario(
         3,
@@ -82,6 +77,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.VISUAL_EVIDENCE, EvidenceGroup.MODEL_EVIDENCE},
         "The normalized value disagrees with the text anchored by its bounding box.",
         "Fail closed for clinical commitment; conflicting visual and model evidence cannot qualify for automatic commitment.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_3_value_and_visual_source_mismatch_is_explicit",
     ),
     _scenario(
         4,
@@ -90,6 +87,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.VISUAL_EVIDENCE},
         "A field lacks a usable bounding box or supplies coordinates outside the source page.",
         "Mark the visual evidence unverifiable and require review; missing or malformed evidence cannot qualify for automatic commitment.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_4_missing_or_malformed_bbox_is_unavailable_or_invalid",
     ),
     _scenario(
         5,
@@ -98,6 +97,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.MODEL_EVIDENCE},
         "The provider supplies aggregate confidence but omits confidence for each extracted field.",
         "Do not infer or copy field confidence, do not commit the fields to clinical truth, and require explicit field-level evidence.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_5_document_only_provider_has_unavailable_field_confidence",
     ),
     _scenario(
         6,
@@ -122,6 +123,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.IDENTITY},
         "Document identity evidence conflicts with the patient bound to the job.",
         "Quarantine or reject the job and block all patient-record commitment; identity ambiguity must fail closed.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_8_identity_mismatch_is_explicit_and_blocking",
     ),
     _scenario(
         9,
@@ -154,6 +157,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.MODEL_EVIDENCE, EvidenceGroup.VISUAL_EVIDENCE},
         "Provider output or its evidence bindings are altered after extraction.",
         "Reject unverifiable output, preserve safe tamper evidence, and prevent every affected field from entering clinical truth.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_12_tampered_evidence_is_representable_and_blocking",
     ),
     _scenario(
         13,
@@ -162,6 +167,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.CLINICAL_VALUE},
         "A clinical value has an ambiguous unit, date, decimal separator, or reference range.",
         "Do not normalize by guesswork; retain the source representation and require explicit adjudication before commitment.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_13_ambiguous_clinical_normalization_remains_unresolved",
     ),
     _scenario(
         14,
@@ -220,6 +227,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.IDENTITY, EvidenceGroup.POLICY_EVIDENCE},
         "An object reference collides with or attempts to resolve into another tenant.",
         "Deny access and processing before source retrieval, preserve tenant isolation, and emit only safe audit evidence.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_20_cross_tenant_binding_mismatch_is_explicit",
     ),
     _scenario(
         21,
@@ -228,6 +237,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.VISUAL_EVIDENCE, EvidenceGroup.CLINICAL_VALUE},
         'The evidence box anchors only part of a value, such as "150" while the extracted value is "150 mg".',
         "Treat the field as incompletely evidenced, preserve the exact source span, and require correction or review before clinical commitment.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_21_partial_visual_coverage_is_not_complete",
     ),
     _scenario(
         22,
@@ -236,6 +247,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.MODEL_EVIDENCE, EvidenceGroup.POLICY_EVIDENCE},
         "The verifier cannot reach a supported agreement or disagreement result.",
         "Treat abstention as unavailable evidence, never as agreement, and require the minimum safe review outcome without inventing a final routing policy.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_22_verifier_abstention_is_not_agreement",
     ),
     _scenario(
         23,
@@ -252,6 +265,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.POLICY_EVIDENCE, EvidenceGroup.LIFECYCLE},
         "Evaluation observes different policy versions during one decision or migration.",
         "Pin one immutable policy version for the entire decision; re-evaluation under a newer policy must create a new immutable decision and never mutate or mix the original.",
+        runtime_tested=True,
+        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_24_policy_record_pins_one_immutable_version",
     ),
 )
 

@@ -18,6 +18,7 @@ import pytest
 
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.pipeline import ExtractionJob
+from app.models.ai_models import ExtractedMedicalDocument
 from app.services.pipeline_orchestrator import process_extraction_job
 
 SENSITIVE_EXCEPTION_TEXT = (
@@ -67,6 +68,7 @@ def _make_job_and_document() -> tuple[ExtractionJob, DocumentStorageRecord]:
         storage_ref="local://fake-ref",
         content_type="application/pdf",
         size=1024,
+        content_hash="a" * 64,
         uploaded_at=now,
     )
     job = ExtractionJob(
@@ -135,3 +137,43 @@ async def test_internal_failure_log_never_leaks_exception_text(
         formatted = logging.Formatter().format(record)
         assert "Asha Rao" not in formatted
         assert "X-Amz-Signature" not in formatted
+
+
+@pytest.mark.asyncio
+async def test_document_only_confidence_fails_before_staging_field_persistence():
+    job, document = _make_job_and_document()
+    db = _FakeDB(job, document)
+    fake_storage = AsyncMock()
+    fake_storage.get_document_bytes = AsyncMock(return_value=b"%PDF-1.7")
+    fake_extractor = AsyncMock()
+    fake_extractor.extract_bytes = AsyncMock(
+        return_value=ExtractedMedicalDocument(
+            patient_name="",
+            aadhaar_abha_id="",
+            phone="",
+            diagnoses=["Hypertension"],
+            lab_results=[],
+            prescriptions=[],
+            extraction_confidence=0.99,
+        )
+    )
+
+    with (
+        patch(
+            "app.services.pipeline_orchestrator.get_document_storage",
+            return_value=fake_storage,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.get_medical_document_extractor",
+            return_value=fake_extractor,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.append_audit_log_or_503",
+            AsyncMock(return_value=True),
+        ),
+    ):
+        result = await process_extraction_job(str(job.id), db)
+
+    assert result["status"] == "validation_failed"
+    assert result["error_code"] == "FIELD_EVIDENCE_INCOMPLETE"
+    assert job.status == "validation_failed"

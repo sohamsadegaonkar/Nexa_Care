@@ -15,15 +15,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import DocumentExtractionError, get_medical_document_extractor
-from app.ai.scoring_engine import score_extracted_field
 from app.core.config import get_document_extraction_config
-from app.models.extracted_field import ExtractedField, ValidationResult
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
-from app.models.pipeline import ExtractedFieldRecord, ExtractionJob, ReviewQueueItem
+from app.models.pipeline import ExtractionJob
 from app.models.shards import NexaVault
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.observability.safe_exceptions import log_safe_exception
 from app.services.document_storage import DocumentStorageError, get_document_storage
+from app.services.extraction_evidence_adapter import (
+    CurrentExtractionBinding,
+    adapt_current_extracted_field,
+)
 from app.services.crypto_kms import (
     EncryptedField,
     EncryptionError,
@@ -35,6 +37,10 @@ logger = logging.getLogger("nexa_logger")
 
 class ExtractedIdentityMismatch(RuntimeError):
     pass
+
+
+class IncompleteFieldEvidence(RuntimeError):
+    """Current provider output cannot safely enter staging persistence."""
 
 
 async def _validate_extracted_identity(
@@ -182,72 +188,49 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         await db.flush()
         job.status = "validation_pending"
         candidates = _candidate_fields(extracted)
-        review_count = 0
+        extracted_at = datetime.now(timezone.utc)
+        evidence_records = []
         for item in candidates:
-            field_id = uuid.uuid4()
-            field = score_extracted_field(
-                ExtractedField(
-                    field_id=str(field_id),
-                    job_id=str(job.id),
+            evidence_records.append(
+                adapt_current_extracted_field(
+                    document=extracted,
                     field_name=item["field_name"],
                     raw_value=item["raw_value"],
-                    normalized_value=item["raw_value"],
-                    confidence=float(extracted.extraction_confidence),
-                    risk_level="MEDIUM_RISK",
-                    source_page=None,
-                    source_document_id=str(job.document_id),
-                    status="needs_review",
+                    binding=CurrentExtractionBinding(
+                        patient_id=str(job.patient_id),
+                        tenant_id=str(job.tenant_id),
+                        organization_id=str(job.tenant_id),
+                        source_document_id=str(job.document_id),
+                        source_document_hash=document.content_hash,
+                        ingestion_id=str(document.id),
+                        job_id=str(job.id),
+                        workflow_id=job.consent_request_id,
+                        request_id=job.request_id,
+                        attempt_number=job.attempt_count,
+                        attempt_id=f"{job.id}:{job.attempt_count}",
+                        created_at=job.created_at,
+                        extracted_at=extracted_at,
+                        source_received_at=document.uploaded_at,
+                        provider_name=config.provider,
+                        model_name=None,
+                        model_version=job.extractor_version,
+                        consent_reference=job.consent_request_id,
+                    ),
                 )
             )
-            # The current provider contract supplies only document-level
-            # confidence. It is retained as provenance but can never authorize
-            # auto-commit; every such field requires human review.
-            risk = str(field.risk_level or "HIGH_RISK")
-            if field.field_name.lower() in {"allergy", "allergen"}:
-                risk = "HIGH_RISK"
-            validation = field.validation_result
-            validation_json = (
-                validation.model_dump()
-                if isinstance(validation, ValidationResult)
-                else validation
-                if isinstance(validation, dict)
-                else {
-                    "is_valid": False,
-                    "validation_errors": ["field_level_confidence_unavailable"],
-                }
-            )
-            db.add(
-                ExtractedFieldRecord(
-                    id=field_id,
-                    job_id=job.id,
-                    patient_id=job.patient_id,
-                    field_name=field.field_name,
-                    raw_value=field.raw_value,
-                    normalized_value=field.normalized_value,
-                    confidence=float(field.confidence or 0.0),
-                    risk_level=risk,
-                    validation_result=validation_json,
-                    source_page=field.source_page,
-                    source_bbox=field.source_bbox,
-                    status="needs_review",
-                    source_document_id=job.document_id,
-                    extractor_provider=config.provider,
-                    extractor_version=job.extractor_version,
-                )
-            )
-            db.add(
-                ReviewQueueItem(
-                    id=uuid.uuid4(),
-                    job_id=job.id,
-                    field_id=field_id,
-                    patient_id=job.patient_id,
-                    queued_at=datetime.now(timezone.utc),
-                    status="pending",
-                )
-            )
-            review_count += 1
 
-        job.status = "review_pending" if review_count else "ready_for_commit"
+        # The staging schema requires a numeric field confidence. The current
+        # provider exposes document confidence only, so writing these candidates
+        # would require fabricating confidence. Fail before staging persistence;
+        # a later milestone may route this immutable evidence without changing it.
+        if any(
+            not evidence.model.has_genuine_field_confidence
+            for evidence in evidence_records
+        ):
+            raise IncompleteFieldEvidence()
+
+        review_count = 0
+        job.status = "ready_for_commit"
         job.completed_at = datetime.now(timezone.utc)
         await db.commit()
         await append_audit_log_or_503(
@@ -271,6 +254,10 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
     except ExtractedIdentityMismatch:
         job.status = "identity_mismatch"
         job.error_code = "EXTRACTED_IDENTITY_MISMATCH"
+        job.retryable = False
+    except IncompleteFieldEvidence:
+        job.status = "validation_failed"
+        job.error_code = "FIELD_EVIDENCE_INCOMPLETE"
         job.retryable = False
     except EncryptionError:
         job.status = "validation_failed"

@@ -68,7 +68,21 @@ def test_required_cross_group_scenarios_are_pinned():
 
 def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
     runtime_scenarios = [scenario for scenario in SCENARIOS if scenario.runtime_tested]
-    assert [scenario.scenario_id for scenario in runtime_scenarios] == [17]
+    assert [scenario.scenario_id for scenario in runtime_scenarios] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+        8,
+        12,
+        13,
+        17,
+        20,
+        21,
+        22,
+        24,
+    ]
     assert len(runtime_scenarios) < len(SCENARIOS)
     for scenario in runtime_scenarios:
         assert scenario.test_reference

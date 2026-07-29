@@ -7,12 +7,13 @@ PIPELINE = (ROOT / "app/api/v2/pipeline_routes.py").read_text(encoding="utf-8")
 REVIEW = (ROOT / "app/api/v2/review_routes.py").read_text(encoding="utf-8")
 
 
-def test_every_extracted_field_is_queued_for_review():
+def test_incomplete_extracted_field_is_not_persisted_or_queued_for_review():
     orchestrator = (ROOT / "app/services/pipeline_orchestrator.py").read_text(
         encoding="utf-8"
     )
-    assert 'status="needs_review"' in orchestrator
-    assert "ReviewQueueItem(" in orchestrator
+    assert "FIELD_EVIDENCE_INCOMPLETE" in orchestrator
+    assert "has_genuine_field_confidence" in orchestrator
+    assert "ReviewQueueItem(" not in orchestrator
 
 
 def test_pipeline_review_requires_role_and_tenant():

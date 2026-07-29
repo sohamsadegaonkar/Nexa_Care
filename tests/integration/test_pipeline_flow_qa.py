@@ -55,4 +55,5 @@ def test_orchestrator_has_identity_quarantine_and_retry_quarantine():
     assert 'job.status = "identity_mismatch"' in ORCHESTRATOR
     assert '"quarantined"' in ORCHESTRATOR
     assert "if exhausted" in ORCHESTRATOR
-    assert 'status="needs_review"' in ORCHESTRATOR
+    assert "FIELD_EVIDENCE_INCOMPLETE" in ORCHESTRATOR
+    assert "has_genuine_field_confidence" in ORCHESTRATOR

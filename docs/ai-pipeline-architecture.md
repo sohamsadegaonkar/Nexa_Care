@@ -9,8 +9,8 @@
 Privacy-first health-record platform. A provider uploads a clinical
 document (lab report, prescription, discharge summary). Our pipeline
 extracts the medical data, validates it, scores confidence, classifies
-risk, detects conflicts, and either auto-approves or sends to a human
-steward for review. PII is encrypted with per-patient keys and never
+risk, and detects conflicts. Runtime auto-commit is disabled; extracted
+clinical candidates require human adjudication. PII is encrypted with
 leaves the vault unredacted.
 
 ---
@@ -180,9 +180,9 @@ policies, roles, documents, patient records, review.
 1. **No local ML** — extraction is a hosted VLM call. Everything else
    is deterministic rules. API server runs GPU-free.
 
-2. **Fail-closed auto-approval** — if anything is wrong (validation
-   failure, review-required unknown reference range, conflict, missing confidence, HIGH/CRITICAL risk, allergy),
-   the field goes to human review. False-auto-approve rate is 0%.
+2. **Runtime auto-commit disabled** — the current runtime does not
+   automatically commit extracted clinical candidates. Missing or incomplete
+   evidence fails closed and cannot be promoted by a confidence threshold.
 
 3. **Allergy invariant** — allergy fields are forced to HIGH_RISK and
    never auto-approved, regardless of confidence. Hard-coded clinical
@@ -235,3 +235,50 @@ real tests exercise their production paths.
 
 Runtime auto-commit remains disabled and is neither enabled nor approved by the
 catalog.
+
+## Canonical field-evidence contract
+
+Milestone 1 defines the immutable contract in
+`app/models/field_evidence.py` and the current-output adapter in
+`app/services/extraction_evidence_adapter.py`. The contract groups evidence
+into the same six areas as the adversarial catalog:
+
+- **Identity:** patient, tenant/organization, source document and hash,
+  ingestion/encounter identifiers, and an explicit binding status.
+- **Clinical value:** canonical field name, raw and normalized values/units,
+  reference range, effective date, clinical risk, validation results, and
+  unresolved ambiguity.
+- **Visual evidence:** zero-based page number, normalized `0.0-1.0` bounding
+  box, exact source text/span, and coverage completeness.
+- **Model evidence:** provider/model/version, extraction timestamp, separate
+  document and field confidence, confidence provenance, verifier outcome, and
+  safe evidence hashes.
+- **Policy evidence:** immutable evaluation identifier/version/timestamp when
+  evaluation eventually occurs and the disabled auto-commit flag. It does not
+  contain a lane decision.
+- **Lifecycle:** job/workflow/request and attempt bindings, timestamps, partial
+  response state, retry/supersession/addendum relationships, and consent and
+  erasure snapshots.
+
+Document confidence and field confidence are different facts. The current
+provider payload supplies document-level confidence only; the adapter retains
+that value as `document_confidence` while recording `field_confidence=None`
+with `UNAVAILABLE` provenance. Current output also lacks genuine page,
+bounding-box, and exact source-text evidence, so those fields remain `None`
+rather than being fabricated.
+
+The existing staging column for field confidence is non-null. Current
+document-only-confidence output therefore fails with
+`FIELD_EVIDENCE_INCOMPLETE` before staging persistence instead of substituting
+zero or copying document confidence. No migration is introduced by this
+milestone.
+
+Completeness helpers report structural evidence facts and machine-readable
+issues only. They do not approve clinical truth or return an auto-commit,
+source-only, or quarantine lane. Incomplete evidence is representable but
+cannot be silently promoted. The three-lane decision engine is a later
+milestone, and runtime auto-commit remains disabled.
+
+Catalog coverage remains a threat specification. Executable coverage is
+declared only when a test exercises the production contract or adapter;
+Scenario 17 continues to exercise the production clinical/audit transaction.
