@@ -218,3 +218,20 @@ Not synthetic — every number comes from the real engine.
 | Conflict Detector | 100.0% (5/5) |
 | Full Pipeline E2E | 100.0% (7/7) |
 | **Overall** | **100.0% (85/85)** |
+## Adversarial evidence catalog
+
+Milestone 0 defines a canonical 24-scenario adversarial catalog under
+`tests/ai_extraction/adversarial/`. Each scenario is mapped to one or more of
+six typed evidence-contract groups: `IDENTITY`, `CLINICAL_VALUE`,
+`VISUAL_EVIDENCE`, `MODEL_EVIDENCE`, `POLICY_EVIDENCE`, and `LIFECYCLE`.
+
+Catalog coverage is specification coverage: it records the threats and minimum
+fail-safe outcomes that the extraction design must address. It is distinct from
+executable runtime regression coverage. Catalog inclusion does not mean a
+scenario is implemented or passing. Scenario 17 currently has an executable
+runtime regression for atomic clinical persistence and audit-outbox rollback;
+the remaining catalog scenarios must not be described as runtime-tested until
+real tests exercise their production paths.
+
+Runtime auto-commit remains disabled and is neither enabled nor approved by the
+catalog.
