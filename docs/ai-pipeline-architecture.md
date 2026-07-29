@@ -410,5 +410,28 @@ same-case accepted-submission ownership.
 
 Jobs with no supported clinical candidates have no fabricated field decision
 or routing row. They may receive an explicit document-level case whose routing
-and decision bindings are null. The frontend review workspace remains a later
-milestone.
+and decision bindings are null.
+
+### Clinician source-adjudication workspace
+
+Milestone 5 provides the provider-web routes under
+`/doctor/pipeline/adjudication`. The queue reads adjudication cases, and the
+review workspace retrieves the protected case source directly into a temporary
+browser object URL that is revoked on replacement or unmount. PDF and image
+rendering stays local to the browser; no third-party viewer receives document
+bytes.
+
+Review-session identifiers and mutation idempotency keys are generated with
+browser cryptographic randomness and live only in process memory. They are
+never placed in URLs or browser storage. Refresh/session loss fails closed and
+does not invent a replacement session for an existing case. The UI supports
+only the backend vital and laboratory unions, closed outcome-specific reason
+codes, explicit human-verification confirmation, and accepted-submission
+commit with `human_adjudicated` provenance.
+
+The legacy `ReviewQueueItem`/`FieldCard` workflow remains only a historical
+compatibility surface. `source_only` and `quarantined` jobs are redirected away
+from its review and commit screens; the current adjudication workspace never
+calls the legacy job commit endpoint. Supersession is intentionally unavailable
+because the safe case-detail response does not expose the accepted structured
+submission required for full reconfirmation.

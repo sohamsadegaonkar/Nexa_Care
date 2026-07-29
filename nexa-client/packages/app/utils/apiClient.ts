@@ -244,9 +244,18 @@ export interface DocumentUploadResponse {
 export interface ExtractionJobStatusResponse {
   job_id: string
   patient_id: string
-  status: 'queued' | 'processing' | 'review_required' | 'auto_approved' | 'failed'
+  status:
+    | 'queued'
+    | 'processing'
+    | 'review_required'
+    | 'review_pending'
+    | 'auto_approved'
+    | 'source_only'
+    | 'quarantined'
+    | 'failed'
+    | 'committed'
   document_type: 'PRESCRIPTION' | 'LAB_REPORT' | 'DISCHARGE_SUMMARY' | 'UNKNOWN'
-  overall_confidence: number
+  overall_confidence: number | null
   extracted_fields: ExtractedField[]
   created_at: string
 }
@@ -291,6 +300,93 @@ export interface CommitJobResponse {
   timeline_event_id: string
   ledger_tx_hash: string
   committed_at: string
+}
+
+export type AdjudicationOutcome = 'ACCEPTED' | 'REJECTED' | 'NEEDS_SPECIALIST_REVIEW'
+export type AdjudicationCaseStatus = 'PENDING' | 'ACCEPTED' | 'REJECTED' | 'NEEDS_SPECIALIST_REVIEW'
+
+export type AdjudicationReasonCode =
+  | 'SOURCE_VERIFIED'
+  | 'MANUAL_TRANSCRIPTION'
+  | 'CORRECTED_AGAINST_SOURCE'
+  | 'NOT_CLINICAL_DATA'
+  | 'ILLEGIBLE_SOURCE'
+  | 'DUPLICATE_OBSERVATION'
+  | 'SOURCE_MISMATCH'
+  | 'SPECIALIST_INTERPRETATION_REQUIRED'
+  | 'AMBIGUOUS_SOURCE'
+  | 'OUT_OF_SUPPORTED_SCOPE'
+
+export type AdjudicatedClinicalField =
+  | {
+      kind: 'VITAL'
+      vital_type: 'BLOOD_PRESSURE' | 'HEART_RATE' | 'TEMPERATURE' | 'SPO2' | 'RESPIRATORY_RATE'
+      reviewer_entered_value: number
+      normalized_value: number
+      unit: string
+      effective_at: string
+      page_number?: number | null
+      provenance_type: 'HUMAN_TRANSCRIBED' | 'HUMAN_VERIFIED'
+    }
+  | {
+      kind: 'LAB_RESULT'
+      test_name: string
+      reviewer_entered_value: number
+      normalized_value: number
+      unit: string
+      reference_range: string
+      is_abnormal: boolean
+      effective_at: string
+      page_number?: number | null
+      provenance_type: 'HUMAN_TRANSCRIBED' | 'HUMAN_VERIFIED'
+    }
+
+export interface AdjudicationCaseResponse {
+  case_id: string
+  patient_id: string
+  tenant_id: string
+  source_document_id: string
+  job_id: string
+  routing_id: string | null
+  decision_id: string | null
+  reviewer_id: string
+  reviewer_role: string
+  status: AdjudicationCaseStatus
+  version: number
+  created_at: string
+  resolved_at: string | null
+  clinical_committed_at: string | null
+}
+
+export interface CreateAdjudicationCaseRequest {
+  review_session_id: string
+  idempotency_key: string
+}
+
+export interface AdjudicationSubmissionRequest {
+  review_session_id: string
+  idempotency_key: string
+  outcome: AdjudicationOutcome
+  fields: AdjudicatedClinicalField[]
+  reason_codes: AdjudicationReasonCode[]
+  supersedes_submission_id?: string
+}
+
+export interface AdjudicationSubmissionResponse {
+  submission_id: string
+  case_id: string
+  outcome: AdjudicationOutcome
+  attempt_number: number
+  content_hash: string
+  supersedes_submission_id: string | null
+}
+
+export interface AdjudicationCommitResponse {
+  submission_id: string
+  case_id: string
+  status: 'committed'
+  committed_at: string
+  provenance: 'human_adjudicated'
 }
 
 export class ApiError extends Error {
@@ -457,7 +553,8 @@ async function request<T>(
   customHeaders: Record<string, string> = {},
   noAuth = false,
   timeoutMs = DEFAULT_TIMEOUT_MS,
-  forceCookieTransport = false
+  forceCookieTransport = false,
+  responseMode: 'json' | 'blob' = 'json'
 ): Promise<T> {
   if (!API_BASE_URL) {
     try {
@@ -588,6 +685,10 @@ async function request<T>(
 
   if (response.status === 204) {
     return {} as T
+  }
+
+  if (responseMode === 'blob') {
+    return (await response.blob()) as T
   }
 
   try {
@@ -966,6 +1067,72 @@ export const NexaApiClient = {
         'X-Consent-Token': consentToken,
         'X-Consent-Purpose': 'pipeline_commit',
       }
+    )
+  },
+
+  createAdjudicationCaseFromRoute(
+    routingId: string,
+    payload: CreateAdjudicationCaseRequest
+  ): Promise<AdjudicationCaseResponse> {
+    return request<AdjudicationCaseResponse>(
+      `/api/v2/pipeline/routing/${encodeURIComponent(routingId)}/adjudication-cases`,
+      { method: 'POST', body: JSON.stringify(payload) }
+    )
+  },
+
+  createDocumentAdjudicationCase(
+    jobId: string,
+    payload: CreateAdjudicationCaseRequest
+  ): Promise<AdjudicationCaseResponse> {
+    return request<AdjudicationCaseResponse>(
+      `/api/v2/pipeline/jobs/${encodeURIComponent(jobId)}/document-adjudication-cases`,
+      { method: 'POST', body: JSON.stringify(payload) }
+    )
+  },
+
+  listAdjudicationCases(): Promise<AdjudicationCaseResponse[]> {
+    return request<AdjudicationCaseResponse[]>('/api/v2/pipeline/adjudication-cases', {
+      method: 'GET',
+    })
+  },
+
+  getAdjudicationCase(caseId: string): Promise<AdjudicationCaseResponse> {
+    return request<AdjudicationCaseResponse>(
+      `/api/v2/pipeline/adjudication-cases/${encodeURIComponent(caseId)}`,
+      { method: 'GET' }
+    )
+  },
+
+  getAdjudicationSource(caseId: string, reviewSessionId: string): Promise<Blob> {
+    return request<Blob>(
+      `/api/v2/pipeline/adjudication-cases/${encodeURIComponent(caseId)}/source`,
+      { method: 'GET' },
+      { 'X-Review-Session-ID': reviewSessionId },
+      false,
+      DEFAULT_TIMEOUT_MS,
+      false,
+      'blob'
+    )
+  },
+
+  submitAdjudication(
+    caseId: string,
+    payload: AdjudicationSubmissionRequest
+  ): Promise<AdjudicationSubmissionResponse> {
+    return request<AdjudicationSubmissionResponse>(
+      `/api/v2/pipeline/adjudication-cases/${encodeURIComponent(caseId)}/submissions`,
+      { method: 'POST', body: JSON.stringify(payload) }
+    )
+  },
+
+  commitAdjudicationSubmission(
+    submissionId: string,
+    reviewSessionId: string
+  ): Promise<AdjudicationCommitResponse> {
+    return request<AdjudicationCommitResponse>(
+      `/api/v2/pipeline/adjudication-submissions/${encodeURIComponent(submissionId)}/commit`,
+      { method: 'POST' },
+      { 'X-Review-Session-ID': reviewSessionId }
     )
   },
 

@@ -366,3 +366,75 @@ describe('shared API transport', () => {
     expect(fetchMock.mock.calls[1][1].headers.Authorization).toBeUndefined()
   })
 })
+
+describe('adjudication API contract', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.resetModules()
+  })
+
+  it('uses case APIs and sends the review session only in the source header', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify([
+            {
+              case_id: 'case-1',
+              status: 'PENDING',
+            },
+          ]),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response('document', {
+          status: 200,
+          headers: { 'Content-Type': 'application/pdf' },
+        })
+      )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-token')
+
+    await NexaApiClient.listAdjudicationCases()
+    await NexaApiClient.getAdjudicationSource('case-1', 'review-session-secret')
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      'https://native.example.test/api/v2/pipeline/adjudication-cases'
+    )
+    const [sourceUrl, sourceInit] = fetchMock.mock.calls[1]
+    expect(sourceUrl).toBe(
+      'https://native.example.test/api/v2/pipeline/adjudication-cases/case-1/source'
+    )
+    expect(sourceUrl).not.toContain('review-session-secret')
+    expect(sourceInit.headers['X-Review-Session-ID']).toBe('review-session-secret')
+  })
+
+  it('commits through the accepted-submission endpoint, never the legacy job endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          submission_id: 'submission-1',
+          case_id: 'case-1',
+          status: 'committed',
+          committed_at: '2026-07-29T12:00:00Z',
+          provenance: 'human_adjudicated',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-token')
+
+    await NexaApiClient.commitAdjudicationSubmission('submission-1', 'review-session-secret')
+
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toContain('/api/v2/pipeline/adjudication-submissions/submission-1/commit')
+    expect(url).not.toContain('/jobs/')
+    expect(init.headers['X-Review-Session-ID']).toBe('review-session-secret')
+  })
+})

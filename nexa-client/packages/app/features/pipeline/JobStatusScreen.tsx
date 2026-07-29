@@ -36,6 +36,8 @@ const TERMINAL_STATUSES = [
   'review_pending',
   'failed',
   'committed',
+  'source_only',
+  'quarantined',
 ]
 
 /**
@@ -53,6 +55,8 @@ const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: Statu
   auto_approved: { label: 'Legacy Unsafe State', icon: '⛔', color: '$red10' },
   failed: { label: 'Failed', icon: '❌', color: '$red10' },
   committed: { label: 'Committed', icon: '📋', color: '$green10' },
+  source_only: { label: 'Source review required', icon: '📄', color: '$orange10' },
+  quarantined: { label: 'Quarantined', icon: '⛔', color: '$red10' },
 }
 
 /** Progress mapping: estimated completion percentage per status. */
@@ -66,6 +70,8 @@ const STATUS_PROGRESS: Record<string, number> = {
   auto_approved: 90,
   failed: 100,
   committed: 100,
+  source_only: 100,
+  quarantined: 100,
 }
 
 export function JobStatusScreen() {
@@ -275,6 +281,8 @@ export function JobStatusScreen() {
   const needsReview = job?.extracted_fields.filter((f) => f.status === 'needs_review').length ?? 0
   const isReviewPending = job?.status === 'review_required'
   const hasLegacyAutoApproval = job?.status === 'auto_approved'
+  const requiresSourceAdjudication = job?.status === 'source_only'
+  const isQuarantined = job?.status === 'quarantined'
   const isFailed = job?.status === 'failed'
 
   return (
@@ -551,6 +559,25 @@ export function JobStatusScreen() {
             fontSize="$3"
           >
             This legacy job is blocked. Quarantine and reprocess it before clinical review.
+          </Text>
+        )}
+
+        {requiresSourceAdjudication && (
+          <Button
+            theme="orange"
+            size="$4"
+            onPress={() => router.push('/doctor/pipeline/adjudication')}
+          >
+            Open source adjudication
+          </Button>
+        )}
+
+        {isQuarantined && (
+          <Text
+            color="$red10"
+            fontSize="$3"
+          >
+            Quarantined jobs cannot enter ordinary adjudication.
           </Text>
         )}
 

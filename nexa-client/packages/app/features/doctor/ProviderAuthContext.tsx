@@ -16,6 +16,7 @@ import {
   setProviderCookieAuthEnabled,
 } from '../../utils/apiClient'
 import { clearAllCapabilities } from '../../services/capabilityStore'
+import { clearAllAdjudicationWorkflows } from '../../services/adjudicationWorkflowStore'
 
 export interface ProviderIdentity {
   provider_id: string
@@ -196,6 +197,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   }, [])
   const logout = useCallback(() => {
     clearAllCapabilities()
+    clearAllAdjudicationWorkflows()
     void NexaApiClient.providerWebLogout().finally(() => {
       setSession(null)
       setAccessGrantState(null)

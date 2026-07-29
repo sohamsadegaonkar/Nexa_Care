@@ -257,6 +257,10 @@ export function CommitScreen() {
     setFetchError(null)
     try {
       const data = await NexaApiClient.getExtractionJobStatus(jobId, consentToken)
+      if (data.status === 'source_only' || data.status === 'quarantined') {
+        router.replace('/doctor/pipeline/adjudication')
+        return
+      }
       setJob(data)
     } catch (err) {
       if (err instanceof ApiError) {

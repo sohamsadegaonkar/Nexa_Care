@@ -180,6 +180,14 @@ export function DoctorDashboardScreen() {
         >
           🚨 Emergency Access
         </Button>
+
+        <Button
+          theme="blue"
+          size="$4"
+          onPress={() => router.push('/doctor/pipeline/adjudication')}
+        >
+          Source adjudication workspace
+        </Button>
       </YStack>
 
       <Separator />
