@@ -33,9 +33,36 @@ For every step record: timestamp, result (`PASS`/`FAIL`), HTTP status, stable sa
 - Confirm all patients and clinical content are synthetic.
 - Confirm backend readiness without printing dependency credentials.
 - Confirm the Android build points to the sanitized pilot API host over the intended secure transport.
-- Confirm one clinician account has MFA and one synthetic patient can authenticate.
+- Confirm Doctor A has the required controlled-login MFA configuration, Doctor B
+  has an independent active credential, and one synthetic patient can
+  authenticate.
 - Confirm the test patient has no active key for this installation, or revoke only the test-owned installation key.
 - Do not flush Redis. Delete only keys bearing the run prefix.
+
+## Seed Doctor B for Step 12
+
+Inject a strong, unique Doctor B password through the approved secret manager or
+ephemeral process environment as `DEMO_PROVIDER_B_PASSWORD`. Do not place the
+value in a command argument, shell history, file, log, screenshot, or evidence
+report. With `DATABASE_URL` already pointing to the controlled non-production
+pilot database, run from the repository root:
+
+```powershell
+.\venv\Scripts\python.exe -m scripts.seed_demo_doctor --doctor-b-only
+```
+
+The command creates or reuses only Dr. Arjun Rao
+(`demo.doctor.b@nexacare.in`) and requires Doctor A's existing active Nexa Demo
+Hospital. It does not seed a patient, NFC card, hospital, or clinical record. A
+newly created credential uses the same controlled seed baseline as Doctor A
+(`mfa_enabled=false`); if the qualification environment requires Doctor B MFA,
+enroll it through the normal MFA setup flow rather than changing or bypassing
+authentication.
+
+The output may contain only created/reused state, the display name/login, and
+active-state booleans. Stop if it contains a UUID, password, hash, session
+value, or another secret. Re-running the command must report reused state and
+must not change Doctor A.
 
 ## Routine access sequence
 
@@ -57,6 +84,27 @@ For every step record: timestamp, result (`PASS`/`FAIL`), HTTP status, stable sa
 | 14 | Disable notification permission or use the controlled push-unavailable condition. Confirm the doctor sees `failed`/`unavailable` honestly and the patient can open the pending request through the authenticated in-app fallback. | Delivery state; fallback result |
 | 15 | Open patient access history and confirm the successful routine read appears once with correct provider/hospital fallback labels. Confirm denied/self-access noise is absent. | Visible audit event ID and device screenshot if sanitized |
 | 16 | Log Doctor A out. Require successful server-side session deletion. Replay a request with the old test session only through an approved diagnostic client and require `401`. If Redis revocation is unavailable, logout must return `503 PROVIDER_SESSION_REVOCATION_UNAVAILABLE`, never false success. | Logout/replay statuses and audit ID |
+
+### Step 12 provider-isolation procedure
+
+1. While Doctor A's approved grant is live, confirm one granted category succeeds
+   for Doctor A without recording clinical values or the capability.
+2. In a separate clean browser profile or approved diagnostic-client session,
+   sign in with Doctor B's independent login. Confirm the server session shows
+   Dr. Arjun Rao, Nexa Demo Hospital, and exactly the `clinician` role. Do not
+   record either provider's database identifier.
+3. In the controlled diagnostic harness, keep Doctor A's capability in memory
+   only and submit one otherwise identical category request authenticated by
+   Doctor B. Never move the capability through a clipboard, command argument,
+   environment variable, file, URL, log, screenshot, or evidence report.
+4. Require `403` with the stable value-free denial code. Record only the status,
+   safe code, timestamp, and denial audit event ID; the response and audit
+   metadata must not expose provider details or capability material.
+5. Repeat the category request in Doctor A's still-live session and require
+   success. This control distinguishes provider-binding denial from an expired
+   or revoked grant. Record no returned clinical values.
+6. End both provider sessions, clear the harness's in-memory capability, and
+   include this attempt in the final forbidden-value count inspection.
 
 ## Emergency sequence
 
@@ -85,4 +133,3 @@ Search runtime logs, audit metadata, browser history/storage, Expo logs, capture
 Stop immediately on cross-provider access, revoked-device acceptance, consent access after expiry/revocation, emergency full-record access, missing required audit evidence, leaked sensitive material, fabricated push success, or any use of real patient data.
 
 The milestone remains `READY_FOR_DEVICE_TEST` until every row has human-supplied evidence. Automated tests cannot mark this runbook passed.
-
