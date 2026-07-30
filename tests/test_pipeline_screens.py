@@ -496,6 +496,13 @@ class TestFieldCard:
 
 
 class TestReviewCockpitLayout:
+    def test_document_confidence_is_not_fabricated_from_a_retired_aggregate(self) -> None:
+        """The cockpit must preserve unavailable document confidence truthfully."""
+        code = _read_screen("ReviewCockpitScreen")
+        assert "overall_confidence" not in code
+        assert "document_confidence" in code
+        assert "'unavailable'" in code
+
     def test_split_layout(self) -> None:
         """Review Cockpit must have a split layout with document preview and field cards."""
         code = _read_screen("ReviewCockpitScreen")

@@ -93,6 +93,25 @@ describe('WaitingForApprovalScreen polling', () => {
     expect(claim).toHaveBeenCalledOnce()
   })
 
+  it('rejects document scope outside the document-upload workflow', async () => {
+    vi.spyOn(NexaApiClient, 'getConsentStatus').mockResolvedValue(statusResponse('approved'))
+    vi.spyOn(NexaApiClient, 'claimConsentAccess').mockResolvedValue({
+      patient_id: 'patient-verified',
+      consent_token: 'secret-capability',
+      purpose: 'document_processing',
+      scope: 'documents',
+      expires_at: '2099-01-01T00:00:00Z',
+    })
+
+    renderWithTamagui(<WaitingForApprovalScreen />)
+    await flushEffects()
+
+    expect(screen.getByText('Status Check Failed')).toBeTruthy()
+    expect(screen.getByText('Approved access does not permit patient record access.')).toBeTruthy()
+    expect(setAccessGrant).not.toHaveBeenCalled()
+    expect(push).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['denied', 'Access Denied'],
     ['expired', 'Request Expired'],

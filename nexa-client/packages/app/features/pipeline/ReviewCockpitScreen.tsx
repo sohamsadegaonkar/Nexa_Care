@@ -370,7 +370,10 @@ export function ReviewCockpitScreen() {
             color="$color10"
             fontSize="$2"
           >
-            Confidence: {((job?.overall_confidence ?? 0) * 100).toFixed(0)}%
+            Document confidence:{' '}
+            {job?.document_confidence == null
+              ? 'unavailable'
+              : `${(job.document_confidence * 100).toFixed(0)}%`}
           </Text>
         </XStack>
       </XStack>

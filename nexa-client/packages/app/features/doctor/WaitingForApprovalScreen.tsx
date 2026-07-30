@@ -282,6 +282,9 @@ export function WaitingForApprovalScreen() {
           router.push(`/doctor/pipeline/upload?workflow_id=${encodeURIComponent(workflowId)}`)
           return
         }
+        if (claim.scope !== 'clinical' && claim.scope !== 'full') {
+          throw new Error('Approved access does not permit patient record access.')
+        }
         setAccessGrant({
           requestId,
           patientId: claim.patient_id,
