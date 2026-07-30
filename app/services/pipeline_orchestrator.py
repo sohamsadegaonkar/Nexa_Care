@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.extractor import DocumentExtractionError, get_medical_document_extractor
 from app.core.config import get_document_extraction_config
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
-from app.models.pipeline import ExtractionJob
+from app.models.pipeline import ExtractionCandidateRecord, ExtractionJob
 from app.models.extraction_decision import ExtractionDecisionPolicy
 from app.models.field_evidence import SnapshotState
 from app.models.shards import NexaVault
@@ -99,10 +99,22 @@ async def _validate_extracted_identity(
             raise ExtractedIdentityMismatch()
 
 
-def _candidate_fields(document: Any) -> list[dict[str, str]]:
+def _candidate_fields(document: Any) -> list[dict[str, Any]]:
     """Convert clinical arrays only; OCR identity is never a chart candidate."""
 
-    candidates: list[dict[str, str]] = []
+    if document.field_evidence:
+        return [
+            {
+                "field_name": item.canonical_field_name,
+                "raw_value": item.raw_value,
+                "provider_evidence": item,
+            }
+            for item in document.field_evidence
+            if item.canonical_field_name
+            not in {"patient_name", "phone", "aadhaar_abha_id"}
+        ]
+
+    candidates: list[dict[str, Any]] = []
     candidates.extend(
         {"field_name": "diagnosis", "raw_value": str(value)}
         for value in document.diagnoses
@@ -199,6 +211,8 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             mime_type=document.content_type,
             request_id=job.request_id or str(job.id),
         )
+        if extracted.field_evidence:
+            job.extractor_version = extracted.field_evidence[0].provider_api_version
         del document_bytes
         await _validate_extracted_identity(extracted, job.patient_id, db)
 
@@ -242,6 +256,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     document=extracted,
                     field_name=item["field_name"],
                     raw_value=item["raw_value"],
+                    provider_evidence=item.get("provider_evidence"),
                     binding=CurrentExtractionBinding(
                         patient_id=str(job.patient_id),
                         tenant_id=str(job.tenant_id),
@@ -332,6 +347,62 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     quarantine_review_deadline=(
                         routed_at if not consent_active or not erasure_clear else None
                     ),
+                )
+            )
+
+        kms = get_encryption_provider()
+        for item, evidence, result in zip(
+            candidates, evidence_records, results, strict=True
+        ):
+            if item.get("provider_evidence") is None:
+                continue
+            evidence_uuid = uuid.UUID(evidence.evidence_id)
+            value_context = f"extraction_candidate_value:{evidence.evidence_id}"
+            source_context = f"extraction_candidate_source:{evidence.evidence_id}"
+            encrypted_value = await kms.encrypt_field(
+                str(job.patient_id),
+                value_context,
+                evidence.clinical_value.raw_value,
+                db,
+            )
+            encrypted_source = None
+            if evidence.visual.source_text:
+                encrypted_source = await kms.encrypt_field(
+                    str(job.patient_id),
+                    source_context,
+                    evidence.visual.source_text,
+                    db,
+                )
+            bbox = evidence.visual.bounding_box
+            db.add(
+                ExtractionCandidateRecord(
+                    id=uuid.uuid4(),
+                    evidence_id=evidence_uuid,
+                    job_id=job.id,
+                    source_document_id=job.document_id,
+                    patient_id=job.patient_id,
+                    tenant_id=job.tenant_id,
+                    authorization_provider_id=str(job.authorization_provider_id),
+                    field_name=evidence.clinical_value.field_name,
+                    encrypted_raw_value=encrypted_value.serialize(),
+                    encrypted_source_text=(
+                        encrypted_source.serialize() if encrypted_source else None
+                    ),
+                    source_page=evidence.visual.page_number,
+                    source_bbox=(
+                        [bbox.left, bbox.top, bbox.right, bbox.bottom]
+                        if bbox
+                        else None
+                    ),
+                    field_confidence=evidence.model.field_confidence,
+                    document_confidence=evidence.model.document_confidence,
+                    provider_name=evidence.model.provider_name or "unknown",
+                    provider_version=evidence.model.model_version or "unknown",
+                    extracted_at=evidence.model.extracted_at,
+                    evidence_complete=evidence.visual_evidence_complete,
+                    lane=result.routing.lane,
+                    reason_codes=list(result.decision.reason_codes),
+                    created_at=routed_at,
                 )
             )
 

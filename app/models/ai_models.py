@@ -2,7 +2,28 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.models.field_evidence import NormalizedBoundingBox
+
+
+class ProviderFieldEvidence(BaseModel):
+    """Provider-authentic candidate and its field-level source evidence."""
+
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    canonical_field_name: str
+    raw_value: str
+    source_text: str | None = None
+    page_number: int | None = Field(default=None, ge=0)
+    bounding_box: NormalizedBoundingBox | None = None
+    field_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    provider_name: str
+    provider_api_version: str
+    extraction_timestamp: datetime
+    evidence_hash: str | None = None
 
 
 class ExtractedMedicalDocument(BaseModel):
@@ -16,20 +37,25 @@ class ExtractedMedicalDocument(BaseModel):
     model_config = ConfigDict(strict=True, extra="allow")
 
     patient_name: str = Field(
-        ..., description="Patient name extracted from the document"
+        ..., description="Patient name extracted from the document, if present"
     )
     aadhaar_abha_id: str = Field(
         ..., description="Aadhaar or ABHA identifier if present"
     )
     phone: str = Field(..., description="Indian phone number if present")
-    diagnoses: list[str] = Field(..., description="Diagnoses or clinical impressions")
-    lab_results: list[str] = Field(..., description="Lab result summaries")
+    diagnoses: list[str] = Field(
+        ..., description="Directly written diagnoses only"
+    )
+    lab_results: list[str] = Field(
+        ..., description="Lab result summaries"
+    )
     prescriptions: list[str] = Field(
         ..., description="Medication or prescription entries"
     )
-    extraction_confidence: float = Field(
-        ...,
+    extraction_confidence: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
-        description="Remote extraction confidence score from 0.0 to 1.0",
+        description="Provider document-level confidence, when actually supplied",
     )
+    field_evidence: list[ProviderFieldEvidence] = Field(default_factory=list)

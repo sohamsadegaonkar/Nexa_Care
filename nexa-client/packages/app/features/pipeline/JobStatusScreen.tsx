@@ -14,7 +14,7 @@
  * - Session guard: must be authenticated.
  * - Stops polling on terminal states; cleans up on unmount.
  *
- * Route: /doctor/pipeline/jobs/[jobId]?workflow_id=...&patient_id=...
+ * Route: /doctor/pipeline/jobs/[jobId]?workflow_id=...
  */
 
 'use client'
@@ -24,7 +24,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useRouter, useSearchParams, useParams } from 'next/navigation'
 import { NexaApiClient, type ExtractionJobStatusResponse, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
-import { useCapability } from '../../services/capabilityStore'
+import { clearCapability, useCapability } from '../../services/capabilityStore'
 
 /** Polling interval in milliseconds. */
 const POLL_INTERVAL_MS = 2_000
@@ -38,6 +38,10 @@ const TERMINAL_STATUSES = [
   'committed',
   'source_only',
   'quarantined',
+  'extraction_failed_retryable',
+  'extraction_failed_terminal',
+  'identity_mismatch',
+  'validation_failed',
 ]
 
 /**
@@ -47,6 +51,7 @@ type StatusColor = '$blue10' | '$orange10' | '$green10' | '$red10'
 
 const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: StatusColor }> = {
   queued: { label: 'Queued', icon: '⏳', color: '$blue10' },
+  extraction_pending: { label: 'Upload stored; extraction pending', icon: '⏳', color: '$blue10' },
   processing: { label: 'Extracting', icon: '⚙️', color: '$orange10' },
   extracting: { label: 'Extracting', icon: '⚙️', color: '$orange10' },
   scored: { label: 'Scored', icon: '✅', color: '$green10' },
@@ -54,6 +59,14 @@ const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: Statu
   review_pending: { label: 'Review Pending', icon: '⚠️', color: '$orange10' },
   auto_approved: { label: 'Legacy Unsafe State', icon: '⛔', color: '$red10' },
   failed: { label: 'Failed', icon: '❌', color: '$red10' },
+  extraction_failed_retryable: {
+    label: 'Provider temporarily unavailable',
+    icon: '⚠️',
+    color: '$orange10',
+  },
+  extraction_failed_terminal: { label: 'Extraction failed', icon: '❌', color: '$red10' },
+  identity_mismatch: { label: 'Identity mismatch', icon: '⛔', color: '$red10' },
+  validation_failed: { label: 'Validation failed', icon: '⛔', color: '$red10' },
   committed: { label: 'Committed', icon: '📋', color: '$green10' },
   source_only: { label: 'Source review required', icon: '📄', color: '$orange10' },
   quarantined: { label: 'Quarantined', icon: '⛔', color: '$red10' },
@@ -62,6 +75,7 @@ const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: Statu
 /** Progress mapping: estimated completion percentage per status. */
 const STATUS_PROGRESS: Record<string, number> = {
   queued: 10,
+  extraction_pending: 15,
   processing: 40,
   extracting: 40,
   scored: 80,
@@ -72,6 +86,10 @@ const STATUS_PROGRESS: Record<string, number> = {
   committed: 100,
   source_only: 100,
   quarantined: 100,
+  extraction_failed_retryable: 100,
+  extraction_failed_terminal: 100,
+  identity_mismatch: 100,
+  validation_failed: 100,
 }
 
 export function JobStatusScreen() {
@@ -82,10 +100,16 @@ export function JobStatusScreen() {
 
   // jobId comes from the [jobId] route param (camelCase); snake_case only in API payloads
   const jobId = (routeParams.jobId as string) ?? ''
-  const patientId = searchParams.get('patient_id') ?? ''
   const workflowId = searchParams.get('workflow_id')
   const capability = useCapability(workflowId)
-  const consentToken = capability?.token ?? ''
+  const validDocumentCapability =
+    capability?.purpose === 'document_processing' &&
+    capability.scope.length === 1 &&
+    capability.scope[0] === 'documents'
+      ? capability
+      : null
+  const consentToken = validDocumentCapability?.token ?? ''
+  const patientId = validDocumentCapability?.patientId ?? ''
 
   const [job, setJob] = useState<ExtractionJobStatusResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -154,7 +178,7 @@ export function JobStatusScreen() {
         </Text>
         <Button
           theme="blue"
-          onPress={() => router.push('/doctor/request-consent')}
+          onPress={() => router.push('/doctor/patient-search?intent=document_upload')}
         >
           Request Consent
         </Button>
@@ -180,6 +204,8 @@ export function JobStatusScreen() {
           return
         }
         if (err.status === 403) {
+          if (workflowId) clearCapability(workflowId)
+          setJob(null)
           setError('Consent required to view job status.')
           setPollingActive(false)
           return
@@ -194,7 +220,7 @@ export function JobStatusScreen() {
     } finally {
       setLoading(false)
     }
-  }, [jobId, consentToken, router])
+  }, [jobId, consentToken, router, workflowId])
 
   // ── Polling effect — every 2 seconds ─────────────────────────────────
   useEffect(() => {
@@ -277,13 +303,15 @@ export function JobStatusScreen() {
 
   const statusInfo = STATUS_DISPLAY[job?.status ?? ''] ?? STATUS_DISPLAY.queued
   const progressPct = STATUS_PROGRESS[job?.status ?? 'queued'] ?? 0
-  const autoApproved = job?.extracted_fields.filter((f) => f.status === 'auto_approved').length ?? 0
-  const needsReview = job?.extracted_fields.filter((f) => f.status === 'needs_review').length ?? 0
   const isReviewPending = job?.status === 'review_required'
   const hasLegacyAutoApproval = job?.status === 'auto_approved'
   const requiresSourceAdjudication = job?.status === 'source_only'
   const isQuarantined = job?.status === 'quarantined'
-  const isFailed = job?.status === 'failed'
+  const isFailed =
+    job?.status === 'failed' ||
+    job?.status === 'extraction_failed_terminal' ||
+    job?.status === 'identity_mismatch' ||
+    job?.status === 'validation_failed'
 
   return (
     <YStack
@@ -429,68 +457,99 @@ export function JobStatusScreen() {
         </XStack>
       </YStack>
 
-      {/* ── Field summary (shown when scored or beyond) ────────────────── */}
-      {autoApproved + needsReview > 0 && (
+      {job && (
         <YStack gap="$3">
-          <Text
-            color="$color12"
-            fontSize="$3"
-            fontWeight="600"
+          <Card
+            padding="$4"
+            backgroundColor="$backgroundHover"
+            gap="$2"
           >
-            Field Summary
-          </Text>
-          <XStack gap="$4">
-            <Card
-              flex={1}
-              padding="$3"
-              backgroundColor="$red4"
-              borderRadius="$4"
-              alignItems="center"
+            <Text
+              color="$color12"
+              fontSize="$3"
+              fontWeight="700"
             >
-              <Text
-                color="$red10"
-                fontSize="$6"
-                fontWeight="700"
-              >
-                {autoApproved}
-              </Text>
-              <Text
-                color="$red10"
-                fontSize="$2"
-              >
-                Legacy blocked
-              </Text>
-            </Card>
-            <Card
-              flex={1}
-              padding="$3"
-              backgroundColor="$orange4"
-              borderRadius="$4"
-              alignItems="center"
-            >
-              <Text
-                color="$orange10"
-                fontSize="$6"
-                fontWeight="700"
-              >
-                {needsReview}
-              </Text>
-              <Text
-                color="$orange10"
-                fontSize="$2"
-              >
-                Need Review
-              </Text>
-            </Card>
-          </XStack>
-          {job?.overall_confidence != null && (
+              Genuine extraction result
+            </Text>
             <Text
               color="$color10"
               fontSize="$2"
             >
-              Overall confidence: {(job.overall_confidence * 100).toFixed(0)}%
+              Provider: {job.provider ?? 'not called'} · Candidates: {job.candidate_count}
             </Text>
-          )}
+            <Text
+              color="$color10"
+              fontSize="$2"
+            >
+              Routing: {job.routing_lane ?? 'not routed'}
+              {job.routing_reasons.length > 0 ? ` · ${job.routing_reasons.join(', ')}` : ''}
+            </Text>
+            <Text
+              color="$color10"
+              fontSize="$2"
+            >
+              Identity validation: {job.identity_validation.replace('_', ' ')}
+            </Text>
+            <Text
+              color="$orange10"
+              fontSize="$2"
+              fontWeight="700"
+            >
+              Auto-commit is disabled. Clinician adjudication is mandatory.
+            </Text>
+          </Card>
+
+          {job.candidates.map((candidate, index) => (
+            <Card
+              key={`${candidate.field_name}-${index}`}
+              padding="$4"
+              backgroundColor={candidate.lane === 'QUARANTINE' ? '$red3' : '$blue3'}
+              gap="$2"
+            >
+              <Text
+                color="$color12"
+                fontSize="$4"
+                fontWeight="700"
+              >
+                {candidate.field_name}: {candidate.raw_value}
+              </Text>
+              <Text
+                color="$color10"
+                fontSize="$2"
+              >
+                Field confidence:{' '}
+                {candidate.field_confidence == null
+                  ? 'unavailable'
+                  : `${(candidate.field_confidence * 100).toFixed(1)}%`}
+              </Text>
+              <Text
+                color="$color10"
+                fontSize="$2"
+              >
+                Source page:{' '}
+                {candidate.source_page == null ? 'unavailable' : candidate.source_page + 1}
+              </Text>
+              <Text
+                color="$color10"
+                fontSize="$2"
+              >
+                Source text: {candidate.source_text ?? 'unavailable'}
+              </Text>
+              <Text
+                color="$color10"
+                fontSize="$2"
+              >
+                Bounding box: {candidate.source_bbox ? 'available' : 'unavailable'} · Evidence:{' '}
+                {candidate.evidence_complete ? 'complete' : 'incomplete'}
+              </Text>
+              <Text
+                color="$color10"
+                fontSize="$2"
+              >
+                Lane: {candidate.lane} · {candidate.reason_codes.join(', ')}
+              </Text>
+            </Card>
+          ))}
         </YStack>
       )}
 
@@ -538,7 +597,11 @@ export function JobStatusScreen() {
       >
         <Button
           chromeless
-          onPress={() => router.push('/doctor/pipeline/upload')}
+          onPress={() =>
+            router.push(
+              `/doctor/pipeline/upload?workflow_id=${encodeURIComponent(workflowId ?? '')}`
+            )
+          }
         >
           ← Upload Another
         </Button>
@@ -587,7 +650,7 @@ export function JobStatusScreen() {
             size="$4"
             onPress={() =>
               router.push(
-                `/doctor/pipeline/upload?patient_id=${patientId}&workflow_id=${workflowId}`
+                `/doctor/pipeline/upload?workflow_id=${encodeURIComponent(workflowId ?? '')}`
               )
             }
           >

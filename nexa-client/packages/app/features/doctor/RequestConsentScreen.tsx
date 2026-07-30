@@ -28,7 +28,13 @@ import { useProviderAuth } from './ProviderAuthContext'
 import { ConsentSelect } from './components/ConsentSelect'
 
 // ── Controlled purpose codes ────────────────────────────────────────────────
-type AccessPurpose = 'treatment' | 'emergency_care' | 'diagnostic_review' | 'follow_up' | 'referral'
+type AccessPurpose =
+  | 'treatment'
+  | 'emergency_care'
+  | 'diagnostic_review'
+  | 'follow_up'
+  | 'referral'
+  | 'document_processing'
 
 const PURPOSE_OPTIONS: { value: AccessPurpose; label: string; description: string }[] = [
   { value: 'treatment', label: 'Treatment', description: 'Direct clinical treatment' },
@@ -39,7 +45,7 @@ const PURPOSE_OPTIONS: { value: AccessPurpose; label: string; description: strin
 ]
 
 // ── Controlled scope categories ──────────────────────────────────────────────
-type ConsentScope = 'clinical' | 'full'
+type ConsentScope = 'clinical' | 'full' | 'documents'
 
 const SCOPE_OPTIONS: { value: ConsentScope; label: string; description: string }[] = [
   {
@@ -62,6 +68,7 @@ export function RequestConsentScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const patientId = searchParams.get('patient_id') ?? ''
+  const documentUploadIntent = searchParams.get('intent') === 'document_upload'
   const { providerId, hospitalName, isAuthenticated, session } = useProviderAuth()
 
   // ── Session guard ─────────────────────────────────────────────────────
@@ -100,9 +107,13 @@ export function RequestConsentScreen() {
     )
   }
 
-  const [purpose, setPurpose] = useState<AccessPurpose>('treatment')
+  const [purpose, setPurpose] = useState<AccessPurpose>(
+    documentUploadIntent ? 'document_processing' : 'treatment'
+  )
   const [purposeNote, setPurposeNote] = useState('')
-  const [requestedScope, setRequestedScope] = useState<ConsentScope>('clinical')
+  const [requestedScope, setRequestedScope] = useState<ConsentScope>(
+    documentUploadIntent ? 'documents' : 'clinical'
+  )
   const [accessDuration, setAccessDuration] = useState(900)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -127,15 +138,15 @@ export function RequestConsentScreen() {
         {
           patient_id: patientId,
           provider_id: providerId ?? '',
-          purpose: purpose,
-          scope: requestedScope,
+          purpose: documentUploadIntent ? 'document_processing' : purpose,
+          scope: documentUploadIntent ? 'documents' : requestedScope,
           access_duration_seconds: accessDuration,
           ...(purposeNote.trim() ? { purpose_note: purposeNote.trim() } : {}),
         },
         hospitalId
       )
       router.push(
-        `/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}&patient_id=${encodeURIComponent(patientId)}`
+        `/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}&patient_id=${encodeURIComponent(patientId)}${documentUploadIntent ? '&intent=document_upload' : ''}`
       )
     } catch (caught: unknown) {
       setError(
@@ -231,57 +242,112 @@ export function RequestConsentScreen() {
           </Text>
         </Card>
 
-        {/* Purpose (controlled selector) */}
-        <YStack gap="$2">
-          <ConsentSelect
-            id="consent-purpose"
-            label="Purpose"
-            value={purpose}
-            options={PURPOSE_OPTIONS}
-            onValueChange={setPurpose}
-            disabled={submitting}
-          />
-          <Paragraph
-            color="$color10"
-            fontSize={13}
+        {/* Purpose is immutable for document ingestion. */}
+        {documentUploadIntent ? (
+          <Card
+            padding="$4"
+            backgroundColor="$blue3"
+            gap="$2"
           >
-            {PURPOSE_OPTIONS.find((o) => o.value === purpose)?.description}
-          </Paragraph>
-        </YStack>
+            <Paragraph
+              color="$color10"
+              fontSize={12}
+              fontWeight="700"
+            >
+              LOCKED PURPOSE
+            </Paragraph>
+            <Text
+              color="$color12"
+              fontSize={16}
+              fontWeight="700"
+            >
+              Document processing
+            </Text>
+            <Paragraph
+              color="$color10"
+              fontSize={13}
+            >
+              This grant can authorize document upload, extraction results, and source adjudication
+              only.
+            </Paragraph>
+          </Card>
+        ) : (
+          <YStack gap="$2">
+            <ConsentSelect
+              id="consent-purpose"
+              label="Purpose"
+              value={purpose}
+              options={PURPOSE_OPTIONS}
+              onValueChange={setPurpose}
+              disabled={submitting}
+            />
+            <Paragraph
+              color="$color10"
+              fontSize={13}
+            >
+              {PURPOSE_OPTIONS.find((o) => o.value === purpose)?.description}
+            </Paragraph>
+          </YStack>
+        )}
 
         {/* Purpose note (optional free-text explanation) */}
-        <YStack gap="$2">
-          <Paragraph
-            color="$color11"
-            fontSize={15}
-          >
-            Purpose Note (optional)
-          </Paragraph>
-          <Input
-            size="$4"
-            value={purposeNote}
-            onChangeText={setPurposeNote}
-            placeholder="e.g. Diabetes follow-up consultation"
-          />
-        </YStack>
+        {!documentUploadIntent && (
+          <YStack gap="$2">
+            <Paragraph
+              color="$color11"
+              fontSize={15}
+            >
+              Purpose Note (optional)
+            </Paragraph>
+            <Input
+              size="$4"
+              value={purposeNote}
+              onChangeText={setPurposeNote}
+              placeholder="e.g. Diabetes follow-up consultation"
+            />
+          </YStack>
+        )}
 
-        {/* Requested scope (controlled selector) */}
-        <YStack gap="$2">
-          <ConsentSelect
-            id="consent-scope"
-            label="Requested Scope"
-            value={requestedScope}
-            options={SCOPE_OPTIONS}
-            onValueChange={setRequestedScope}
-            disabled={submitting}
-          />
-          <Paragraph
-            color="$color10"
-            fontSize={13}
+        {/* Scope is immutable for document ingestion. */}
+        {documentUploadIntent ? (
+          <Card
+            padding="$4"
+            backgroundColor="$blue3"
+            gap="$2"
           >
-            {SCOPE_OPTIONS.find((o) => o.value === requestedScope)?.description}
-          </Paragraph>
-        </YStack>
+            <Paragraph
+              color="$color10"
+              fontSize={12}
+              fontWeight="700"
+            >
+              LOCKED SCOPE
+            </Paragraph>
+            <Text
+              color="$color12"
+              fontSize={16}
+              fontWeight="700"
+            >
+              Documents
+            </Text>
+          </Card>
+        ) : (
+          <YStack gap="$2">
+            <ConsentSelect
+              id="consent-scope"
+              label="Requested Scope"
+              value={requestedScope}
+              options={SCOPE_OPTIONS}
+              onValueChange={setRequestedScope}
+              disabled={submitting}
+            />
+            <Paragraph
+              color="$color10"
+              fontSize={13}
+            >
+              {SCOPE_OPTIONS.find((o) => o.value === requestedScope)?.description}
+            </Paragraph>
+          </YStack>
+        )}
 
         {/* Access duration (preset selector) */}
         <YStack gap="$2">

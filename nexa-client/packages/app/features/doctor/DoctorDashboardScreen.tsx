@@ -160,6 +160,14 @@ export function DoctorDashboardScreen() {
         <Button
           theme="blue"
           size="$4"
+          onPress={() => router.push('/doctor/patient-search?intent=document_upload')}
+        >
+          Upload &amp; AI Extract
+        </Button>
+
+        <Button
+          theme="blue"
+          size="$4"
           onPress={() => router.push('/doctor/patient-search')}
         >
           🔍 Search Patient

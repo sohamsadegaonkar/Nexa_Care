@@ -36,6 +36,7 @@ export function PatientSearchScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const initialMode = searchParams.get('mode') === 'nfc' ? 'nfc' : 'manual'
+  const documentUploadIntent = searchParams.get('intent') === 'document_upload'
   const { isAuthenticated } = useProviderAuth()
 
   const [mode, setMode] = useState<SearchMode>(initialMode)
@@ -135,8 +136,9 @@ export function PatientSearchScreen() {
       resolved.is_redirected && resolved.canonical_patient_id
         ? resolved.canonical_patient_id
         : resolved.patient_id
-    router.push(`/doctor/request-consent?patient_id=${encodeURIComponent(targetId)}`)
-  }, [resolved, router])
+    const intent = documentUploadIntent ? '&intent=document_upload' : ''
+    router.push(`/doctor/request-consent?patient_id=${encodeURIComponent(targetId)}${intent}`)
+  }, [documentUploadIntent, resolved, router])
 
   const handleBack = useCallback(() => {
     setStep('input')
@@ -264,7 +266,7 @@ export function PatientSearchScreen() {
             size="$4"
             onPress={handleRequestAccess}
           >
-            Request Access
+            {documentUploadIntent ? 'Request Document Processing' : 'Request Access'}
           </Button>
           <Button
             size="$4"

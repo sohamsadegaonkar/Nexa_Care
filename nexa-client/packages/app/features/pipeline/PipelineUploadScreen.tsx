@@ -21,7 +21,7 @@
  *   boundary automatically for FormData uploads.
  * - Session guard: must be authenticated via ProviderAuthContext.
  *
- * Route: /doctor/pipeline/upload?patient_id=...&workflow_id=...
+ * Route: /doctor/pipeline/upload?workflow_id=...
  */
 
 'use client'
@@ -34,22 +34,21 @@ import {
   Text,
   Spinner,
   Card,
-  Input,
   XStack,
   Separator,
   ScrollView,
 } from '@my/ui'
-import { useState, useCallback, useRef, useEffect } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from '../doctor/ProviderAuthContext'
-import { attachJobId, useCapability } from '../../services/capabilityStore'
+import { attachJobId, clearCapability, useCapability } from '../../services/capabilityStore'
 
-/** Maximum upload size in bytes (25 MB). */
-const MAX_FILE_SIZE = 25 * 1024 * 1024
+/** Maximum upload size in bytes (10 MB synchronous Textract limit). */
+const MAX_FILE_SIZE = 10 * 1024 * 1024
 
 /** Allowed file extensions for clinical document upload. */
-const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg', '.tiff', '.doc', '.docx'] as const
+const ALLOWED_EXTENSIONS = ['.pdf', '.png', '.jpg', '.jpeg'] as const
 
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error'
 
@@ -58,27 +57,28 @@ export function PipelineUploadScreen() {
   const searchParams = useSearchParams()
   const { isAuthenticated } = useProviderAuth()
 
-  const urlPatientId = searchParams.get('patient_id') ?? ''
   const workflowId = searchParams.get('workflow_id')
   const capability = useCapability(workflowId)
-  const consentToken = capability?.token ?? ''
+  const validDocumentCapability =
+    capability?.purpose === 'document_processing' &&
+    capability.scope.length === 1 &&
+    capability.scope[0] === 'documents'
+      ? capability
+      : null
+  const consentToken = validDocumentCapability?.token ?? ''
+  const patientId = validDocumentCapability?.patientId ?? ''
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle')
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [validationError, setValidationError] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
-  const [patientId, setPatientId] = useState(urlPatientId)
   const [dragOver, setDragOver] = useState(false)
 
   /** Hidden file input ref for cross-platform file selection. */
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ── Sync patient ID from URL params ──────────────────────────────────
-  useEffect(() => {
-    if (urlPatientId) setPatientId(urlPatientId)
-  }, [urlPatientId])
-
   // ── Session guard ────────────────────────────────────────────────────
   if (!isAuthenticated) {
     return (
@@ -119,7 +119,7 @@ export function PipelineUploadScreen() {
       return `Unsupported file type "${ext}". Allowed: ${ALLOWED_EXTENSIONS.join(', ')}`
     }
     if (file.size > MAX_FILE_SIZE) {
-      return `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 25 MB.`
+      return `File too large (${(file.size / 1024 / 1024).toFixed(1)} MB). Maximum: 10 MB.`
     }
     return null
   }, [])
@@ -187,7 +187,7 @@ export function PipelineUploadScreen() {
 
       // Redirect to job status screen
       router.push(
-        `/doctor/pipeline/jobs/${result.job_id}?patient_id=${patientId}&workflow_id=${workflowId}`
+        `/doctor/pipeline/jobs/${result.job_id}?workflow_id=${encodeURIComponent(workflowId ?? '')}`
       )
     } catch (err) {
       setUploadStatus('error')
@@ -197,6 +197,7 @@ export function PipelineUploadScreen() {
           return
         }
         if (err.status === 403) {
+          if (workflowId) clearCapability(workflowId)
           setUploadError('Consent required for document ingestion.')
         } else {
           setUploadError(err.message || 'Upload failed.')
@@ -234,7 +235,7 @@ export function PipelineUploadScreen() {
         </Paragraph>
         <Button
           theme="blue"
-          onPress={() => router.push('/doctor/request-consent')}
+          onPress={() => router.push('/doctor/patient-search?intent=document_upload')}
         >
           Request Consent
         </Button>
@@ -300,28 +301,24 @@ export function PipelineUploadScreen() {
           >
             Patient
           </Text>
-          <Input
-            value={patientId}
-            onChangeText={setPatientId}
-            placeholder="Enter patient ID or use NFC scan…"
-            size="$4"
-          />
-          {urlPatientId && (
+          <Card
+            padding="$3"
+            backgroundColor="$backgroundHover"
+          >
+            <Text
+              color="$color12"
+              fontSize="$3"
+              fontWeight="600"
+            >
+              {patientId}
+            </Text>
             <Text
               color="$color10"
               fontSize="$2"
             >
-              Pre-filled from consent context. You may change it if needed.
+              Locked to the signed document-processing approval.
             </Text>
-          )}
-          {!patientId.trim() && (
-            <Text
-              color="$orange10"
-              fontSize="$2"
-            >
-              Patient ID is required.
-            </Text>
-          )}
+          </Card>
         </YStack>
 
         <Separator />
@@ -438,7 +435,7 @@ export function PipelineUploadScreen() {
           color="$color10"
           fontSize="$2"
         >
-          Allowed: PDF, PNG, JPG, TIFF, DOC, DOCX · Maximum: 25 MB
+          Single-page PDF, PNG, or JPG only · Maximum: 10 MB
         </Text>
 
         <Separator />

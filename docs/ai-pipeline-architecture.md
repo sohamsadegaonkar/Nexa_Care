@@ -46,7 +46,8 @@ queue are not clinical-ingestion authorities.
 
 | API | Wired? | What It Does |
 |---|---|---|
-| Document AI / VLM | **Provider integration pending** | External extraction output is untrusted input and cannot become clinical truth without the current evidence and adjudication boundaries. |
+| Amazon Textract | **Adapter implemented; live AWS proof pending credentials** | Synchronous `AnalyzeDocument` Queries return controlled pilot candidates with authentic field confidence and visual evidence. Output remains untrusted until clinician adjudication. |
+| Remote Document AI / VLM | **Compatibility adapter retained** | Existing remote deployments remain supported; absent field evidence stays explicitly unavailable and routes fail closed. |
 | Supabase Auth | ✅ Yes | JWT verification, user management |
 | Supabase PostgREST | ✅ Yes | Immutable hash-chained audit ledger writes |
 | Redis | ✅ Yes | Rate limiting, session store, Celery broker |
@@ -155,7 +156,7 @@ The authoritative pure three-lane evaluator is documented below.
 | **PII redaction** | Correction logger redacts 9 PII field types to `[REDACTED]` before storage. Audit ledger never logs raw document bytes or extracted PII. Review queue only sees clinical fields. |
 | **Consent gate** | Providers must present live `X-Consent-Token` for the specific patient + purpose. No consent = no access. |
 | **Audit trail** | Hash-chained immutable ledger. Every pipeline transition audited before the data write (fail-closed). |
-| **Upload limit** | 20 MB `ContentSizeLimitMiddleware`. |
+| **Upload limit** | Textract pilot: 10 MB and one page. The UI accepts PDF/PNG/JPEG; unsupported or multi-page provider input fails closed. |
 | **Rate limiting** | Redis-backed per-IP throttling. |
 | **MFA** | TOTP-based 2FA for provider accounts. |
 
@@ -166,7 +167,9 @@ The authoritative pure three-lane evaluator is documented below.
 ```
 document_storage          ← uploaded file metadata
   └─ extraction_jobs      ← background job lifecycle
-       └─ extracted_fields ← each atomic observation
+       ├─ extraction_candidates ← patient-DEK encrypted value/source evidence,
+       │                          tenant/patient/provider/document/job bound
+       └─ extracted_fields ← legacy compatibility observations
             ├─ validation_result (JSONB)
             ├─ confidence, risk_level, status
             └─ review_queue   ← fields needing human eyes
@@ -196,8 +199,9 @@ policies, roles, documents, patient records, review.
 
 ## Key Design Decisions
 
-1. **No local ML** — extraction is a hosted VLM call. Everything else
-   is deterministic rules. API server runs GPU-free.
+1. **No local ML** — the real pilot uses Amazon Textract `AnalyzeDocument`
+   with nine controlled Queries. Blocking SDK work runs outside the async event
+   loop with bounded timeouts and retries.
 
 2. **Runtime auto-commit disabled** — the current runtime does not
    automatically commit extracted clinical candidates. Missing or incomplete
@@ -215,12 +219,47 @@ policies, roles, documents, patient records, review.
    hash-chained ledger *before* the data write. Audit failure = operation
    abort.
 
-6. **Mock fallback** — entire pipeline works without a VLM API key.
-   Deterministic mock extractor for CI, demos, and local development.
+6. **No implicit mock fallback** — `demo` is restricted to explicit
+   local/development/test/alpha configuration. Missing AWS credentials fail
+   closed with a stable safe code.
 
 7. **Medication 3-component rule** — a medication field must have drug
    name (fuzzy ≥ 0.65), strength (e.g. "500mg"), and frequency (e.g.
    "twice daily"). Missing any component = validation failure.
+
+## Amazon Textract pilot configuration
+
+```dotenv
+DOCUMENT_EXTRACTION_PROVIDER=aws_textract
+DOCUMENT_AI_AWS_REGION=ap-south-1
+DOCUMENT_AI_TIMEOUT_SECONDS=30
+DOCUMENT_AI_MAX_ATTEMPTS=3
+```
+
+Use the normal AWS SDK credential chain. Never place access keys in Nexa Care
+configuration or logs. The minimum IAM statement is:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": "textract:AnalyzeDocument",
+  "Resource": "*"
+}
+```
+
+AWS synchronous Textract supports JPEG, PNG, PDF, and TIFF, up to 10 MB in
+memory; PDF/TIFF are limited to one page, with at most 15 queries per page.
+This first UI deliberately accepts only single-page PDF/PNG/JPEG and never
+silently truncates a multi-page file.
+
+Milestone status:
+
+- Adapter implemented.
+- Automated provider-response tests completed locally.
+- Live AWS synthetic-document verification pending authorized credentials and
+  a synthetic input.
+- Runtime AUTO_COMMIT remains disabled.
+- Clinician source adjudication and explicit commit remain mandatory.
 
 ---
 

@@ -71,6 +71,7 @@ class DocumentExtractionConfig:
     environment: str
     api_url: str | None = None
     api_key: str | None = None
+    aws_region: str = "ap-south-1"
     timeout_seconds: float = 30.0
     max_attempts: int = 3
 
@@ -186,8 +187,10 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
             "ENVIRONMENT (or ENV) must explicitly identify the runtime environment"
         )
     provider = _require_env("DOCUMENT_EXTRACTION_PROVIDER").strip().lower()
-    if provider not in {"remote", "demo"}:
-        raise ConfigError("DOCUMENT_EXTRACTION_PROVIDER must be 'remote' or 'demo'")
+    if provider not in {"remote", "demo", "aws_textract"}:
+        raise ConfigError(
+            "DOCUMENT_EXTRACTION_PROVIDER must be 'remote', 'demo', or 'aws_textract'"
+        )
     if provider == "demo":
         if environment not in _SAFE_DEMO_ENVIRONMENTS:
             raise ConfigError(
@@ -195,14 +198,6 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
             )
         return DocumentExtractionConfig(provider=provider, environment=environment)
 
-    api_url = _require_env("DOCUMENT_AI_API_URL").strip()
-    api_key = _require_env("DOCUMENT_AI_API_KEY").strip()
-    if environment in _PRODUCTION_LIKE_ENVIRONMENTS and not api_url.lower().startswith(
-        "https://"
-    ):
-        raise ConfigError(
-            "DOCUMENT_AI_API_URL must use HTTPS in production-like environments"
-        )
     try:
         timeout_seconds = float(os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "30"))
         max_attempts = int(os.getenv("DOCUMENT_AI_MAX_ATTEMPTS", "3"))
@@ -213,6 +208,26 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
     if timeout_seconds <= 0 or not 1 <= max_attempts <= 5:
         raise ConfigError(
             "Document extraction timeout must be positive and max attempts must be 1..5"
+        )
+    if provider == "aws_textract":
+        aws_region = os.getenv("DOCUMENT_AI_AWS_REGION", "ap-south-1").strip()
+        if not aws_region:
+            raise ConfigError("DOCUMENT_AI_AWS_REGION must not be empty")
+        return DocumentExtractionConfig(
+            provider=provider,
+            environment=environment,
+            aws_region=aws_region,
+            timeout_seconds=timeout_seconds,
+            max_attempts=max_attempts,
+        )
+
+    api_url = _require_env("DOCUMENT_AI_API_URL").strip()
+    api_key = _require_env("DOCUMENT_AI_API_KEY").strip()
+    if environment in _PRODUCTION_LIKE_ENVIRONMENTS and not api_url.lower().startswith(
+        "https://"
+    ):
+        raise ConfigError(
+            "DOCUMENT_AI_API_URL must use HTTPS in production-like environments"
         )
     return DocumentExtractionConfig(
         provider=provider,

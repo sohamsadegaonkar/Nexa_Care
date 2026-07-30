@@ -36,6 +36,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
+import { generateWorkflowId, setCapability } from '../../services/capabilityStore'
 
 type ConsentState =
   | 'pending'
@@ -62,6 +63,7 @@ export function WaitingForApprovalScreen() {
   const searchParams = useSearchParams()
   const requestId = searchParams.get('request_id') ?? ''
   const patientId = searchParams.get('patient_id') ?? ''
+  const documentUploadIntent = searchParams.get('intent') === 'document_upload'
   const { isAuthenticated, session, setAccessGrant } = useProviderAuth()
   const hospitalId = session?.hospital.hospital_id ?? ''
 
@@ -264,6 +266,22 @@ export function WaitingForApprovalScreen() {
     NexaApiClient.claimConsentAccess(requestId, hospitalId)
       .then((claim) => {
         if (!active) return
+        if (documentUploadIntent) {
+          if (claim.purpose !== 'document_processing' || claim.scope !== 'documents') {
+            throw new Error('Approved access does not permit document processing.')
+          }
+          const workflowId = generateWorkflowId()
+          setCapability({
+            workflowId,
+            patientId: claim.patient_id,
+            token: claim.consent_token,
+            purpose: claim.purpose,
+            scope: [claim.scope],
+            expiresAt: claim.expires_at,
+          })
+          router.push(`/doctor/pipeline/upload?workflow_id=${encodeURIComponent(workflowId)}`)
+          return
+        }
         setAccessGrant({
           requestId,
           patientId: claim.patient_id,
@@ -285,7 +303,7 @@ export function WaitingForApprovalScreen() {
     return () => {
       active = false
     }
-  }, [consentState, hospitalId, requestId, router, setAccessGrant])
+  }, [consentState, documentUploadIntent, hospitalId, requestId, router, setAccessGrant])
 
   // ── Helpers ───────────────────────────────────────────────────────────
 
@@ -317,7 +335,7 @@ export function WaitingForApprovalScreen() {
     // Navigate to request-consent with preserved patient_id context.
     // This creates a BRAND NEW request — never reuses the expired request_id.
     const target = patientId
-      ? `/doctor/request-consent?patient_id=${encodeURIComponent(patientId)}`
+      ? `/doctor/request-consent?patient_id=${encodeURIComponent(patientId)}${documentUploadIntent ? '&intent=document_upload' : ''}`
       : '/doctor/dashboard'
     router.push(target)
   }

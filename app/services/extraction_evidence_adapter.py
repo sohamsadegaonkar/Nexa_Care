@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict
 
-from app.models.ai_models import ExtractedMedicalDocument
+from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
 from app.models.field_evidence import (
     ClinicalValueEvidence,
     ConfidenceProvenance,
@@ -59,21 +59,43 @@ def adapt_current_extracted_field(
     field_name: str,
     raw_value: str,
     binding: CurrentExtractionBinding,
+    provider_evidence: ProviderFieldEvidence | None = None,
 ) -> ExtractedFieldEvidence:
     """Represent current output without fabricating field or visual evidence."""
     identity_issues: set[EvidenceIssue] = set()
     if not binding.source_document_hash:
         identity_issues.add(EvidenceIssue.SOURCE_DOCUMENT_HASH_MISSING)
 
-    model_issues = {
-        EvidenceIssue.FIELD_CONFIDENCE_UNAVAILABLE,
-        EvidenceIssue.PROVIDER_PROVENANCE_INCOMPLETE,
-    }
-    visual_issues = {
-        EvidenceIssue.PAGE_UNAVAILABLE,
-        EvidenceIssue.BOUNDING_BOX_UNAVAILABLE,
-        EvidenceIssue.SOURCE_TEXT_UNAVAILABLE,
-    }
+    model_issues: set[EvidenceIssue] = set()
+    visual_issues: set[EvidenceIssue] = set()
+    if provider_evidence is None or provider_evidence.field_confidence is None:
+        model_issues.add(EvidenceIssue.FIELD_CONFIDENCE_UNAVAILABLE)
+    provider_name = (
+        provider_evidence.provider_name if provider_evidence else binding.provider_name
+    )
+    model_name = "AnalyzeDocument" if provider_evidence else binding.model_name
+    model_version = (
+        provider_evidence.provider_api_version
+        if provider_evidence
+        else binding.model_version
+    )
+    if not provider_name or not model_name or not model_version or model_version == "unknown":
+        model_issues.add(EvidenceIssue.PROVIDER_PROVENANCE_INCOMPLETE)
+
+    page_number = provider_evidence.page_number if provider_evidence else None
+    bounding_box = provider_evidence.bounding_box if provider_evidence else None
+    source_text = provider_evidence.source_text if provider_evidence else None
+    if page_number is None:
+        visual_issues.add(EvidenceIssue.PAGE_UNAVAILABLE)
+    if bounding_box is None:
+        visual_issues.add(EvidenceIssue.BOUNDING_BOX_UNAVAILABLE)
+    if not source_text:
+        visual_issues.add(EvidenceIssue.SOURCE_TEXT_UNAVAILABLE)
+    coverage = (
+        VisualCoverage.COMPLETE
+        if not visual_issues
+        else VisualCoverage.UNAVAILABLE
+    )
 
     return ExtractedFieldEvidence(
         evidence_id=str(uuid4()),
@@ -96,21 +118,34 @@ def adapt_current_extracted_field(
             normalization_status=NormalizationStatus.UNRESOLVED,
         ),
         visual=VisualEvidence(
-            page_number=None,
-            bounding_box=None,
-            source_text=None,
-            coverage=VisualCoverage.UNAVAILABLE,
+            page_number=page_number,
+            bounding_box=bounding_box,
+            source_text=source_text,
+            coverage=coverage,
             issues=frozenset(visual_issues),
         ),
         model=ModelEvidence(
-            provider_name=binding.provider_name,
-            model_name=binding.model_name,
-            model_version=binding.model_version,
-            extracted_at=binding.extracted_at,
+            provider_name=provider_name,
+            model_name=model_name,
+            model_version=model_version,
+            extracted_at=(
+                provider_evidence.extraction_timestamp
+                if provider_evidence
+                else binding.extracted_at
+            ),
             document_confidence=document.extraction_confidence,
-            field_confidence=None,
-            field_confidence_source=ConfidenceProvenance.UNAVAILABLE,
+            field_confidence=(
+                provider_evidence.field_confidence if provider_evidence else None
+            ),
+            field_confidence_source=(
+                ConfidenceProvenance.PROVIDER_FIELD
+                if provider_evidence and provider_evidence.field_confidence is not None
+                else ConfidenceProvenance.UNAVAILABLE
+            ),
             verifier_outcome=VerifierOutcome.NOT_RUN,
+            provider_evidence_hash=(
+                provider_evidence.evidence_hash if provider_evidence else None
+            ),
             issues=frozenset(model_issues),
         ),
         policy=PolicyEvidence(

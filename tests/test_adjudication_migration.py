@@ -8,10 +8,14 @@ BASE_MIGRATION = ROOT / "alembic/versions/20260730_source_adjudicate.py"
 MIGRATION = ROOT / "alembic/versions/20260731_adjudication_harden.py"
 
 
-def test_adjudication_is_single_head_with_expected_parent():
+def test_adjudication_remains_on_the_single_head_chain_with_expected_parent():
     config = Config(str(ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260731_adjudication_harden"]
+    assert script.get_heads() == ["20260801_textract_candidates"]
+    assert (
+        script.get_revision("20260801_textract_candidates").down_revision
+        == "20260731_adjudication_harden"
+    )
     code = MIGRATION.read_text(encoding="utf-8")
     assert 'revision = "20260731_adjudication_harden"' in code
     assert 'down_revision = "20260730_source_adjudicate"' in code

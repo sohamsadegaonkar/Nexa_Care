@@ -93,8 +93,14 @@ export interface EnrolledDevicesListResponse {
 export interface ConsentChallengeRequest {
   patient_id: string
   provider_id: string
-  purpose: 'treatment' | 'emergency_care' | 'diagnostic_review' | 'follow_up' | 'referral'
-  scope: 'clinical' | 'full'
+  purpose:
+    | 'treatment'
+    | 'emergency_care'
+    | 'diagnostic_review'
+    | 'follow_up'
+    | 'referral'
+    | 'document_processing'
+  scope: 'clinical' | 'full' | 'documents'
   access_duration_seconds: number
   purpose_note?: string
 }
@@ -253,9 +259,34 @@ export interface ExtractionJobStatusResponse {
     | 'source_only'
     | 'quarantined'
     | 'failed'
+    | 'extraction_pending'
+    | 'extracting'
+    | 'extraction_failed_retryable'
+    | 'extraction_failed_terminal'
+    | 'identity_mismatch'
+    | 'validation_failed'
     | 'committed'
-  document_type: 'PRESCRIPTION' | 'LAB_REPORT' | 'DISCHARGE_SUMMARY' | 'UNKNOWN'
-  overall_confidence: number | null
+  document_type: string
+  provider: string | null
+  provider_version: string | null
+  document_confidence: number | null
+  routing_lane: 'SOURCE_ONLY' | 'QUARANTINE' | null
+  routing_reasons: string[]
+  candidate_count: number
+  candidates: Array<{
+    field_name: string
+    raw_value: string
+    field_confidence: number | null
+    source_page: number | null
+    source_text: string | null
+    source_bbox: number[] | null
+    evidence_complete: boolean
+    lane: 'SOURCE_ONLY' | 'QUARANTINE'
+    reason_codes: string[]
+  }>
+  identity_validation: 'passed' | 'failed' | 'not_completed'
+  auto_commit_enabled: false
+  clinician_adjudication_required: true
   extracted_fields: ExtractedField[]
   created_at: string
 }
@@ -407,7 +438,7 @@ export interface ConsentAccessClaimResponse {
   patient_id: string
   consent_token: string
   purpose: string
-  scope: 'clinical' | 'full'
+  scope: 'clinical' | 'full' | 'documents'
   expires_at: string
 }
 

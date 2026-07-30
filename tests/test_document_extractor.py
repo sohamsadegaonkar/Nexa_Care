@@ -1,12 +1,20 @@
+import asyncio
 import sys
-from unittest.mock import AsyncMock, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+from botocore.exceptions import ClientError, NoCredentialsError
 
 from app.ai.extractor import (
+    AwsTextractExtractionProvider,
     DemoExtractionProvider,
     InvalidDocumentError,
+    ProviderCredentialsUnavailableError,
+    ProviderResponseError,
+    ProviderThrottledError,
+    ProviderTimeoutError,
     RemoteExtractionProvider,
     RetryableDocumentExtractionError,
 )
@@ -14,6 +22,11 @@ from app.core.config import (
     ConfigError,
     DocumentExtractionConfig,
     get_document_extraction_config,
+)
+from app.models.field_evidence import EvidenceIssue
+from app.services.extraction_evidence_adapter import (
+    CurrentExtractionBinding,
+    adapt_current_extracted_field,
 )
 
 
@@ -28,6 +41,42 @@ def remote_config(**overrides):
     )
     values.update(overrides)
     return DocumentExtractionConfig(**values)
+
+
+def textract_config(**overrides):
+    values = dict(
+        provider="aws_textract",
+        environment="test",
+        aws_region="ap-south-1",
+        timeout_seconds=1,
+        max_attempts=2,
+    )
+    values.update(overrides)
+    return DocumentExtractionConfig(**values)
+
+
+def textract_response(*, text="7.2 %", confidence=97.4, bbox=None, pages=1):
+    bbox = bbox or {"Left": 0.1, "Top": 0.2, "Width": 0.3, "Height": 0.1}
+    return {
+        "AnalyzeDocumentModelVersion": "1.0",
+        "DocumentMetadata": {"Pages": pages},
+        "Blocks": [
+            {
+                "BlockType": "QUERY",
+                "Id": "q1",
+                "Query": {"Alias": "hba1c", "Text": "What is the HbA1c?"},
+                "Relationships": [{"Type": "ANSWER", "Ids": ["a1"]}],
+            },
+            {
+                "BlockType": "QUERY_RESULT",
+                "Id": "a1",
+                "Text": text,
+                "Confidence": confidence,
+                "Page": 1,
+                "Geometry": {"BoundingBox": bbox},
+            },
+        ],
+    }
 
 
 @pytest.mark.asyncio
@@ -112,6 +161,148 @@ def test_remote_provider_requires_key_and_url(monkeypatch):
     monkeypatch.delenv("DOCUMENT_AI_API_URL", raising=False)
     with pytest.raises(ConfigError):
         get_document_extraction_config()
+
+
+def test_textract_config_uses_default_region_without_api_key(monkeypatch):
+    monkeypatch.setenv("ENVIRONMENT", "pilot")
+    monkeypatch.delenv("ENV", raising=False)
+    monkeypatch.setenv("DOCUMENT_EXTRACTION_PROVIDER", "aws_textract")
+    monkeypatch.delenv("DOCUMENT_AI_API_KEY", raising=False)
+    monkeypatch.delenv("DOCUMENT_AI_API_URL", raising=False)
+    monkeypatch.delenv("DOCUMENT_AI_AWS_REGION", raising=False)
+    config = get_document_extraction_config()
+    assert config.aws_region == "ap-south-1"
+
+
+@pytest.mark.asyncio
+async def test_textract_query_maps_authentic_field_evidence():
+    client = Mock()
+    client.analyze_document.return_value = textract_response()
+    result = await AwsTextractExtractionProvider(
+        textract_config(), client
+    ).extract_bytes(b"%PDF-1.7", mime_type="application/pdf", request_id="req-map")
+    item = result.field_evidence[0]
+    assert item.canonical_field_name == "hba1c"
+    assert item.raw_value == item.source_text == "7.2 %"
+    assert item.page_number == 0
+    assert item.bounding_box.model_dump() == {
+        "left": 0.1,
+        "top": 0.2,
+        "right": 0.4,
+        "bottom": 0.30000000000000004,
+    }
+    assert item.field_confidence == pytest.approx(0.974)
+    assert result.extraction_confidence is None
+
+
+@pytest.mark.asyncio
+async def test_textract_invalid_geometry_is_retained_as_incomplete_not_fabricated():
+    client = Mock()
+    client.analyze_document.return_value = textract_response(
+        bbox={"Left": 0.9, "Top": 0.2, "Width": 0.3, "Height": 0.1}
+    )
+    document = await AwsTextractExtractionProvider(
+        textract_config(), client
+    ).extract_bytes(b"image", mime_type="image/png", request_id="req-geometry")
+    item = document.field_evidence[0]
+    assert item.bounding_box is None
+    now = datetime.now(timezone.utc)
+    evidence = adapt_current_extracted_field(
+        document=document,
+        field_name=item.canonical_field_name,
+        raw_value=item.raw_value,
+        provider_evidence=item,
+        binding=CurrentExtractionBinding(
+            patient_id="11111111-1111-4111-8111-111111111111",
+            tenant_id="22222222-2222-4222-8222-222222222222",
+            source_document_id="33333333-3333-4333-8333-333333333333",
+            source_document_hash="a" * 64,
+            ingestion_id="33333333-3333-4333-8333-333333333333",
+            job_id="44444444-4444-4444-8444-444444444444",
+            attempt_number=1,
+            attempt_id="attempt-1",
+            created_at=now,
+            extracted_at=now,
+        ),
+    )
+    assert not evidence.visual_evidence_complete
+    assert EvidenceIssue.BOUNDING_BOX_UNAVAILABLE in evidence.visual.issues
+
+
+@pytest.mark.asyncio
+async def test_textract_empty_answer_is_omitted():
+    client = Mock()
+    client.analyze_document.return_value = textract_response(text="  ")
+    result = await AwsTextractExtractionProvider(
+        textract_config(), client
+    ).extract_bytes(b"image", mime_type="image/jpeg", request_id="req-empty")
+    assert result.field_evidence == []
+
+
+@pytest.mark.asyncio
+async def test_textract_timeout_is_stable_and_retryable():
+    provider = AwsTextractExtractionProvider(textract_config(max_attempts=1), Mock())
+    async def fail_wait(awaitable, *, timeout):
+        _ = timeout
+        awaitable.close()
+        raise asyncio.TimeoutError
+
+    with patch("app.ai.extractor.asyncio.wait_for", new=fail_wait):
+        with pytest.raises(ProviderTimeoutError) as exc:
+            await provider.extract_bytes(
+                b"image", mime_type="image/png", request_id="req-timeout"
+            )
+    assert exc.value.error_code == "EXTRACTION_PROVIDER_TIMEOUT"
+
+
+@pytest.mark.asyncio
+async def test_textract_throttling_is_stable_and_retryable():
+    client = Mock()
+    client.analyze_document.side_effect = ClientError(
+        {"Error": {"Code": "ThrottlingException", "Message": "sensitive"}},
+        "AnalyzeDocument",
+    )
+    provider = AwsTextractExtractionProvider(textract_config(max_attempts=1), client)
+    with pytest.raises(ProviderThrottledError) as exc:
+        await provider.extract_bytes(
+            b"image", mime_type="image/png", request_id="req-throttle"
+        )
+    assert exc.value.error_code == "EXTRACTION_PROVIDER_THROTTLED"
+    assert "sensitive" not in str(exc.value)
+
+
+@pytest.mark.asyncio
+async def test_textract_malformed_response_is_terminal():
+    client = Mock()
+    client.analyze_document.return_value = {"Blocks": "provider payload"}
+    with pytest.raises(ProviderResponseError):
+        await AwsTextractExtractionProvider(textract_config(), client).extract_bytes(
+            b"image", mime_type="image/png", request_id="req-malformed"
+        )
+
+
+@pytest.mark.asyncio
+async def test_textract_unavailable_credentials_is_stable():
+    client = Mock()
+    client.analyze_document.side_effect = NoCredentialsError()
+    with pytest.raises(ProviderCredentialsUnavailableError) as exc:
+        await AwsTextractExtractionProvider(textract_config(), client).extract_bytes(
+            b"image", mime_type="image/png", request_id="req-creds"
+        )
+    assert exc.value.error_code == "EXTRACTION_CREDENTIALS_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
+async def test_textract_logs_neither_extracted_value_nor_provider_payload(caplog):
+    client = Mock()
+    client.analyze_document.return_value = textract_response(
+        text="SYNTHETIC_PRIVATE_LAB_VALUE"
+    )
+    await AwsTextractExtractionProvider(textract_config(), client).extract_bytes(
+        b"image", mime_type="image/png", request_id="safe-request-id"
+    )
+    assert "SYNTHETIC_PRIVATE_LAB_VALUE" not in caplog.text
+    assert "BoundingBox" not in caplog.text
 
 
 def test_extractor_does_not_import_local_ml():

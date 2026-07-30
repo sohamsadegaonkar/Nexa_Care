@@ -22,6 +22,7 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -165,6 +166,67 @@ class ExtractedFieldRecord(Base, UUIDPrimaryKeyMixin):
     committed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     __table_args__ = (Index("ix_extracted_fields_job_status", "job_id", "status"),)
+
+
+class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
+    """Encrypted, authorization-bound provider candidates for truthful result display.
+
+    Rows share the source document/job lifecycle and are never clinical authority.
+    """
+
+    __tablename__ = "extraction_candidates"
+
+    evidence_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, unique=True
+    )
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    authorization_provider_id: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    field_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    encrypted_raw_value: Mapped[str] = mapped_column(Text, nullable=False)
+    encrypted_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_bbox: Mapped[list[float] | None] = mapped_column(JSONB, nullable=True)
+    field_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    document_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provider_name: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    evidence_complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    lane: Mapped[str] = mapped_column(String(24), nullable=False)
+    reason_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "lane IN ('SOURCE_ONLY', 'QUARANTINE')",
+            name="ck_extraction_candidates_safe_lane",
+        ),
+        Index(
+            "ix_extraction_candidates_authorization_binding",
+            "tenant_id",
+            "patient_id",
+            "authorization_provider_id",
+            "job_id",
+        ),
+        Index("ix_extraction_candidates_document", "source_document_id"),
+    )
 
 
 class PipelineCommit(Base, UUIDPrimaryKeyMixin):

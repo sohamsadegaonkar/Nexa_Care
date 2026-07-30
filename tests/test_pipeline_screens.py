@@ -603,15 +603,19 @@ class TestJobStatusPolling:
         ), "JobStatusScreen missing STATUS_PROGRESS mapping."
 
     def test_field_summary_when_scored(self) -> None:
-        """JobStatusScreen must show auto-approved / needs-review counts."""
+        """JobStatusScreen must show genuine candidates and safe routing evidence."""
         code = _read_screen("JobStatusScreen")
-        nw = _normalize_ws(code)
-        assert (
-            "auto_approved" in nw or "Auto-Approved" in code
-        ), "JobStatusScreen missing auto-approved count display."
-        assert (
-            "needs_review" in nw or "Need Review" in code or "Needs Review" in code
-        ), "JobStatusScreen missing needs-review count display."
+        for contract in [
+            "candidate_count",
+            "field_confidence",
+            "source_page",
+            "source_text",
+            "source_bbox",
+            "identity_validation",
+            "routing_lane",
+        ]:
+            assert contract in code, f"JobStatusScreen missing {contract}."
+        assert "Auto-commit is disabled" in code
 
     def test_go_to_review_queue_button(self) -> None:
         """When review_pending, must show 'Go to Review Queue' button."""
@@ -827,10 +831,12 @@ class TestUploadScreen:
         assert 'type="file"' in code, "Upload missing hidden file input element."
 
     def test_patient_selector(self) -> None:
-        """Upload must have a patient ID input field."""
+        """Upload patient must be immutable and derived from the claimed capability."""
         code = _read_screen("PipelineUploadScreen")
-        assert "patientId" in code, "Upload missing patient ID state."
-        assert "setPatientId" in code, "Upload missing setPatientId."
+        assert "validDocumentCapability?.patientId" in code
+        assert "setPatientId" not in code
+        assert "urlPatientId" not in code
+        assert "Locked to the signed document-processing approval." in code
 
     def test_multipart_upload_with_formdata(self) -> None:
         """Upload must send FormData for multipart, not JSON."""
@@ -1026,6 +1032,52 @@ class TestPipelineApiAlignment:
         assert (
             "/api/v2/pipeline/jobs/" in api_nw
         ), "apiClient doesn't define the job details endpoint."
+
+
+class TestVisibleTextractConsentFlow:
+    def test_dashboard_reaches_document_upload_intent(self) -> None:
+        dashboard = _read(DOCTOR_DIR / "DoctorDashboardScreen.tsx")
+        assert "Upload &amp; AI Extract" in dashboard
+        assert "/doctor/patient-search?intent=document_upload" in dashboard
+
+    def test_patient_search_preserves_document_upload_intent(self) -> None:
+        search = _read(DOCTOR_DIR / "PatientSearchScreen.tsx")
+        assert "documentUploadIntent" in search
+        assert "&intent=document_upload" in search
+
+    def test_document_consent_purpose_and_scope_are_locked(self) -> None:
+        request = _read(DOCTOR_DIR / "RequestConsentScreen.tsx")
+        assert "document_processing" in request
+        assert "documents" in request
+        assert "LOCKED PURPOSE" in request
+        assert "LOCKED SCOPE" in request
+        assert "documentUploadIntent ? 'document_processing' : purpose" in request
+        assert "documentUploadIntent ? 'documents' : requestedScope" in request
+
+    def test_signed_claim_populates_pipeline_memory_store(self) -> None:
+        waiting = _read(DOCTOR_DIR / "WaitingForApprovalScreen.tsx")
+        assert "setCapability" in waiting
+        assert "generateWorkflowId" in waiting
+        assert "claim.consent_token" in waiting
+        assert "/doctor/pipeline/upload?workflow_id=" in waiting
+        assert "consent_token=" not in waiting
+
+    def test_pipeline_navigation_never_persists_or_routes_capability(self) -> None:
+        upload = _read_screen("PipelineUploadScreen")
+        status = _read_screen("JobStatusScreen")
+        capability_store = _read(
+            ROOT
+            / "nexa-client"
+            / "packages"
+            / "app"
+            / "services"
+            / "capabilityStore.ts"
+        )
+        combined = upload + status + capability_store
+        for forbidden in ["localStorage", "sessionStorage", "IndexedDB", "SecureStore"]:
+            assert forbidden not in _strip_comments(combined)
+        assert "consent_token=" not in combined
+        assert "token=" not in upload
 
     def test_commit_calls_correct_endpoint(self) -> None:
         code = _read_screen("CommitScreen")

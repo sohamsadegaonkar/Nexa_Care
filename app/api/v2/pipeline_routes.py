@@ -47,6 +47,7 @@ from app.core.document_processing_gate import (
     assert_job_authorization_binding,
     authorize_document_processing,
 )
+from app.core.config import get_document_extraction_config
 from app.core.database import get_db_session, get_session_factory
 from app.core.dependencies import get_current_provider
 from app.models.extracted_field import ExtractedField
@@ -61,6 +62,7 @@ from app.models.patient_records import TimelineEvent
 from app.models.pipeline import (
     DocumentStorage,
     AdjudicationCaseRecord,
+    ExtractionCandidateRecord,
     ExtractedFieldRecord,
     ExtractionJob,
     FieldCorrection,
@@ -69,9 +71,16 @@ from app.models.pipeline import (
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.document_processing_policy import DocumentProcessingOperation
+from app.ai.extractor import TEXTRACT_MAX_SYNC_BYTES
 from app.services.pipeline_orchestrator import process_extraction_job
 from app.services.record_ingestion import ingest_extracted_fields
 from app.services.document_storage import get_document_storage
+from app.services.crypto_kms import (
+    EncryptedField,
+    EncryptionError,
+    PatientDataErased,
+    get_encryption_provider,
+)
 from app.services.audit_outbox import enqueue_audit_event
 from app.services.adjudication import (
     AdjudicationError,
@@ -161,6 +170,23 @@ VALID_RISK_LEVELS = {"LOW_RISK", "MEDIUM_RISK", "HIGH_RISK", "CRITICAL_RISK"}
 ALLOWED_COMMIT_STATUSES = {"approved", "edited"}
 
 
+def _assert_candidate_authorization_binding(
+    *, candidate: ExtractionCandidateRecord, job: ExtractionJob, provider: ProviderContext
+) -> None:
+    """Defense-in-depth before decrypting any staged candidate PHI."""
+    if (
+        candidate.job_id != job.id
+        or candidate.source_document_id != job.document_id
+        or candidate.patient_id != job.patient_id
+        or candidate.tenant_id != job.tenant_id
+        or candidate.authorization_provider_id != provider.actor_uid
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "CANDIDATE_AUTHORIZATION_MISMATCH"},
+        )
+
+
 def _validate_commit_field_metadata(field: dict[str, Any]) -> None:
     if (
         "confidence" not in field
@@ -240,7 +266,13 @@ async def upload_pipeline_document(
         provider=provider,
         operation=DocumentProcessingOperation.UPLOAD_DOCUMENT,
     )
-    max_bytes = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+    configured_max = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
+    extraction_config = get_document_extraction_config()
+    max_bytes = (
+        min(configured_max, TEXTRACT_MAX_SYNC_BYTES)
+        if extraction_config.provider == "aws_textract"
+        else configured_max
+    )
     data = await file.read(max_bytes + 1)
     await file.close()
     if not data:
@@ -351,7 +383,6 @@ async def upload_pipeline_document(
             "patient_id": str(pid_uuid),
             "tenant_id": str(tenant_id),
             "request_id": request_id,
-            "document_hash": stored.content_hash,
             "size": stored.size,
             "mime_type": mime_type,
         },
@@ -410,39 +441,121 @@ async def get_extraction_job(
     assert_job_authorization_binding(job=job, capability=capability, provider=provider)
     pid = capability.patient_id
 
-    stmt_f = select(ExtractedFieldRecord).where(ExtractedFieldRecord.job_id == job_uuid)
-    res_f = await db.execute(stmt_f)
-    f_rows = res_f.scalars().all()
+    candidate_rows = (
+        (
+            await db.execute(
+                select(ExtractionCandidateRecord)
+                .where(
+                    ExtractionCandidateRecord.job_id == job_uuid,
+                    ExtractionCandidateRecord.patient_id == job.patient_id,
+                    ExtractionCandidateRecord.tenant_id == job.tenant_id,
+                    ExtractionCandidateRecord.authorization_provider_id
+                    == provider.actor_uid,
+                    ExtractionCandidateRecord.source_document_id == job.document_id,
+                )
+                .order_by(ExtractionCandidateRecord.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    kms = get_encryption_provider()
+    candidates = []
+    try:
+        for row in candidate_rows:
+            _assert_candidate_authorization_binding(
+                candidate=row, job=job, provider=provider
+            )
+            value_context = f"extraction_candidate_value:{row.evidence_id}"
+            source_context = f"extraction_candidate_source:{row.evidence_id}"
+            raw_value = await kms.decrypt_field(
+                str(job.patient_id),
+                value_context,
+                EncryptedField.deserialize(row.encrypted_raw_value, value_context),
+                db,
+            )
+            source_text = None
+            if row.encrypted_source_text:
+                source_text = await kms.decrypt_field(
+                    str(job.patient_id),
+                    source_context,
+                    EncryptedField.deserialize(
+                        row.encrypted_source_text, source_context
+                    ),
+                    db,
+                )
+            candidates.append(
+                {
+                    "field_name": row.field_name,
+                    "raw_value": raw_value,
+                    "field_confidence": row.field_confidence,
+                    "source_page": row.source_page,
+                    "source_text": source_text,
+                    "source_bbox": row.source_bbox,
+                    "evidence_complete": row.evidence_complete,
+                    "lane": row.lane,
+                    "reason_codes": row.reason_codes,
+                }
+            )
+    except (EncryptionError, PatientDataErased) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "CANDIDATE_EVIDENCE_UNAVAILABLE"},
+        ) from exc
+    lane = None
+    reason_codes: list[str] = []
+    if candidate_rows:
+        lane = (
+            "QUARANTINE"
+            if any(row.lane == "QUARANTINE" for row in candidate_rows)
+            else "SOURCE_ONLY"
+        )
+        reason_codes = sorted(
+            {
+                reason
+                for row in candidate_rows
+                for reason in (row.reason_codes or [])
+            }
+        )
+    elif job.status == "source_only":
+        lane = "SOURCE_ONLY"
+        reason_codes = ["NO_CLINICAL_CANDIDATES"]
+    elif job.status == "quarantined":
+        lane = "QUARANTINE"
+        reason_codes = [job.error_code] if job.error_code else []
 
-    fields = [
-        {
-            "field_id": str(f.id),
-            "job_id": job_id,
-            "field_name": f.field_name,
-            "raw_value": f.raw_value,
-            "normalized_value": f.normalized_value,
-            "confidence": f.confidence,
-            "risk_level": f.risk_level,
-            "validation_result": f.validation_result,
-            "source_page": f.source_page,
-            "source_bbox": f.source_bbox,
-            "status": f.status,
-            "corrected_value": f.corrected_value,
+    identity_validation = (
+        "failed"
+        if job.status == "identity_mismatch"
+        else "passed"
+        if job.status
+        in {
+            "extracted",
+            "validation_pending",
+            "source_only",
+            "quarantined",
         }
-        for f in f_rows
-    ]
-    auto_cnt = sum(1 for f in f_rows if f.status == "auto_approved")
-    rev_cnt = sum(1 for f in f_rows if f.status == "needs_review")
+        else "not_completed"
+    )
 
     return {
         "job_id": job_id,
         "patient_id": pid,
         "status": job.status,
         "document_type": job.document_type,
-        "overall_confidence": None,
-        "auto_approved_count": auto_cnt,
-        "needs_review_count": rev_cnt,
-        "extracted_fields": fields,
+        "provider": job.extractor_provider,
+        "provider_version": job.extractor_version,
+        "document_confidence": (
+            candidate_rows[0].document_confidence if candidate_rows else None
+        ),
+        "routing_lane": lane,
+        "routing_reasons": reason_codes,
+        "candidate_count": len(candidates),
+        "candidates": candidates,
+        "identity_validation": identity_validation,
+        "auto_commit_enabled": False,
+        "clinician_adjudication_required": True,
+        "extracted_fields": [],
         "created_at": job.created_at.isoformat(),
     }
 
