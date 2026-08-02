@@ -163,7 +163,7 @@ Validation query:
 Forward-fix strategy:
 ```
 
-Current head is `20260731_adjudication_harden`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
+Current head is `20260801_textract_candidates`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
 
 ## 11. Frontend standard
 

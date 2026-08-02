@@ -1,3 +1,8 @@
+# WARNING: Historical remote-provider configuration only.
+# This manifest is not approved for Milestone 6 and must not be used for AWS
+# Textract qualification. It retains obsolete provider and encryption
+# assumptions. The approved qualification backend target is Amazon ECS Fargate.
+
 services:
   - type: web
     name: nexa-care-api-remote-pilot
