@@ -22,11 +22,11 @@ def load_migration():
     return module
 
 
-def test_migration_is_ordered_after_current_audit_head():
+def test_provider_password_follows_audit_revision_and_precedes_current_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     revision = script.get_revision("20260717_provider_pwd_canonical")
     assert revision.down_revision == "20260716_audit_ledger_chain"
-    assert script.get_current_head() == "20260731_adjudication_harden"
+    assert script.get_current_head() == "20260801_textract_candidates"
     assert len(revision.revision) <= 32
 
 

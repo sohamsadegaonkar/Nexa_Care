@@ -35,11 +35,11 @@ def _scripts() -> ScriptDirectory:
     return ScriptDirectory.from_config(config)
 
 
-def test_provider_revision_precedes_patient_auth_identity_head() -> None:
+def test_provider_revision_precedes_patient_auth_identity_and_current_head() -> None:
     revision = _scripts().get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == "20260713_device_key_timestamps"
-    assert _scripts().get_heads() == ["20260731_adjudication_harden"]
+    assert _scripts().get_heads() == ["20260801_textract_candidates"]
 
 
 def test_every_doctor_seed_model_has_migration_coverage() -> None:
