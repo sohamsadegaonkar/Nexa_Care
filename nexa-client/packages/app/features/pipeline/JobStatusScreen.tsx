@@ -303,6 +303,10 @@ export function JobStatusScreen() {
 
   const statusInfo = STATUS_DISPLAY[job?.status ?? ''] ?? STATUS_DISPLAY.queued
   const progressPct = STATUS_PROGRESS[job?.status ?? 'queued'] ?? 0
+  const routingReasons = Array.isArray(job?.routing_reasons) ? job.routing_reasons : []
+  const extractedFields = Array.isArray(job?.extracted_fields) ? job.extracted_fields : []
+  const autoApproved = extractedFields.filter((field) => field.status === 'auto_approved').length
+  const needsReview = extractedFields.filter((field) => field.status === 'needs_review').length
   const isReviewPending = job?.status === 'review_required'
   const hasLegacyAutoApproval = job?.status === 'auto_approved'
   const requiresSourceAdjudication = job?.status === 'source_only'
@@ -482,8 +486,16 @@ export function JobStatusScreen() {
               fontSize="$2"
             >
               Routing: {job.routing_lane ?? 'not routed'}
-              {job.routing_reasons.length > 0 ? ` · ${job.routing_reasons.join(', ')}` : ''}
+              {routingReasons.length > 0 ? ` · ${routingReasons.join(', ')}` : ''}
             </Text>
+            {extractedFields.length > 0 && (
+              <Text
+                color="$color10"
+                fontSize="$2"
+              >
+                Legacy fields: {autoApproved} auto-approved · {needsReview} need review
+              </Text>
+            )}
             <Text
               color="$color10"
               fontSize="$2"

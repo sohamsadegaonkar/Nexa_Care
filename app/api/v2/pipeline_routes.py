@@ -24,7 +24,7 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -153,6 +153,37 @@ class RecoverAdjudicationSessionRequest(BaseModel):
     )
 
 
+class ExtractionCandidateStatusResponse(BaseModel):
+    field_name: str
+    raw_value: str
+    field_confidence: float | None = None
+    source_page: int | None = None
+    source_text: str | None = None
+    source_bbox: list[float] | None = None
+    evidence_complete: bool
+    lane: Literal["SOURCE_ONLY", "QUARANTINE"]
+    reason_codes: list[str] = Field(default_factory=list)
+
+
+class ExtractionJobStatusResponse(BaseModel):
+    job_id: str
+    patient_id: str
+    status: str
+    document_type: str
+    provider: str | None = None
+    provider_version: str | None = None
+    document_confidence: float | None = None
+    routing_lane: Literal["SOURCE_ONLY", "QUARANTINE"] | None = None
+    routing_reasons: list[str] = Field(default_factory=list)
+    candidate_count: int
+    candidates: list[ExtractionCandidateStatusResponse] = Field(default_factory=list)
+    identity_validation: Literal["passed", "failed", "not_completed"]
+    auto_commit_enabled: Literal[False] = False
+    clinician_adjudication_required: Literal[True] = True
+    extracted_fields: list[ExtractedField] = Field(default_factory=list)
+    created_at: str
+
+
 def _parse_uuid(id_str: str) -> uuid.UUID:
     try:
         return uuid.UUID(str(id_str))
@@ -171,7 +202,10 @@ ALLOWED_COMMIT_STATUSES = {"approved", "edited"}
 
 
 def _assert_candidate_authorization_binding(
-    *, candidate: ExtractionCandidateRecord, job: ExtractionJob, provider: ProviderContext
+    *,
+    candidate: ExtractionCandidateRecord,
+    job: ExtractionJob,
+    provider: ProviderContext,
 ) -> None:
     """Defense-in-depth before decrypting any staged candidate PHI."""
     if (
@@ -401,7 +435,7 @@ async def upload_pipeline_document(
 # ── Job status (server-derived patient_id from job entity) ──────────────────
 
 
-@router.get("/jobs/{job_id}", status_code=status.HTTP_200_OK)
+@router.get("/jobs/{job_id}", response_model=ExtractionJobStatusResponse)
 async def get_extraction_job(
     job_id: str,
     provider: ProviderContext = Depends(get_current_provider),
@@ -511,11 +545,7 @@ async def get_extraction_job(
             else "SOURCE_ONLY"
         )
         reason_codes = sorted(
-            {
-                reason
-                for row in candidate_rows
-                for reason in (row.reason_codes or [])
-            }
+            {reason for row in candidate_rows for reason in (row.reason_codes or [])}
         )
     elif job.status == "source_only":
         lane = "SOURCE_ONLY"

@@ -270,8 +270,8 @@ export interface ExtractionJobStatusResponse {
   provider: string | null
   provider_version: string | null
   document_confidence: number | null
-  routing_lane: 'SOURCE_ONLY' | 'QUARANTINE' | null
-  routing_reasons: string[]
+  routing_lane?: 'SOURCE_ONLY' | 'QUARANTINE' | null
+  routing_reasons?: string[] | null
   candidate_count: number
   candidates: Array<{
     field_name: string
@@ -1031,11 +1031,11 @@ export const NexaApiClient = {
     )
   },
 
-  getExtractionJobStatus(
+  async getExtractionJobStatus(
     jobId: string,
     consentToken: string
   ): Promise<ExtractionJobStatusResponse> {
-    return request<ExtractionJobStatusResponse>(
+    const response = await request<ExtractionJobStatusResponse>(
       `/api/v2/pipeline/jobs/${jobId}`,
       {
         method: 'GET',
@@ -1045,6 +1045,17 @@ export const NexaApiClient = {
         'X-Consent-Purpose': 'pipeline_status',
       }
     )
+    const routingReasons =
+      Array.isArray(response.routing_reasons) &&
+      response.routing_reasons.every((reason) => typeof reason === 'string')
+        ? response.routing_reasons
+        : []
+
+    return {
+      ...response,
+      extracted_fields: Array.isArray(response.extracted_fields) ? response.extracted_fields : [],
+      routing_reasons: routingReasons,
+    }
   },
 
   getReviewQueue(

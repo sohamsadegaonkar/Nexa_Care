@@ -367,6 +367,92 @@ describe('shared API transport', () => {
   })
 })
 
+describe('pipeline job-status response compatibility', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.resetModules()
+  })
+
+  function baseStatusPayload(): Record<string, unknown> {
+    return {
+      job_id: 'job-1',
+      patient_id: 'patient-1',
+      status: 'source_only',
+      document_type: 'lab_report',
+      provider: 'aws_textract',
+      provider_version: 'queries-v1',
+      document_confidence: null,
+      routing_lane: 'SOURCE_ONLY',
+      candidate_count: 0,
+      candidates: [],
+      identity_validation: 'passed',
+      auto_commit_enabled: false,
+      clinician_adjudication_required: true,
+      created_at: '2026-08-02T00:00:00Z',
+    }
+  }
+
+  it.each([
+    ['missing', false, undefined, undefined],
+    ['null', true, null, null],
+    ['malformed', true, 'not-an-array', { status: 'not-an-array' }],
+    ['empty', true, [], []],
+  ])(
+    'normalizes %s routing reasons and extracted fields',
+    async (_label, includeFields, routingReasons, extractedFields) => {
+      const payload = baseStatusPayload()
+      if (includeFields) {
+        payload.routing_reasons = routingReasons
+        payload.extracted_fields = extractedFields
+      }
+      const fetchMock = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+      setAuthTokenProvider(() => 'provider-session-token')
+
+      const response = await NexaApiClient.getExtractionJobStatus('job-1', 'document-capability')
+
+      expect(response.routing_reasons).toEqual([])
+      expect(response.extracted_fields).toEqual([])
+      expect(response.routing_lane).toBe('SOURCE_ONLY')
+      expect(response.provider).toBe('aws_textract')
+    }
+  )
+
+  it('preserves multiple valid routing reasons and all other response properties', async () => {
+    const payload = {
+      ...baseStatusPayload(),
+      routing_reasons: ['LOW_FIELD_CONFIDENCE', 'SOURCE_TEXT_MISSING'],
+      extracted_fields: [],
+    }
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify(payload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      )
+    )
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'provider-session-token')
+
+    const response = await NexaApiClient.getExtractionJobStatus('job-1', 'document-capability')
+
+    expect(response.routing_reasons).toEqual(['LOW_FIELD_CONFIDENCE', 'SOURCE_TEXT_MISSING'])
+    expect(response.job_id).toBe('job-1')
+    expect(response.status).toBe('source_only')
+    expect(response.candidate_count).toBe(0)
+  })
+})
+
 describe('adjudication API contract', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
