@@ -55,8 +55,9 @@ ground truth. Eleven expected fields are table rows: seven laboratory rows and
 four medication rows, including one incomplete row of each kind.
 
 All 15 documents carry a synthetic bound identity. Fourteen are identity-match
-cases and one is a deliberate mismatch. The mismatch binds `Synthetic Patient
-Bound` while the page contains `Synthetic Patient Mismatch`.
+cases and one is a deliberate mismatch. The mismatch page contains only its
+displayed mismatch identity; its different expected binding exists only in the
+manifest and is never rendered.
 
 ## Reproduction and qualification boundary
 
@@ -69,8 +70,8 @@ live benchmark harness or assess OCR quality.
 
 The manifest gates are conservative initial qualification thresholds, not
 production medical-accuracy claims. Higher-is-better metrics use typed
-`minimum_gates`; lower-is-better `false_positive_rate` and
-`unexpected_provider_failure_rate` use `maximum_gates`. Provider/API failure is
+`minimum_gates`; lower-is-better `unexpected_provider_failure_rate` uses
+`maximum_gates`. Provider/API failure is
 not clinical `QUARANTINE` and the benchmark does not infer a clinical route.
 
 ## First live-run integrity incident
@@ -85,5 +86,32 @@ counts; field occurrence counts; and aggregate stable provider error codes. It
 never emits exception messages, document filenames, source values, or identity
 values. Undefined metrics serialize as `null`, set `metrics_valid=false`, and
 make `benchmark_valid=false`. Any unexpected provider failure also fails the
-current corpus. A live rerun remains pending diagnosis and separate
-authorization.
+current corpus.
+
+A subsequent authorized run successfully executed Textract for all 15/15
+documents with no provider errors, but it was not an accuracy qualification
+pass. It reported 53 expected occurrences, 97 provider evidence occurrences,
+and an impossible 80 matches. Its multiset calculation found 49/53 exact raw
+occurrences; the 97 count included Query/Form/Table provenance multiplicity,
+while the 80 count reused expected occurrences and was inflated. Page accuracy
+was 0, source-text accuracy was 0.275, and identity detection was
+0.9333333333333333. Evaluation now groups only location/provenance-linked
+evidence, preserves all support, and matches expected and semantic occurrences
+one-to-one. No production accuracy claim may be made and a live rerun remains
+pending separate authorization.
+
+## Metric denominators
+
+- Canonical presence recall uses distinct expected canonical types.
+- Exact occurrence recall and exact raw accuracy use expected occurrences;
+  exact occurrence precision uses semantic candidates.
+- Evidence support uses semantic candidates; duplicate provenance uses all
+  evidence records and counts support beyond the first record per candidate.
+- Normalized value, unit, source text, page, bounding-box and confidence rates
+  use one-to-one exact matches. Repeated recall uses expected occurrences whose
+  canonical field repeats within a document.
+- Table-row accuracy uses expected CELL occurrences and requires matched,
+  structured CELL support with the complete expected row text.
+- Identity detection uses successful documents. Provider rates use attempted
+  documents. A zero denominator is `null`, never perfect, and invalidates the
+  benchmark when the metric is required.

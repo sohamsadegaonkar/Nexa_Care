@@ -27,6 +27,8 @@ class ProviderFieldEvidence(BaseModel):
     evidence_hash: str | None = None
     source_type: Literal["QUERY_RESULT", "KEY_VALUE_SET", "CELL"] | None = None
     source_block_ids: tuple[str, ...] = ()
+    supporting_evidence_hashes: tuple[str, ...] = ()
+    supporting_source_block_ids: tuple[str, ...] = ()
     normalized_value: str | None = None
     raw_unit: str | None = None
     normalized_unit: str | None = None

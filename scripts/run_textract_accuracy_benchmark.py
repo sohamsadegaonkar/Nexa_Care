@@ -28,11 +28,15 @@ from app.ai.extractor import (  # noqa: E402
     ExtractionProvider,
 )
 from app.core.config import DocumentExtractionConfig  # noqa: E402
+from app.ai.semantic_evidence import group_semantic_candidates  # noqa: E402
 
 ACCURACY_METRICS = (
-    "field_detection_precision",
-    "field_detection_recall",
+    "canonical_field_presence_recall",
+    "exact_occurrence_precision",
+    "exact_occurrence_recall",
     "exact_raw_value_accuracy",
+    "evidence_support_rate",
+    "duplicate_provenance_rate",
     "normalized_value_accuracy",
     "unit_accuracy",
     "repeated_field_recall",
@@ -41,7 +45,6 @@ ACCURACY_METRICS = (
     "page_accuracy",
     "bounding_box_presence_and_validity",
     "field_confidence_provenance",
-    "false_positive_rate",
     "patient_identity_mismatch_detection",
 )
 RATE_METRICS = (
@@ -118,11 +121,15 @@ async def run_benchmark(
     )
     counts: Counter[str] = Counter()
     provider_errors: Counter[str] = Counter()
+    by_source: Counter[str] = Counter()
+    page_by_source: Counter[str] = Counter()
+    exact_by_field: Counter[str] = Counter()
+    unmatched_expected_by_field: Counter[str] = Counter()
+    unmatched_candidate_by_field: Counter[str] = Counter()
 
     for specification in specifications:
         counts["attempted"] += 1
         expected = specification.get("fields", [])
-        expected_keys = Counter(item["canonical_field"] for item in expected)
         try:
             path = (directory / specification["file"]).resolve()
             if directory.resolve() not in path.parents or not path.is_file():
@@ -157,66 +164,130 @@ async def run_benchmark(
 
         counts["successful"] += 1
         actual = result.field_evidence
-        actual_keys = Counter(item.canonical_field_name for item in actual)
-        detected = sum((expected_keys & actual_keys).values())
-        counts.update(
-            scored_expected=sum(expected_keys.values()),
-            actual=sum(actual_keys.values()),
-            detected=detected,
-        )
-        expected_tuples = Counter(
-            (item["canonical_field"], item["raw_value"]) for item in expected
-        )
-        actual_tuples = Counter(
-            (item.canonical_field_name, item.raw_value) for item in actual
-        )
-        counts["raw_exact"] += sum((expected_tuples & actual_tuples).values())
+        candidates = group_semantic_candidates(actual)
+        counts["evidence"] += len(actual)
+        counts["candidates"] += len(candidates)
+        counts["supported"] += sum(bool(candidate.evidence) for candidate in candidates)
+        counts["duplicate_provenance"] += len(actual) - len(candidates)
+        counts["scored_expected"] += len(expected)
         for item in actual:
-            match = next(
-                (
-                    target
-                    for target in expected
-                    if target["canonical_field"] == item.canonical_field_name
-                    and target["raw_value"] == item.raw_value
-                ),
-                None,
-            )
-            if not match:
+            source = item.source_type or "UNKNOWN"
+            by_source[source] += 1
+            if item.page_number is None:
+                counts["page_missing"] += 1
+            else:
+                counts["page_present"] += 1
+                page_by_source[source] += 1
+
+        expected_types = {item["canonical_field"] for item in expected}
+        actual_types = {
+            candidate.representative.canonical_field_name for candidate in candidates
+        }
+        counts["expected_types"] += len(expected_types)
+        counts["present_types"] += len(expected_types & actual_types)
+
+        available = set(range(len(candidates)))
+        matches: list[tuple[int, int]] = []
+        for expected_index, target in enumerate(expected):
+            eligible = [
+                index
+                for index in available
+                if candidates[index].representative.canonical_field_name
+                == target["canonical_field"]
+                and candidates[index].representative.raw_value == target["raw_value"]
+            ]
+            if not eligible:
+                unmatched_expected_by_field[target["canonical_field"]] += 1
                 continue
-            counts["matched"] += 1
-            counts["normalized_exact"] += item.normalized_value == match.get(
-                "normalized_value"
-            )
-            counts["unit_exact"] += item.raw_unit == match.get("unit")
-            counts["source_exact"] += item.source_text == match.get(
-                "source_text", match["raw_value"]
-            )
-            counts["page_exact"] += item.page_number == match.get("page")
-            counts["bbox_valid"] += item.bounding_box is not None
-            counts["confidence_provenance"] += item.field_confidence is not None
-            counts["table_exact"] += (
-                item.source_type != "CELL" or item.structured_value is not None
-            )
-        repeated_expected = _expected_repeated_occurrences(expected)
-        counts["repeated_expected"] += repeated_expected
-        counts["repeated_detected"] += sum(
-            min(value, actual_keys[key])
-            for key, value in expected_keys.items()
-            if value > 1
+
+            def rank(index: int) -> tuple[int, int, int, int]:
+                support = candidates[index].evidence
+                category = target.get("source_category")
+                return (
+                    -int(any(x.source_type == category for x in support)),
+                    -int(
+                        any(
+                            x.source_type == category
+                            and x.source_text
+                            == target.get("source_text", target["raw_value"])
+                            for x in support
+                        )
+                    ),
+                    -int(any(x.page_number == target.get("page") for x in support)),
+                    index,
+                )
+
+            chosen = min(eligible, key=rank)
+            available.remove(chosen)
+            matches.append((expected_index, chosen))
+            exact_by_field[target["canonical_field"]] += 1
+
+        for index in sorted(available):
+            unmatched_candidate_by_field[
+                candidates[index].representative.canonical_field_name
+            ] += 1
+        counts["matched"] += len(matches)
+        counts["unmatched_expected"] += len(expected) - len(matches)
+        counts["unmatched_candidates"] += len(available)
+        repeated_fields = {
+            name
+            for name, total in Counter(x["canonical_field"] for x in expected).items()
+            if total > 1
+        }
+        counts["repeated_expected"] += sum(
+            x["canonical_field"] in repeated_fields for x in expected
         )
+        counts["repeated_detected"] += sum(
+            expected[i]["canonical_field"] in repeated_fields for i, _ in matches
+        )
+        table_expected = sum(x.get("source_category") == "CELL" for x in expected)
+        counts["table_expected"] += table_expected
+        for expected_index, candidate_index in matches:
+            target = expected[expected_index]
+            support = candidates[candidate_index].evidence
+            counts["normalized_exact"] += any(
+                item.normalized_value == target.get("normalized_value")
+                for item in support
+            )
+            counts["unit_exact"] += any(
+                item.raw_unit == target.get("unit") for item in support
+            )
+            compatible = [
+                x for x in support if x.source_type == target.get("source_category")
+            ]
+            counts["source_exact"] += any(
+                x.source_text == target.get("source_text", target["raw_value"])
+                for x in compatible
+            )
+            counts["page_exact"] += any(
+                x.page_number == target.get("page") for x in support
+            )
+            counts["bbox_valid"] += any(x.bounding_box is not None for x in support)
+            counts["confidence_provenance"] += any(
+                x.field_confidence is not None for x in support
+            )
+            if target.get("source_category") == "CELL":
+                counts["table_exact"] += any(
+                    x.source_type == "CELL"
+                    and x.structured_value is not None
+                    and x.source_text == target.get("source_text")
+                    for x in support
+                )
         extracted_identity = {
-            item.canonical_field_name: item.raw_value
-            for item in actual
-            if item.canonical_field_name in {"patient_name", "phone", "aadhaar_abha_id"}
+            key: {item.raw_value for item in actual if item.canonical_field_name == key}
+            for key in {"patient_name", "phone", "aadhaar_abha_id"}
         }
         bound_identity = specification.get("bound_identity", {})
         actual_match = bool(bound_identity) and all(
-            extracted_identity.get(key) == value
-            for key, value in bound_identity.items()
+            extracted_identity[key] == {value} for key, value in bound_identity.items()
         )
-        counts["identity_detection_correct"] += actual_match == bool(
+        identity_correct = actual_match == bool(
             specification["patient_binding_matches"]
         )
+        counts["identity_detection_correct"] += identity_correct
+        counts[
+            "identity_cases_correct" if identity_correct else "identity_cases_incorrect"
+        ] += 1
 
     attempted = counts["attempted"]
     successful = counts["successful"]
@@ -231,14 +302,23 @@ async def run_benchmark(
     if successful:
         metrics.update(
             {
-                "field_detection_precision": _ratio(
-                    counts["detected"], counts["actual"]
+                "canonical_field_presence_recall": _ratio(
+                    counts["present_types"], counts["expected_types"]
                 ),
-                "field_detection_recall": _ratio(
-                    counts["detected"], counts["scored_expected"]
+                "exact_occurrence_precision": _ratio(
+                    counts["matched"], counts["candidates"]
+                ),
+                "exact_occurrence_recall": _ratio(
+                    counts["matched"], counts["scored_expected"]
                 ),
                 "exact_raw_value_accuracy": _ratio(
-                    counts["raw_exact"], counts["scored_expected"]
+                    counts["matched"], counts["scored_expected"]
+                ),
+                "evidence_support_rate": _ratio(
+                    counts["supported"], counts["candidates"]
+                ),
+                "duplicate_provenance_rate": _ratio(
+                    counts["duplicate_provenance"], counts["evidence"]
                 ),
                 "normalized_value_accuracy": _ratio(
                     counts["normalized_exact"], counts["matched"]
@@ -247,7 +327,9 @@ async def run_benchmark(
                 "repeated_field_recall": _ratio(
                     counts["repeated_detected"], counts["repeated_expected"]
                 ),
-                "table_row_accuracy": _ratio(counts["table_exact"], counts["matched"]),
+                "table_row_accuracy": _ratio(
+                    counts["table_exact"], counts["table_expected"]
+                ),
                 "source_text_accuracy": _ratio(
                     counts["source_exact"], counts["matched"]
                 ),
@@ -257,9 +339,6 @@ async def run_benchmark(
                 ),
                 "field_confidence_provenance": _ratio(
                     counts["confidence_provenance"], counts["matched"]
-                ),
-                "false_positive_rate": _ratio(
-                    counts["actual"] - counts["detected"], counts["actual"]
                 ),
                 "patient_identity_mismatch_detection": _ratio(
                     counts["identity_detection_correct"], successful
@@ -289,8 +368,32 @@ async def run_benchmark(
         "successful_documents": successful,
         "failed_documents": failed,
         "expected_field_occurrences": expected_field_occurrences,
-        "actual_field_occurrences": counts["actual"],
+        "actual_field_occurrences": counts["evidence"],
         "matched_field_occurrences": counts["matched"],
+        "evidence_occurrences": counts["evidence"],
+        "semantic_candidate_occurrences": counts["candidates"],
+        "supporting_evidence_occurrences": counts["evidence"],
+        "duplicate_provenance_occurrences": counts["duplicate_provenance"],
+        "unmatched_semantic_candidates": counts["unmatched_candidates"],
+        "unmatched_expected_occurrences": counts["unmatched_expected"],
+        "evidence_occurrences_by_source_type": dict(sorted(by_source.items())),
+        "semantic_candidate_count": counts["candidates"],
+        "exact_match_count": counts["matched"],
+        "unmatched_expected_count": counts["unmatched_expected"],
+        "unmatched_candidate_count": counts["unmatched_candidates"],
+        "duplicate_provenance_count": counts["duplicate_provenance"],
+        "page_present_count": counts["page_present"],
+        "page_missing_count": counts["page_missing"],
+        "page_present_by_source_type": dict(sorted(page_by_source.items())),
+        "exact_matches_by_canonical_field": dict(sorted(exact_by_field.items())),
+        "unmatched_expected_by_canonical_field": dict(
+            sorted(unmatched_expected_by_field.items())
+        ),
+        "unmatched_candidates_by_canonical_field": dict(
+            sorted(unmatched_candidate_by_field.items())
+        ),
+        "identity_cases_correct": counts["identity_cases_correct"],
+        "identity_cases_incorrect": counts["identity_cases_incorrect"],
         "provider_error_counts": dict(sorted(provider_errors.items())),
         "metrics": metrics,
         "gate_results": gate_results,
@@ -361,6 +464,26 @@ def main() -> int:
             "expected_field_occurrences": 0,
             "actual_field_occurrences": 0,
             "matched_field_occurrences": 0,
+            "evidence_occurrences": 0,
+            "semantic_candidate_occurrences": 0,
+            "supporting_evidence_occurrences": 0,
+            "duplicate_provenance_occurrences": 0,
+            "unmatched_semantic_candidates": 0,
+            "unmatched_expected_occurrences": 0,
+            "evidence_occurrences_by_source_type": {},
+            "semantic_candidate_count": 0,
+            "exact_match_count": 0,
+            "unmatched_expected_count": 0,
+            "unmatched_candidate_count": 0,
+            "duplicate_provenance_count": 0,
+            "page_present_count": 0,
+            "page_missing_count": 0,
+            "page_present_by_source_type": {},
+            "exact_matches_by_canonical_field": {},
+            "unmatched_expected_by_canonical_field": {},
+            "unmatched_candidates_by_canonical_field": {},
+            "identity_cases_correct": 0,
+            "identity_cases_incorrect": 0,
             "provider_error_counts": {INTERNAL_ERROR_CODE: 1},
             "metrics": {
                 "successful_document_rate": None,

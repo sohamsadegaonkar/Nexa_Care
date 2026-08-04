@@ -169,30 +169,32 @@ async def test_required_null_metric_fails_even_after_successful_provider_call():
     manifest["documents"] = manifest["documents"][:1]
     result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([empty]))
     assert result["successful_documents"] == 1
-    assert result["metrics"]["field_detection_precision"] is None
+    assert result["metrics"]["exact_occurrence_precision"] is None
     assert result["metrics_valid"] is False
     assert result["benchmark_valid"] is False
 
 
 def test_minimum_and_maximum_gate_directions_are_explicit():
     metrics = {
-        "field_detection_recall": 0.8,
-        "false_positive_rate": 0.1,
+        "exact_occurrence_recall": 0.8,
+        "unexpected_provider_failure_rate": 0.1,
     }
     assert evaluate_gates(
         metrics,
-        {"field_detection_recall": 0.75},
-        {"false_positive_rate": 0.2},
-    ) == {"field_detection_recall": True, "false_positive_rate": True}
+        {"exact_occurrence_recall": 0.75},
+        {"unexpected_provider_failure_rate": 0.2},
+    ) == {"exact_occurrence_recall": True, "unexpected_provider_failure_rate": True}
     assert evaluate_gates(
         metrics,
-        {"field_detection_recall": 0.85},
-        {"false_positive_rate": 0.05},
-    ) == {"field_detection_recall": False, "false_positive_rate": False}
+        {"exact_occurrence_recall": 0.85},
+        {"unexpected_provider_failure_rate": 0.05},
+    ) == {"exact_occurrence_recall": False, "unexpected_provider_failure_rate": False}
     assert (
-        evaluate_gates({"false_positive_rate": 0.9}, {}, {"false_positive_rate": 0.2})[
-            "false_positive_rate"
-        ]
+        evaluate_gates(
+            {"unexpected_provider_failure_rate": 0.9},
+            {},
+            {"unexpected_provider_failure_rate": 0.2},
+        )["unexpected_provider_failure_rate"]
         is False
     )
 
@@ -230,3 +232,63 @@ async def test_fully_successful_injected_provider_passes_without_aws(monkeypatch
     assert result["matched_field_occurrences"] == 53
     assert all(result["gate_results"].values())
     assert benchmark_exit_code(result) == 0
+
+
+@pytest.mark.asyncio
+async def test_expected_occurrence_is_consumed_and_real_extra_candidate_remains_visible():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    extra = document.field_evidence[1].model_copy(
+        update={
+            "bounding_box": NormalizedBoundingBox(
+                left=0.6, top=0.6, right=0.8, bottom=0.7
+            ),
+            "source_block_ids": ("separate-location",),
+        }
+    )
+    document.field_evidence.append(extra)
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([document]))
+    assert result["exact_match_count"] == 2
+    assert result["unmatched_candidate_count"] == 1
+    assert result["matched_field_occurrences"] <= min(
+        result["expected_field_occurrences"], result["semantic_candidate_count"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_overlapping_query_and_form_are_support_not_a_false_positive():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    duplicate = document.field_evidence[1].model_copy(
+        update={
+            "source_type": "QUERY_RESULT",
+            "source_text": "7.2 %",
+            "source_block_ids": ("query-answer",),
+        }
+    )
+    document.field_evidence.append(duplicate)
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([document]))
+    assert result["actual_field_occurrences"] == 3
+    assert result["semantic_candidate_count"] == 2
+    assert result["duplicate_provenance_count"] == 1
+    assert result["unmatched_candidate_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_identity_conflict_fails_closed_regardless_of_order():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    conflict = document.field_evidence[0].model_copy(
+        update={"raw_value": "Conflicting Synthetic Identity"}
+    )
+    for evidence in (
+        [conflict, *document.field_evidence],
+        [*document.field_evidence, conflict],
+    ):
+        altered = document.model_copy(update={"field_evidence": evidence})
+        result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([altered]))
+        assert result["identity_cases_correct"] == 0
+        assert result["identity_cases_incorrect"] == 1

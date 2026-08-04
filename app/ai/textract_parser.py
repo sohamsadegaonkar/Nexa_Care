@@ -93,6 +93,14 @@ class TextractBlockGraph:
             for block in self.blocks
             if isinstance(block.get("Id"), str)
         }
+        self.parents: dict[str, set[str]] = {}
+        for parent in self.blocks:
+            parent_id = parent.get("Id")
+            if not isinstance(parent_id, str):
+                continue
+            for relationship_type in ("CHILD", "ANSWER", "VALUE"):
+                for child_id in self.relationship_ids(parent, relationship_type):
+                    self.parents.setdefault(child_id, set()).add(parent_id)
 
     @staticmethod
     def relationship_ids(block: dict[str, Any], kind: str) -> list[str]:
@@ -134,6 +142,33 @@ class TextractBlockGraph:
         return " ".join(
             value for child in self.children(block) if (value := self.text(child, seen))
         ).strip()
+
+    def page_number(self, block: dict[str, Any]) -> int | None:
+        """Resolve an authentic page, returning None for ambiguity or no proof."""
+        direct = _page(block)
+        if direct is not None:
+            return direct
+        start = block.get("Id")
+        if not isinstance(start, str):
+            return None
+        pages: set[int] = set()
+        pending = list(self.parents.get(start, set()))
+        seen = {start}
+        while pending:
+            parent_id = pending.pop()
+            if parent_id in seen:
+                continue
+            seen.add(parent_id)
+            parent = self.by_id.get(parent_id)
+            if parent is None:
+                continue
+            if (
+                parent.get("BlockType") == "PAGE"
+                and (page := _page(parent)) is not None
+            ):
+                pages.add(page)
+            pending.extend(self.parents.get(parent_id, set()))
+        return next(iter(pages)) if len(pages) == 1 else None
 
 
 def _confidence(block: dict[str, Any]) -> float | None:
@@ -192,6 +227,7 @@ def _make(
     block_ids: list[str],
     extracted_at: datetime,
     model_version: str,
+    page_number: int | None = None,
     bounding_box: NormalizedBoundingBox | None = None,
     structured: dict[str, str | bool | None] | None = None,
     incomplete: bool = False,
@@ -199,7 +235,7 @@ def _make(
     reference_range: str | None = None,
 ) -> ProviderFieldEvidence:
     normalized = normalize_extracted_value(field, raw)
-    page = _page(block)
+    page = page_number if page_number is not None else _page(block)
     bbox = bounding_box if bounding_box is not None else _bbox(block)
     safe_ids = sorted({item for item in block_ids if item})
     identity = {
@@ -280,6 +316,7 @@ def _parse_queries(
                         block_ids=[answer_id],
                         extracted_at=extracted_at,
                         model_version=model_version,
+                        page_number=graph.page_number(answer),
                     )
                 )
 
@@ -327,6 +364,7 @@ def _parse_forms(
                         ],
                         extracted_at=extracted_at,
                         model_version=model_version,
+                        page_number=graph.page_number(value),
                         bounding_box=_union_bbox([key, value]),
                     )
                 )
@@ -424,6 +462,7 @@ def _parse_tables(
                 ],
                 extracted_at=extracted_at,
                 model_version=model_version,
+                page_number=graph.page_number(primary_cell),
                 bounding_box=_union_bbox(ordered),
                 structured={**parts, "row_index": str(row_index)},
                 incomplete=incomplete,

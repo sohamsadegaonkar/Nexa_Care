@@ -254,9 +254,12 @@ silently truncates a multi-page file.
 
 The block graph is indexed once by Textract block ID. It follows only returned
 query/answer, key/value, table/cell, merged-cell, word, line, and selection
-relationships. Repeated answers and rows remain independent candidates;
-deduplication occurs only when canonical value and exact evidence identity are
-identical. Conflicting values are never selected or reconciled automatically.
+relationships. Repeated answers and rows remain independent evidence
+occurrences; deduplication occurs only when canonical value and exact evidence
+identity are identical. A deterministic semantic boundary groups records only
+when value, page, and authentic location or block relationships establish the
+same occurrence. Equal values at separate locations remain separate.
+Conflicting values are never selected or reconciled automatically.
 
 Each candidate retains exact raw and source text, zero-based page, validated
 normalized bounding box, genuine source-block confidence when present, model
@@ -304,22 +307,28 @@ It prints aggregate metrics only, exits non-zero when configured gates fail,
 and must never receive real patient documents. It is excluded from normal unit
 tests and deployment automation.
 
-The benchmark reports explicit attempt/success/failure and field-occurrence
-counts, sanitized stable provider-error counts, field precision/recall, exact
+The benchmark reports explicit attempt/success/failure and separate evidence,
+semantic-candidate, duplicate-provenance and unmatched counts; sanitized stable
+provider-error counts; canonical presence recall; exact occurrence
+precision/recall; exact
 raw and normalized value accuracy, unit accuracy, repeated-field recall,
 table-row and source-text accuracy, page and bounding-box quality, confidence
-provenance, false-positive rate, identity-mismatch detection, and unexpected
+provenance, identity-mismatch detection, and unexpected
 provider-failure rate. Provider/API failure is not clinical `QUARANTINE` and
 does not imply a clinical routing decision.
 
-The first authorized live synthetic run was invalid because all 15 provider
-requests failed. The former zero-denominator fallback incorrectly rendered
-undefined accuracy as `1.0`; no extraction-accuracy claim resulted. Undefined
-metrics now serialize as `null`, invalidate the metric set, and fail the run.
-Higher-is-better metrics use minimum gates; lower-is-better false-positive and
-unexpected-provider-failure rates use maximum gates. A live rerun remains
-pending diagnosis and separate authorization. Parser fixture and injected-
-provider coverage prove benchmark behavior, not Textract extraction accuracy.
+The first valid provider-authorized execution reached Textract for all 15/15
+documents without provider errors, but did not pass accuracy qualification. It
+reported 53 expected occurrences, 97 evidence records, and 80 inflated matches;
+the contemporaneous multiset calculation found 49/53 exact raw occurrences.
+Expected-item reuse inflated the match count. Page accuracy was 0, source-text
+accuracy 0.275, and identity detection 0.9333333333333333. The corrected
+evaluator consumes both sides once, uses source-category-compatible evidence,
+resolves pages only from direct Page or PAGE ancestry, and fails identity
+conflicts closed. Production staging also produced duplicate review candidates;
+it now groups before routing and carries all supporting hashes and block IDs.
+No production accuracy claim may be made. A live rerun remains pending separate
+authorization.
 ## Adversarial evidence catalog
 
 Milestone 0 defines a canonical 24-scenario adversarial catalog under

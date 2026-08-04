@@ -26,12 +26,15 @@ SUPPORTED_FIELDS = {
 }
 EXPECTED_MINIMUM_GATES = {
     "successful_document_rate": 1.00,
-    "field_detection_precision": 0.80,
-    "field_detection_recall": 0.75,
+    "canonical_field_presence_recall": 0.75,
+    "exact_occurrence_precision": 0.80,
+    "exact_occurrence_recall": 0.70,
     "exact_raw_value_accuracy": 0.70,
+    "evidence_support_rate": 1.00,
     "normalized_value_accuracy": 0.80,
     "unit_accuracy": 0.85,
     "repeated_field_recall": 0.60,
+    "table_row_accuracy": 0.70,
     "source_text_accuracy": 0.70,
     "page_accuracy": 1.00,
     "bounding_box_presence_and_validity": 0.90,
@@ -39,7 +42,6 @@ EXPECTED_MINIMUM_GATES = {
     "patient_identity_mismatch_detection": 1.00,
 }
 EXPECTED_MAXIMUM_GATES = {
-    "false_positive_rate": 0.20,
     "unexpected_provider_failure_rate": 0.00,
 }
 
@@ -114,7 +116,6 @@ def test_manifest_validates_against_committed_schema_and_expected_gates():
     _validate_schema(manifest, schema)
     assert manifest["minimum_gates"] == EXPECTED_MINIMUM_GATES
     assert manifest["maximum_gates"] == EXPECTED_MAXIMUM_GATES
-    assert "false_positive_rate" not in manifest["minimum_gates"]
     assert "unexpected_provider_failure_rate" not in manifest["minimum_gates"]
 
 
@@ -197,6 +198,12 @@ def test_inventory_has_tables_incomplete_rows_and_one_identity_mismatch():
         if field["canonical_field"] == "patient_name"
     )
     assert extracted_name != mismatch["bound_identity"]["patient_name"]
+    generator_text = (BENCHMARK / "generate_documents.ps1").read_text(encoding="utf-8")
+    mismatch_source = generator_text.split("15-identity-mismatch.png", 1)[1].split(
+        "}", 1
+    )[0]
+    assert mismatch["bound_identity"]["patient_name"] not in mismatch_source
+    assert "Bound identity" not in mismatch_source
     incomplete_lab = next(
         item for item in manifest["documents"] if item["file"].startswith("13-")
     )
@@ -205,3 +212,17 @@ def test_inventory_has_tables_incomplete_rows_and_one_identity_mismatch():
     )
     assert "unit" not in incomplete_lab["fields"][1]
     assert "frequency" not in incomplete_medication["fields"][1]
+
+
+def test_source_text_contract_matches_source_category():
+    manifest, _ = _load()
+    for document in manifest["documents"]:
+        for field in document["fields"]:
+            if field["source_category"] == "QUERY_RESULT":
+                assert field["source_text"] == field["raw_value"]
+            elif field["source_category"] == "KEY_VALUE_SET":
+                assert field["raw_value"] in field["source_text"]
+                assert field["source_text"] != field["raw_value"]
+            else:
+                assert field["source_category"] == "CELL"
+                assert "|" in field["source_text"]

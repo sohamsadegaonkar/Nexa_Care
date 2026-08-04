@@ -96,6 +96,69 @@ def test_queries_preserve_repeated_conflicting_answers_and_deduplicate_exact_evi
     assert items[0].evidence_hash and items[0].source_block_ids == ("a1",)
 
 
+def test_page_lineage_resolves_query_form_and_table_descendants_without_cycles():
+    graph = TextractBlockGraph(
+        [
+            {
+                "BlockType": "PAGE",
+                "Id": "p1",
+                "Page": 1,
+                "Relationships": [{"Type": "CHILD", "Ids": ["query", "key", "t"]}],
+            },
+            {
+                "BlockType": "QUERY",
+                "Id": "query",
+                "Relationships": [{"Type": "ANSWER", "Ids": ["q"]}],
+            },
+            {"BlockType": "QUERY_RESULT", "Id": "q"},
+            {
+                "BlockType": "KEY_VALUE_SET",
+                "Id": "key",
+                "Relationships": [{"Type": "VALUE", "Ids": ["v"]}],
+            },
+            {"BlockType": "KEY_VALUE_SET", "Id": "v"},
+            {
+                "BlockType": "TABLE",
+                "Id": "t",
+                "Relationships": [{"Type": "CHILD", "Ids": ["c"]}],
+            },
+            {
+                "BlockType": "CELL",
+                "Id": "c",
+                "Relationships": [{"Type": "CHILD", "Ids": ["t"]}],
+            },
+        ]
+    )
+    assert graph.page_number(graph.by_id["q"]) == 0
+    assert graph.page_number(graph.by_id["v"]) == 0
+    assert graph.page_number(graph.by_id["c"]) == 0
+
+
+def test_page_lineage_direct_multiple_ambiguous_and_unknown():
+    graph = TextractBlockGraph(
+        [
+            {
+                "BlockType": "PAGE",
+                "Id": "p1",
+                "Page": 1,
+                "Relationships": [{"Type": "CHILD", "Ids": ["x"]}],
+            },
+            {
+                "BlockType": "PAGE",
+                "Id": "p2",
+                "Page": 2,
+                "Relationships": [{"Type": "CHILD", "Ids": ["x"]}],
+            },
+            {"BlockType": "WORD", "Id": "direct", "Page": 2},
+            {"BlockType": "WORD", "Id": "x"},
+            {"BlockType": "WORD", "Id": "unknown"},
+        ]
+    )
+    assert graph.page_number(graph.by_id["direct"]) == 1
+    assert graph.page_number(graph.by_id["x"]) is None
+    assert graph.page_number(graph.by_id["unknown"]) is None
+
+
 @pytest.mark.parametrize("confidence", ["99", True, -1, 101, float("nan")])
 def test_malformed_confidence_is_unavailable(confidence):
     blocks = [

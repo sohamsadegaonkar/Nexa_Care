@@ -103,14 +103,16 @@ def _candidate_fields(document: Any) -> list[dict[str, Any]]:
     """Convert clinical arrays only; OCR identity is never a chart candidate."""
 
     if document.field_evidence:
+        from app.ai.semantic_evidence import group_semantic_candidates
+
         return [
             {
-                "field_name": item.canonical_field_name,
-                "raw_value": item.raw_value,
-                "provider_evidence": item,
+                "field_name": candidate.representative.canonical_field_name,
+                "raw_value": candidate.representative.raw_value,
+                "provider_evidence": candidate.representative,
             }
-            for item in document.field_evidence
-            if item.canonical_field_name
+            for candidate in group_semantic_candidates(document.field_evidence)
+            if candidate.representative.canonical_field_name
             not in {"patient_name", "phone", "aadhaar_abha_id"}
         ]
 
@@ -390,9 +392,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     ),
                     source_page=evidence.visual.page_number,
                     source_bbox=(
-                        [bbox.left, bbox.top, bbox.right, bbox.bottom]
-                        if bbox
-                        else None
+                        [bbox.left, bbox.top, bbox.right, bbox.bottom] if bbox else None
                     ),
                     field_confidence=evidence.model.field_confidence,
                     document_confidence=evidence.model.document_confidence,

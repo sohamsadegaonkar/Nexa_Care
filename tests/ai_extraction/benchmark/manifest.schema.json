@@ -20,12 +20,12 @@
     },
     "minimum_gates": {
       "type": "object",
-      "propertyNames": {"enum": ["successful_document_rate", "field_detection_precision", "field_detection_recall", "exact_raw_value_accuracy", "normalized_value_accuracy", "unit_accuracy", "repeated_field_recall", "table_row_accuracy", "source_text_accuracy", "page_accuracy", "bounding_box_presence_and_validity", "field_confidence_provenance", "patient_identity_mismatch_detection"]},
+      "propertyNames": {"enum": ["successful_document_rate", "canonical_field_presence_recall", "exact_occurrence_precision", "exact_occurrence_recall", "exact_raw_value_accuracy", "evidence_support_rate", "duplicate_provenance_rate", "normalized_value_accuracy", "unit_accuracy", "repeated_field_recall", "table_row_accuracy", "source_text_accuracy", "page_accuracy", "bounding_box_presence_and_validity", "field_confidence_provenance", "patient_identity_mismatch_detection"]},
       "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
     },
     "maximum_gates": {
       "type": "object",
-      "propertyNames": {"enum": ["false_positive_rate", "unexpected_provider_failure_rate"]},
+      "propertyNames": {"enum": ["unexpected_provider_failure_rate"]},
       "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
     }
   }

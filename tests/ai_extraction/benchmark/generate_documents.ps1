@@ -21,7 +21,7 @@ $documents = @(
     @{ File='12-repeated-conflicting-values.jpg'; Style='compact'; Title='REPEATED AND CONFLICTING VALUES'; Lines=@('Patient Name: Synthetic Patient Iota','HbA1c: 7.0 %','HbA1c: 7.8 %','BP: 120/80 mmHg','BP: 138/88 mmHg','Values intentionally retained for review') },
     @{ File='13-incomplete-lab-row.png'; Style='table'; Title='INCOMPLETE LABORATORY ROW'; Lines=@('Patient Name: Synthetic Patient Xi','Investigation | Result | Unit | Reference Range','Blood Glucose | 142 |  | ','Row intentionally omits unit and range') },
     @{ File='14-incomplete-medication-row.jpg'; Style='table'; Title='INCOMPLETE MEDICATION ROW'; Lines=@('Patient Name: Synthetic Patient Omicron','Medicine | Strength | Frequency | Route | Duration','SyntheticMed Kappa | 20 mg |  | Oral | ','Row intentionally omits frequency and duration') },
-    @{ File='15-identity-mismatch.png'; Style='bordered'; Title='IDENTITY MISMATCH FIXTURE'; Lines=@('Patient Name: Synthetic Patient Mismatch','Health ID: 99-0000-0000-0015','HbA1c: 6.5 %','Bound identity is Synthetic Patient Bound') }
+    @{ File='15-identity-mismatch.png'; Style='bordered'; Title='IDENTITY MISMATCH FIXTURE'; Lines=@('Patient Name: Synthetic Patient Mismatch','Health ID: 99-0000-0000-0015','HbA1c: 6.5 %') }
 )
 
 function Add-TextLine {
