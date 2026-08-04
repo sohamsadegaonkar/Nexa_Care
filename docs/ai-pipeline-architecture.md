@@ -304,13 +304,22 @@ It prints aggregate metrics only, exits non-zero when configured gates fail,
 and must never receive real patient documents. It is excluded from normal unit
 tests and deployment automation.
 
-The benchmark reports field precision/recall, exact raw and normalized value
-accuracy, unit accuracy, repeated-field recall, table-row and source-text
-accuracy, page and bounding-box quality, confidence provenance, false-positive
-rate, identity-mismatch detection, and fail-closed rate separately. No
-Textract accuracy percentage exists until this live synthetic benchmark has
-actually run. Parser fixture coverage proves deterministic response handling
-only.
+The benchmark reports explicit attempt/success/failure and field-occurrence
+counts, sanitized stable provider-error counts, field precision/recall, exact
+raw and normalized value accuracy, unit accuracy, repeated-field recall,
+table-row and source-text accuracy, page and bounding-box quality, confidence
+provenance, false-positive rate, identity-mismatch detection, and unexpected
+provider-failure rate. Provider/API failure is not clinical `QUARANTINE` and
+does not imply a clinical routing decision.
+
+The first authorized live synthetic run was invalid because all 15 provider
+requests failed. The former zero-denominator fallback incorrectly rendered
+undefined accuracy as `1.0`; no extraction-accuracy claim resulted. Undefined
+metrics now serialize as `null`, invalidate the metric set, and fail the run.
+Higher-is-better metrics use minimum gates; lower-is-better false-positive and
+unexpected-provider-failure rates use maximum gates. A live rerun remains
+pending diagnosis and separate authorization. Parser fixture and injected-
+provider coverage prove benchmark behavior, not Textract extraction accuracy.
 ## Adversarial evidence catalog
 
 Milestone 0 defines a canonical 24-scenario adversarial catalog under

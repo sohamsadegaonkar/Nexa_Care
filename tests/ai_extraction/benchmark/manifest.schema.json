@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Synthetic Textract accuracy benchmark manifest",
   "type": "object",
-  "required": ["documents", "gates"],
+  "required": ["documents", "minimum_gates", "maximum_gates"],
   "properties": {
     "documents": {
       "type": "array",
@@ -12,11 +12,21 @@
         "properties": {
           "file": {"type": "string"},
           "patient_binding_matches": {"type": "boolean"},
+          "expected_provider_rejection": {"type": "boolean"},
           "bound_identity": {"type": "object", "propertyNames": {"enum": ["patient_name", "phone", "aadhaar_abha_id"]}, "additionalProperties": {"type": "string"}},
           "fields": {"type": "array", "items": {"type": "object", "required": ["canonical_field", "raw_value", "page"], "properties": {"canonical_field": {"type": "string"}, "raw_value": {"type": "string"}, "source_text": {"type": "string"}, "source_category": {"enum": ["QUERY_RESULT", "KEY_VALUE_SET", "CELL"]}, "normalized_value": {"type": ["string", "null"]}, "unit": {"type": ["string", "null"]}, "page": {"type": ["integer", "null"]}}}}
         }
       }
     },
-    "gates": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}}
+    "minimum_gates": {
+      "type": "object",
+      "propertyNames": {"enum": ["successful_document_rate", "field_detection_precision", "field_detection_recall", "exact_raw_value_accuracy", "normalized_value_accuracy", "unit_accuracy", "repeated_field_recall", "table_row_accuracy", "source_text_accuracy", "page_accuracy", "bounding_box_presence_and_validity", "field_confidence_provenance", "patient_identity_mismatch_detection"]},
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+    },
+    "maximum_gates": {
+      "type": "object",
+      "propertyNames": {"enum": ["false_positive_rate", "unexpected_provider_failure_rate"]},
+      "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}
+    }
   }
 }

@@ -24,7 +24,8 @@ SUPPORTED_FIELDS = {
     "medication",
     "diagnosis",
 }
-EXPECTED_GATES = {
+EXPECTED_MINIMUM_GATES = {
+    "successful_document_rate": 1.00,
     "field_detection_precision": 0.80,
     "field_detection_recall": 0.75,
     "exact_raw_value_accuracy": 0.70,
@@ -36,6 +37,10 @@ EXPECTED_GATES = {
     "bounding_box_presence_and_validity": 0.90,
     "field_confidence_provenance": 0.90,
     "patient_identity_mismatch_detection": 1.00,
+}
+EXPECTED_MAXIMUM_GATES = {
+    "false_positive_rate": 0.20,
+    "unexpected_provider_failure_rate": 0.00,
 }
 
 
@@ -107,8 +112,10 @@ def _load() -> tuple[dict[str, Any], dict[str, Any]]:
 def test_manifest_validates_against_committed_schema_and_expected_gates():
     manifest, schema = _load()
     _validate_schema(manifest, schema)
-    assert manifest["gates"] == EXPECTED_GATES
-    assert "fail_closed_quarantine_rate" not in manifest["gates"]
+    assert manifest["minimum_gates"] == EXPECTED_MINIMUM_GATES
+    assert manifest["maximum_gates"] == EXPECTED_MAXIMUM_GATES
+    assert "false_positive_rate" not in manifest["minimum_gates"]
+    assert "unexpected_provider_failure_rate" not in manifest["minimum_gates"]
 
 
 def test_documents_are_unique_local_single_page_images_and_no_aws_call(

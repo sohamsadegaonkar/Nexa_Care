@@ -9,5 +9,6 @@
       ]
     }
   ],
-  "gates": {"field_detection_precision": 0.9, "field_detection_recall": 0.9}
+  "minimum_gates": {"successful_document_rate": 1.0, "field_detection_precision": 0.9, "field_detection_recall": 0.9},
+  "maximum_gates": {"false_positive_rate": 0.1, "unexpected_provider_failure_rate": 0.0}
 }

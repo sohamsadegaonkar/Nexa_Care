@@ -159,7 +159,8 @@
       ]
     }
   ],
-  "gates": {
+  "minimum_gates": {
+    "successful_document_rate": 1.00,
     "field_detection_precision": 0.80,
     "field_detection_recall": 0.75,
     "exact_raw_value_accuracy": 0.70,
@@ -171,5 +172,9 @@
     "bounding_box_presence_and_validity": 0.90,
     "field_confidence_provenance": 0.90,
     "patient_identity_mismatch_detection": 1.00
+  },
+  "maximum_gates": {
+    "false_positive_rate": 0.20,
+    "unexpected_provider_failure_rate": 0.00
   }
 }

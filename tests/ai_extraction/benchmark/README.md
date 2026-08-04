@@ -68,5 +68,22 @@ identity markers, repetition, and mismatch coverage. It does not invoke the
 live benchmark harness or assess OCR quality.
 
 The manifest gates are conservative initial qualification thresholds, not
-production medical-accuracy claims. `fail_closed_quarantine_rate` deliberately
-has no gate until a live synthetic qualification establishes a baseline.
+production medical-accuracy claims. Higher-is-better metrics use typed
+`minimum_gates`; lower-is-better `false_positive_rate` and
+`unexpected_provider_failure_rate` use `maximum_gates`. Provider/API failure is
+not clinical `QUARANTINE` and the benchmark does not infer a clinical route.
+
+## First live-run integrity incident
+
+The first authorized live synthetic run was invalid: all 15 provider requests
+failed, while the old zero-denominator fallback incorrectly displayed the
+undefined accuracy metrics as `1.0` and returned success. No extraction-accuracy
+claim resulted from that run.
+
+The corrected harness reports attempted, successful, and failed document
+counts; field occurrence counts; and aggregate stable provider error codes. It
+never emits exception messages, document filenames, source values, or identity
+values. Undefined metrics serialize as `null`, set `metrics_valid=false`, and
+make `benchmark_valid=false`. Any unexpected provider failure also fails the
+current corpus. A live rerun remains pending diagnosis and separate
+authorization.
