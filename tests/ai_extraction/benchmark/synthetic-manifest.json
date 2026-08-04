@@ -1,0 +1,175 @@
+{
+  "documents": [
+    {
+      "file": "01-simple-laboratory-form.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Alpha"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Alpha", "source_text": "Patient Name: Synthetic Patient Alpha", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "7.2 %", "normalized_value": "7.2", "unit": "%", "source_text": "HbA1c: 7.2 %", "source_category": "KEY_VALUE_SET", "page": 0}
+      ]
+    },
+    {
+      "file": "02-multiple-laboratory-rows.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Lambda"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Lambda", "source_text": "Patient Name: Synthetic Patient Lambda", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "6.8", "normalized_value": "6.8", "unit": "%", "source_text": "HbA1c | 6.8 | % | 4.0 - 5.6", "source_category": "CELL", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "108", "normalized_value": "108", "unit": "mg/dL", "source_text": "FBS | 108 | mg/dL | 70 - 100", "source_category": "CELL", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "146", "normalized_value": "146", "unit": "mg/dL", "source_text": "RBS | 146 | mg/dL | 70 - 140", "source_category": "CELL", "page": 0}
+      ]
+    },
+    {
+      "file": "03-repeated-glucose-table.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Mu"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Mu", "source_text": "Patient Name: Synthetic Patient Mu", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "102", "normalized_value": "102", "unit": "mg/dL", "source_text": "FBS | 102 | mg/dL | 05 Aug 2026", "source_category": "CELL", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "138", "normalized_value": "138", "unit": "mg/dL", "source_text": "PPBS | 138 | mg/dL | 05 Aug 2026", "source_category": "CELL", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "121", "normalized_value": "121", "unit": "mg/dL", "source_text": "RBS | 121 | mg/dL | 05 Aug 2026", "source_category": "CELL", "page": 0}
+      ]
+    },
+    {
+      "file": "04-hba1c-report.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Beta"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Beta", "source_text": "Synthetic Patient Beta", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "7.4 %", "normalized_value": "7.4", "unit": "%", "source_text": "7.4 %", "source_category": "QUERY_RESULT", "page": 0}
+      ]
+    },
+    {
+      "file": "05-vital-sign-form.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Gamma"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Gamma", "source_text": "Patient Name: Synthetic Patient Gamma", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "blood_pressure", "raw_value": "118/76 mmHg", "normalized_value": "118/76", "unit": "mmHg", "source_text": "Blood Pressure: 118/76 mmHg", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "heart_rate", "raw_value": "72 bpm", "normalized_value": "72", "unit": "bpm", "source_text": "Heart Rate: 72 bpm", "source_category": "KEY_VALUE_SET", "page": 0}
+      ]
+    },
+    {
+      "file": "06-blood-pressure-pulse-report.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Delta"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Delta", "source_text": "Patient Name: Synthetic Patient Delta", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "blood_pressure", "raw_value": "126/82 mmHg", "normalized_value": "126/82", "unit": "mmHg", "source_text": "BP: 126/82 mmHg", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "heart_rate", "raw_value": "78 bpm", "normalized_value": "78", "unit": "bpm", "source_text": "Pulse: 78 bpm", "source_category": "KEY_VALUE_SET", "page": 0}
+      ]
+    },
+    {
+      "file": "07-medication-table.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Nu"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Nu", "source_text": "Patient Name: Synthetic Patient Nu", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Alpha", "normalized_value": "SyntheticMed Alpha", "source_text": "SyntheticMed Alpha | 5 mg | Once daily | Oral | 7 days", "source_category": "CELL", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Beta", "normalized_value": "SyntheticMed Beta", "source_text": "SyntheticMed Beta | 10 mg | Twice daily | Oral | 5 days", "source_category": "CELL", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Gamma", "normalized_value": "SyntheticMed Gamma", "source_text": "SyntheticMed Gamma | 2 mg | At night | Oral | 10 days", "source_category": "CELL", "page": 0}
+      ]
+    },
+    {
+      "file": "08-prescription-list.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Epsilon"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Epsilon", "source_text": "Synthetic Patient Epsilon", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Delta 25 mg once daily", "normalized_value": "SyntheticMed Delta 25 mg once daily", "source_text": "SyntheticMed Delta 25 mg once daily", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Epsilon 10 mg twice daily", "normalized_value": "SyntheticMed Epsilon 10 mg twice daily", "source_text": "SyntheticMed Epsilon 10 mg twice daily", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Zeta 5 mg at night", "normalized_value": "SyntheticMed Zeta 5 mg at night", "source_text": "SyntheticMed Zeta 5 mg at night", "source_category": "QUERY_RESULT", "page": 0}
+      ]
+    },
+    {
+      "file": "09-diagnosis-form.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Zeta"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Zeta", "source_text": "Patient Name: Synthetic Patient Zeta", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "diagnosis", "raw_value": "Synthetic Condition Alpha", "normalized_value": "Synthetic Condition Alpha", "source_text": "Diagnosis: Synthetic Condition Alpha", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "diagnosis", "raw_value": "Synthetic Condition Beta", "normalized_value": "Synthetic Condition Beta", "source_text": "Provisional Diagnosis: Synthetic Condition Beta", "source_category": "KEY_VALUE_SET", "page": 0}
+      ]
+    },
+    {
+      "file": "10-mixed-clinical-summary.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Eta"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Eta", "source_text": "Synthetic Patient Eta", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "6.9 %", "normalized_value": "6.9", "unit": "%", "source_text": "6.9 %", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "132 mg/dL", "normalized_value": "132", "unit": "mg/dL", "source_text": "132 mg/dL", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "blood_pressure", "raw_value": "122/80 mmHg", "normalized_value": "122/80", "unit": "mmHg", "source_text": "122/80 mmHg", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "heart_rate", "raw_value": "74 bpm", "normalized_value": "74", "unit": "bpm", "source_text": "74 bpm", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Eta 5 mg once daily", "normalized_value": "SyntheticMed Eta 5 mg once daily", "source_text": "SyntheticMed Eta 5 mg once daily", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "diagnosis", "raw_value": "Synthetic Condition Gamma", "normalized_value": "Synthetic Condition Gamma", "source_text": "Synthetic Condition Gamma", "source_category": "QUERY_RESULT", "page": 0}
+      ]
+    },
+    {
+      "file": "11-alternate-label-synonyms.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Theta", "aadhaar_abha_id": "99-0000-0000-0001", "phone": "00000 00000"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Theta", "source_text": "NAME OF PATIENT: Synthetic Patient Theta", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "aadhaar_abha_id", "raw_value": "99-0000-0000-0001", "normalized_value": "99-0000-0000-0001", "source_text": "HEALTH ID: 99-0000-0000-0001", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "phone", "raw_value": "00000 00000", "source_text": "CONTACT: 00000 00000", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "7.1 %", "normalized_value": "7.1", "unit": "%", "source_text": "GLYCATED HAEMOGLOBIN: 7.1 %", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "heart_rate", "raw_value": "76 bpm", "normalized_value": "76", "unit": "bpm", "source_text": "PULSE: 76 bpm", "source_category": "KEY_VALUE_SET", "page": 0}
+      ]
+    },
+    {
+      "file": "12-repeated-conflicting-values.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Iota"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Iota", "source_text": "Synthetic Patient Iota", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "7.0 %", "normalized_value": "7.0", "unit": "%", "source_text": "7.0 %", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "7.8 %", "normalized_value": "7.8", "unit": "%", "source_text": "7.8 %", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "blood_pressure", "raw_value": "120/80 mmHg", "normalized_value": "120/80", "unit": "mmHg", "source_text": "120/80 mmHg", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "blood_pressure", "raw_value": "138/88 mmHg", "normalized_value": "138/88", "unit": "mmHg", "source_text": "138/88 mmHg", "source_category": "QUERY_RESULT", "page": 0}
+      ]
+    },
+    {
+      "file": "13-incomplete-lab-row.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Xi"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Xi", "source_text": "Patient Name: Synthetic Patient Xi", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "blood_glucose", "raw_value": "142", "source_text": "Blood Glucose | 142", "source_category": "CELL", "page": 0}
+      ]
+    },
+    {
+      "file": "14-incomplete-medication-row.jpg",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient Omicron"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Omicron", "source_text": "Patient Name: Synthetic Patient Omicron", "source_category": "QUERY_RESULT", "page": 0},
+        {"canonical_field": "medication", "raw_value": "SyntheticMed Kappa", "normalized_value": "SyntheticMed Kappa", "source_text": "SyntheticMed Kappa | 20 mg | Oral", "source_category": "CELL", "page": 0}
+      ]
+    },
+    {
+      "file": "15-identity-mismatch.png",
+      "patient_binding_matches": false,
+      "bound_identity": {"patient_name": "Synthetic Patient Bound", "aadhaar_abha_id": "99-0000-0000-0099"},
+      "fields": [
+        {"canonical_field": "patient_name", "raw_value": "Synthetic Patient Mismatch", "source_text": "Patient Name: Synthetic Patient Mismatch", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "aadhaar_abha_id", "raw_value": "99-0000-0000-0015", "normalized_value": "99-0000-0000-0015", "source_text": "Health ID: 99-0000-0000-0015", "source_category": "KEY_VALUE_SET", "page": 0},
+        {"canonical_field": "hba1c", "raw_value": "6.5 %", "normalized_value": "6.5", "unit": "%", "source_text": "HbA1c: 6.5 %", "source_category": "KEY_VALUE_SET", "page": 0}
+      ]
+    }
+  ],
+  "gates": {
+    "field_detection_precision": 0.80,
+    "field_detection_recall": 0.75,
+    "exact_raw_value_accuracy": 0.70,
+    "normalized_value_accuracy": 0.80,
+    "unit_accuracy": 0.85,
+    "repeated_field_recall": 0.60,
+    "source_text_accuracy": 0.70,
+    "page_accuracy": 1.00,
+    "bounding_box_presence_and_validity": 0.90,
+    "field_confidence_provenance": 0.90,
+    "patient_identity_mismatch_detection": 1.00
+  }
+}

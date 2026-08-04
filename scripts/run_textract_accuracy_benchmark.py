@@ -113,7 +113,7 @@ async def run(
             counts["normalized_exact"] += item.normalized_value == match.get(
                 "normalized_value"
             )
-            counts["unit_exact"] += item.normalized_unit == match.get("unit")
+            counts["unit_exact"] += item.raw_unit == match.get("unit")
             counts["source_exact"] += item.source_text == match.get(
                 "source_text", match["raw_value"]
             )

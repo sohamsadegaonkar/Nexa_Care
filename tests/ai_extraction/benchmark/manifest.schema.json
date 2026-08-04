@@ -13,7 +13,7 @@
           "file": {"type": "string"},
           "patient_binding_matches": {"type": "boolean"},
           "bound_identity": {"type": "object", "propertyNames": {"enum": ["patient_name", "phone", "aadhaar_abha_id"]}, "additionalProperties": {"type": "string"}},
-          "fields": {"type": "array", "items": {"type": "object", "required": ["canonical_field", "raw_value"], "properties": {"canonical_field": {"type": "string"}, "raw_value": {"type": "string"}, "source_text": {"type": "string"}, "normalized_value": {"type": ["string", "null"]}, "unit": {"type": ["string", "null"]}, "page": {"type": ["integer", "null"]}}}}
+          "fields": {"type": "array", "items": {"type": "object", "required": ["canonical_field", "raw_value", "page"], "properties": {"canonical_field": {"type": "string"}, "raw_value": {"type": "string"}, "source_text": {"type": "string"}, "source_category": {"enum": ["QUERY_RESULT", "KEY_VALUE_SET", "CELL"]}, "normalized_value": {"type": ["string", "null"]}, "unit": {"type": ["string", "null"]}, "page": {"type": ["integer", "null"]}}}}
         }
       }
     },
