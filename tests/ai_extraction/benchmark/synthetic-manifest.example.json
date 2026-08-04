@@ -1,0 +1,13 @@
+{
+  "documents": [
+    {
+      "file": "synthetic-lab.png",
+      "patient_binding_matches": true,
+      "bound_identity": {"patient_name": "Synthetic Patient"},
+      "fields": [
+        {"canonical_field": "hba1c", "raw_value": "7.2 %", "normalized_value": "7.2", "unit": "%", "page": 0}
+      ]
+    }
+  ],
+  "gates": {"field_detection_precision": 0.9, "field_detection_recall": 0.9}
+}

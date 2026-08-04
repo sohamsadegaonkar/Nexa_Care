@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Synthetic Textract accuracy benchmark manifest",
+  "type": "object",
+  "required": ["documents", "gates"],
+  "properties": {
+    "documents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "patient_binding_matches", "fields"],
+        "properties": {
+          "file": {"type": "string"},
+          "patient_binding_matches": {"type": "boolean"},
+          "bound_identity": {"type": "object", "propertyNames": {"enum": ["patient_name", "phone", "aadhaar_abha_id"]}, "additionalProperties": {"type": "string"}},
+          "fields": {"type": "array", "items": {"type": "object", "required": ["canonical_field", "raw_value"], "properties": {"canonical_field": {"type": "string"}, "raw_value": {"type": "string"}, "source_text": {"type": "string"}, "normalized_value": {"type": ["string", "null"]}, "unit": {"type": ["string", "null"]}, "page": {"type": ["integer", "null"]}}}}
+        }
+      }
+    },
+    "gates": {"type": "object", "additionalProperties": {"type": "number", "minimum": 0, "maximum": 1}}
+  }
+}

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict
 
@@ -79,7 +79,12 @@ def adapt_current_extracted_field(
         if provider_evidence
         else binding.model_version
     )
-    if not provider_name or not model_name or not model_version or model_version == "unknown":
+    if (
+        not provider_name
+        or not model_name
+        or not model_version
+        or model_version == "unknown"
+    ):
         model_issues.add(EvidenceIssue.PROVIDER_PROVENANCE_INCOMPLETE)
 
     page_number = provider_evidence.page_number if provider_evidence else None
@@ -92,13 +97,15 @@ def adapt_current_extracted_field(
     if not source_text:
         visual_issues.add(EvidenceIssue.SOURCE_TEXT_UNAVAILABLE)
     coverage = (
-        VisualCoverage.COMPLETE
-        if not visual_issues
-        else VisualCoverage.UNAVAILABLE
+        VisualCoverage.COMPLETE if not visual_issues else VisualCoverage.UNAVAILABLE
     )
 
     return ExtractedFieldEvidence(
-        evidence_id=str(uuid4()),
+        evidence_id=str(
+            uuid5(NAMESPACE_URL, f"nexa-textract:{provider_evidence.evidence_hash}")
+            if provider_evidence and provider_evidence.evidence_hash
+            else uuid4()
+        ),
         identity=IdentityEvidence(
             patient_id=binding.patient_id,
             tenant_id=binding.tenant_id,
@@ -114,8 +121,21 @@ def adapt_current_extracted_field(
         clinical_value=ClinicalValueEvidence(
             field_name=field_name,
             raw_value=raw_value,
-            normalized_value=None,
-            normalization_status=NormalizationStatus.UNRESOLVED,
+            normalized_value=(
+                provider_evidence.normalized_value if provider_evidence else None
+            ),
+            raw_unit=(provider_evidence.raw_unit if provider_evidence else None),
+            normalized_unit=(
+                provider_evidence.normalized_unit if provider_evidence else None
+            ),
+            reference_range=(
+                provider_evidence.reference_range if provider_evidence else None
+            ),
+            normalization_status=(
+                NormalizationStatus.NORMALIZED
+                if provider_evidence and provider_evidence.normalized_value is not None
+                else NormalizationStatus.UNRESOLVED
+            ),
         ),
         visual=VisualEvidence(
             page_number=page_number,

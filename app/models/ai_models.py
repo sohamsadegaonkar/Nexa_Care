@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -24,6 +25,14 @@ class ProviderFieldEvidence(BaseModel):
     provider_api_version: str
     extraction_timestamp: datetime
     evidence_hash: str | None = None
+    source_type: Literal["QUERY_RESULT", "KEY_VALUE_SET", "CELL"] | None = None
+    source_block_ids: tuple[str, ...] = ()
+    normalized_value: str | None = None
+    raw_unit: str | None = None
+    normalized_unit: str | None = None
+    reference_range: str | None = None
+    structured_value: dict[str, str | bool | None] | None = None
+    incomplete: bool = False
 
 
 class ExtractedMedicalDocument(BaseModel):
@@ -43,12 +52,8 @@ class ExtractedMedicalDocument(BaseModel):
         ..., description="Aadhaar or ABHA identifier if present"
     )
     phone: str = Field(..., description="Indian phone number if present")
-    diagnoses: list[str] = Field(
-        ..., description="Directly written diagnoses only"
-    )
-    lab_results: list[str] = Field(
-        ..., description="Lab result summaries"
-    )
+    diagnoses: list[str] = Field(..., description="Directly written diagnoses only")
+    lab_results: list[str] = Field(..., description="Lab result summaries")
     prescriptions: list[str] = Field(
         ..., description="Medication or prescription entries"
     )

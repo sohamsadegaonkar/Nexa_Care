@@ -174,6 +174,15 @@ def test_textract_config_uses_default_region_without_api_key(monkeypatch):
     assert config.aws_region == "ap-south-1"
 
 
+def test_textract_client_uses_normal_sdk_chain_without_static_credentials():
+    with patch("app.ai.extractor.boto3.client", return_value=Mock()) as create:
+        AwsTextractExtractionProvider(textract_config())._get_client()
+    kwargs = create.call_args.kwargs
+    assert "aws_access_key_id" not in kwargs
+    assert "aws_secret_access_key" not in kwargs
+    assert "aws_session_token" not in kwargs
+
+
 @pytest.mark.asyncio
 async def test_textract_query_maps_authentic_field_evidence():
     client = Mock()
@@ -193,6 +202,9 @@ async def test_textract_query_maps_authentic_field_evidence():
     }
     assert item.field_confidence == pytest.approx(0.974)
     assert result.extraction_confidence is None
+    request = client.analyze_document.call_args.kwargs
+    assert request["FeatureTypes"] == ["QUERIES", "FORMS", "TABLES"]
+    assert request["QueriesConfig"]["Queries"][0]["Pages"] == ["1"]
 
 
 @pytest.mark.asyncio
@@ -242,6 +254,7 @@ async def test_textract_empty_answer_is_omitted():
 @pytest.mark.asyncio
 async def test_textract_timeout_is_stable_and_retryable():
     provider = AwsTextractExtractionProvider(textract_config(max_attempts=1), Mock())
+
     async def fail_wait(awaitable, *, timeout):
         _ = timeout
         awaitable.close()

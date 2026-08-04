@@ -1,0 +1,9 @@
+{
+  "AnalyzeDocumentModelVersion": "synthetic-1",
+  "DocumentMetadata": {"Pages": 1},
+  "Blocks": [
+    {"BlockType": "QUERY", "Id": "query-medication", "Query": {"Alias": "medication", "Text": "What medication name and dose are directly written?"}, "Relationships": [{"Type": "ANSWER", "Ids": ["answer-medication-1", "answer-medication-2"]}]},
+    {"BlockType": "QUERY_RESULT", "Id": "answer-medication-1", "Text": "Synthetic Drug A 5 mg", "Confidence": 98.0, "Page": 1, "Geometry": {"BoundingBox": {"Left": 0.1, "Top": 0.2, "Width": 0.3, "Height": 0.05}}},
+    {"BlockType": "QUERY_RESULT", "Id": "answer-medication-2", "Text": "Synthetic Drug B 10 mg", "Confidence": 96.0, "Page": 1, "Geometry": {"BoundingBox": {"Left": 0.1, "Top": 0.3, "Width": 0.3, "Height": 0.05}}}
+  ]
+}

@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import math
 import random
 import time
 from abc import ABC, abstractmethod
@@ -29,9 +28,9 @@ from botocore.exceptions import (
 )
 from pydantic import ValidationError
 
+from app.ai.textract_parser import parse_textract_blocks
 from app.core.config import DocumentExtractionConfig, get_document_extraction_config
-from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
-from app.models.field_evidence import NormalizedBoundingBox
+from app.models.ai_models import ExtractedMedicalDocument
 
 logger = logging.getLogger("nexa_logger")
 
@@ -81,7 +80,7 @@ TEXTRACT_SUPPORTED_MIME_TYPES = frozenset(
 # synchronous limit of 15 queries per page.
 TEXTRACT_PILOT_QUERIES: tuple[tuple[str, str], ...] = (
     ("patient_name", "What is the patient name?"),
-    ("phone", "What is the patient phone number or patient identifier?"),
+    ("phone", "What patient phone or mobile number is directly written?"),
     ("aadhaar_abha_id", "What is the ABHA identifier?"),
     ("hba1c", "What is the HbA1c result, including units?"),
     ("blood_glucose", "What is the blood glucose result, including units?"),
@@ -264,103 +263,47 @@ class AwsTextractExtractionProvider(ExtractionProvider):
         if metadata.get("Pages") != 1:
             raise InvalidDocumentError("Document must contain exactly one page")
 
-        by_id = {
-            block.get("Id"): block
-            for block in blocks
-            if isinstance(block, dict) and isinstance(block.get("Id"), str)
-        }
         extracted_at = datetime.now(timezone.utc)
         model_version = response.get("AnalyzeDocumentModelVersion")
         if not isinstance(model_version, str) or not model_version.strip():
             model_version = "unknown"
 
-        evidence: list[ProviderFieldEvidence] = []
-        identity: dict[str, str] = {}
-        for query in blocks:
-            if not isinstance(query, dict) or query.get("BlockType") != "QUERY":
-                continue
-            query_data = query.get("Query")
-            if not isinstance(query_data, dict):
-                continue
-            alias = query_data.get("Alias")
-            if alias not in {item[0] for item in TEXTRACT_PILOT_QUERIES}:
-                continue
-            answer_ids = [
-                answer_id
-                for relationship in query.get("Relationships", [])
-                if isinstance(relationship, dict)
-                and relationship.get("Type") == "ANSWER"
-                for answer_id in relationship.get("Ids", [])
-                if isinstance(answer_id, str)
-            ]
-            for answer_id in answer_ids:
-                answer = by_id.get(answer_id)
-                if not isinstance(answer, dict) or answer.get("BlockType") != "QUERY_RESULT":
-                    continue
-                text = answer.get("Text")
-                if not isinstance(text, str) or not text.strip():
-                    continue
-                raw_value = text.strip()
-
-                confidence_raw = answer.get("Confidence")
-                field_confidence = (
-                    float(confidence_raw) / 100.0
-                    if isinstance(confidence_raw, (int, float))
-                    and not isinstance(confidence_raw, bool)
-                    and math.isfinite(float(confidence_raw))
-                    and 0 <= float(confidence_raw) <= 100
-                    else None
-                )
-                page_raw = answer.get("Page")
-                page_number = (
-                    int(page_raw) - 1
-                    if isinstance(page_raw, int)
-                    and not isinstance(page_raw, bool)
-                    and page_raw >= 1
-                    else None
-                )
-
-                bbox_model: NormalizedBoundingBox | None = None
-                geometry = answer.get("Geometry")
-                bbox = geometry.get("BoundingBox") if isinstance(geometry, dict) else None
-                if isinstance(bbox, dict):
-                    try:
-                        left = float(bbox["Left"])
-                        top = float(bbox["Top"])
-                        width = float(bbox["Width"])
-                        height = float(bbox["Height"])
-                        bbox_model = NormalizedBoundingBox(
-                            left=left,
-                            top=top,
-                            right=left + width,
-                            bottom=top + height,
-                        )
-                    except (KeyError, TypeError, ValueError, ValidationError):
-                        bbox_model = None
-
-                item = ProviderFieldEvidence(
-                    canonical_field_name=alias,
-                    raw_value=raw_value,
-                    source_text=text,
-                    page_number=page_number,
-                    bounding_box=bbox_model,
-                    field_confidence=field_confidence,
-                    provider_name="aws_textract",
-                    provider_api_version=model_version,
-                    extraction_timestamp=extracted_at,
-                )
-                evidence.append(item)
-                if alias in _IDENTITY_FIELDS and alias not in identity:
-                    identity[alias] = raw_value
-                break
+        evidence = parse_textract_blocks(
+            blocks, extracted_at=extracted_at, model_version=model_version
+        )
+        identity = {
+            field: next(
+                (
+                    item.raw_value
+                    for item in evidence
+                    if item.canonical_field_name == field
+                ),
+                "",
+            )
+            for field in _IDENTITY_FIELDS
+        }
 
         return ExtractedMedicalDocument(
             patient_name=identity.get("patient_name", ""),
             phone=identity.get("phone", ""),
             aadhaar_abha_id=identity.get("aadhaar_abha_id", ""),
-            diagnoses=[],
-            lab_results=[],
-            prescriptions=[],
+            # Compatibility summaries only; field_evidence is authoritative.
+            diagnoses=[
+                item.raw_value
+                for item in evidence
+                if item.canonical_field_name == "diagnosis"
+            ],
+            lab_results=[
+                item.raw_value
+                for item in evidence
+                if item.source_type == "CELL"
+                and item.canonical_field_name != "medication"
+            ],
+            prescriptions=[
+                item.raw_value
+                for item in evidence
+                if item.canonical_field_name == "medication"
+            ],
             extraction_confidence=None,
             field_evidence=evidence,
         )
@@ -382,7 +325,7 @@ class AwsTextractExtractionProvider(ExtractionProvider):
                     asyncio.to_thread(
                         client.analyze_document,
                         Document={"Bytes": document_bytes},
-                        FeatureTypes=["QUERIES"],
+                        FeatureTypes=["QUERIES", "FORMS", "TABLES"],
                         QueriesConfig={
                             "Queries": [
                                 {"Alias": alias, "Text": question, "Pages": ["1"]}

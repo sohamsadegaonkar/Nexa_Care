@@ -46,7 +46,7 @@ queue are not clinical-ingestion authorities.
 
 | API | Wired? | What It Does |
 |---|---|---|
-| Amazon Textract | **Adapter implemented; live AWS proof pending credentials** | Synchronous `AnalyzeDocument` Queries return controlled pilot candidates with authentic field confidence and visual evidence. Output remains untrusted until clinician adjudication. |
+| Amazon Textract | **Structured adapter implemented; live accuracy qualification pending** | Synchronous single-page `AnalyzeDocument` uses `QUERIES`, `FORMS`, and `TABLES`. Provider-authentic candidates remain untrusted until protected source review and clinician submission. |
 | Remote Document AI / VLM | **Compatibility adapter retained** | Existing remote deployments remain supported; absent field evidence stays explicitly unavailable and routes fail closed. |
 | Supabase Auth | ✅ Yes | JWT verification, user management |
 | Supabase PostgREST | ✅ Yes | Immutable hash-chained audit ledger writes |
@@ -200,8 +200,8 @@ policies, roles, documents, patient records, review.
 ## Key Design Decisions
 
 1. **No local ML** — the real pilot uses Amazon Textract `AnalyzeDocument`
-   with nine controlled Queries. Blocking SDK work runs outside the async event
-   loop with bounded timeouts and retries.
+   with nine controlled Queries plus Forms and Tables. Blocking SDK work runs
+   outside the async event loop with bounded timeouts and retries.
 
 2. **Runtime auto-commit disabled** — the current runtime does not
    automatically commit extracted clinical candidates. Missing or incomplete
@@ -249,13 +249,29 @@ configuration or logs. The minimum IAM statement is:
 
 AWS synchronous Textract supports JPEG, PNG, PDF, and TIFF, up to 10 MB in
 memory; PDF/TIFF are limited to one page, with at most 15 queries per page.
-This first UI deliberately accepts only single-page PDF/PNG/JPEG and never
+This adapter deliberately accepts only single-page PDF/PNG/JPEG/TIFF and never
 silently truncates a multi-page file.
+
+The block graph is indexed once by Textract block ID. It follows only returned
+query/answer, key/value, table/cell, merged-cell, word, line, and selection
+relationships. Repeated answers and rows remain independent candidates;
+deduplication occurs only when canonical value and exact evidence identity are
+identical. Conflicting values are never selected or reconciled automatically.
+
+Each candidate retains exact raw and source text, zero-based page, validated
+normalized bounding box, genuine source-block confidence when present, model
+version, timestamp, source type and block IDs, and a deterministic evidence
+hash. Missing evidence remains missing. Deterministic normalization is a
+separate conservative layer: it recognizes only directly written, unambiguous
+formats and never guesses units, converts laboratory units, completes
+medications, or infers diagnoses. Extracted identity is an OCR fact distinct
+from the server-side patient/job/document binding.
 
 Milestone status:
 
 - Adapter implemented.
-- Automated provider-response tests completed locally.
+- Production parser fixture tests cover graph interpretation; these are not OCR
+  or live Textract accuracy results.
 - Live AWS synthetic-document verification pending authorized credentials and
   a synthetic input.
 - Runtime AUTO_COMMIT remains disabled.
@@ -263,10 +279,11 @@ Milestone status:
 
 ---
 
-## Ground-Truth Accuracy
+## Historical deterministic-rule coverage (not OCR accuracy)
 
-Measured by running actual WS5 engine code against 85 test cases.
-Not synthetic — every number comes from the real engine.
+The historical 85-case suite measures deterministic validation, routing, and
+conflict-rule behavior. It does not measure OCR, Textract field extraction,
+table reconstruction, or production accuracy and must not be quoted as such.
 
 | Component | Accuracy |
 |---|---|
@@ -276,6 +293,24 @@ Not synthetic — every number comes from the real engine.
 | Conflict Detector | 100.0% (5/5) |
 | Full Pipeline E2E | 100.0% (7/7) |
 | **Overall** | **100.0% (85/85)** |
+
+## Live synthetic accuracy benchmark
+
+`scripts/run_textract_accuracy_benchmark.py` is an explicit opt-in harness that
+uses the real `AwsTextractExtractionProvider` and normal AWS SDK credential
+chain against a caller-supplied directory of synthetic single-page documents.
+Its field-level manifest schema lives under `tests/ai_extraction/benchmark/`.
+It prints aggregate metrics only, exits non-zero when configured gates fail,
+and must never receive real patient documents. It is excluded from normal unit
+tests and deployment automation.
+
+The benchmark reports field precision/recall, exact raw and normalized value
+accuracy, unit accuracy, repeated-field recall, table-row and source-text
+accuracy, page and bounding-box quality, confidence provenance, false-positive
+rate, identity-mismatch detection, and fail-closed rate separately. No
+Textract accuracy percentage exists until this live synthetic benchmark has
+actually run. Parser fixture coverage proves deterministic response handling
+only.
 ## Adversarial evidence catalog
 
 Milestone 0 defines a canonical 24-scenario adversarial catalog under
