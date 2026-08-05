@@ -15,6 +15,7 @@ import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import boto3
@@ -232,12 +233,17 @@ class AwsTextractExtractionProvider(ExtractionProvider):
     """Synchronous single-page Textract Queries adapter."""
 
     def __init__(
-        self, config: DocumentExtractionConfig, client: Any | None = None
+        self,
+        config: DocumentExtractionConfig,
+        client: Any | None = None,
+        *,
+        successful_response_observer: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         if config.provider != "aws_textract":
             raise ValueError("Textract extraction requires aws_textract configuration")
         self.config = config
         self._client = client
+        self._successful_response_observer = successful_response_observer
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -339,6 +345,8 @@ class AwsTextractExtractionProvider(ExtractionProvider):
                     timeout=self.config.timeout_seconds,
                 )
                 result = self._parse_response(response)
+                if self._successful_response_observer is not None:
+                    self._successful_response_observer(response)
                 logger.info(
                     json.dumps(
                         {

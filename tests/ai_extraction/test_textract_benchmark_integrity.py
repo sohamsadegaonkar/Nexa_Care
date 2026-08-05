@@ -17,6 +17,7 @@ from scripts.run_textract_accuracy_benchmark import (
     INTERNAL_ERROR_CODE,
     benchmark_exit_code,
     evaluate_gates,
+    _edit_distance_bucket,
     run_benchmark,
 )
 
@@ -321,7 +322,7 @@ async def test_case_level_unmatched_and_support_diagnostics_are_value_free():
     }
     serialized = json.dumps(result, sort_keys=True)
     assert "unmatched synthetic value" not in serialized
-    assert "form" not in serialized and "query" not in serialized
+    assert '"form"' not in serialized and '"query"' not in serialized
 
 
 @pytest.mark.asyncio
@@ -384,3 +385,61 @@ async def test_deliberate_identity_mismatch_case_is_still_classified_correctly()
     assert result["identity_cases_correct"] == 1
     assert result["identity_cases_incorrect"] == 0
     assert result["identity_incorrect_case_indexes"] == []
+
+
+@pytest.mark.parametrize(
+    ("distance", "bucket"),
+    [(0, "0"), (1, "1"), (2, "2"), (3, "3_to_5"), (5, "3_to_5"), (6, "greater_than_5")],
+)
+def test_edit_distance_bucket_boundaries(distance, bucket):
+    assert _edit_distance_bucket(distance) == bucket
+
+
+@pytest.mark.asyncio
+async def test_unmatched_pair_and_query_diagnostics_are_aggregate_only():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    query = document.field_evidence[1].model_copy(
+        update={
+            "raw_value": "7.2%",
+            "normalized_value": "7.2",
+            "source_type": "QUERY_RESULT",
+            "source_text": "7.2%",
+            "source_block_ids": ("query-only",),
+        }
+    )
+    document.field_evidence[1] = query
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([document]))
+
+    pair = result["unmatched_pair_diagnostics"][0]
+    assert pair["case_index"] == 1
+    assert pair["canonical_field"] == "hba1c"
+    assert pair["boolean_counts"]["normalized_value_equal"]["true"] == 1
+    assert pair["boolean_counts"]["punctuation_stripped_raw_equal"]["true"] == 1
+    assert pair["edit_distance_bucket_counts"] == {"1": 1}
+    query_diagnostic = result["unmatched_query_candidate_diagnostics"][0]
+    assert query_diagnostic["source_signature"] == "QUERY_RESULT"
+    assert query_diagnostic["compatible_form_or_table_evidence"] is False
+    assert result["query_only_candidate_count_by_canonical_field"] == {"hba1c": 1}
+    serialized = json.dumps(result, sort_keys=True)
+    assert "7.2%" not in serialized
+    assert "query-only" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_identity_failure_diagnostics_do_not_expose_identity_values():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    document.field_evidence[0] = document.field_evidence[0].model_copy(
+        update={"raw_value": "Synthetic Patient Altered"}
+    )
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([document]))
+    diagnostic = result["identity_failure_diagnostics"][0]
+    assert diagnostic["case_index"] == 1
+    assert diagnostic["canonical_field"] == "patient_name"
+    assert diagnostic["status"] == "nonmatching"
+    serialized = json.dumps(diagnostic, sort_keys=True)
+    assert "Synthetic Patient" not in serialized
+    assert "Altered" not in serialized

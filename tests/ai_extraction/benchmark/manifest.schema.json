@@ -2,8 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Synthetic Textract accuracy benchmark manifest",
   "type": "object",
-  "required": ["documents", "minimum_gates", "maximum_gates"],
+  "required": ["synthetic_only", "documents", "minimum_gates", "maximum_gates"],
   "properties": {
+    "synthetic_only": {"const": true},
     "documents": {
       "type": "array",
       "items": {

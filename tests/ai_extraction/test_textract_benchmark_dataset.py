@@ -66,6 +66,8 @@ def _validate_schema(value: Any, schema: dict[str, Any], path: str = "$") -> Non
         assert any(_matches_type(value, choice) for choice in choices), path
     if "enum" in schema:
         assert value in schema["enum"], path
+    if "const" in schema:
+        assert value == schema["const"], path
     if isinstance(value, dict):
         for required in schema.get("required", []):
             assert required in value, f"{path}.{required}"

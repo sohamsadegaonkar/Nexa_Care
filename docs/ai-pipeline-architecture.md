@@ -340,6 +340,25 @@ it now groups before routing and carries all supporting hashes and block IDs.
 No production accuracy claim may be made. A live rerun remains pending separate
 authorization.
 
+The latest authorized diagnostic baseline reached 15/15 provider success with
+97 evidence records, 63 semantic candidates, 34 provenance duplicates, and
+49/53 exact matches. Exact occurrence precision was `0.7777777777777778`,
+recall `0.9245283018867925`, page accuracy was `1.0` with 97/97 pages present,
+source-text accuracy was `0.5510204081632653`, and identity detection was
+`0.9333333333333333`. Source-text accuracy, exact occurrence recall and
+identity detection remain below qualification; case 12 and Query false
+positives remain unresolved. This is not a production accuracy claim.
+
+The benchmark has an explicit synthetic-only sanitized replay boundary.
+Capture is repository-corpus scoped, occurs only after successful provider
+parsing, strips request/provider metadata, canonicalizes IDs and relationships,
+and atomically requires the complete corpus. Offline replay validates the exact
+fixture set and invokes the same parser with zero AWS calls. Replay fixtures
+are synthetic test assets, never clinical records, and are not selectable by
+production configuration. Unmatched, Query and identity diagnostics contain
+only ordinals, canonical fields, source-type signatures, booleans, buckets and
+counts; they never expose clinical values or provenance identifiers.
+
 The corrected case diagnostic subsequently reported 63 semantic candidates,
 34 duplicate-provenance records, 49 exact matches, 14 unmatched candidates,
 four unmatched expectations and 97/97 missing pages. Document 15's deliberate

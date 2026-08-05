@@ -5,7 +5,11 @@ from pathlib import Path
 import pytest
 
 from app.ai.extraction_normalization import normalize_extracted_value
-from app.ai.textract_parser import TextractBlockGraph, parse_textract_blocks
+from app.ai.textract_parser import (
+    TextractBlockGraph,
+    compose_form_source_text,
+    parse_textract_blocks,
+)
 
 
 BOX = {"BoundingBox": {"Left": 0.1, "Top": 0.1, "Width": 0.1, "Height": 0.05}}
@@ -43,6 +47,22 @@ def parse(blocks, *, validated_document_page_count=None):
         model_version="1.0",
         validated_document_page_count=validated_document_page_count,
     )
+
+
+@pytest.mark.parametrize(
+    ("key", "raw", "expected"),
+    [
+        ("Patient Name:", "Synthetic Patient", "Patient Name: Synthetic Patient"),
+        ("Patient Name：", "Synthetic Patient", "Patient Name： Synthetic Patient"),
+        ("Result -", "7.2 %", "Result - 7.2 %"),
+        ("Result –", "7.2 %", "Result – 7.2 %"),
+        ("Result", "7.2 %", "Result: 7.2 %"),
+        ("  Result:  ", " 7.2 % ", "Result:  7.2 % "),
+        ("   ", "7.2 %", "7.2 %"),
+    ],
+)
+def test_form_source_text_delimiter_composition(key, raw, expected):
+    assert compose_form_source_text(key, raw) == expected
 
 
 def test_synthetic_json_fixture_exercises_production_parser():

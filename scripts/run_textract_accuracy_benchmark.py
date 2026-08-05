@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import mimetypes
+import re
 import sys
 import traceback
 from collections import Counter
@@ -29,6 +30,14 @@ from app.ai.extractor import (  # noqa: E402
 )
 from app.core.config import DocumentExtractionConfig  # noqa: E402
 from app.ai.semantic_evidence import group_semantic_candidates  # noqa: E402
+from app.ai.extraction_normalization import normalize_extracted_value  # noqa: E402
+from app.ai.medical_validator import validate_field  # noqa: E402
+from scripts.textract_sanitized_replay import (  # noqa: E402
+    CaseIndexedCaptureProvider,
+    SanitizedCaptureSession,
+    SanitizedReplayProvider,
+    validate_synthetic_benchmark_scope,
+)
 
 ACCURACY_METRICS = (
     "canonical_field_presence_recall",
@@ -106,6 +115,64 @@ def _empty_accuracy_metrics() -> dict[str, None]:
     return dict.fromkeys(ACCURACY_METRICS)
 
 
+def _edit_distance(left: str, right: str) -> int:
+    previous = list(range(len(right) + 1))
+    for left_index, left_character in enumerate(left, start=1):
+        current = [left_index]
+        for right_index, right_character in enumerate(right, start=1):
+            current.append(
+                min(
+                    current[-1] + 1,
+                    previous[right_index] + 1,
+                    previous[right_index - 1] + (left_character != right_character),
+                )
+            )
+        previous = current
+    return previous[-1]
+
+
+def _edit_distance_bucket(distance: int) -> str:
+    if distance <= 2:
+        return str(distance)
+    if distance <= 5:
+        return "3_to_5"
+    return "greater_than_5"
+
+
+def _comparison_flags(
+    *,
+    expected_raw: str,
+    candidate_raw: str,
+    expected_normalized: str | None,
+    candidate_normalized: str | None,
+    expected_unit: str | None,
+    candidate_unit: str | None,
+) -> dict[str, bool | str]:
+    def collapse(value: str) -> str:
+        return " ".join(value.split())
+
+    def strip_punctuation(value: str) -> str:
+        return collapse(re.sub(r"[^\w\s]", "", value))
+
+    return {
+        "normalized_value_equal": expected_normalized is not None
+        and expected_normalized == candidate_normalized,
+        "normalized_unit_equal": expected_unit == candidate_unit,
+        "whitespace_collapsed_raw_equal": collapse(expected_raw)
+        == collapse(candidate_raw),
+        "casefold_raw_equal": expected_raw.casefold() == candidate_raw.casefold(),
+        "punctuation_stripped_raw_equal": strip_punctuation(expected_raw)
+        == strip_punctuation(candidate_raw),
+        "expected_raw_contained_in_candidate": expected_raw in candidate_raw,
+        "candidate_raw_contained_in_expected": candidate_raw in expected_raw,
+        "same_token_count": len(expected_raw.split()) == len(candidate_raw.split()),
+        "same_character_length": len(expected_raw) == len(candidate_raw),
+        "edit_distance_bucket": _edit_distance_bucket(
+            _edit_distance(expected_raw, candidate_raw)
+        ),
+    }
+
+
 async def run_benchmark(
     directory: Path,
     manifest: dict[str, Any],
@@ -134,11 +201,18 @@ async def run_benchmark(
     unmatched_candidate_cases: dict[str, set[int]] = {}
     unmatched_candidate_signatures: dict[str, Counter[str]] = {}
     identity_failure_reasons: dict[str, Counter[str]] = {}
+    unmatched_pair_diagnostics: dict[tuple[int, str], dict[str, Any]] = {}
+    query_diagnostic_counts: Counter[tuple[Any, ...]] = Counter()
+    query_only_by_field: Counter[str] = Counter()
+    identity_failure_diagnostics: list[dict[str, Any]] = []
 
     for case_index, specification in enumerate(specifications, start=1):
         counts["attempted"] += 1
         expected = specification.get("fields", [])
         try:
+            set_case_index = getattr(provider, "set_benchmark_case_index", None)
+            if callable(set_case_index):
+                set_case_index(case_index)
             path = (directory / specification["file"]).resolve()
             if directory.resolve() not in path.parents or not path.is_file():
                 raise ValueError("Benchmark document path is invalid")
@@ -252,6 +326,86 @@ async def run_benchmark(
                 unmatched_candidate_signatures.setdefault(field, Counter())[
                     signature
                 ] += 1
+            if any(item.source_type == "QUERY_RESULT" for item in candidate.evidence):
+                non_query_support = any(
+                    item.source_type in {"KEY_VALUE_SET", "CELL"}
+                    for item in candidate.evidence
+                )
+                another_exact = any(
+                    candidates[matched_index].representative.canonical_field_name
+                    == field
+                    for _, matched_index in matches
+                )
+                valid_format = validate_field(
+                    field, candidate.representative.raw_value
+                ).is_valid
+                query_diagnostic_counts[
+                    (
+                        case_index,
+                        field,
+                        signature,
+                        valid_format,
+                        non_query_support,
+                        another_exact,
+                    )
+                ] += 1
+                if not non_query_support:
+                    query_only_by_field[field] += 1
+
+        matched_expected_indexes = {index for index, _ in matches}
+        fields_with_unmatched = {
+            item["canonical_field"]
+            for index, item in enumerate(expected)
+            if index not in matched_expected_indexes
+        } | {
+            candidates[index].representative.canonical_field_name for index in available
+        }
+        for field in sorted(fields_with_unmatched):
+            expected_indexes = [
+                index
+                for index, item in enumerate(expected)
+                if index not in matched_expected_indexes
+                and item["canonical_field"] == field
+            ]
+            candidate_indexes = [
+                index
+                for index in sorted(available)
+                if candidates[index].representative.canonical_field_name == field
+            ]
+            for expected_index, candidate_index in zip(
+                expected_indexes, candidate_indexes, strict=False
+            ):
+                target = expected[expected_index]
+                candidate = candidates[candidate_index].representative
+                flags = _comparison_flags(
+                    expected_raw=target["raw_value"],
+                    candidate_raw=candidate.raw_value,
+                    expected_normalized=target.get("normalized_value"),
+                    candidate_normalized=candidate.normalized_value,
+                    expected_unit=target.get("unit"),
+                    candidate_unit=candidate.normalized_unit,
+                )
+                aggregate = unmatched_pair_diagnostics.setdefault(
+                    (case_index, field),
+                    {
+                        "case_index": case_index,
+                        "canonical_field": field,
+                        "pair_count": 0,
+                        "boolean_counts": {
+                            key: {"true": 0, "false": 0}
+                            for key in flags
+                            if key != "edit_distance_bucket"
+                        },
+                        "edit_distance_bucket_counts": {},
+                    },
+                )
+                aggregate["pair_count"] += 1
+                for key, value in flags.items():
+                    if key == "edit_distance_bucket":
+                        buckets = aggregate["edit_distance_bucket_counts"]
+                        buckets[value] = buckets.get(value, 0) + 1
+                    else:
+                        aggregate["boolean_counts"][key][str(value).lower()] += 1
         counts["matched"] += len(matches)
         counts["unmatched_expected"] += len(expected) - len(matches)
         counts["unmatched_candidates"] += len(available)
@@ -338,6 +492,45 @@ async def run_benchmark(
         ] += 1
         if not identity_correct:
             identity_incorrect_case_indexes.append(case_index)
+            for key, status in sorted(identity_statuses.items()):
+                if status == "exact":
+                    continue
+                values = extracted_identity[key]
+                bound_value = bound_identity[key]
+                comparison_value = next(
+                    (value for value in sorted(values) if value != bound_value), ""
+                )
+                if comparison_value:
+                    flags = _comparison_flags(
+                        expected_raw=bound_value,
+                        candidate_raw=comparison_value,
+                        expected_normalized=normalize_extracted_value(
+                            key, bound_value
+                        ).value,
+                        candidate_normalized=normalize_extracted_value(
+                            key, comparison_value
+                        ).value,
+                        expected_unit=None,
+                        candidate_unit=None,
+                    )
+                else:
+                    flags = {
+                        "normalized_value_equal": False,
+                        "same_token_count": False,
+                        "same_character_length": False,
+                        "edit_distance_bucket": "greater_than_5",
+                    }
+                identity_failure_diagnostics.append(
+                    {
+                        "case_index": case_index,
+                        "canonical_field": key,
+                        "status": status,
+                        "normalized_equivalent": flags["normalized_value_equal"],
+                        "same_token_count": flags["same_token_count"],
+                        "same_character_length": flags["same_character_length"],
+                        "edit_distance_bucket": flags["edit_distance_bucket"],
+                    }
+                )
 
     attempted = counts["attempted"]
     successful = counts["successful"]
@@ -470,6 +663,26 @@ async def run_benchmark(
             key: dict(sorted(value.items()))
             for key, value in sorted(identity_failure_reasons.items())
         },
+        "unmatched_pair_diagnostics": [
+            unmatched_pair_diagnostics[key]
+            for key in sorted(unmatched_pair_diagnostics)
+        ],
+        "unmatched_query_candidate_diagnostics": [
+            {
+                "case_index": key[0],
+                "canonical_field": key[1],
+                "source_signature": key[2],
+                "field_format_valid": key[3],
+                "compatible_form_or_table_evidence": key[4],
+                "another_exact_candidate_for_field_matched": key[5],
+                "count": count,
+            }
+            for key, count in sorted(query_diagnostic_counts.items())
+        ],
+        "query_only_candidate_count_by_canonical_field": dict(
+            sorted(query_only_by_field.items())
+        ),
+        "identity_failure_diagnostics": identity_failure_diagnostics,
         "provider_error_counts": dict(sorted(provider_errors.items())),
         "metrics": metrics,
         "gate_results": gate_results,
@@ -485,19 +698,65 @@ async def run(
     attempts: int,
     provider: ExtractionProvider | None = None,
     debug: bool = False,
+    capture_sanitized_replay: Path | None = None,
+    replay_sanitized: Path | None = None,
 ) -> dict[str, Any]:
     """Load the manifest and run with the real provider unless one is injected."""
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    selected_provider = provider or AwsTextractExtractionProvider(
-        DocumentExtractionConfig(
-            provider="aws_textract",
-            environment="benchmark",
-            aws_region=region,
-            timeout_seconds=timeout,
-            max_attempts=attempts,
+    if capture_sanitized_replay is not None and replay_sanitized is not None:
+        raise ValueError("CAPTURE_AND_REPLAY_ARE_MUTUALLY_EXCLUSIVE")
+    if capture_sanitized_replay is not None or replay_sanitized is not None:
+        validate_synthetic_benchmark_scope(directory, manifest_path, manifest)
+    capture_session: SanitizedCaptureSession | None = None
+    if replay_sanitized is not None:
+        if provider is not None:
+            raise ValueError("REPLAY_PROVIDER_OVERRIDE_FORBIDDEN")
+        selected_provider: ExtractionProvider = SanitizedReplayProvider(
+            replay_sanitized, len(manifest.get("documents", []))
         )
+        provider_mode = "sanitized_replay"
+    elif capture_sanitized_replay is not None:
+        if provider is not None:
+            raise ValueError("CAPTURE_PROVIDER_OVERRIDE_FORBIDDEN")
+        capture_session = SanitizedCaptureSession(
+            capture_sanitized_replay, len(manifest.get("documents", []))
+        )
+        holder: dict[str, CaseIndexedCaptureProvider] = {}
+        aws_provider = AwsTextractExtractionProvider(
+            DocumentExtractionConfig(
+                provider="aws_textract",
+                environment="benchmark",
+                aws_region=region,
+                timeout_seconds=timeout,
+                max_attempts=attempts,
+            ),
+            successful_response_observer=lambda response: holder["provider"].observe(
+                response
+            ),
+        )
+        capture_provider = CaseIndexedCaptureProvider(aws_provider, capture_session)
+        holder["provider"] = capture_provider
+        selected_provider = capture_provider
+        provider_mode = "live_capture"
+    else:
+        selected_provider = provider or AwsTextractExtractionProvider(
+            DocumentExtractionConfig(
+                provider="aws_textract",
+                environment="benchmark",
+                aws_region=region,
+                timeout_seconds=timeout,
+                max_attempts=attempts,
+            )
+        )
+        provider_mode = "injected" if provider is not None else "live"
+    result = await run_benchmark(directory, manifest, selected_provider, debug=debug)
+    if capture_session is not None:
+        result["captured_fixture_count"] = capture_session.finalize()
+    result["provider_mode"] = provider_mode
+    result["live_provider_calls"] = (
+        0 if provider_mode == "sanitized_replay" else result["attempted_documents"]
     )
-    return await run_benchmark(directory, manifest, selected_provider, debug=debug)
+    return result
 
 
 def main() -> int:
@@ -507,6 +766,9 @@ def main() -> int:
     parser.add_argument("--region", default="ap-south-1")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--attempts", type=int, default=2)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--capture-sanitized-replay", type=Path)
+    modes.add_argument("--replay-sanitized", type=Path)
     parser.add_argument(
         "--debug",
         action="store_true",
@@ -525,6 +787,8 @@ def main() -> int:
                 timeout=args.timeout,
                 attempts=args.attempts,
                 debug=args.debug,
+                capture_sanitized_replay=args.capture_sanitized_replay,
+                replay_sanitized=args.replay_sanitized,
             )
         )
     except Exception as exc:  # manifest/config boundary before per-document execution
@@ -568,6 +832,10 @@ def main() -> int:
             "source_text_match_count_by_source_category": {},
             "source_text_mismatch_count_by_source_category": {},
             "identity_failure_reason_counts_by_canonical_field": {},
+            "unmatched_pair_diagnostics": [],
+            "unmatched_query_candidate_diagnostics": [],
+            "query_only_candidate_count_by_canonical_field": {},
+            "identity_failure_diagnostics": [],
             "provider_error_counts": {INTERNAL_ERROR_CODE: 1},
             "metrics": {
                 "successful_document_rate": None,
@@ -575,6 +843,10 @@ def main() -> int:
                 **_empty_accuracy_metrics(),
             },
             "gate_results": {},
+            "provider_mode": (
+                "sanitized_replay" if args.replay_sanitized is not None else "live"
+            ),
+            "live_provider_calls": 0 if args.replay_sanitized is not None else 0,
         }
     print(json.dumps(result, sort_keys=True))
     return benchmark_exit_code(result)

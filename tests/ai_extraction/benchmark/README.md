@@ -118,6 +118,30 @@ unknown. Case-level diagnostics expose only manifest ordinals, canonical field
 names, source-type signatures and numeric reason counts. No accuracy claim may
 be made; another live run requires separate authorization.
 
+The latest authorized diagnostic baseline reached 15/15 provider success with
+97 authentic evidence records, 63 semantic candidates, 34 grouped provenance
+duplicates, and 49/53 exact matches. Exact occurrence precision was
+`0.7777777777777778`, recall `0.9245283018867925`, page accuracy `1.0`, and
+page presence `97/97`. Source-text accuracy was `0.5510204081632653`; identity
+detection was `0.9333333333333333`, with case 12 remaining incorrect. The
+remaining three qualification failures are source-text accuracy, exact
+occurrence recall, and identity detection. Query false positives remain
+unresolved. No production accuracy claim is permitted.
+
+The opt-in `--capture-sanitized-replay` mode requires the repository's
+`synthetic_only` manifest and synthetic corpus, captures only after successful
+provider parsing, strips provider metadata, canonicalizes block IDs and
+relationships, and atomically requires all 15 ordinal fixtures. Partial or
+malformed sets are rejected. `--replay-sanitized` validates exactly
+`case-01.json` through `case-15.json`, feeds them through the production parser,
+and makes zero AWS/boto3 calls. Replay fixtures are synthetic test assets, never
+clinical records, and replay mode is unavailable to production configuration.
+
+Unmatched-pair, Query, and identity diagnostics expose only case ordinals,
+canonical fields, source signatures, validation booleans, edit buckets and
+counts. They never expose values, source text, filenames, IDs, hashes or
+coordinates.
+
 ## Metric denominators
 
 - Canonical presence recall uses distinct expected canonical types.

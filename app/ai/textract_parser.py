@@ -85,6 +85,15 @@ def _label(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
 
+def compose_form_source_text(key_text: str, raw_value: str) -> str:
+    """Join authentic Form key/value text without duplicating delimiters."""
+    key = key_text.strip()
+    if not key:
+        return raw_value
+    separator = " " if key.endswith((":", "：", "-", "–", "—")) else ": "
+    return f"{key}{separator}{raw_value}"
+
+
 class TextractBlockGraph:
     def __init__(
         self,
@@ -374,7 +383,7 @@ def _parse_forms(
                     _make(
                         field,
                         raw,
-                        f"{key_text}: {raw}",
+                        compose_form_source_text(key_text, raw),
                         value,
                         source_type="KEY_VALUE_SET",
                         block_ids=[
