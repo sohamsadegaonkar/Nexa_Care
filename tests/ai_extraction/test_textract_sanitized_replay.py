@@ -236,6 +236,12 @@ async def test_committed_replay_is_the_offline_qualification_baseline(monkeypatc
     assert result["routing_ineligible_count_by_reason"] == {
         "INELIGIBLE_QUERY_ONLY_INVALID_FORMAT": 5
     }
+    assert (
+        result["routing_ineligible_count_by_reason"].get(
+            "INELIGIBLE_CLASSIFICATION_FAILED", 0
+        )
+        == 0
+    )
     assert result["routing_exact_match_count"] == 49
     assert result["routing_exact_occurrence_precision"] == pytest.approx(49 / 58)
     assert result["routing_exact_occurrence_recall"] == pytest.approx(49 / 53)

@@ -426,6 +426,13 @@ interface ExtractionJobStatusResponse {
 }
 ```
 
+`ineligible_count_by_reason` may contain only the closed reasons
+`INELIGIBLE_QUERY_ONLY_INVALID_FORMAT` and
+`INELIGIBLE_CLASSIFICATION_FAILED`. The former means a malformed Query-only
+provider result; the latter means internal classification failed unexpectedly.
+No exception details or candidate data are exposed, and both outcomes remain
+non-clinical and fail-closed.
+
 Candidate status values are filtered server-side to `routing_eligible=true`.
 Clients cannot request suppressed values. The protected job document endpoint
 remains the source-review path and retains its existing authorization, consent,

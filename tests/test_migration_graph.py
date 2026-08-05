@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260806_candidate_eligibility"
+EXPECTED_HEAD = "20260806_eligibility_reason"
 
 
 def _scripts() -> ScriptDirectory:
@@ -26,10 +26,10 @@ def test_migration_chain_has_expected_single_head() -> None:
     assert _scripts().get_heads() == [EXPECTED_HEAD]
 
 
-def test_candidate_eligibility_head_descends_from_textract_candidates() -> None:
+def test_eligibility_reason_head_descends_from_candidate_eligibility() -> None:
     revision = _scripts().get_revision(EXPECTED_HEAD)
     assert revision is not None
-    assert revision.down_revision == "20260801_textract_candidates"
+    assert revision.down_revision == "20260806_candidate_eligibility"
 
 
 def test_migration_revision_ids_fit_alembic_version_column() -> None:

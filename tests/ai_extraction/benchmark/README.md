@@ -143,6 +143,11 @@ routing are unchanged, and these projections do not alter gates or
 Production eligibility is a separate, non-destructive projection. All
 non-identity candidates and authentic supporting evidence remain encrypted and
 authorization-bound in persistence, including malformed Query-only candidates.
+`INELIGIBLE_QUERY_ONLY_INVALID_FORMAT` records a provider-format validation
+failure, while `INELIGIBLE_CLASSIFICATION_FAILED` records an unexpected
+internal classifier failure. The operational reason is persisted only when
+that outcome was actually established; both cases remain fail-closed and
+non-clinical.
 Clinician views return eligible candidate values plus aggregate suppressed
 counts only; protected source review remains available. Eligibility does not
 change extraction lanes, identity handling, consent, erasure, clinical commit,

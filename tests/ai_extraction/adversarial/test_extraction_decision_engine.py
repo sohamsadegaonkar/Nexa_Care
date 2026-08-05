@@ -137,6 +137,14 @@ def test_identical_inputs_have_identical_substantive_decision_and_hashes():
     assert first.policy_configuration_hash == second.policy_configuration_hash
 
 
+def test_candidate_classification_failure_forces_quarantine_without_exception_text():
+    decision = _evaluate(
+        policy=_policy(force_quarantine=True),
+    )
+    assert decision.lane is DecisionLane.QUARANTINE
+    assert decision.reasons == (DecisionReason.ELIGIBILITY_CLASSIFICATION_FAILED,)
+
+
 def test_invalid_constructed_evidence_fails_closed_without_sensitive_reason_text():
     invalid_model = ModelEvidence.model_construct(
         extracted_at=NOW,

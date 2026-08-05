@@ -122,9 +122,7 @@ def _candidate_fields(document: Any) -> list[dict[str, Any]]:
                 classification = classify_semantic_candidate(candidate)
                 classification_failed = False
             except Exception:
-                classification = (
-                    CandidateEligibility.INELIGIBLE_QUERY_ONLY_INVALID_FORMAT
-                )
+                classification = CandidateEligibility.INELIGIBLE_CLASSIFICATION_FAILED
                 classification_failed = True
             eligible = classification is CandidateEligibility.ELIGIBLE
             candidates.append(

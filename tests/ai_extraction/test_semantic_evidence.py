@@ -1,8 +1,13 @@
 from datetime import datetime, timezone
 
 from app.ai.semantic_evidence import group_semantic_candidates
+from app.ai.candidate_eligibility import (
+    CandidateEligibility,
+    classify_semantic_candidate,
+)
 from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
 from app.models.field_evidence import NormalizedBoundingBox
+import app.services.pipeline_orchestrator as pipeline_orchestrator
 from app.services.pipeline_orchestrator import _candidate_fields
 
 
@@ -86,3 +91,34 @@ def test_production_candidate_projection_classifies_without_discarding_evidence(
     )
     assert candidate["eligibility_policy_version"] == "v1"
     assert candidate["provider_evidence"].source_text == "authentic"
+
+
+def test_pure_classifier_never_returns_internal_failure_reason():
+    candidate = group_semantic_candidates([evidence("QUERY_RESULT", 0.1, "pure")])[0]
+    assert classify_semantic_candidate(candidate) is CandidateEligibility.ELIGIBLE
+
+
+def test_classifier_exception_is_distinct_fail_closed_reason(monkeypatch):
+    invalid = evidence("KEY_VALUE_SET", 0.1, "exception")
+    document = ExtractedMedicalDocument(
+        patient_name="",
+        phone="",
+        aadhaar_abha_id="",
+        diagnoses=[],
+        lab_results=[],
+        prescriptions=[],
+        field_evidence=[invalid],
+    )
+
+    def raise_classifier(_candidate):
+        raise RuntimeError("internal-only detail")
+
+    monkeypatch.setattr(
+        pipeline_orchestrator, "classify_semantic_candidate", raise_classifier
+    )
+    candidate = _candidate_fields(document)[0]
+    assert candidate["routing_eligible"] is False
+    assert candidate["eligibility_reason_code"] == ("INELIGIBLE_CLASSIFICATION_FAILED")
+    assert candidate["eligibility_classification_failed"] is True
+    assert candidate["provider_evidence"].raw_value == invalid.raw_value
+    assert candidate["provider_evidence"].source_text == invalid.source_text

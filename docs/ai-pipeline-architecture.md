@@ -366,6 +366,11 @@ are unchanged, and these projections do not affect benchmark gates or
 Production candidate eligibility is separate from the extraction lane. Every
 non-identity semantic candidate remains evidence-bound, encrypted and persisted
 with `routing_eligible`, a closed eligibility reason, and policy version `v1`.
+Malformed Query-only provider format uses
+`INELIGIBLE_QUERY_ONLY_INVALID_FORMAT`; an unexpected internal classifier
+failure uses `INELIGIBLE_CLASSIFICATION_FAILED`. These reasons are distinct
+operational facts: neither is inferred from the other, neither exposes
+exception details, and both retain evidence while failing closed.
 Clinician candidate responses present eligible candidates only and expose safe
 suppressed counts; the protected source-document review path remains available.
 Eligibility does not change `SOURCE_ONLY` or `QUARANTINE`, identity handling,

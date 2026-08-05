@@ -114,3 +114,21 @@ def test_candidate_model_separates_eligibility_from_lane():
         for constraint in ExtractionCandidateRecord.__table__.constraints
     }
     assert "ck_extraction_candidates_eligibility" in constraints
+
+
+def test_candidate_eligibility_reason_migration_expands_and_restores_constraint():
+    code = (ROOT / "alembic/versions/20260806_eligibility_reason.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'down_revision = "20260806_candidate_eligibility"' in code
+    assert "INELIGIBLE_QUERY_ONLY_INVALID_FORMAT" in code
+    assert "INELIGIBLE_CLASSIFICATION_FAILED" in code
+    assert "Compatibility fallback" in code
+    assert "UPDATE extraction_candidates SET eligibility_reason_code" in code
+    assert "def downgrade()" in code
+
+
+def test_candidate_model_accepts_both_closed_ineligible_reasons():
+    code = (ROOT / "app/models/pipeline.py").read_text(encoding="utf-8")
+    assert "INELIGIBLE_QUERY_ONLY_INVALID_FORMAT" in code
+    assert "INELIGIBLE_CLASSIFICATION_FAILED" in code

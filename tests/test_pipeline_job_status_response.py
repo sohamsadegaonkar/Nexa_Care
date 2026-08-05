@@ -1,6 +1,15 @@
+from datetime import datetime, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
 from fastapi.routing import APIRoute
 
-from app.api.v2.pipeline_routes import ExtractionJobStatusResponse, router
+from app.api.v2.pipeline_routes import (
+    ExtractionJobStatusResponse,
+    get_extraction_job,
+    router,
+)
 
 
 def _status_response() -> ExtractionJobStatusResponse:
@@ -40,3 +49,83 @@ def test_job_status_route_enforces_the_typed_response_model() -> None:
     )
 
     assert route.response_model is ExtractionJobStatusResponse
+
+
+class _Result:
+    def __init__(self, value):
+        self.value = value
+
+    def scalar_one_or_none(self):
+        return self.value
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self.value
+
+
+class _DB:
+    def __init__(self, job, candidates):
+        self.results = [_Result(job), _Result(candidates)]
+
+    async def execute(self, _statement):
+        return self.results.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_status_suppresses_classification_failure_values_and_counts_reason():
+    patient_id = "00000000-0000-0000-0000-000000000001"
+    tenant_id = "00000000-0000-0000-0000-000000000002"
+    document_id = "00000000-0000-0000-0000-000000000003"
+    job = SimpleNamespace(
+        id="00000000-0000-0000-0000-000000000004",
+        tenant_id=tenant_id,
+        patient_id=patient_id,
+        document_id=document_id,
+        consent_request_id=None,
+        status="quarantined",
+        error_code=None,
+        document_type="lab_report",
+        extractor_provider="aws_textract",
+        extractor_version="test",
+        created_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
+    )
+    provider = SimpleNamespace(
+        actor_uid="provider-1",
+        hospital=SimpleNamespace(hospital_id=tenant_id),
+    )
+    ineligible = SimpleNamespace(
+        routing_eligible=False,
+        eligibility_reason_code="INELIGIBLE_CLASSIFICATION_FAILED",
+        job_id=job.id,
+        source_document_id=document_id,
+        patient_id=patient_id,
+        tenant_id=tenant_id,
+        authorization_provider_id=provider.actor_uid,
+        lane="QUARANTINE",
+        reason_codes=["ELIGIBILITY_CLASSIFICATION_FAILED"],
+        document_confidence=None,
+    )
+    capability = SimpleNamespace(patient_id=patient_id)
+    with (
+        patch(
+            "app.api.v2.pipeline_routes.authorize_document_processing",
+            AsyncMock(return_value=capability),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.assert_job_authorization_binding",
+        ),
+    ):
+        response = await get_extraction_job(
+            str(job.id),
+            provider=provider,
+            x_consent_token=None,
+            db=_DB(job, [ineligible]),
+        )
+
+    assert response["candidates"] == []
+    assert response["ineligible_candidate_count"] == 1
+    assert response["ineligible_count_by_reason"] == {
+        "INELIGIBLE_CLASSIFICATION_FAILED": 1
+    }

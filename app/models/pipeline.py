@@ -228,8 +228,9 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
         CheckConstraint(
             "(routing_eligible AND eligibility_reason_code IS NULL) OR "
             "(NOT routing_eligible AND eligibility_reason_code IS NOT NULL AND "
-            "eligibility_reason_code = "
-            "'INELIGIBLE_QUERY_ONLY_INVALID_FORMAT')",
+            "eligibility_reason_code IN ("
+            "'INELIGIBLE_QUERY_ONLY_INVALID_FORMAT', "
+            "'INELIGIBLE_CLASSIFICATION_FAILED')",
             name="ck_extraction_candidates_eligibility",
         ),
         Index(
