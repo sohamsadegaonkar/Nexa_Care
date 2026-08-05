@@ -270,6 +270,16 @@ formats and never guesses units, converts laboratory units, completes
 medications, or infers diagnoses. Extracted identity is an OCR fact distinct
 from the server-side patient/job/document binding.
 
+Some synchronous Textract responses contain authentic PAGE ancestry without a
+numeric `Block.Page` on the PAGE or descendant blocks. The first lineage
+implementation reached the PAGE ancestor but still returned `None` because it
+required that numeric property. The production provider now passes the already
+validated single-page `DocumentMetadata.Pages` value to the parser. A missing
+numeric page becomes zero only when the target has authentic ancestry to
+exactly one PAGE block and that block is the only PAGE in the graph. Direct
+numeric pages remain authoritative; unvalidated callers, unrelated blocks,
+multiple or ambiguous PAGE ancestry, and malformed cycles remain unknown.
+
 Milestone status:
 
 - Adapter implemented.
@@ -329,6 +339,15 @@ conflicts closed. Production staging also produced duplicate review candidates;
 it now groups before routing and carries all supporting hashes and block IDs.
 No production accuracy claim may be made. A live rerun remains pending separate
 authorization.
+
+The corrected case diagnostic subsequently reported 63 semantic candidates,
+34 duplicate-provenance records, 49 exact matches, 14 unmatched candidates,
+four unmatched expectations and 97/97 missing pages. Document 15's deliberate
+identity mismatch was correctly detected; one different synthetic case still
+failed identity evaluation. Benchmark diagnostics identify cases only by
+one-based manifest ordinal and aggregate canonical fields, identity reason
+counts and sorted source-type signatures. They never expose values, text,
+filenames, coordinates, evidence identifiers or provider request metadata.
 ## Adversarial evidence catalog
 
 Milestone 0 defines a canonical 24-scenario adversarial catalog under

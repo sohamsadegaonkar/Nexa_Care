@@ -36,11 +36,12 @@ def cell(block_id, row, col, children, confidence=96.0, block_type="CELL"):
     }
 
 
-def parse(blocks):
+def parse(blocks, *, validated_document_page_count=None):
     return parse_textract_blocks(
         blocks,
         extracted_at=datetime(2026, 8, 5, tzinfo=timezone.utc),
         model_version="1.0",
+        validated_document_page_count=validated_document_page_count,
     )
 
 
@@ -157,6 +158,128 @@ def test_page_lineage_direct_multiple_ambiguous_and_unknown():
     assert graph.page_number(graph.by_id["direct"]) == 1
     assert graph.page_number(graph.by_id["x"]) is None
     assert graph.page_number(graph.by_id["unknown"]) is None
+
+
+def test_validated_single_page_fallback_requires_authentic_unique_page_ancestry():
+    blocks = [
+        {
+            "BlockType": "PAGE",
+            "Id": "p",
+            "Relationships": [{"Type": "CHILD", "Ids": ["query", "key", "table"]}],
+        },
+        {
+            "BlockType": "QUERY",
+            "Id": "query",
+            "Relationships": [{"Type": "ANSWER", "Ids": ["answer"]}],
+        },
+        {"BlockType": "QUERY_RESULT", "Id": "answer"},
+        {
+            "BlockType": "KEY_VALUE_SET",
+            "Id": "key",
+            "Relationships": [{"Type": "VALUE", "Ids": ["value"]}],
+        },
+        {"BlockType": "KEY_VALUE_SET", "Id": "value"},
+        {
+            "BlockType": "TABLE",
+            "Id": "table",
+            "Relationships": [{"Type": "CHILD", "Ids": ["cell"]}],
+        },
+        {"BlockType": "CELL", "Id": "cell"},
+        {"BlockType": "LINE", "Id": "unrelated"},
+    ]
+    graph = TextractBlockGraph(blocks, validated_document_page_count=1)
+    assert graph.page_number(graph.by_id["answer"]) == 0
+    assert graph.page_number(graph.by_id["value"]) == 0
+    assert graph.page_number(graph.by_id["cell"]) == 0
+    assert graph.page_number(graph.by_id["unrelated"]) is None
+
+
+def test_parser_applies_validated_context_but_unvalidated_call_does_not_assume_page():
+    blocks = [
+        {
+            "BlockType": "PAGE",
+            "Id": "p",
+            "Relationships": [{"Type": "CHILD", "Ids": ["q"]}],
+        },
+        {
+            "BlockType": "QUERY",
+            "Id": "q",
+            "Query": {"Alias": "hba1c"},
+            "Relationships": [{"Type": "ANSWER", "Ids": ["a"]}],
+        },
+        {
+            "BlockType": "QUERY_RESULT",
+            "Id": "a",
+            "Text": "7.2 %",
+            "Confidence": 95.0,
+            "Geometry": BOX,
+        },
+    ]
+    assert parse(blocks)[0].page_number is None
+    assert parse(blocks, validated_document_page_count=1)[0].page_number == 0
+
+
+@pytest.mark.parametrize("validated_count", [None, 2])
+def test_missing_page_number_does_not_fallback_without_validated_single_page(
+    validated_count,
+):
+    blocks = [
+        {
+            "BlockType": "PAGE",
+            "Id": "p",
+            "Relationships": [{"Type": "CHILD", "Ids": ["x"]}],
+        },
+        {"BlockType": "WORD", "Id": "x"},
+    ]
+    graph = TextractBlockGraph(blocks, validated_document_page_count=validated_count)
+    assert graph.page_number(graph.by_id["x"]) is None
+
+
+def test_no_page_multiple_pages_and_ambiguous_ancestry_do_not_fallback():
+    no_page = TextractBlockGraph(
+        [{"BlockType": "WORD", "Id": "x"}], validated_document_page_count=1
+    )
+    assert no_page.page_number(no_page.by_id["x"]) is None
+    blocks = [
+        {
+            "BlockType": "PAGE",
+            "Id": "p1",
+            "Relationships": [{"Type": "CHILD", "Ids": ["x"]}],
+        },
+        {
+            "BlockType": "PAGE",
+            "Id": "p2",
+            "Relationships": [{"Type": "CHILD", "Ids": ["x"]}],
+        },
+        {"BlockType": "WORD", "Id": "x"},
+    ]
+    graph = TextractBlockGraph(blocks, validated_document_page_count=1)
+    assert graph.page_number(graph.by_id["x"]) is None
+
+
+def test_direct_page_wins_and_cycles_remain_safe_with_validated_context():
+    blocks = [
+        {
+            "BlockType": "PAGE",
+            "Id": "p",
+            "Relationships": [{"Type": "CHILD", "Ids": ["a"]}],
+        },
+        {
+            "BlockType": "WORD",
+            "Id": "a",
+            "Page": 2,
+            "Relationships": [{"Type": "CHILD", "Ids": ["b"]}],
+        },
+        {
+            "BlockType": "WORD",
+            "Id": "b",
+            "Relationships": [{"Type": "CHILD", "Ids": ["a"]}],
+        },
+        {"BlockType": "WORD"},
+    ]
+    graph = TextractBlockGraph(blocks, validated_document_page_count=1)
+    assert graph.page_number(graph.by_id["a"]) == 1
+    assert graph.page_number(blocks[-1]) is None
 
 
 @pytest.mark.parametrize("confidence", ["99", True, -1, 101, float("nan")])

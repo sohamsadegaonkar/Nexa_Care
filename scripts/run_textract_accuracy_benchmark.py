@@ -126,8 +126,16 @@ async def run_benchmark(
     exact_by_field: Counter[str] = Counter()
     unmatched_expected_by_field: Counter[str] = Counter()
     unmatched_candidate_by_field: Counter[str] = Counter()
+    page_missing_by_source: Counter[str] = Counter()
+    source_text_match_by_category: Counter[str] = Counter()
+    source_text_mismatch_by_category: Counter[str] = Counter()
+    identity_incorrect_case_indexes: list[int] = []
+    unmatched_expected_cases: dict[str, set[int]] = {}
+    unmatched_candidate_cases: dict[str, set[int]] = {}
+    unmatched_candidate_signatures: dict[str, Counter[str]] = {}
+    identity_failure_reasons: dict[str, Counter[str]] = {}
 
-    for specification in specifications:
+    for case_index, specification in enumerate(specifications, start=1):
         counts["attempted"] += 1
         expected = specification.get("fields", [])
         try:
@@ -175,6 +183,7 @@ async def run_benchmark(
             by_source[source] += 1
             if item.page_number is None:
                 counts["page_missing"] += 1
+                page_missing_by_source[source] += 1
             else:
                 counts["page_present"] += 1
                 page_by_source[source] += 1
@@ -198,6 +207,9 @@ async def run_benchmark(
             ]
             if not eligible:
                 unmatched_expected_by_field[target["canonical_field"]] += 1
+                unmatched_expected_cases.setdefault(
+                    target["canonical_field"], set()
+                ).add(case_index)
                 continue
 
             def rank(index: int) -> tuple[int, int, int, int]:
@@ -223,9 +235,23 @@ async def run_benchmark(
             exact_by_field[target["canonical_field"]] += 1
 
         for index in sorted(available):
-            unmatched_candidate_by_field[
-                candidates[index].representative.canonical_field_name
-            ] += 1
+            candidate = candidates[index]
+            field = candidate.representative.canonical_field_name
+            unmatched_candidate_by_field[field] += 1
+            unmatched_candidate_cases.setdefault(field, set()).add(case_index)
+            signature = "+".join(
+                sorted(
+                    {
+                        item.source_type
+                        for item in candidate.evidence
+                        if item.source_type
+                    }
+                )
+            )
+            if signature:
+                unmatched_candidate_signatures.setdefault(field, Counter())[
+                    signature
+                ] += 1
         counts["matched"] += len(matches)
         counts["unmatched_expected"] += len(expected) - len(matches)
         counts["unmatched_candidates"] += len(available)
@@ -255,10 +281,18 @@ async def run_benchmark(
             compatible = [
                 x for x in support if x.source_type == target.get("source_category")
             ]
-            counts["source_exact"] += any(
+            source_exact = any(
                 x.source_text == target.get("source_text", target["raw_value"])
                 for x in compatible
             )
+            counts["source_exact"] += source_exact
+            category = target.get("source_category")
+            if isinstance(category, str):
+                (
+                    source_text_match_by_category
+                    if source_exact
+                    else source_text_mismatch_by_category
+                )[category] += 1
             counts["page_exact"] += any(
                 x.page_number == target.get("page") for x in support
             )
@@ -278,8 +312,22 @@ async def run_benchmark(
             for key in {"patient_name", "phone", "aadhaar_abha_id"}
         }
         bound_identity = specification.get("bound_identity", {})
+        identity_statuses: dict[str, str] = {}
+        for key, value in bound_identity.items():
+            values = extracted_identity[key]
+            if not values:
+                status = "missing"
+            elif value not in values:
+                status = "nonmatching"
+            elif values != {value}:
+                status = "conflicting"
+            else:
+                status = "exact"
+            identity_statuses[key] = status
+            if status != "exact":
+                identity_failure_reasons.setdefault(key, Counter())[status] += 1
         actual_match = bool(bound_identity) and all(
-            extracted_identity[key] == {value} for key, value in bound_identity.items()
+            status == "exact" for status in identity_statuses.values()
         )
         identity_correct = actual_match == bool(
             specification["patient_binding_matches"]
@@ -288,6 +336,8 @@ async def run_benchmark(
         counts[
             "identity_cases_correct" if identity_correct else "identity_cases_incorrect"
         ] += 1
+        if not identity_correct:
+            identity_incorrect_case_indexes.append(case_index)
 
     attempted = counts["attempted"]
     successful = counts["successful"]
@@ -385,6 +435,9 @@ async def run_benchmark(
         "page_present_count": counts["page_present"],
         "page_missing_count": counts["page_missing"],
         "page_present_by_source_type": dict(sorted(page_by_source.items())),
+        "page_missing_count_by_source_type": dict(
+            sorted(page_missing_by_source.items())
+        ),
         "exact_matches_by_canonical_field": dict(sorted(exact_by_field.items())),
         "unmatched_expected_by_canonical_field": dict(
             sorted(unmatched_expected_by_field.items())
@@ -394,6 +447,29 @@ async def run_benchmark(
         ),
         "identity_cases_correct": counts["identity_cases_correct"],
         "identity_cases_incorrect": counts["identity_cases_incorrect"],
+        "identity_incorrect_case_indexes": identity_incorrect_case_indexes,
+        "unmatched_expected_case_indexes_by_canonical_field": {
+            key: sorted(value)
+            for key, value in sorted(unmatched_expected_cases.items())
+        },
+        "unmatched_candidate_case_indexes_by_canonical_field": {
+            key: sorted(value)
+            for key, value in sorted(unmatched_candidate_cases.items())
+        },
+        "unmatched_candidate_support_signatures": {
+            key: dict(sorted(value.items()))
+            for key, value in sorted(unmatched_candidate_signatures.items())
+        },
+        "source_text_match_count_by_source_category": dict(
+            sorted(source_text_match_by_category.items())
+        ),
+        "source_text_mismatch_count_by_source_category": dict(
+            sorted(source_text_mismatch_by_category.items())
+        ),
+        "identity_failure_reason_counts_by_canonical_field": {
+            key: dict(sorted(value.items()))
+            for key, value in sorted(identity_failure_reasons.items())
+        },
         "provider_error_counts": dict(sorted(provider_errors.items())),
         "metrics": metrics,
         "gate_results": gate_results,
@@ -479,11 +555,19 @@ def main() -> int:
             "page_present_count": 0,
             "page_missing_count": 0,
             "page_present_by_source_type": {},
+            "page_missing_count_by_source_type": {},
             "exact_matches_by_canonical_field": {},
             "unmatched_expected_by_canonical_field": {},
             "unmatched_candidates_by_canonical_field": {},
             "identity_cases_correct": 0,
             "identity_cases_incorrect": 0,
+            "identity_incorrect_case_indexes": [],
+            "unmatched_expected_case_indexes_by_canonical_field": {},
+            "unmatched_candidate_case_indexes_by_canonical_field": {},
+            "unmatched_candidate_support_signatures": {},
+            "source_text_match_count_by_source_category": {},
+            "source_text_mismatch_count_by_source_category": {},
+            "identity_failure_reason_counts_by_canonical_field": {},
             "provider_error_counts": {INTERNAL_ERROR_CODE: 1},
             "metrics": {
                 "successful_document_rate": None,

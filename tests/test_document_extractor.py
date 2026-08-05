@@ -183,6 +183,13 @@ def test_textract_client_uses_normal_sdk_chain_without_static_credentials():
     assert "aws_session_token" not in kwargs
 
 
+def test_textract_provider_passes_validated_page_count_to_parser_without_aws():
+    response = textract_response(pages=1)
+    with patch("app.ai.extractor.parse_textract_blocks", return_value=[]) as parser:
+        AwsTextractExtractionProvider._parse_response(response)
+    assert parser.call_args.kwargs["validated_document_page_count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_textract_query_maps_authentic_field_evidence():
     client = Mock()

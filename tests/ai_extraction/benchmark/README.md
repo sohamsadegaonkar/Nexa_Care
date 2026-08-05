@@ -100,6 +100,24 @@ evidence, preserves all support, and matches expected and semantic occurrences
 one-to-one. No production accuracy claim may be made and a live rerun remains
 pending separate authorization.
 
+The corrected 15-document diagnostic then reported 97 evidence records, 63
+semantic candidates, 34 duplicate-provenance records, 49 exact one-to-one
+matches, 14 unmatched candidates, four unmatched expectations, and missing page
+evidence on all 97 records. A sanitized document-15 inspection confirmed one
+PAGE block and authentic PAGE ancestry but no numeric `Block.Page` anywhere.
+Its deliberate identity mismatch was detected correctly; the remaining
+identity error belongs to another synthetic case and remains unqualified.
+
+The provider now passes its already validated `DocumentMetadata.Pages == 1`
+context into the parser. Direct numeric page values still win. Otherwise a
+target must reach exactly one PAGE ancestor through authentic CHILD, ANSWER or
+VALUE relationships, and page 0 is used only when that ancestor is the graph's
+single PAGE block. Callers without validated context, unrelated blocks, absent
+or multiple PAGE blocks, ambiguous ancestry and malformed cycles remain
+unknown. Case-level diagnostics expose only manifest ordinals, canonical field
+names, source-type signatures and numeric reason counts. No accuracy claim may
+be made; another live run requires separate authorization.
+
 ## Metric denominators
 
 - Canonical presence recall uses distinct expected canonical types.

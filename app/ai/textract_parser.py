@@ -86,8 +86,14 @@ def _label(value: str) -> str:
 
 
 class TextractBlockGraph:
-    def __init__(self, blocks: list[Any]) -> None:
+    def __init__(
+        self,
+        blocks: list[Any],
+        *,
+        validated_document_page_count: int | None = None,
+    ) -> None:
         self.blocks = [block for block in blocks if isinstance(block, dict)]
+        self.validated_document_page_count = validated_document_page_count
         self.by_id = {
             block["Id"]: block
             for block in self.blocks
@@ -151,7 +157,7 @@ class TextractBlockGraph:
         start = block.get("Id")
         if not isinstance(start, str):
             return None
-        pages: set[int] = set()
+        page_ids: set[str] = set()
         pending = list(self.parents.get(start, set()))
         seen = {start}
         while pending:
@@ -162,13 +168,22 @@ class TextractBlockGraph:
             parent = self.by_id.get(parent_id)
             if parent is None:
                 continue
-            if (
-                parent.get("BlockType") == "PAGE"
-                and (page := _page(parent)) is not None
-            ):
-                pages.add(page)
+            if parent.get("BlockType") == "PAGE":
+                page_ids.add(parent_id)
             pending.extend(self.parents.get(parent_id, set()))
-        return next(iter(pages)) if len(pages) == 1 else None
+        if len(page_ids) != 1:
+            return None
+        page_block = self.by_id[next(iter(page_ids))]
+        if (page := _page(page_block)) is not None:
+            return page
+        graph_page_ids = {
+            item["Id"]
+            for item in self.blocks
+            if item.get("BlockType") == "PAGE" and isinstance(item.get("Id"), str)
+        }
+        if self.validated_document_page_count == 1 and graph_page_ids == page_ids:
+            return 0
+        return None
 
 
 def _confidence(block: dict[str, Any]) -> float | None:
@@ -272,9 +287,15 @@ def _make(
 
 
 def parse_textract_blocks(
-    blocks: list[Any], *, extracted_at: datetime, model_version: str
+    blocks: list[Any],
+    *,
+    extracted_at: datetime,
+    model_version: str,
+    validated_document_page_count: int | None = None,
 ) -> list[ProviderFieldEvidence]:
-    graph = TextractBlockGraph(blocks)
+    graph = TextractBlockGraph(
+        blocks, validated_document_page_count=validated_document_page_count
+    )
     evidence: list[ProviderFieldEvidence] = []
     _parse_queries(graph, evidence, extracted_at, model_version)
     _parse_forms(graph, evidence, extracted_at, model_version)

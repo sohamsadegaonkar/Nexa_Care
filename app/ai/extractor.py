@@ -269,7 +269,10 @@ class AwsTextractExtractionProvider(ExtractionProvider):
             model_version = "unknown"
 
         evidence = parse_textract_blocks(
-            blocks, extracted_at=extracted_at, model_version=model_version
+            blocks,
+            extracted_at=extracted_at,
+            model_version=model_version,
+            validated_document_page_count=metadata["Pages"],
         )
         identity = {
             field: next(

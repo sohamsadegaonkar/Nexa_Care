@@ -292,3 +292,95 @@ async def test_identity_conflict_fails_closed_regardless_of_order():
         result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([altered]))
         assert result["identity_cases_correct"] == 0
         assert result["identity_cases_incorrect"] == 1
+
+
+@pytest.mark.asyncio
+async def test_case_level_unmatched_and_support_diagnostics_are_value_free():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    document.field_evidence = document.field_evidence[:1]
+    base = _document(manifest["documents"][0]).field_evidence[1]
+    extra_form = base.model_copy(
+        update={"raw_value": "unmatched synthetic value", "source_block_ids": ("form",)}
+    )
+    extra_query = extra_form.model_copy(
+        update={"source_type": "QUERY_RESULT", "source_block_ids": ("query",)}
+    )
+    document.field_evidence.extend([extra_form, extra_query])
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([document]))
+
+    assert result["unmatched_expected_case_indexes_by_canonical_field"] == {
+        "hba1c": [1]
+    }
+    assert result["unmatched_candidate_case_indexes_by_canonical_field"] == {
+        "hba1c": [1]
+    }
+    assert result["unmatched_candidate_support_signatures"] == {
+        "hba1c": {"KEY_VALUE_SET+QUERY_RESULT": 1}
+    }
+    serialized = json.dumps(result, sort_keys=True)
+    assert "unmatched synthetic value" not in serialized
+    assert "form" not in serialized and "query" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_source_text_diagnostics_use_compatible_category():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    document.field_evidence[1] = document.field_evidence[1].model_copy(
+        update={"source_text": "different authentic source"}
+    )
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([document]))
+    assert result["source_text_match_count_by_source_category"] == {"KEY_VALUE_SET": 1}
+    assert result["source_text_mismatch_count_by_source_category"] == {
+        "KEY_VALUE_SET": 1
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        ("missing", "missing"),
+        ("nonmatching", "nonmatching"),
+        ("conflicting", "conflicting"),
+    ],
+)
+async def test_identity_failure_reasons_are_safe_and_fail_closed(mode, reason):
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][:1]
+    document = _document(manifest["documents"][0])
+    identity = document.field_evidence[0]
+    if mode == "missing":
+        evidence = document.field_evidence[1:]
+    elif mode == "nonmatching":
+        evidence = [
+            identity.model_copy(update={"raw_value": "Different Synthetic Name"}),
+            *document.field_evidence[1:],
+        ]
+    else:
+        evidence = [
+            identity,
+            identity.model_copy(update={"raw_value": "Different Synthetic Name"}),
+            *document.field_evidence[1:],
+        ]
+    altered = document.model_copy(update={"field_evidence": evidence})
+    result = await run_benchmark(DOCUMENTS, manifest, SequenceProvider([altered]))
+    assert result["identity_incorrect_case_indexes"] == [1]
+    assert result["identity_failure_reason_counts_by_canonical_field"] == {
+        "patient_name": {reason: 1}
+    }
+
+
+@pytest.mark.asyncio
+async def test_deliberate_identity_mismatch_case_is_still_classified_correctly():
+    manifest = deepcopy(MANIFEST)
+    manifest["documents"] = manifest["documents"][-1:]
+    result = await run_benchmark(
+        DOCUMENTS, manifest, SequenceProvider(_successful_outcomes(manifest))
+    )
+    assert result["identity_cases_correct"] == 1
+    assert result["identity_cases_incorrect"] == 0
+    assert result["identity_incorrect_case_indexes"] == []
