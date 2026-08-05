@@ -352,6 +352,17 @@ test assets, not clinical records. Future parser and evaluator work must use
 offline replay; another live Textract run is not currently authorized. No
 production accuracy claim is permitted.
 
+The replay also reports a separate semantic-occurrence diagnostic: 52 matches,
+including three additional HbA1c matches beyond the 49 exact raw matches,
+giving semantic precision `52/63` and recall `52/53`. Identity fields are
+excluded from semantic matching, and exact raw metrics remain the fidelity
+measures. A benchmark-only candidate-eligibility projection classifies five
+malformed Query-only candidates as ineligible, leaving 58 eligible candidates;
+its exact projection is `49/58` and its semantic projection is `52/58` with
+recall `52/53`. Authentic evidence is retained, production staging and routing
+are unchanged, and these projections do not affect benchmark gates or
+`benchmark_valid`.
+
 The benchmark has an explicit synthetic-only sanitized replay boundary.
 Capture is repository-corpus scoped, occurs only after successful provider
 parsing, strips request/provider metadata, canonicalizes IDs and relationships,

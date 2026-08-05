@@ -219,6 +219,41 @@ async def test_committed_replay_is_the_offline_qualification_baseline(monkeypatc
         "patient_identity_mismatch_detection",
     }
     assert result["benchmark_valid"] is False
+    assert result["exact_match_count"] == 49
+    assert result["unmatched_expected_count"] == 4
+    assert result["unmatched_candidate_count"] == 14
+    assert result["semantic_occurrence_match_count"] == 52
+    assert result["semantic_occurrence_precision"] == pytest.approx(52 / 63)
+    assert result["semantic_occurrence_recall"] == pytest.approx(52 / 53)
+    assert result["semantic_raw_exact_count"] == 49
+    assert result["semantic_raw_exact_rate"] == pytest.approx(49 / 52)
+    assert result["semantic_matches_added_beyond_exact"] == 3
+    assert result["semantic_unmatched_expected_count"] == 1
+    assert result["semantic_unmatched_candidate_count"] == 11
+    assert result["semantic_matches_added_by_canonical_field"] == {"hba1c": 3}
+    assert result["routing_eligible_candidate_count"] == 58
+    assert result["routing_ineligible_candidate_count"] == 5
+    assert result["routing_ineligible_count_by_reason"] == {
+        "INELIGIBLE_QUERY_ONLY_INVALID_FORMAT": 5
+    }
+    assert result["routing_exact_match_count"] == 49
+    assert result["routing_exact_occurrence_precision"] == pytest.approx(49 / 58)
+    assert result["routing_exact_occurrence_recall"] == pytest.approx(49 / 53)
+    assert result["routing_semantic_match_count"] == 52
+    assert result["routing_semantic_occurrence_precision"] == pytest.approx(52 / 58)
+    assert result["routing_semantic_occurrence_recall"] == pytest.approx(52 / 53)
+    assert result["metrics"]["exact_occurrence_precision"] == pytest.approx(49 / 63)
+    assert result["metrics"]["exact_occurrence_recall"] == pytest.approx(49 / 53)
+    assert result["metrics"]["exact_raw_value_accuracy"] == pytest.approx(49 / 53)
+    serialized = json.dumps(result, sort_keys=True)
+    for forbidden in (
+        "Synthetic Patient",
+        "7.2 %",
+        "01-simple-laboratory-form.png",
+        "RequestId",
+        "ResponseMetadata",
+    ):
+        assert forbidden not in serialized
 
 
 def test_replay_rejects_missing_extra_and_malformed_fixture_sets(tmp_path):

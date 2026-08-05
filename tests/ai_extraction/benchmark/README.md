@@ -130,6 +130,16 @@ are synthetic test assets, not clinical records. Future parser and evaluator
 work must use offline replay; another live Textract run is not currently
 authorized. No production accuracy claim is permitted.
 
+Semantic occurrence matching is reported separately for diagnostics: it finds
+52 matches, three beyond the 49 exact raw matches, for precision `52/63` and
+recall `52/53`. Identity fields are excluded, and exact metrics remain the
+raw-fidelity measures. A benchmark-only eligibility projection excludes five
+malformed Query-only candidates, leaving 58 eligible candidates; projected
+exact precision is `49/58` and projected semantic precision is `52/58`, with
+recall `52/53`. Authentic evidence is preserved, production staging and
+routing are unchanged, and these projections do not alter gates or
+`benchmark_valid`.
+
 The opt-in `--capture-sanitized-replay` mode requires the repository's
 `synthetic_only` manifest and synthetic corpus, captures only after successful
 provider parsing, strips provider metadata, canonicalizes block IDs and

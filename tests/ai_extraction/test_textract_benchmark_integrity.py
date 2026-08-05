@@ -10,6 +10,11 @@ import boto3
 import pytest
 
 from app.ai.extractor import InvalidDocumentError
+from app.ai.candidate_eligibility import (
+    CandidateEligibility,
+    classify_semantic_candidate,
+)
+from app.ai.semantic_evidence import SemanticCandidate
 from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
 from app.models.field_evidence import NormalizedBoundingBox
 from scripts.run_textract_accuracy_benchmark import (
@@ -17,6 +22,7 @@ from scripts.run_textract_accuracy_benchmark import (
     INTERNAL_ERROR_CODE,
     benchmark_exit_code,
     evaluate_gates,
+    semantic_match_occurrences,
     _edit_distance_bucket,
     run_benchmark,
 )
@@ -97,6 +103,137 @@ class SequenceProvider:
 
 def _successful_outcomes(manifest: dict[str, Any]) -> list[ExtractedMedicalDocument]:
     return [_document(specification) for specification in manifest["documents"]]
+
+
+def test_semantic_matcher_is_normalized_one_to_one_and_excludes_identity():
+    base = _document(MANIFEST["documents"][0]).field_evidence[1]
+    candidates = [
+        SemanticCandidate((base,)),
+        SemanticCandidate(
+            (
+                base.model_copy(
+                    update={"raw_value": "7.2%", "source_block_ids": ("variant",)}
+                ),
+            )
+        ),
+        SemanticCandidate(
+            (
+                base.model_copy(
+                    update={
+                        "raw_value": "8.1%",
+                        "normalized_value": "8.1",
+                        "source_block_ids": ("second",),
+                    }
+                ),
+            )
+        ),
+    ]
+    expected = [
+        {
+            "canonical_field": "hba1c",
+            "raw_value": "7.2 %",
+            "normalized_value": "7.2",
+            "unit": "%",
+            "source_category": "KEY_VALUE_SET",
+            "source_text": "HbA1c: 7.2 %",
+            "page": 0,
+        },
+        {
+            "canonical_field": "hba1c",
+            "raw_value": "8.1 %",
+            "normalized_value": "8.1",
+            "unit": "%",
+            "source_category": "KEY_VALUE_SET",
+            "source_text": "HbA1c: 8.1 %",
+            "page": 0,
+        },
+    ]
+    matches = semantic_match_occurrences(expected, candidates)
+    assert matches == [(0, 0), (1, 2)]
+    assert semantic_match_occurrences(expected, list(reversed(candidates))) == [
+        (0, 2),
+        (1, 0),
+    ]
+
+    identity_expected = [
+        {
+            "canonical_field": "patient_name",
+            "raw_value": "Synthetic Patient Alpha",
+            "normalized_value": "Synthetic Patient Alpha",
+            "unit": None,
+        }
+    ]
+    identity_candidate = SemanticCandidate(
+        (_document(MANIFEST["documents"][0]).field_evidence[0],)
+    )
+    assert semantic_match_occurrences(identity_expected, [identity_candidate]) == []
+
+
+def test_semantic_matcher_rejects_empty_or_incompatible_units():
+    base = _document(MANIFEST["documents"][0]).field_evidence[1]
+    expected = [
+        {
+            "canonical_field": "hba1c",
+            "raw_value": "7.2 %",
+            "normalized_value": "7.2",
+            "unit": "mg/dL",
+        },
+        {
+            "canonical_field": "hba1c",
+            "raw_value": "",
+            "normalized_value": "",
+            "unit": "%",
+        },
+    ]
+    candidates = [
+        SemanticCandidate((base,)),
+        SemanticCandidate(
+            (
+                base.model_copy(
+                    update={"normalized_value": None, "source_block_ids": ("empty",)}
+                ),
+            )
+        ),
+    ]
+    assert semantic_match_occurrences(expected, candidates) == []
+
+
+@pytest.mark.parametrize(
+    ("source_types", "raw_value", "expected"),
+    [
+        (
+            ("QUERY_RESULT",),
+            "not-a-blood-pressure",
+            CandidateEligibility.INELIGIBLE_QUERY_ONLY_INVALID_FORMAT,
+        ),
+        (("QUERY_RESULT",), "120/80 mmHg", CandidateEligibility.ELIGIBLE),
+        (("KEY_VALUE_SET",), "not-a-blood-pressure", CandidateEligibility.ELIGIBLE),
+        (("CELL",), "not-a-blood-pressure", CandidateEligibility.ELIGIBLE),
+        (
+            ("QUERY_RESULT", "KEY_VALUE_SET"),
+            "not-a-blood-pressure",
+            CandidateEligibility.ELIGIBLE,
+        ),
+    ],
+)
+def test_candidate_eligibility_is_pure_and_expectation_free(
+    source_types, raw_value, expected
+):
+    base = _document(MANIFEST["documents"][0]).field_evidence[1]
+    evidence = tuple(
+        base.model_copy(
+            update={
+                "canonical_field_name": "blood_pressure",
+                "source_type": source_type,
+                "raw_value": raw_value,
+            }
+        )
+        for source_type in source_types
+    )
+    candidate = SemanticCandidate(evidence)
+    before = candidate.evidence
+    assert classify_semantic_candidate(candidate) is expected
+    assert candidate.evidence == before
 
 
 @pytest.mark.asyncio

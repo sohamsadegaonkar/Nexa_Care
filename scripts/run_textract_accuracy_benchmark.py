@@ -30,6 +30,11 @@ from app.ai.extractor import (  # noqa: E402
 )
 from app.core.config import DocumentExtractionConfig  # noqa: E402
 from app.ai.semantic_evidence import group_semantic_candidates  # noqa: E402
+from app.ai.semantic_evidence import SemanticCandidate  # noqa: E402
+from app.ai.candidate_eligibility import (  # noqa: E402
+    CandidateEligibility,
+    classify_semantic_candidate,
+)
 from app.ai.extraction_normalization import normalize_extracted_value  # noqa: E402
 from app.ai.medical_validator import validate_field  # noqa: E402
 from scripts.textract_sanitized_replay import (  # noqa: E402
@@ -73,6 +78,7 @@ SAFE_PROVIDER_ERROR_CODES = frozenset(
     }
 )
 INTERNAL_ERROR_CODE = "BENCHMARK_INTERNAL_ERROR"
+IDENTITY_FIELDS = frozenset({"patient_name", "phone", "aadhaar_abha_id"})
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -173,6 +179,112 @@ def _comparison_flags(
     }
 
 
+def _exact_match_occurrences(
+    expected: list[dict[str, Any]],
+    candidates: list[SemanticCandidate],
+    candidate_indexes: set[int] | None = None,
+) -> tuple[list[tuple[int, int]], set[int]]:
+    """Match raw occurrences one-to-one using the established exact ranking."""
+    available = (
+        set(range(len(candidates)))
+        if candidate_indexes is None
+        else set(candidate_indexes)
+    )
+    matches: list[tuple[int, int]] = []
+    for expected_index, target in enumerate(expected):
+        eligible = [
+            index
+            for index in available
+            if candidates[index].representative.canonical_field_name
+            == target["canonical_field"]
+            and candidates[index].representative.raw_value == target["raw_value"]
+        ]
+        if not eligible:
+            continue
+
+        def rank(index: int) -> tuple[int, int, int, int]:
+            support = candidates[index].evidence
+            category = target.get("source_category")
+            return (
+                -int(any(x.source_type == category for x in support)),
+                -int(
+                    any(
+                        x.source_type == category
+                        and x.source_text
+                        == target.get("source_text", target["raw_value"])
+                        for x in support
+                    )
+                ),
+                -int(any(x.page_number == target.get("page") for x in support)),
+                index,
+            )
+
+        chosen = min(eligible, key=rank)
+        available.remove(chosen)
+        matches.append((expected_index, chosen))
+    return matches, available
+
+
+def semantic_match_occurrences(
+    expected: list[dict[str, Any]],
+    candidates: list[SemanticCandidate],
+    candidate_indexes: set[int] | None = None,
+    seed_matches: list[tuple[int, int]] | None = None,
+) -> list[tuple[int, int]]:
+    """Match normalized non-identity occurrences one-to-one, deterministically."""
+    available = (
+        set(range(len(candidates)))
+        if candidate_indexes is None
+        else set(candidate_indexes)
+    )
+    matches = list(seed_matches or [])
+    matched_expected = {expected_index for expected_index, _ in matches}
+    for _, candidate_index in matches:
+        available.discard(candidate_index)
+    for expected_index, target in enumerate(expected):
+        if expected_index in matched_expected:
+            continue
+        field = target["canonical_field"]
+        expected_normalized = target.get("normalized_value")
+        expected_unit = target.get("unit")
+        if expected_unit is None:
+            expected_unit = normalize_extracted_value(field, target["raw_value"]).unit
+        if field in IDENTITY_FIELDS or not expected_normalized:
+            continue
+        eligible = [
+            index
+            for index in available
+            if (
+                candidates[index].representative.canonical_field_name == field
+                and candidates[index].representative.normalized_value
+                and candidates[index].representative.normalized_value
+                == expected_normalized
+                and (candidates[index].representative.normalized_unit or "").casefold()
+                == (expected_unit or "").casefold()
+            )
+        ]
+        if not eligible:
+            continue
+
+        def rank(index: int) -> tuple[int, int, int, int, int]:
+            candidate = candidates[index].representative
+            support = candidates[index].evidence
+            category = target.get("source_category")
+            return (
+                -int(candidate.raw_value == target["raw_value"]),
+                -int(any(item.source_type == category for item in support)),
+                -int(any(item.page_number == target.get("page") for item in support)),
+                -int(candidate.raw_unit == expected_unit),
+                index,
+            )
+
+        chosen = min(eligible, key=rank)
+        available.remove(chosen)
+        matches.append((expected_index, chosen))
+        matched_expected.add(expected_index)
+    return matches
+
+
 async def run_benchmark(
     directory: Path,
     manifest: dict[str, Any],
@@ -205,6 +317,12 @@ async def run_benchmark(
     query_diagnostic_counts: Counter[tuple[Any, ...]] = Counter()
     query_only_by_field: Counter[str] = Counter()
     identity_failure_diagnostics: list[dict[str, Any]] = []
+    semantic_counts: Counter[str] = Counter()
+    semantic_matches_added_by_field: Counter[str] = Counter()
+    routing_counts: Counter[str] = Counter()
+    routing_ineligible_reasons: Counter[str] = Counter()
+    routing_ineligible_by_field: Counter[str] = Counter()
+    routing_ineligible_cases: dict[str, set[int]] = {}
 
     for case_index, specification in enumerate(specifications, start=1):
         counts["attempted"] += 1
@@ -307,6 +425,51 @@ async def run_benchmark(
             available.remove(chosen)
             matches.append((expected_index, chosen))
             exact_by_field[target["canonical_field"]] += 1
+
+        exact_match_pairs = set(matches)
+        semantic_matches = semantic_match_occurrences(
+            expected, candidates, seed_matches=matches
+        )
+        semantic_counts["matches"] += len(semantic_matches)
+        semantic_counts["raw_exact"] += sum(
+            candidates[candidate_index].representative.raw_value
+            == expected[expected_index]["raw_value"]
+            for expected_index, candidate_index in semantic_matches
+        )
+        semantic_counts["unmatched_expected"] += len(expected) - len(semantic_matches)
+        semantic_counts["unmatched_candidates"] += len(candidates) - len(
+            semantic_matches
+        )
+        for expected_index, candidate_index in semantic_matches:
+            if (expected_index, candidate_index) not in exact_match_pairs:
+                semantic_matches_added_by_field[
+                    expected[expected_index]["canonical_field"]
+                ] += 1
+
+        eligible_indexes: set[int] = set()
+        for candidate_index, candidate in enumerate(candidates):
+            classification = classify_semantic_candidate(candidate)
+            if classification is CandidateEligibility.ELIGIBLE:
+                eligible_indexes.add(candidate_index)
+                routing_counts["eligible"] += 1
+            else:
+                routing_counts["ineligible"] += 1
+                routing_ineligible_reasons[classification.value] += 1
+                field = candidate.representative.canonical_field_name
+                routing_ineligible_by_field[field] += 1
+                routing_ineligible_cases.setdefault(field, set()).add(case_index)
+
+        routing_exact_matches, _ = _exact_match_occurrences(
+            expected, candidates, eligible_indexes
+        )
+        routing_semantic_matches = semantic_match_occurrences(
+            expected,
+            candidates,
+            eligible_indexes,
+            seed_matches=routing_exact_matches,
+        )
+        routing_counts["exact_matches"] += len(routing_exact_matches)
+        routing_counts["semantic_matches"] += len(routing_semantic_matches)
 
         for index in sorted(available):
             candidate = candidates[index]
@@ -683,6 +846,51 @@ async def run_benchmark(
             sorted(query_only_by_field.items())
         ),
         "identity_failure_diagnostics": identity_failure_diagnostics,
+        "semantic_occurrence_match_count": semantic_counts["matches"],
+        "semantic_occurrence_precision": _ratio(
+            semantic_counts["matches"], counts["candidates"]
+        ),
+        "semantic_occurrence_recall": _ratio(
+            semantic_counts["matches"], counts["scored_expected"]
+        ),
+        "semantic_raw_exact_count": semantic_counts["raw_exact"],
+        "semantic_raw_exact_rate": _ratio(
+            semantic_counts["raw_exact"], semantic_counts["matches"]
+        ),
+        "semantic_matches_added_beyond_exact": sum(
+            semantic_matches_added_by_field.values()
+        ),
+        "semantic_unmatched_expected_count": semantic_counts["unmatched_expected"],
+        "semantic_unmatched_candidate_count": semantic_counts["unmatched_candidates"],
+        "semantic_matches_added_by_canonical_field": dict(
+            sorted(semantic_matches_added_by_field.items())
+        ),
+        "routing_eligible_candidate_count": routing_counts["eligible"],
+        "routing_ineligible_candidate_count": routing_counts["ineligible"],
+        "routing_ineligible_count_by_reason": dict(
+            sorted(routing_ineligible_reasons.items())
+        ),
+        "routing_ineligible_count_by_canonical_field": dict(
+            sorted(routing_ineligible_by_field.items())
+        ),
+        "routing_ineligible_case_indexes_by_canonical_field": {
+            key: sorted(value)
+            for key, value in sorted(routing_ineligible_cases.items())
+        },
+        "routing_exact_match_count": routing_counts["exact_matches"],
+        "routing_exact_occurrence_precision": _ratio(
+            routing_counts["exact_matches"], routing_counts["eligible"]
+        ),
+        "routing_exact_occurrence_recall": _ratio(
+            routing_counts["exact_matches"], counts["scored_expected"]
+        ),
+        "routing_semantic_match_count": routing_counts["semantic_matches"],
+        "routing_semantic_occurrence_precision": _ratio(
+            routing_counts["semantic_matches"], routing_counts["eligible"]
+        ),
+        "routing_semantic_occurrence_recall": _ratio(
+            routing_counts["semantic_matches"], counts["scored_expected"]
+        ),
         "provider_error_counts": dict(sorted(provider_errors.items())),
         "metrics": metrics,
         "gate_results": gate_results,
@@ -836,6 +1044,26 @@ def main() -> int:
             "unmatched_query_candidate_diagnostics": [],
             "query_only_candidate_count_by_canonical_field": {},
             "identity_failure_diagnostics": [],
+            "semantic_occurrence_match_count": 0,
+            "semantic_occurrence_precision": None,
+            "semantic_occurrence_recall": None,
+            "semantic_raw_exact_count": 0,
+            "semantic_raw_exact_rate": None,
+            "semantic_matches_added_beyond_exact": 0,
+            "semantic_unmatched_expected_count": 0,
+            "semantic_unmatched_candidate_count": 0,
+            "semantic_matches_added_by_canonical_field": {},
+            "routing_eligible_candidate_count": 0,
+            "routing_ineligible_candidate_count": 0,
+            "routing_ineligible_count_by_reason": {},
+            "routing_ineligible_count_by_canonical_field": {},
+            "routing_ineligible_case_indexes_by_canonical_field": {},
+            "routing_exact_match_count": 0,
+            "routing_exact_occurrence_precision": None,
+            "routing_exact_occurrence_recall": None,
+            "routing_semantic_match_count": 0,
+            "routing_semantic_occurrence_precision": None,
+            "routing_semantic_occurrence_recall": None,
             "provider_error_counts": {INTERNAL_ERROR_CODE: 1},
             "metrics": {
                 "successful_document_rate": None,
