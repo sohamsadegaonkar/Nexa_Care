@@ -61,3 +61,28 @@ def test_production_staging_uses_one_candidate_and_preserves_support_ids():
     provider = candidates[0]["provider_evidence"]
     assert provider.supporting_evidence_hashes == ("a" * 64, "b" * 64)
     assert provider.supporting_source_block_ids == ("a", "b")
+
+
+def test_production_candidate_projection_classifies_without_discarding_evidence():
+    invalid = evidence("QUERY_RESULT", 0.1, "invalid")
+    invalid = invalid.model_copy(
+        update={"raw_value": "not-a-valid-hba1c", "source_text": "authentic"}
+    )
+    document = ExtractedMedicalDocument(
+        patient_name="",
+        phone="",
+        aadhaar_abha_id="",
+        diagnoses=[],
+        lab_results=[],
+        prescriptions=[],
+        field_evidence=[invalid],
+    )
+    candidates = _candidate_fields(document)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["routing_eligible"] is False
+    assert candidate["eligibility_reason_code"] == (
+        "INELIGIBLE_QUERY_ONLY_INVALID_FORMAT"
+    )
+    assert candidate["eligibility_policy_version"] == "v1"
+    assert candidate["provider_evidence"].source_text == "authentic"

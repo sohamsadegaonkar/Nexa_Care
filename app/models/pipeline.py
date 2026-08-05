@@ -191,9 +191,7 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
     )
     patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    authorization_provider_id: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
+    authorization_provider_id: Mapped[str] = mapped_column(String(64), nullable=False)
     field_name: Mapped[str] = mapped_column(String(128), nullable=False)
     encrypted_raw_value: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -209,6 +207,15 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
     evidence_complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
     lane: Mapped[str] = mapped_column(String(24), nullable=False)
     reason_codes: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    routing_eligible: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True
+    )
+    eligibility_reason_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    eligibility_policy_version: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="v1"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )
@@ -218,6 +225,13 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
             "lane IN ('SOURCE_ONLY', 'QUARANTINE')",
             name="ck_extraction_candidates_safe_lane",
         ),
+        CheckConstraint(
+            "(routing_eligible AND eligibility_reason_code IS NULL) OR "
+            "(NOT routing_eligible AND eligibility_reason_code IS NOT NULL AND "
+            "eligibility_reason_code = "
+            "'INELIGIBLE_QUERY_ONLY_INVALID_FORMAT')",
+            name="ck_extraction_candidates_eligibility",
+        ),
         Index(
             "ix_extraction_candidates_authorization_binding",
             "tenant_id",
@@ -226,6 +240,11 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
             "job_id",
         ),
         Index("ix_extraction_candidates_document", "source_document_id"),
+        Index(
+            "ix_extraction_candidates_job_routing_eligible",
+            "job_id",
+            "routing_eligible",
+        ),
     )
 
 

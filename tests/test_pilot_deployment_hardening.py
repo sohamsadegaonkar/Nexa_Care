@@ -90,7 +90,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 def test_migration_script_requires_exact_single_repository_head() -> None:
     assert run_pilot_migrations.repository_heads() == (
-        "20260801_textract_candidates",
+        "20260806_candidate_eligibility",
     )
 
 
@@ -112,7 +112,7 @@ def test_migration_script_scopes_url_and_redacts_command_output(
         assert environment["DATABASE_URL"] == sensitive_url
         assert "MIGRATION_DATABASE_URL" not in environment
         stdout = (
-            "20260801_textract_candidates (head)\n"
+            "20260806_candidate_eligibility (head)\n"
             if arguments == ["current"]
             else ""
         )
@@ -178,16 +178,15 @@ def test_pilot_preflight_rejects_static_aws_credentials(name: str) -> None:
 
 def test_valid_synthetic_pilot_configuration_passes() -> None:
     assert (
-        check_pilot_environment.validate_configuration(valid_pilot_environment())
-        == []
+        check_pilot_environment.validate_configuration(valid_pilot_environment()) == []
     )
 
 
 def test_render_manifest_is_retired_with_required_warning() -> None:
     assert not (ROOT / "render.yaml").exists()
-    legacy = (
-        ROOT / "deploy" / "legacy" / "render.remote-pilot.yaml"
-    ).read_text(encoding="utf-8")
+    legacy = (ROOT / "deploy" / "legacy" / "render.remote-pilot.yaml").read_text(
+        encoding="utf-8"
+    )
 
     assert "Historical remote-provider configuration only" in legacy
     assert "not approved for Milestone 6" in legacy
@@ -203,7 +202,7 @@ def test_pilot_operations_document_uses_current_contract() -> None:
 
     assert "CORS_ALLOWED_ORIGINS" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=aws_textract" in content
-    assert "20260801_textract_candidates" in content
+    assert "20260806_candidate_eligibility" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=remote" not in content
     assert "DOCUMENT_AI_API_URL` or `DOCUMENT_AI_API_KEY" in content
     assert "desiredCount=1" in content
@@ -213,10 +212,10 @@ def test_governance_contract_names_current_migration_head() -> None:
     constitution = (
         ROOT / "docs" / "governance" / "NEXA_CARE_ENGINEERING_CONSTITUTION.md"
     ).read_text(encoding="utf-8")
-    security = (
-        ROOT / "docs" / "governance" / "SECURITY_NON_REGRESSION.md"
-    ).read_text(encoding="utf-8")
+    security = (ROOT / "docs" / "governance" / "SECURITY_NON_REGRESSION.md").read_text(
+        encoding="utf-8"
+    )
 
-    assert "Current head is `20260801_textract_candidates`" in constitution
-    assert "current head `20260801_textract_candidates`" in security
+    assert "Current head is `20260806_candidate_eligibility`" in constitution
+    assert "current head `20260806_candidate_eligibility`" in security
     assert "API containers never run migrations during startup" in security

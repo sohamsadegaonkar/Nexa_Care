@@ -13,6 +13,9 @@ class CandidateEligibility(StrEnum):
     INELIGIBLE_QUERY_ONLY_INVALID_FORMAT = "INELIGIBLE_QUERY_ONLY_INVALID_FORMAT"
 
 
+CANDIDATE_ELIGIBILITY_POLICY_VERSION = "v1"
+
+
 def classify_semantic_candidate(candidate: SemanticCandidate) -> CandidateEligibility:
     """Classify without reading expectations or mutating authentic evidence."""
     evidence = candidate.evidence

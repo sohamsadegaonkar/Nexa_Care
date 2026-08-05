@@ -199,6 +199,8 @@ def evaluate_extraction_evidence(
 
     quarantine: list[DecisionReason] = []
     source_only: list[DecisionReason] = []
+    if validated_policy.force_quarantine:
+        quarantine.append(DecisionReason.ELIGIBILITY_CLASSIFICATION_FAILED)
     issues = validated.issue_codes
 
     identity = validated.identity

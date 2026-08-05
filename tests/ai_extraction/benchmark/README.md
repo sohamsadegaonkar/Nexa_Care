@@ -140,6 +140,14 @@ recall `52/53`. Authentic evidence is preserved, production staging and
 routing are unchanged, and these projections do not alter gates or
 `benchmark_valid`.
 
+Production eligibility is a separate, non-destructive projection. All
+non-identity candidates and authentic supporting evidence remain encrypted and
+authorization-bound in persistence, including malformed Query-only candidates.
+Clinician views return eligible candidate values plus aggregate suppressed
+counts only; protected source review remains available. Eligibility does not
+change extraction lanes, identity handling, consent, erasure, clinical commit,
+or automatic ingestion, and it never reads benchmark expectations.
+
 The opt-in `--capture-sanitized-replay` mode requires the repository's
 `synthetic_only` manifest and synthetic corpus, captures only after successful
 provider parsing, strips provider metadata, canonicalizes block IDs and

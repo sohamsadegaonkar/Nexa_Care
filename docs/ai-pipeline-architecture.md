@@ -363,6 +363,16 @@ recall `52/53`. Authentic evidence is retained, production staging and routing
 are unchanged, and these projections do not affect benchmark gates or
 `benchmark_valid`.
 
+Production candidate eligibility is separate from the extraction lane. Every
+non-identity semantic candidate remains evidence-bound, encrypted and persisted
+with `routing_eligible`, a closed eligibility reason, and policy version `v1`.
+Clinician candidate responses present eligible candidates only and expose safe
+suppressed counts; the protected source-document review path remains available.
+Eligibility does not change `SOURCE_ONLY` or `QUARANTINE`, identity handling,
+consent, erasure, or clinical commit. No automatic clinical ingestion or
+auto-commit is enabled, and benchmark expectations are never consulted by the
+production classifier.
+
 The benchmark has an explicit synthetic-only sanitized replay boundary.
 Capture is repository-corpus scoped, occurs only after successful provider
 parsing, strips request/provider metadata, canonicalizes IDs and relationships,

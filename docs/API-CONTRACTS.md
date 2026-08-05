@@ -418,9 +418,18 @@ interface ExtractionJobStatusResponse {
   document_type: "PRESCRIPTION" | "LAB_REPORT" | "DISCHARGE_SUMMARY" | "UNKNOWN";
   overall_confidence: number; // 0.0 to 1.0
   extracted_fields: ExtractedField[]; // Exact schema matching DATA-MODELS.md
+  eligible_candidate_count: number; // Clinician-visible candidate values
+  ineligible_candidate_count: number; // Safe aggregate only
+  ineligible_count_by_reason: Record<string, number>; // Closed reason codes only
+  // Ineligible candidate values/source text are never returned by this endpoint.
   created_at: string; // ISO 8601 Timestamp
 }
 ```
+
+Candidate status values are filtered server-side to `routing_eligible=true`.
+Clients cannot request suppressed values. The protected job document endpoint
+remains the source-review path and retains its existing authorization, consent,
+tenant, patient, provider, and erasure checks.
 
 ---
 

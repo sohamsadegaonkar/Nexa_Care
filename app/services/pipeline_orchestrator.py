@@ -15,6 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import DocumentExtractionError, get_medical_document_extractor
+from app.ai.candidate_eligibility import (
+    CANDIDATE_ELIGIBILITY_POLICY_VERSION,
+    CandidateEligibility,
+    classify_semantic_candidate,
+)
 from app.core.config import get_document_extraction_config
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.pipeline import ExtractionCandidateRecord, ExtractionJob
@@ -105,18 +110,40 @@ def _candidate_fields(document: Any) -> list[dict[str, Any]]:
     if document.field_evidence:
         from app.ai.semantic_evidence import group_semantic_candidates
 
-        return [
-            {
-                "field_name": candidate.representative.canonical_field_name,
-                "raw_value": candidate.representative.raw_value,
-                "provider_evidence": candidate.representative,
-            }
-            for candidate in group_semantic_candidates(document.field_evidence)
-            if candidate.representative.canonical_field_name
-            not in {"patient_name", "phone", "aadhaar_abha_id"}
-        ]
+        candidates: list[dict[str, Any]] = []
+        for candidate in group_semantic_candidates(document.field_evidence):
+            if candidate.representative.canonical_field_name in {
+                "patient_name",
+                "phone",
+                "aadhaar_abha_id",
+            }:
+                continue
+            try:
+                classification = classify_semantic_candidate(candidate)
+                classification_failed = False
+            except Exception:
+                classification = (
+                    CandidateEligibility.INELIGIBLE_QUERY_ONLY_INVALID_FORMAT
+                )
+                classification_failed = True
+            eligible = classification is CandidateEligibility.ELIGIBLE
+            candidates.append(
+                {
+                    "field_name": candidate.representative.canonical_field_name,
+                    "raw_value": candidate.representative.raw_value,
+                    "provider_evidence": candidate.representative,
+                    "semantic_candidate": candidate,
+                    "routing_eligible": eligible,
+                    "eligibility_reason_code": (
+                        None if eligible else classification.value
+                    ),
+                    "eligibility_policy_version": CANDIDATE_ELIGIBILITY_POLICY_VERSION,
+                    "eligibility_classification_failed": classification_failed,
+                }
+            )
+        return candidates
 
-    candidates: list[dict[str, Any]] = []
+    candidates = []
     candidates.extend(
         {"field_name": "diagnosis", "raw_value": str(value)}
         for value in document.diagnoses
@@ -130,6 +157,20 @@ def _candidate_fields(document: Any) -> list[dict[str, Any]]:
         for value in document.prescriptions
     )
     return candidates
+
+
+def _eligibility_counts(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+    ineligible = [item for item in candidates if not item.get("routing_eligible", True)]
+    by_reason: dict[str, int] = {}
+    for item in ineligible:
+        reason = item.get("eligibility_reason_code")
+        if isinstance(reason, str):
+            by_reason[reason] = by_reason.get(reason, 0) + 1
+    return {
+        "eligible_candidate_count": len(candidates) - len(ineligible),
+        "ineligible_candidate_count": len(ineligible),
+        "ineligible_count_by_reason": dict(sorted(by_reason.items())),
+    }
 
 
 async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any]:
@@ -250,6 +291,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         await db.flush()
         job.status = "validation_pending"
         candidates = _candidate_fields(extracted)
+        eligibility_counts = _eligibility_counts(candidates)
         extracted_at = datetime.now(timezone.utc)
         evidence_records = []
         for item in candidates:
@@ -314,6 +356,15 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                         "SOURCE_ONLY" if job.status == "source_only" else "QUARANTINE"
                     ),
                     "candidate_count": 0,
+                    "eligible_candidate_count": eligibility_counts[
+                        "eligible_candidate_count"
+                    ],
+                    "ineligible_candidate_count": eligibility_counts[
+                        "ineligible_candidate_count"
+                    ],
+                    "ineligible_count_by_reason": eligibility_counts[
+                        "ineligible_count_by_reason"
+                    ],
                 },
             )
             await db.commit()
@@ -321,11 +372,12 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 "job_id": str(job.id),
                 "status": job.status,
                 "source_only_count": 0,
+                **eligibility_counts,
             }
 
         results = []
         routed_at = datetime.now(timezone.utc)
-        for evidence in evidence_records:
+        for item, evidence in zip(candidates, evidence_records, strict=True):
             policy = ExtractionDecisionPolicy(
                 patient_id=str(job.patient_id),
                 tenant_id=str(job.tenant_id),
@@ -336,6 +388,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 workflow_id=str(job.consent_request_id),
                 request_id=str(job.request_id),
                 attempt_id=f"{job.id}:{job.attempt_count}",
+                force_quarantine=item.get("eligibility_classification_failed", False),
             )
             results.append(
                 await evaluate_and_persist_lane(
@@ -402,6 +455,12 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     evidence_complete=evidence.visual_evidence_complete,
                     lane=result.routing.lane,
                     reason_codes=list(result.decision.reason_codes),
+                    routing_eligible=item.get("routing_eligible", True),
+                    eligibility_reason_code=item.get("eligibility_reason_code"),
+                    eligibility_policy_version=item.get(
+                        "eligibility_policy_version",
+                        CANDIDATE_ELIGIBILITY_POLICY_VERSION,
+                    ),
                     created_at=routed_at,
                 )
             )
@@ -429,6 +488,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 "status": job.status,
                 "source_only_count": source_only_count,
                 "quarantine_count": quarantine_count,
+                **eligibility_counts,
             },
         )
         await db.commit()
@@ -437,6 +497,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             "status": job.status,
             "source_only_count": source_only_count,
             "quarantine_count": quarantine_count,
+            **eligibility_counts,
         }
     except ExtractedIdentityMismatch:
         job = await _rollback_and_reload_job(db, job_uuid)

@@ -176,6 +176,9 @@ class ExtractionJobStatusResponse(BaseModel):
     routing_lane: Literal["SOURCE_ONLY", "QUARANTINE"] | None = None
     routing_reasons: list[str] = Field(default_factory=list)
     candidate_count: int
+    eligible_candidate_count: int = 0
+    ineligible_candidate_count: int = 0
+    ineligible_count_by_reason: dict[str, int] = Field(default_factory=dict)
     candidates: list[ExtractionCandidateStatusResponse] = Field(default_factory=list)
     identity_validation: Literal["passed", "failed", "not_completed"]
     auto_commit_enabled: Literal[False] = False
@@ -493,10 +496,21 @@ async def get_extraction_job(
         .scalars()
         .all()
     )
+    eligible_rows = [
+        row for row in candidate_rows if getattr(row, "routing_eligible", True)
+    ]
+    ineligible_rows = [
+        row for row in candidate_rows if not getattr(row, "routing_eligible", True)
+    ]
+    ineligible_by_reason: dict[str, int] = {}
+    for row in ineligible_rows:
+        reason = getattr(row, "eligibility_reason_code", None)
+        if isinstance(reason, str):
+            ineligible_by_reason[reason] = ineligible_by_reason.get(reason, 0) + 1
     kms = get_encryption_provider()
     candidates = []
     try:
-        for row in candidate_rows:
+        for row in eligible_rows:
             _assert_candidate_authorization_binding(
                 candidate=row, job=job, provider=provider
             )
@@ -581,6 +595,9 @@ async def get_extraction_job(
         "routing_lane": lane,
         "routing_reasons": reason_codes,
         "candidate_count": len(candidates),
+        "eligible_candidate_count": len(candidates),
+        "ineligible_candidate_count": len(ineligible_rows),
+        "ineligible_count_by_reason": dict(sorted(ineligible_by_reason.items())),
         "candidates": candidates,
         "identity_validation": identity_validation,
         "auto_commit_enabled": False,

@@ -67,9 +67,9 @@ def test_candidate_staging_has_no_plaintext_value_or_source_columns():
 
 
 def test_candidate_migration_enforces_binding_encryption_and_safe_lanes():
-    code = (
-        ROOT / "alembic/versions/20260801_textract_candidates.py"
-    ).read_text(encoding="utf-8")
+    code = (ROOT / "alembic/versions/20260801_textract_candidates.py").read_text(
+        encoding="utf-8"
+    )
     for required in [
         "encrypted_raw_value",
         "encrypted_source_text",
@@ -78,6 +78,39 @@ def test_candidate_migration_enforces_binding_encryption_and_safe_lanes():
         "patient_id",
         "tenant_id",
         "ck_extraction_candidates_safe_lane",
-        "ondelete=\"CASCADE\"",
+        'ondelete="CASCADE"',
     ]:
         assert required in code
+
+
+def test_candidate_eligibility_migration_is_chained_and_non_destructive():
+    code = (ROOT / "alembic/versions/20260806_candidate_eligibility.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'down_revision = "20260801_textract_candidates"' in code
+    for required in (
+        '"routing_eligible"',
+        '"eligibility_reason_code"',
+        '"eligibility_policy_version"',
+        "ck_extraction_candidates_eligibility",
+        "ix_extraction_candidates_job_routing_eligible",
+        "UPDATE extraction_candidates SET routing_eligible = TRUE",
+        "UPDATE extraction_candidates SET eligibility_policy_version = 'v1'",
+        "def downgrade()",
+    ):
+        assert required in code
+
+
+def test_candidate_model_separates_eligibility_from_lane():
+    columns = {column.name for column in ExtractionCandidateRecord.__table__.columns}
+    assert {
+        "routing_eligible",
+        "eligibility_reason_code",
+        "eligibility_policy_version",
+    }.issubset(columns)
+    assert "lane" in columns
+    constraints = {
+        constraint.name
+        for constraint in ExtractionCandidateRecord.__table__.constraints
+    }
+    assert "ck_extraction_candidates_eligibility" in constraints

@@ -13,7 +13,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HEAD = "20260801_textract_candidates"
+EXPECTED_HEAD = "20260806_candidate_eligibility"
 ALLOWED_ENVIRONMENTS = frozenset({"pilot", "staging", "production"})
 CURRENT_REVISION = re.compile(r"(?m)^\s*([0-9]{8}_[a-z0-9_]+)(?:\s+\(head\))?\s*$")
 
@@ -26,7 +26,9 @@ def repository_heads() -> tuple[str, ...]:
     return tuple(ScriptDirectory.from_config(config).get_heads())
 
 
-def _run_alembic(arguments: list[str], environment: dict[str, str]) -> subprocess.CompletedProcess[str]:
+def _run_alembic(
+    arguments: list[str], environment: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "alembic", *arguments],
         cwd=ROOT,

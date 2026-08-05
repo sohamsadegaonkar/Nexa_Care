@@ -47,6 +47,7 @@ class DecisionReason(str, Enum):
     EVIDENCE_CONTRACT_UNSUPPORTED = "EVIDENCE_CONTRACT_UNSUPPORTED"
     SUPERSESSION_UNRESOLVED = "SUPERSESSION_UNRESOLVED"
     DECISION_INPUT_INVALID = "DECISION_INPUT_INVALID"
+    ELIGIBILITY_CLASSIFICATION_FAILED = "ELIGIBILITY_CLASSIFICATION_FAILED"
 
 
 class _FrozenModel(BaseModel):
@@ -75,6 +76,7 @@ class ExtractionDecisionPolicy(_FrozenModel):
     permitted_clinical_risks: frozenset[str] = frozenset({"LOW_RISK"})
     require_validation_success: bool = True
     minimum_field_confidence: float | None = None
+    force_quarantine: bool = False
 
     @field_validator("minimum_field_confidence")
     @classmethod
