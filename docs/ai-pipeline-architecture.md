@@ -345,9 +345,11 @@ The latest authorized diagnostic baseline reached 15/15 provider success with
 49/53 exact matches. Exact occurrence precision was `0.7777777777777778`,
 recall `0.9245283018867925`, page accuracy was `1.0` with 97/97 pages present,
 source-text accuracy was `0.5510204081632653`, and identity detection was
-`0.9333333333333333`. Source-text accuracy, exact occurrence recall and
-identity detection remain below qualification; case 12 and Query false
-positives remain unresolved. This is not a production accuracy claim.
+`0.9333333333333333`. The remaining three qualification failures are exact
+occurrence precision, source-text accuracy, and identity detection. Exact
+occurrence recall passed its configured gate at `0.9245283018867925`; case 12
+and Query false positives remain unresolved. This is not a production accuracy
+claim.
 
 The benchmark has an explicit synthetic-only sanitized replay boundary.
 Capture is repository-corpus scoped, occurs only after successful provider

@@ -124,8 +124,9 @@ duplicates, and 49/53 exact matches. Exact occurrence precision was
 `0.7777777777777778`, recall `0.9245283018867925`, page accuracy `1.0`, and
 page presence `97/97`. Source-text accuracy was `0.5510204081632653`; identity
 detection was `0.9333333333333333`, with case 12 remaining incorrect. The
-remaining three qualification failures are source-text accuracy, exact
-occurrence recall, and identity detection. Query false positives remain
+remaining three qualification failures are exact occurrence precision,
+source-text accuracy, and identity detection. Exact occurrence recall passed
+its configured gate at `0.9245283018867925`. Query false positives remain
 unresolved. No production accuracy claim is permitted.
 
 The opt-in `--capture-sanitized-replay` mode requires the repository's
