@@ -16,6 +16,7 @@ from scripts.textract_sanitized_replay import (
 from scripts.run_textract_accuracy_benchmark import run
 
 BENCHMARK = Path(__file__).parent / "benchmark"
+COMMITTED_REPLAY = BENCHMARK / "sanitized-replay"
 
 
 def response() -> dict:
@@ -163,6 +164,61 @@ async def test_benchmark_replay_reports_zero_live_calls(monkeypatch, tmp_path):
     )
     assert result["provider_mode"] == "sanitized_replay"
     assert result["live_provider_calls"] == 0
+
+
+@pytest.mark.asyncio
+async def test_committed_replay_is_the_offline_qualification_baseline(monkeypatch):
+    expected_files = {f"case-{index:02d}.json" for index in range(1, 16)}
+    assert {path.name for path in COMMITTED_REPLAY.iterdir()} == expected_files
+    for path in sorted(COMMITTED_REPLAY.iterdir()):
+        value = json.loads(path.read_text(encoding="utf-8"))
+        assert sanitize_textract_response(value) == value
+
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        lambda *args, **kwargs: pytest.fail("boto3 must not be called"),
+    )
+    result = await run(
+        BENCHMARK / "documents",
+        BENCHMARK / "synthetic-manifest.json",
+        region="ap-south-1",
+        timeout=1,
+        attempts=1,
+        replay_sanitized=COMMITTED_REPLAY,
+    )
+
+    assert result["provider_mode"] == "sanitized_replay"
+    assert result["live_provider_calls"] == 0
+    assert result["attempted_documents"] == 15
+    assert result["successful_documents"] == 15
+    assert result["failed_documents"] == 0
+    assert result["evidence_occurrences"] == 97
+    assert result["semantic_candidate_count"] == 63
+    assert result["exact_match_count"] == 49
+    assert result["unmatched_expected_count"] == 4
+    assert result["unmatched_candidate_count"] == 14
+    assert result["page_present_count"] == 97
+    assert result["page_missing_count"] == 0
+    assert result["identity_cases_correct"] == 14
+    assert result["identity_cases_incorrect"] == 1
+    assert result["metrics"]["source_text_accuracy"] == pytest.approx(
+        0.9183673469387755
+    )
+    assert result["metrics"]["exact_occurrence_precision"] == pytest.approx(
+        0.7777777777777778
+    )
+    assert result["metrics"]["exact_occurrence_recall"] == pytest.approx(
+        0.9245283018867925
+    )
+    assert result["metrics"]["patient_identity_mismatch_detection"] == pytest.approx(
+        0.9333333333333333
+    )
+    assert {name for name, passed in result["gate_results"].items() if not passed} == {
+        "exact_occurrence_precision",
+        "patient_identity_mismatch_detection",
+    }
+    assert result["benchmark_valid"] is False
 
 
 def test_replay_rejects_missing_extra_and_malformed_fixture_sets(tmp_path):

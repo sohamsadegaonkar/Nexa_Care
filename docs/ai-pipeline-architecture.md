@@ -340,16 +340,17 @@ it now groups before routing and carries all supporting hashes and block IDs.
 No production accuracy claim may be made. A live rerun remains pending separate
 authorization.
 
-The latest authorized diagnostic baseline reached 15/15 provider success with
+The committed sanitized replay baseline reached 15/15 provider success with
 97 evidence records, 63 semantic candidates, 34 provenance duplicates, and
-49/53 exact matches. Exact occurrence precision was `0.7777777777777778`,
-recall `0.9245283018867925`, page accuracy was `1.0` with 97/97 pages present,
-source-text accuracy was `0.5510204081632653`, and identity detection was
-`0.9333333333333333`. The remaining three qualification failures are exact
-occurrence precision, source-text accuracy, and identity detection. Exact
-occurrence recall passed its configured gate at `0.9245283018867925`; case 12
-and Query false positives remain unresolved. This is not a production accuracy
-claim.
+49/53 exact matches. Live and offline results are equivalent: exact occurrence
+precision is `0.7777777777777778`, recall is `0.9245283018867925`, page accuracy
+is `1.0` with 97/97 pages present, source-text accuracy is
+`0.9183673469387755`, and identity detection is `0.9333333333333333`. The
+remaining failed gates are exact occurrence precision and identity
+classification; `benchmark_valid` remains false. These fixtures are synthetic
+test assets, not clinical records. Future parser and evaluator work must use
+offline replay; another live Textract run is not currently authorized. No
+production accuracy claim is permitted.
 
 The benchmark has an explicit synthetic-only sanitized replay boundary.
 Capture is repository-corpus scoped, occurs only after successful provider

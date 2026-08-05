@@ -118,16 +118,17 @@ unknown. Case-level diagnostics expose only manifest ordinals, canonical field
 names, source-type signatures and numeric reason counts. No accuracy claim may
 be made; another live run requires separate authorization.
 
-The latest authorized diagnostic baseline reached 15/15 provider success with
+The committed sanitized replay baseline reached 15/15 provider success with
 97 authentic evidence records, 63 semantic candidates, 34 grouped provenance
-duplicates, and 49/53 exact matches. Exact occurrence precision was
-`0.7777777777777778`, recall `0.9245283018867925`, page accuracy `1.0`, and
-page presence `97/97`. Source-text accuracy was `0.5510204081632653`; identity
-detection was `0.9333333333333333`, with case 12 remaining incorrect. The
-remaining three qualification failures are exact occurrence precision,
-source-text accuracy, and identity detection. Exact occurrence recall passed
-its configured gate at `0.9245283018867925`. Query false positives remain
-unresolved. No production accuracy claim is permitted.
+duplicates, and 49/53 exact matches. Live and offline results are equivalent:
+exact occurrence precision is `0.7777777777777778`, recall is
+`0.9245283018867925`, page accuracy is `1.0`, and page presence is `97/97`.
+Source-text accuracy now passes at `0.9183673469387755`; identity detection is
+`0.9333333333333333`. The remaining failed gates are exact occurrence precision
+and identity classification; `benchmark_valid` remains false. These fixtures
+are synthetic test assets, not clinical records. Future parser and evaluator
+work must use offline replay; another live Textract run is not currently
+authorized. No production accuracy claim is permitted.
 
 The opt-in `--capture-sanitized-replay` mode requires the repository's
 `synthetic_only` manifest and synthetic corpus, captures only after successful
