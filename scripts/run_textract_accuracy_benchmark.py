@@ -43,6 +43,9 @@ from scripts.textract_sanitized_replay import (  # noqa: E402
     SanitizedReplayProvider,
     validate_synthetic_benchmark_scope,
 )
+from scripts.textract_benchmark_failure_classification import (  # noqa: E402
+    FailureClassificationAccumulator,
+)
 
 ACCURACY_METRICS = (
     "canonical_field_presence_recall",
@@ -323,6 +326,7 @@ async def run_benchmark(
     routing_ineligible_reasons: Counter[str] = Counter()
     routing_ineligible_by_field: Counter[str] = Counter()
     routing_ineligible_cases: dict[str, set[int]] = {}
+    failure_classification = FailureClassificationAccumulator()
 
     for case_index, specification in enumerate(specifications, start=1):
         counts["attempted"] += 1
@@ -447,8 +451,10 @@ async def run_benchmark(
                 ] += 1
 
         eligible_indexes: set[int] = set()
+        eligibility_by_index: dict[int, CandidateEligibility] = {}
         for candidate_index, candidate in enumerate(candidates):
             classification = classify_semantic_candidate(candidate)
+            eligibility_by_index[candidate_index] = classification
             if classification is CandidateEligibility.ELIGIBLE:
                 eligible_indexes.add(candidate_index)
                 routing_counts["eligible"] += 1
@@ -643,6 +649,15 @@ async def run_benchmark(
             identity_statuses[key] = status
             if status != "exact":
                 identity_failure_reasons.setdefault(key, Counter())[status] += 1
+        failure_classification.add_case(
+            case_index=case_index,
+            expected=expected,
+            candidates=candidates,
+            exact_matches=matches,
+            semantic_matches=semantic_matches,
+            identity_statuses=identity_statuses,
+            eligibility_by_index=eligibility_by_index,
+        )
         actual_match = bool(bound_identity) and all(
             status == "exact" for status in identity_statuses.values()
         )
@@ -894,6 +909,15 @@ async def run_benchmark(
         "provider_error_counts": dict(sorted(provider_errors.items())),
         "metrics": metrics,
         "gate_results": gate_results,
+        "failure_classification": failure_classification.result(
+            expected_field_occurrences=expected_field_occurrences,
+            exact_match_count=counts["matched"],
+            semantic_match_count=semantic_counts["matches"],
+            semantic_candidate_count=counts["candidates"],
+            evidence_occurrences=counts["evidence"],
+            routing_eligible_count=routing_counts["eligible"],
+            routing_ineligible_count=routing_counts["ineligible"],
+        ),
     }
 
 
@@ -1076,6 +1100,16 @@ def main() -> int:
             ),
             "live_provider_calls": 0 if args.replay_sanitized is not None else 0,
         }
+    if "failure_classification" not in result:
+        result["failure_classification"] = FailureClassificationAccumulator().result(
+            expected_field_occurrences=0,
+            exact_match_count=0,
+            semantic_match_count=0,
+            semantic_candidate_count=0,
+            evidence_occurrences=0,
+            routing_eligible_count=0,
+            routing_ineligible_count=0,
+        )
     print(json.dumps(result, sort_keys=True))
     return benchmark_exit_code(result)
 

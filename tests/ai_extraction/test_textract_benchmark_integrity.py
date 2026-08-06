@@ -26,6 +26,10 @@ from scripts.run_textract_accuracy_benchmark import (
     _edit_distance_bucket,
     run_benchmark,
 )
+from scripts.textract_benchmark_failure_classification import (
+    FailureClassificationAccumulator,
+    PRIMARY_CLASSES,
+)
 
 BENCHMARK = Path(__file__).parent / "benchmark"
 DOCUMENTS = BENCHMARK / "documents"
@@ -580,3 +584,233 @@ async def test_identity_failure_diagnostics_do_not_expose_identity_values():
     serialized = json.dumps(diagnostic, sort_keys=True)
     assert "Synthetic Patient" not in serialized
     assert "Altered" not in serialized
+
+
+def _classification_result(
+    *,
+    expected,
+    candidates,
+    exact_matches=(),
+    semantic_matches=(),
+    identity_statuses=None,
+    eligibility_by_index=None,
+):
+    accumulator = FailureClassificationAccumulator()
+    accumulator.add_case(
+        case_index=1,
+        expected=expected,
+        candidates=candidates,
+        exact_matches=exact_matches,
+        semantic_matches=semantic_matches,
+        identity_statuses=identity_statuses or {},
+        eligibility_by_index=eligibility_by_index or {},
+    )
+    return accumulator.result(
+        expected_field_occurrences=len(expected),
+        exact_match_count=len(exact_matches),
+        semantic_match_count=len(semantic_matches),
+        semantic_candidate_count=len(candidates),
+        evidence_occurrences=sum(len(candidate.evidence) for candidate in candidates),
+        routing_eligible_count=len(candidates),
+        routing_ineligible_count=0,
+    )
+
+
+def _field_candidate(
+    *,
+    canonical_field="hba1c",
+    raw_value="7.2%",
+    normalized_value="7.2",
+    source_type="QUERY_RESULT",
+):
+    document = _document(
+        {
+            "fields": [
+                {
+                    "canonical_field": canonical_field,
+                    "raw_value": raw_value,
+                    "source_text": raw_value,
+                    "normalized_value": normalized_value,
+                    "unit": "%",
+                    "page": 1,
+                    "source_category": source_type,
+                }
+            ]
+        }
+    )
+    return SemanticCandidate((document.field_evidence[0],))
+
+
+def test_failure_classification_has_closed_primary_classes_and_reconciles():
+    candidate = _field_candidate()
+    result = _classification_result(
+        expected=[
+            {
+                "canonical_field": "hba1c",
+                "raw_value": "7.2 %",
+                "normalized_value": "7.2",
+                "unit": "%",
+                "source_category": "QUERY_RESULT",
+            }
+        ],
+        candidates=[candidate],
+        semantic_matches=[(0, 0)],
+    )
+    assert tuple(result["counts_by_class"]) == PRIMARY_CLASSES
+    assert result["reconciliation_valid"] is True
+    assert result["counts_by_class"]["RAW_REPRESENTATION_VARIANCE"] == {
+        "represented_semantic_groups": 0,
+        "exact_candidates": 1,
+        "semantic_candidates": 0,
+        "exact_expected": 1,
+        "semantic_expected": 0,
+    }
+    serialized = json.dumps(result, sort_keys=True)
+    for marker in SENSITIVE_MARKERS:
+        assert marker not in serialized
+
+
+def test_cross_source_support_and_true_duplicates_are_not_failure_candidates():
+    base = _field_candidate().evidence[0]
+    cross_source = SemanticCandidate(
+        (
+            base,
+            base.model_copy(
+                update={
+                    "source_type": "KEY_VALUE_SET",
+                    "source_block_ids": ("form-support",),
+                }
+            ),
+        )
+    )
+    same_source = SemanticCandidate(
+        (
+            base.model_copy(update={"source_block_ids": ("query-a",)}),
+            base.model_copy(update={"source_block_ids": ("query-b",)}),
+        )
+    )
+    expected = [
+        {
+            "canonical_field": "hba1c",
+            "raw_value": "7.2%",
+            "normalized_value": "7.2",
+            "unit": "%",
+            "source_category": "QUERY_RESULT",
+        }
+    ]
+    result = _classification_result(
+        expected=expected,
+        candidates=[cross_source, same_source],
+        exact_matches=[(0, 0)],
+        semantic_matches=[(0, 0)],
+    )
+    assert (
+        result["counts_by_class"]["CROSS_SOURCE_SAME_OCCURRENCE"][
+            "represented_semantic_groups"
+        ]
+        == 1
+    )
+    assert (
+        result["counts_by_class"]["TRUE_DUPLICATE"]["represented_semantic_groups"] == 1
+    )
+    assert (
+        result["counts_by_class"]["CROSS_SOURCE_SAME_OCCURRENCE"]["exact_candidates"]
+        == 0
+    )
+
+
+def test_same_value_distinct_authentic_locations_are_not_true_duplicates():
+    base = _field_candidate().evidence[0]
+    first = SemanticCandidate(
+        (base.model_copy(update={"source_block_ids": ("location-a",)}),)
+    )
+    second = SemanticCandidate(
+        (
+            base.model_copy(
+                update={
+                    "source_block_ids": ("location-b",),
+                    "bounding_box": NormalizedBoundingBox(
+                        left=0.6, top=0.6, right=0.8, bottom=0.8
+                    ),
+                }
+            ),
+        )
+    )
+    result = _classification_result(
+        expected=[],
+        candidates=[first, second],
+    )
+    assert result["counts_by_class"]["SAME_VALUE_DISTINCT_AUTHENTIC_LOCATION"] == {
+        "represented_semantic_groups": 0,
+        "exact_candidates": 2,
+        "semantic_candidates": 2,
+        "exact_expected": 0,
+        "semantic_expected": 0,
+    }
+    assert (
+        result["counts_by_class"]["TRUE_DUPLICATE"]["represented_semantic_groups"] == 0
+    )
+
+
+def test_malformed_query_only_uses_eligibility_and_internal_failure_is_unresolved():
+    malformed = _field_candidate(raw_value="not-a-number", normalized_value=None)
+    expected = [
+        {
+            "canonical_field": "hba1c",
+            "raw_value": "7.2%",
+            "normalized_value": "7.2",
+            "unit": "%",
+            "source_category": "QUERY_RESULT",
+        }
+    ]
+    malformed_result = _classification_result(
+        expected=expected,
+        candidates=[malformed],
+        eligibility_by_index={
+            0: CandidateEligibility.INELIGIBLE_QUERY_ONLY_INVALID_FORMAT
+        },
+    )
+    assert (
+        malformed_result["counts_by_class"]["MALFORMED_QUERY_ONLY"]["exact_candidates"]
+        == 1
+    )
+    failed_result = _classification_result(
+        expected=expected,
+        candidates=[malformed],
+        eligibility_by_index={0: CandidateEligibility.INELIGIBLE_CLASSIFICATION_FAILED},
+    )
+    assert (
+        failed_result["counts_by_class"]["UNRESOLVED_SAFE_DIAGNOSIS"][
+            "exact_candidates"
+        ]
+        == 1
+    )
+    assert (
+        failed_result["counts_by_class"]["MALFORMED_QUERY_ONLY"]["exact_candidates"]
+        == 0
+    )
+
+
+def test_identity_failure_excludes_raw_variance_and_remains_fail_closed():
+    candidate = _field_candidate(
+        canonical_field="patient_name",
+        raw_value="Different Synthetic Name",
+        normalized_value="different synthetic name",
+    )
+    result = _classification_result(
+        expected=[
+            {
+                "canonical_field": "patient_name",
+                "raw_value": "Synthetic Patient Alpha",
+                "normalized_value": "synthetic patient alpha",
+                "source_category": "KEY_VALUE_SET",
+            }
+        ],
+        candidates=[candidate],
+        identity_statuses={"patient_name": "nonmatching"},
+    )
+    assert result["counts_by_class"]["IDENTITY_NONMATCHING"]["exact_candidates"] == 1
+    assert (
+        result["counts_by_class"]["RAW_REPRESENTATION_VARIANCE"]["exact_candidates"]
+        == 0
+    )

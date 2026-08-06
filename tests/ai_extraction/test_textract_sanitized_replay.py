@@ -248,6 +248,131 @@ async def test_committed_replay_is_the_offline_qualification_baseline(monkeypatc
     assert result["routing_semantic_match_count"] == 52
     assert result["routing_semantic_occurrence_precision"] == pytest.approx(52 / 58)
     assert result["routing_semantic_occurrence_recall"] == pytest.approx(52 / 53)
+    classification = result["failure_classification"]
+    assert classification["classification_version"] == "v1"
+    assert classification["reconciliation_valid"] is True
+    assert classification["grouped_support_record_count"] == 34
+    assert (
+        classification["counts_by_class"]["CROSS_SOURCE_SAME_OCCURRENCE"][
+            "represented_semantic_groups"
+        ]
+        == 33
+    )
+    assert (
+        classification["counts_by_class"]["TRUE_DUPLICATE"][
+            "represented_semantic_groups"
+        ]
+        == 0
+    )
+    assert (
+        classification["counts_by_class"]["SAME_VALUE_DISTINCT_AUTHENTIC_LOCATION"][
+            "exact_candidates"
+        ]
+        == 0
+    )
+    assert classification["counts_by_class"]["RAW_REPRESENTATION_VARIANCE"] == {
+        "represented_semantic_groups": 0,
+        "exact_candidates": 3,
+        "semantic_candidates": 0,
+        "exact_expected": 3,
+        "semantic_expected": 0,
+    }
+    assert (
+        classification["counts_by_class"]["MALFORMED_QUERY_ONLY"]["exact_candidates"]
+        == 5
+    )
+    assert (
+        classification["counts_by_class"]["UNEXPECTED_EXTRACTED_CANDIDATE"][
+            "exact_candidates"
+        ]
+        == 5
+    )
+    assert classification["counts_by_class"]["IDENTITY_NONMATCHING"] == {
+        "represented_semantic_groups": 0,
+        "exact_candidates": 1,
+        "semantic_candidates": 1,
+        "exact_expected": 1,
+        "semantic_expected": 1,
+    }
+    assert classification["counts_by_canonical_field"]["RAW_REPRESENTATION_VARIANCE"][
+        "candidates"
+    ]["exact"] == {"hba1c": 3}
+    assert classification["counts_by_canonical_field"]["MALFORMED_QUERY_ONLY"][
+        "candidates"
+    ]["exact"] == {"blood_pressure": 1, "hba1c": 1, "medication": 3}
+    assert classification["counts_by_canonical_field"][
+        "UNEXPECTED_EXTRACTED_CANDIDATE"
+    ]["candidates"]["exact"] == {
+        "blood_glucose": 1,
+        "diagnosis": 2,
+        "heart_rate": 1,
+        "medication": 1,
+    }
+    assert classification["case_indexes_by_class"]["RAW_REPRESENTATION_VARIANCE"][
+        "candidates"
+    ]["exact"] == [4, 12, 15]
+    assert classification["case_indexes_by_class"]["IDENTITY_NONMATCHING"][
+        "candidates"
+    ]["exact"] == [12]
+    assert classification["source_signatures_by_class"]["CROSS_SOURCE_SAME_OCCURRENCE"][
+        "groups"
+    ] == {
+        "CELL+KEY_VALUE_SET+QUERY_RESULT": 1,
+        "CELL+QUERY_RESULT": 2,
+        "KEY_VALUE_SET+QUERY_RESULT": 30,
+    }
+    assert classification["reconciliation"] == {
+        "candidates_minus_exact_equals_exact_unmatched": {
+            "left": 14,
+            "right": 14,
+            "valid": True,
+        },
+        "candidates_minus_semantic_equals_semantic_unmatched": {
+            "left": 11,
+            "right": 11,
+            "valid": True,
+        },
+        "evidence_minus_semantic_candidates_equals_grouped_support": {
+            "left": 34,
+            "right": 34,
+            "valid": True,
+        },
+        "exact_unmatched_candidate_primary_sum": {
+            "left": 14,
+            "right": 14,
+            "valid": True,
+        },
+        "expected_minus_exact_equals_exact_unmatched": {
+            "left": 4,
+            "right": 4,
+            "valid": True,
+        },
+        "expected_minus_semantic_equals_semantic_unmatched": {
+            "left": 1,
+            "right": 1,
+            "valid": True,
+        },
+        "identity_failed_case_sum": {
+            "by_class": {
+                "IDENTITY_CONFLICTING": 0,
+                "IDENTITY_MISSING": 0,
+                "IDENTITY_NONMATCHING": 1,
+            },
+            "left": 1,
+            "right": 1,
+            "valid": True,
+        },
+        "routing_eligible_plus_ineligible_equals_candidates": {
+            "left": 63,
+            "right": 63,
+            "valid": True,
+        },
+        "semantic_unmatched_candidate_primary_sum": {
+            "left": 11,
+            "right": 11,
+            "valid": True,
+        },
+    }
     assert result["metrics"]["exact_occurrence_precision"] == pytest.approx(49 / 63)
     assert result["metrics"]["exact_occurrence_recall"] == pytest.approx(49 / 53)
     assert result["metrics"]["exact_raw_value_accuracy"] == pytest.approx(49 / 53)
@@ -260,6 +385,28 @@ async def test_committed_replay_is_the_offline_qualification_baseline(monkeypatc
         "ResponseMetadata",
     ):
         assert forbidden not in serialized
+
+
+@pytest.mark.asyncio
+async def test_committed_replay_failure_classification_is_byte_stable(monkeypatch):
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        lambda *args, **kwargs: pytest.fail("boto3 must not be called"),
+    )
+    arguments = {
+        "directory": BENCHMARK / "documents",
+        "manifest_path": BENCHMARK / "synthetic-manifest.json",
+        "region": "ap-south-1",
+        "timeout": 1,
+        "attempts": 1,
+        "replay_sanitized": COMMITTED_REPLAY,
+    }
+    first = await run(**arguments)
+    second = await run(**arguments)
+    assert json.dumps(first["failure_classification"], sort_keys=True) == json.dumps(
+        second["failure_classification"], sort_keys=True
+    )
 
 
 def test_replay_rejects_missing_extra_and_malformed_fixture_sets(tmp_path):

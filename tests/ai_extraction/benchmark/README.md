@@ -140,6 +140,33 @@ recall `52/53`. Authentic evidence is preserved, production staging and
 routing are unchanged, and these projections do not alter gates or
 `benchmark_valid`.
 
+## Sanitized failure classification
+
+The sanitized benchmark result includes a top-level `failure_classification`
+object. It is deterministic and value-free: it reports the schema version,
+exact and semantic unmatched totals, grouped-support totals, closed primary
+classes, canonical-field aggregates, source-type signatures, case ordinals,
+and reconciliation booleans. It never reports extracted values, source text,
+identities, filenames, block IDs, hashes, coordinates, credentials, or
+exception text.
+
+The committed replay records 33 cross-source same-occurrence groups and 34
+support records beyond their representatives, with no true duplicates or
+same-value distinct-location false positives. Its exact-unmatched candidate
+classes are three raw representation variances, five malformed Query-only
+candidates, five unexpected extracted candidates, and one identity
+nonmatching candidate. The three raw representation variances are cases 4,
+12, and 15 for `hba1c`: normalized value and unit agree even though the raw
+representation does not. They are diagnostics, not parser corrections, and
+are excluded from identity classification.
+
+The classification reconciliation is required to pass before the diagnostic
+is considered complete. It does not alter existing metrics, gates,
+`benchmark_valid`, extraction routing, persistence, or clinical behavior. The
+committed replay remains `benchmark_valid=false`; this offline synthetic
+diagnostic is not a production accuracy claim. No live Textract run is
+authorized by this fixture documentation.
+
 Production eligibility is a separate, non-destructive projection. All
 non-identity candidates and authentic supporting evidence remain encrypted and
 authorization-bound in persistence, including malformed Query-only candidates.
