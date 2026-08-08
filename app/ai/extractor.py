@@ -79,6 +79,7 @@ TEXTRACT_SUPPORTED_MIME_TYPES = frozenset(
 
 # Nine controlled, extraction-only questions. This remains below Textract's
 # synchronous limit of 15 queries per page.
+TEXTRACT_PILOT_QUERY_SET_VERSION = "pilot-v2-diagnosis-label"
 TEXTRACT_PILOT_QUERIES: tuple[tuple[str, str], ...] = (
     ("patient_name", "What is the patient name?"),
     ("phone", "What patient phone or mobile number is directly written?"),
@@ -88,7 +89,10 @@ TEXTRACT_PILOT_QUERIES: tuple[tuple[str, str], ...] = (
     ("blood_pressure", "What blood pressure is directly written?"),
     ("heart_rate", "What heart rate is directly written, including units?"),
     ("medication", "What medication name and dose are directly written?"),
-    ("diagnosis", "What diagnosis is directly written?"),
+    (
+        "diagnosis",
+        "What text is written next to the label Diagnosis or Provisional Diagnosis?",
+    ),
 )
 
 _IDENTITY_FIELDS = frozenset({"patient_name", "phone", "aadhaar_abha_id"})

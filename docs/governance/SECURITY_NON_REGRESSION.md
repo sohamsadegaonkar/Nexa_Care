@@ -68,6 +68,26 @@ The system minimises data and observability, uses durable idempotency, distingui
 | SEC-031 | Raw-fidelity and semantic benchmark separation | Semantic agreement or benchmark-only candidate filtering could be mistaken for OCR fidelity or silently alter clinical routing; fuzzy identity matching could accept the wrong patient. | Preserve exact one-to-one raw matching and gates as the fidelity contract. Semantic matching is a separate deterministic diagnostic that excludes identity fields and requires equal non-empty normalized values and units. Eligibility projections classify only malformed Query-only candidates, retain authentic evidence, never read expected values, and cannot alter production staging, routing or persistence. Identity matching remains exact and fail-closed. | `run_textract_accuracy_benchmark.py`; `candidate_eligibility.py`; `semantic_evidence.py` | semantic one-to-one, unit/empty-value, identity exclusion, eligibility source-support, expectation-independence and safe projection tests | Enforced locally; offline replay only; production staging unchanged | 2026-08-06 |
 | SEC-032 | Non-destructive candidate eligibility persistence and presentation | Filtering malformed Query-only candidates could discard authentic evidence, expose suppressed values without clinician authorization, alter lane or consent decisions, or create an automated clinical path. | Persist every non-identity candidate and its encrypted supporting evidence with separate eligibility metadata; existing rows backfill eligible under policy `v1`. Clinician reads return only `routing_eligible` values and aggregate closed reason counts while preserving protected source review and tenant/patient/provider/consent/erasure bindings. Eligibility is separate from `SOURCE_ONLY` and `QUARANTINE`, does not read benchmark expectations, and never enables AUTO_COMMIT or clinical commit. Unexpected classification failure fails closed under its own closed reason without exception details; invalid provider format and internal classification failure are never conflated. | `candidate_eligibility.py`; `pipeline_orchestrator.py`; `pipeline_routes.py`; `20260806_candidate_eligibility.py`; `20260806_eligibility_reason.py` | persistence, constraint, filtering, authorization, encryption, lane preservation, fail-closed, truthful reason persistence, migration upgrade/downgrade and safe audit-count tests | Enforced locally; truthful eligibility-reason migration, constraint, row-preservation, encrypted-evidence-preservation, downgrade compatibility, re-upgrade, and PostgreSQL marker gates passed on 2026-08-06. Deployment-environment migration qualification remains required. | 2026-08-06 |
 
+### Current-query replay qualification invariant
+
+A production Textract query-text change requires controlled synthetic
+qualification, an explicit query-set version, and replay evidence bound to the
+exact current alias/text registry. Historical provider responses must fail
+closed rather than being scored as evidence for a changed query.
+
+The 2026-08-06 controlled evidence covered 15 synthetic documents, 15
+successful AnalyzeDocument responses, 0 failures, 0 sanitization failures, 2
+expected diagnosis cases preserved, and 2 baseline unexpected answers reduced
+to 0 by both variants. The shorter qualified variant was selected
+deterministically. An authorized 15-document synthetic current-query capture
+then completed with 15 successful AnalyzeDocument calls, zero provider
+failures, zero retries, 15 sanitized fixtures whose registries all match, and
+live/offline replay equivalence. The unchanged identity-mismatch gate still
+fails, so the benchmark remains unqualified. No real patient data, clinical
+validation, hospital-readiness, or production-accuracy claim is supported;
+AUTO_COMMIT remains disabled and historical `pilot-v1-baseline` fixtures are
+available through Git history.
+
 ## 4. Prohibited patterns and safe alternatives
 
 ```python

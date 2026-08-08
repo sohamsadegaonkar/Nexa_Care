@@ -23,10 +23,17 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+BENCHMARK_ROOT = ROOT / "tests" / "ai_extraction" / "benchmark"
+DEFAULT_BENCHMARK_DOCUMENTS = BENCHMARK_ROOT / "documents"
+DEFAULT_BENCHMARK_MANIFEST = BENCHMARK_ROOT / "synthetic-manifest.json"
+DEFAULT_SANITIZED_REPLAY = BENCHMARK_ROOT / "sanitized-replay"
+
 from app.ai.extractor import (  # noqa: E402
     AwsTextractExtractionProvider,
     DocumentExtractionError,
     ExtractionProvider,
+    TEXTRACT_PILOT_QUERIES,
+    TEXTRACT_PILOT_QUERY_SET_VERSION,
 )
 from app.core.config import DocumentExtractionConfig  # noqa: E402
 from app.ai.semantic_evidence import group_semantic_candidates  # noqa: E402
@@ -944,7 +951,11 @@ async def run(
         if provider is not None:
             raise ValueError("REPLAY_PROVIDER_OVERRIDE_FORBIDDEN")
         selected_provider: ExtractionProvider = SanitizedReplayProvider(
-            replay_sanitized, len(manifest.get("documents", []))
+            replay_sanitized,
+            len(manifest.get("documents", [])),
+            expected_queries=TEXTRACT_PILOT_QUERIES,
+            expected_query_registry_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+            fixture_query_registry_version=manifest.get("query_registry_version"),
         )
         provider_mode = "sanitized_replay"
     elif capture_sanitized_replay is not None:
@@ -988,33 +999,54 @@ async def run(
     result["live_provider_calls"] = (
         0 if provider_mode == "sanitized_replay" else result["attempted_documents"]
     )
+    if provider_mode == "sanitized_replay":
+        fixture_version = manifest.get("query_registry_version")
+        result["query_registry"] = {
+            "production_version": TEXTRACT_PILOT_QUERY_SET_VERSION,
+            "fixture_version": fixture_version,
+            "matches_current": fixture_version == TEXTRACT_PILOT_QUERY_SET_VERSION,
+            "failure_code": None,
+        }
     return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("documents", type=Path)
-    parser.add_argument("manifest", type=Path)
+    parser.add_argument("documents", type=Path, nargs="?")
+    parser.add_argument("manifest", type=Path, nargs="?")
     parser.add_argument("--region", default="ap-south-1")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--attempts", type=int, default=2)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--capture-sanitized-replay", type=Path)
-    modes.add_argument("--replay-sanitized", type=Path)
+    modes.add_argument(
+        "--replay-sanitized",
+        type=Path,
+        nargs="?",
+        const=DEFAULT_SANITIZED_REPLAY,
+    )
     parser.add_argument(
         "--debug",
         action="store_true",
         help="Print a sanitized local traceback for internal benchmark errors",
     )
     args = parser.parse_args()
+    if args.replay_sanitized is not None:
+        documents = args.documents or DEFAULT_BENCHMARK_DOCUMENTS
+        manifest = args.manifest or DEFAULT_BENCHMARK_MANIFEST
+    else:
+        if args.documents is None or args.manifest is None:
+            parser.error("documents and manifest are required outside replay mode")
+        documents = args.documents
+        manifest = args.manifest
     # The CLI owns stdout/stderr in aggregate mode; provider event logs would
     # violate the single-JSON-object output contract.
     logging.getLogger("nexa_logger").disabled = True
     try:
         result = asyncio.run(
             run(
-                args.documents,
-                args.manifest,
+                documents,
+                manifest,
                 region=args.region,
                 timeout=args.timeout,
                 attempts=args.attempts,
@@ -1100,7 +1132,20 @@ def main() -> int:
             ),
             "live_provider_calls": 0 if args.replay_sanitized is not None else 0,
         }
-    if "failure_classification" not in result:
+        if args.replay_sanitized is not None:
+            try:
+                fixture_version = json.loads(
+                    manifest.read_text(encoding="utf-8")
+                ).get("query_registry_version")
+            except (OSError, json.JSONDecodeError):
+                fixture_version = None
+            result["query_registry"] = {
+                "production_version": TEXTRACT_PILOT_QUERY_SET_VERSION,
+                "fixture_version": fixture_version,
+                "matches_current": False,
+                "failure_code": "SANITIZED_QUERY_REGISTRY_DRIFT",
+            }
+    if "failure_classification" not in result and args.replay_sanitized is None:
         result["failure_classification"] = FailureClassificationAccumulator().result(
             expected_field_occurrences=0,
             exact_match_count=0,

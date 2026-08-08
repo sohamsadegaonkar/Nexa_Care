@@ -74,6 +74,33 @@ production medical-accuracy claims. Higher-is-better metrics use typed
 `maximum_gates`. Provider/API failure is
 not clinical `QUARANTINE` and the benchmark does not infer a clinical route.
 
+The production query set is versioned as `pilot-v2-diagnosis-label`. Its
+diagnosis query was selected by one controlled 15-document synthetic
+experiment: both replacement variants produced 2/2 exact expected diagnosis
+answers and zero unexpected answers, and the shorter label-value variant was
+selected deterministically. An authorized current-query capture then processed
+all 15 synthetic documents with 15 successful AnalyzeDocument calls, zero
+provider failures, zero retries, and 15 sanitized
+`pilot-v2-diagnosis-label` fixtures. Every fixture matches the current
+nine-query registry and offline replay is equivalent to the captured result.
+The unchanged patient-identity-mismatch gate remains below threshold, so the
+overall benchmark is unqualified and no hospital-readiness claim is made.
+
+### Offline replay
+
+Run replay through the project environment:
+
+```powershell
+python scripts/run_textract_accuracy_benchmark.py --replay-sanitized
+```
+
+This offline-only convenience command resolves the canonical repository
+synthetic documents, manifest, and replay fixtures regardless of the current
+working directory. It makes zero AWS calls and validates the current
+`pilot-v2-diagnosis-label` fixture registry. Explicit documents, manifest, and
+replay-directory paths remain supported. Live and capture modes never inherit
+these defaults and always require explicit inputs.
+
 ## First live-run integrity incident
 
 The first authorized live synthetic run was invalid: all 15 provider requests
@@ -118,17 +145,16 @@ unknown. Case-level diagnostics expose only manifest ordinals, canonical field
 names, source-type signatures and numeric reason counts. No accuracy claim may
 be made; another live run requires separate authorization.
 
-The committed sanitized replay baseline reached 15/15 provider success with
-97 authentic evidence records, 63 semantic candidates, 34 grouped provenance
-duplicates, and 49/53 exact matches. Live and offline results are equivalent:
-exact occurrence precision is `0.7777777777777778`, recall is
-`0.9245283018867925`, page accuracy is `1.0`, and page presence is `97/97`.
-Source-text accuracy now passes at `0.9183673469387755`; identity detection is
-`0.9333333333333333`. The remaining failed gates are exact occurrence precision
-and identity classification; `benchmark_valid` remains false. These fixtures
-are synthetic test assets, not clinical records. Future parser and evaluator
-work must use offline replay; another live Textract run is not currently
-authorized. No production accuracy claim is permitted.
+The committed sanitized replay now contains current
+`pilot-v2-diagnosis-label` evidence from the authorized 15-document synthetic
+capture. Live and offline results are equivalent: 95 authentic evidence
+records, 61 semantic candidates, 49/53 exact matches, exact occurrence
+precision `0.8032786885245902`, recall `0.9245283018867925`, and page accuracy
+`1.0`. Source-text accuracy is `0.9183673469387755`; identity detection is
+`0.9333333333333333`, so the unchanged identity gate leaves
+`benchmark_valid=false`. These fixtures are synthetic test assets, not
+clinical records; historical `pilot-v1-baseline` fixtures remain in Git
+history. No production accuracy or hospital-readiness claim is permitted.
 
 Semantic occurrence matching is reported separately for diagnostics: it finds
 52 matches, three beyond the 49 exact raw matches, for precision `52/63` and
@@ -164,8 +190,8 @@ The classification reconciliation is required to pass before the diagnostic
 is considered complete. It does not alter existing metrics, gates,
 `benchmark_valid`, extraction routing, persistence, or clinical behavior. The
 committed replay remains `benchmark_valid=false`; this offline synthetic
-diagnostic is not a production accuracy claim. No live Textract run is
-authorized by this fixture documentation.
+diagnostic is historical evidence only and is not a production accuracy claim.
+No live Textract run is authorized by this fixture documentation.
 
 Production eligibility is a separate, non-destructive projection. All
 non-identity candidates and authentic supporting evidence remain encrypted and

@@ -17,6 +17,8 @@ from app.ai.extractor import (
     ProviderTimeoutError,
     RemoteExtractionProvider,
     RetryableDocumentExtractionError,
+    TEXTRACT_PILOT_QUERIES,
+    TEXTRACT_PILOT_QUERY_SET_VERSION,
 )
 from app.core.config import (
     ConfigError,
@@ -41,6 +43,24 @@ def remote_config(**overrides):
     )
     values.update(overrides)
     return DocumentExtractionConfig(**values)
+
+
+def test_pilot_query_registry_changes_only_versioned_diagnosis_query():
+    assert TEXTRACT_PILOT_QUERY_SET_VERSION == "pilot-v2-diagnosis-label"
+    assert TEXTRACT_PILOT_QUERIES == (
+        ("patient_name", "What is the patient name?"),
+        ("phone", "What patient phone or mobile number is directly written?"),
+        ("aadhaar_abha_id", "What is the ABHA identifier?"),
+        ("hba1c", "What is the HbA1c result, including units?"),
+        ("blood_glucose", "What is the blood glucose result, including units?"),
+        ("blood_pressure", "What blood pressure is directly written?"),
+        ("heart_rate", "What heart rate is directly written, including units?"),
+        ("medication", "What medication name and dose are directly written?"),
+        (
+            "diagnosis",
+            "What text is written next to the label Diagnosis or Provisional Diagnosis?",
+        ),
+    )
 
 
 def textract_config(**overrides):

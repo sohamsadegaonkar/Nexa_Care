@@ -1,5 +1,6 @@
 {
   "synthetic_only": true,
+  "query_registry_version": "pilot-v2-diagnosis-label",
   "documents": [
     {
       "file": "01-simple-laboratory-form.png",

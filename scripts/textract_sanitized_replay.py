@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import tempfile
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,54 @@ BOUNDING_BOX_FIELDS = ("Left", "Top", "Width", "Height")
 
 class SanitizedReplayError(ValueError):
     """A stable value-free capture/replay validation failure."""
+
+
+def validate_sanitized_query_registry(
+    response: Mapping[str, Any], *, expected_queries: Sequence[tuple[str, str]]
+) -> None:
+    expected = list(expected_queries)
+    if (
+        not expected
+        or any(
+            not isinstance(item, (tuple, list))
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not item[0].strip()
+            or not isinstance(item[1], str)
+            or not item[1].strip()
+            for item in expected
+        )
+        or len({item[0] for item in expected}) != len(expected)
+    ):
+        raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_INVALID")
+
+    blocks = response.get("Blocks")
+    if not isinstance(blocks, list):
+        raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_INVALID")
+    observed: dict[str, str] = {}
+    for block in blocks:
+        if not isinstance(block, dict) or block.get("BlockType") != "QUERY":
+            continue
+        query = block.get("Query")
+        if not isinstance(query, dict):
+            raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_INVALID")
+        alias = query.get("Alias")
+        text = query.get("Text")
+        if (
+            not isinstance(alias, str)
+            or not alias.strip()
+            or not isinstance(text, str)
+            or not text.strip()
+            or alias in observed
+        ):
+            raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_INVALID")
+        observed[alias] = text
+
+    expected_map = dict(expected)
+    if set(observed) != set(expected_map):
+        raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_DRIFT")
+    if any(observed[alias] != text for alias, text in expected_map.items()):
+        raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_DRIFT")
 
 
 def validate_synthetic_benchmark_scope(
@@ -191,9 +240,27 @@ class CaseIndexedCaptureProvider(ExtractionProvider):
 
 
 class SanitizedReplayProvider(ExtractionProvider):
-    def __init__(self, directory: Path, expected_count: int) -> None:
+    def __init__(
+        self,
+        directory: Path,
+        expected_count: int,
+        *,
+        expected_queries: Sequence[tuple[str, str]],
+        expected_query_registry_version: str,
+        fixture_query_registry_version: str,
+    ) -> None:
         self.directory = directory.resolve()
         self.expected_count = expected_count
+        self.expected_queries = tuple(expected_queries)
+        self.expected_query_registry_version = expected_query_registry_version
+        self.fixture_query_registry_version = fixture_query_registry_version
+        if (
+            not isinstance(expected_query_registry_version, str)
+            or not expected_query_registry_version.strip()
+            or not isinstance(fixture_query_registry_version, str)
+            or not fixture_query_registry_version.strip()
+        ):
+            raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_INVALID")
         expected = {f"case-{index:02d}.json" for index in range(1, expected_count + 1)}
         actual = (
             {path.name for path in self.directory.iterdir()}
@@ -215,7 +282,12 @@ class SanitizedReplayProvider(ExtractionProvider):
             sanitized = sanitize_textract_response(value)
             if sanitized != value:
                 raise SanitizedReplayError("SANITIZED_REPLAY_FIXTURE_INVALID")
+            validate_sanitized_query_registry(
+                sanitized, expected_queries=self.expected_queries
+            )
             self._fixtures[index] = value
+        if self.fixture_query_registry_version != self.expected_query_registry_version:
+            raise SanitizedReplayError("SANITIZED_QUERY_REGISTRY_DRIFT")
         self.case_index: int | None = None
 
     def set_benchmark_case_index(self, case_index: int) -> None:
