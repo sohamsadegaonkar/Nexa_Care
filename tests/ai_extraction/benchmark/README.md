@@ -156,6 +156,15 @@ precision `0.8032786885245902`, recall `0.9245283018867925`, and page accuracy
 clinical records; historical `pilot-v1-baseline` fixtures remain in Git
 history. No production accuracy or hospital-readiness claim is permitted.
 
+The current value-free identity decomposition contains 13 true-match accepted
+cases, one true-match fail-closed rejection, one mismatch correctly rejected,
+and zero mismatches accepted. The diagnostic false-accept rate is `0`, and the
+false-reject rate is `1/14`. These metrics are diagnostics, not new gates: the
+legacy identity gate remains failed and the benchmark remains unqualified.
+Zero observed false accepts on one synthetic mismatch case is not clinical
+proof. No fuzzy identity matching is introduced, and no OCR result can create,
+select, or change patient ownership.
+
 Semantic occurrence matching is reported separately for diagnostics: it finds
 52 matches, three beyond the 49 exact raw matches, for precision `52/63` and
 recall `52/53`. Identity fields are excluded, and exact metrics remain the
@@ -180,7 +189,7 @@ The committed replay records 33 cross-source same-occurrence groups and 34
 support records beyond their representatives, with no true duplicates or
 same-value distinct-location false positives. Its exact-unmatched candidate
 classes are three raw representation variances, five malformed Query-only
-candidates, five unexpected extracted candidates, and one identity
+candidates, three unexpected extracted candidates, and one identity
 nonmatching candidate. The three raw representation variances are cases 4,
 12, and 15 for `hba1c`: normalized value and unit agree even though the raw
 representation does not. They are diagnostics, not parser corrections, and

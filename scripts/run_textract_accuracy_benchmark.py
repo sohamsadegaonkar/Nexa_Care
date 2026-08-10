@@ -35,6 +35,11 @@ from app.ai.extractor import (  # noqa: E402
     TEXTRACT_PILOT_QUERIES,
     TEXTRACT_PILOT_QUERY_SET_VERSION,
 )
+from app.ai.identity_decision import (  # noqa: E402
+    IdentityDecisionState,
+    IdentityFieldStatus,
+    decide_identity_state,
+)
 from app.core.config import DocumentExtractionConfig  # noqa: E402
 from app.ai.semantic_evidence import group_semantic_candidates  # noqa: E402
 from app.ai.semantic_evidence import SemanticCandidate  # noqa: E402
@@ -89,6 +94,12 @@ SAFE_PROVIDER_ERROR_CODES = frozenset(
 )
 INTERNAL_ERROR_CODE = "BENCHMARK_INTERNAL_ERROR"
 IDENTITY_FIELDS = frozenset({"patient_name", "phone", "aadhaar_abha_id"})
+IDENTITY_OUTCOMES = (
+    "TRUE_MATCH_ACCEPTED",
+    "TRUE_MATCH_REJECTED",
+    "MISMATCH_REJECTED",
+    "MISMATCH_ACCEPTED",
+)
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -129,6 +140,35 @@ def _expected_repeated_occurrences(fields: list[dict[str, Any]]) -> int:
 
 def _empty_accuracy_metrics() -> dict[str, None]:
     return dict.fromkeys(ACCURACY_METRICS)
+
+
+def _identity_outcome_counts(counter: Counter[str]) -> dict[str, int]:
+    return {outcome: counter[outcome] for outcome in IDENTITY_OUTCOMES}
+
+
+def _identity_state_counts(counter: Counter[str]) -> dict[str, int]:
+    return {state.value: counter[state.value] for state in IdentityDecisionState}
+
+
+def _identity_metrics(counter: Counter[str]) -> dict[str, float | None]:
+    true_match_total = (
+        counter["TRUE_MATCH_ACCEPTED"] + counter["TRUE_MATCH_REJECTED"]
+    )
+    mismatch_total = counter["MISMATCH_REJECTED"] + counter["MISMATCH_ACCEPTED"]
+    return {
+        "patient_identity_match_acceptance_rate": _ratio(
+            counter["TRUE_MATCH_ACCEPTED"], true_match_total
+        ),
+        "patient_identity_mismatch_rejection_rate": _ratio(
+            counter["MISMATCH_REJECTED"], mismatch_total
+        ),
+        "patient_identity_false_accept_rate": _ratio(
+            counter["MISMATCH_ACCEPTED"], mismatch_total
+        ),
+        "patient_identity_false_reject_rate": _ratio(
+            counter["TRUE_MATCH_REJECTED"], true_match_total
+        ),
+    }
 
 
 def _edit_distance(left: str, right: str) -> int:
@@ -327,6 +367,9 @@ async def run_benchmark(
     query_diagnostic_counts: Counter[tuple[Any, ...]] = Counter()
     query_only_by_field: Counter[str] = Counter()
     identity_failure_diagnostics: list[dict[str, Any]] = []
+    identity_case_decisions: list[dict[str, Any]] = []
+    identity_outcome_counter: Counter[str] = Counter()
+    identity_state_counter: Counter[str] = Counter()
     semantic_counts: Counter[str] = Counter()
     semantic_matches_added_by_field: Counter[str] = Counter()
     routing_counts: Counter[str] = Counter()
@@ -665,12 +708,39 @@ async def run_benchmark(
             identity_statuses=identity_statuses,
             eligibility_by_index=eligibility_by_index,
         )
+        identity_decision = decide_identity_state(
+            authoritative_context_present=bool(bound_identity),
+            field_statuses={
+                key: IdentityFieldStatus(status.upper())
+                for key, status in identity_statuses.items()
+            },
+        )
+        identity_state_counter[identity_decision.state.value] += 1
+        patient_binding_matches = bool(specification["patient_binding_matches"])
+        identity_confirmed = (
+            identity_decision.state is IdentityDecisionState.IDENTITY_CONFIRMED
+        )
+        if patient_binding_matches:
+            identity_outcome = (
+                "TRUE_MATCH_ACCEPTED" if identity_confirmed else "TRUE_MATCH_REJECTED"
+            )
+        else:
+            identity_outcome = (
+                "MISMATCH_ACCEPTED" if identity_confirmed else "MISMATCH_REJECTED"
+            )
+        identity_outcome_counter[identity_outcome] += 1
+        identity_case_decisions.append(
+            {
+                "case_index": case_index,
+                "patient_binding_matches": patient_binding_matches,
+                "decision_state": identity_decision.state.value,
+                "benchmark_outcome": identity_outcome,
+            }
+        )
         actual_match = bool(bound_identity) and all(
             status == "exact" for status in identity_statuses.values()
         )
-        identity_correct = actual_match == bool(
-            specification["patient_binding_matches"]
-        )
+        identity_correct = actual_match == patient_binding_matches
         counts["identity_detection_correct"] += identity_correct
         counts[
             "identity_cases_correct" if identity_correct else "identity_cases_incorrect"
@@ -826,6 +896,10 @@ async def run_benchmark(
         "identity_cases_correct": counts["identity_cases_correct"],
         "identity_cases_incorrect": counts["identity_cases_incorrect"],
         "identity_incorrect_case_indexes": identity_incorrect_case_indexes,
+        "identity_outcome_counts": _identity_outcome_counts(identity_outcome_counter),
+        "identity_state_counts": _identity_state_counts(identity_state_counter),
+        "identity_metrics": _identity_metrics(identity_outcome_counter),
+        "identity_case_decisions": identity_case_decisions,
         "unmatched_expected_case_indexes_by_canonical_field": {
             key: sorted(value)
             for key, value in sorted(unmatched_expected_cases.items())
@@ -1090,6 +1164,10 @@ def main() -> int:
             "identity_cases_correct": 0,
             "identity_cases_incorrect": 0,
             "identity_incorrect_case_indexes": [],
+            "identity_outcome_counts": _identity_outcome_counts(Counter()),
+            "identity_state_counts": _identity_state_counts(Counter()),
+            "identity_metrics": _identity_metrics(Counter()),
+            "identity_case_decisions": [],
             "unmatched_expected_case_indexes_by_canonical_field": {},
             "unmatched_candidate_case_indexes_by_canonical_field": {},
             "unmatched_candidate_support_signatures": {},

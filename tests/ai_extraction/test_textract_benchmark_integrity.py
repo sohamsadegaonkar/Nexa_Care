@@ -9,7 +9,11 @@ from typing import Any
 import boto3
 import pytest
 
-from app.ai.extractor import InvalidDocumentError
+from app.ai.extractor import (
+    InvalidDocumentError,
+    TEXTRACT_PILOT_QUERIES,
+    TEXTRACT_PILOT_QUERY_SET_VERSION,
+)
 from app.ai.candidate_eligibility import (
     CandidateEligibility,
     classify_semantic_candidate,
@@ -30,9 +34,11 @@ from scripts.textract_benchmark_failure_classification import (
     FailureClassificationAccumulator,
     PRIMARY_CLASSES,
 )
+from scripts.textract_sanitized_replay import SanitizedReplayProvider
 
 BENCHMARK = Path(__file__).parent / "benchmark"
 DOCUMENTS = BENCHMARK / "documents"
+COMMITTED_REPLAY = BENCHMARK / "sanitized-replay"
 MANIFEST = json.loads(
     (BENCHMARK / "synthetic-manifest.json").read_text(encoding="utf-8")
 )
@@ -374,6 +380,101 @@ async def test_fully_successful_injected_provider_passes_without_aws(monkeypatch
     assert result["matched_field_occurrences"] == 53
     assert all(result["gate_results"].values())
     assert benchmark_exit_code(result) == 0
+
+
+@pytest.mark.asyncio
+async def test_committed_replay_identity_decomposition_is_value_free_and_fail_closed(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        boto3,
+        "client",
+        lambda *args, **kwargs: pytest.fail("AWS client must not be constructed"),
+    )
+    provider = SanitizedReplayProvider(
+        COMMITTED_REPLAY,
+        len(MANIFEST["documents"]),
+        expected_queries=TEXTRACT_PILOT_QUERIES,
+        expected_query_registry_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+        fixture_query_registry_version=MANIFEST["query_registry_version"],
+    )
+
+    result = await run_benchmark(DOCUMENTS, MANIFEST, provider)
+
+    assert result["identity_outcome_counts"] == {
+        "TRUE_MATCH_ACCEPTED": 13,
+        "TRUE_MATCH_REJECTED": 1,
+        "MISMATCH_REJECTED": 1,
+        "MISMATCH_ACCEPTED": 0,
+    }
+    assert result["identity_state_counts"] == {
+        "IDENTITY_CONFIRMED": 13,
+        "IDENTITY_DISCREPANCY": 2,
+        "IDENTITY_INSUFFICIENT": 0,
+        "IDENTITY_CONFLICTING": 0,
+    }
+    assert result["identity_metrics"] == pytest.approx(
+        {
+            "patient_identity_match_acceptance_rate": 13 / 14,
+            "patient_identity_mismatch_rejection_rate": 1.0,
+            "patient_identity_false_accept_rate": 0.0,
+            "patient_identity_false_reject_rate": 1 / 14,
+        }
+    )
+    assert result["metrics"]["patient_identity_mismatch_detection"] == pytest.approx(
+        14 / 15
+    )
+    assert result["gate_results"]["patient_identity_mismatch_detection"] is False
+    assert result["benchmark_valid"] is False
+
+    case_decisions = {
+        item["case_index"]: item for item in result["identity_case_decisions"]
+    }
+    assert case_decisions[12] == {
+        "case_index": 12,
+        "patient_binding_matches": True,
+        "decision_state": "IDENTITY_DISCREPANCY",
+        "benchmark_outcome": "TRUE_MATCH_REJECTED",
+    }
+    assert case_decisions[15] == {
+        "case_index": 15,
+        "patient_binding_matches": False,
+        "decision_state": "IDENTITY_DISCREPANCY",
+        "benchmark_outcome": "MISMATCH_REJECTED",
+    }
+
+    classification = result["failure_classification"]
+    assert classification["reconciliation_valid"] is True
+    assert (
+        classification["counts_by_class"]["CROSS_SOURCE_SAME_OCCURRENCE"][
+            "represented_semantic_groups"
+        ]
+        == 33
+    )
+    assert (
+        classification["counts_by_class"]["RAW_REPRESENTATION_VARIANCE"][
+            "exact_candidates"
+        ]
+        == 3
+    )
+    assert (
+        classification["counts_by_class"]["MALFORMED_QUERY_ONLY"][
+            "exact_candidates"
+        ]
+        == 5
+    )
+    assert (
+        classification["counts_by_class"]["UNEXPECTED_EXTRACTED_CANDIDATE"][
+            "exact_candidates"
+        ]
+        == 3
+    )
+    assert (
+        classification["counts_by_class"]["IDENTITY_NONMATCHING"][
+            "exact_candidates"
+        ]
+        == 1
+    )
 
 
 @pytest.mark.asyncio

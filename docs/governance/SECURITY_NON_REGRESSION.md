@@ -67,6 +67,7 @@ The system minimises data and observability, uses durable idempotency, distingui
 | SEC-030 | Synthetic Textract replay boundary | Replaying or capturing provider responses without strict corpus scoping could persist provider metadata, identifiers, request details or ordinary patient content; Form delimiter repair could also rewrite authentic values. | Capture requires the repository synthetic-only manifest and corpus, occurs only after successful parsing, retains parser-required fields only, canonicalizes all block/relationship IDs, atomically requires the complete ordinal fixture set, and emits aggregate counts only. Replay validates the exact sanitized set, uses the production parser, makes zero AWS calls, and is unavailable to production configuration. Form composition preserves stripped key text, exact raw values and punctuation without fabrication. | `textract_sanitized_replay.py`; `run_textract_accuracy_benchmark.py`; `textract_parser.py` | sanitization, ID rewriting, malformed/partial/extra fixture, replay no-AWS, source composition and diagnostic privacy tests | Enforced locally; 15 synthetic replay fixtures committed; live and offline results equivalent; no further live Textract run authorized | 2026-08-05 |
 | SEC-031 | Raw-fidelity and semantic benchmark separation | Semantic agreement or benchmark-only candidate filtering could be mistaken for OCR fidelity or silently alter clinical routing; fuzzy identity matching could accept the wrong patient. | Preserve exact one-to-one raw matching and gates as the fidelity contract. Semantic matching is a separate deterministic diagnostic that excludes identity fields and requires equal non-empty normalized values and units. Eligibility projections classify only malformed Query-only candidates, retain authentic evidence, never read expected values, and cannot alter production staging, routing or persistence. Identity matching remains exact and fail-closed. | `run_textract_accuracy_benchmark.py`; `candidate_eligibility.py`; `semantic_evidence.py` | semantic one-to-one, unit/empty-value, identity exclusion, eligibility source-support, expectation-independence and safe projection tests | Enforced locally; offline replay only; production staging unchanged | 2026-08-06 |
 | SEC-032 | Non-destructive candidate eligibility persistence and presentation | Filtering malformed Query-only candidates could discard authentic evidence, expose suppressed values without clinician authorization, alter lane or consent decisions, or create an automated clinical path. | Persist every non-identity candidate and its encrypted supporting evidence with separate eligibility metadata; existing rows backfill eligible under policy `v1`. Clinician reads return only `routing_eligible` values and aggregate closed reason counts while preserving protected source review and tenant/patient/provider/consent/erasure bindings. Eligibility is separate from `SOURCE_ONLY` and `QUARANTINE`, does not read benchmark expectations, and never enables AUTO_COMMIT or clinical commit. Unexpected classification failure fails closed under its own closed reason without exception details; invalid provider format and internal classification failure are never conflated. | `candidate_eligibility.py`; `pipeline_orchestrator.py`; `pipeline_routes.py`; `20260806_candidate_eligibility.py`; `20260806_eligibility_reason.py` | persistence, constraint, filtering, authorization, encryption, lane preservation, fail-closed, truthful reason persistence, migration upgrade/downgrade and safe audit-count tests | Enforced locally; truthful eligibility-reason migration, constraint, row-preservation, encrypted-evidence-preservation, downgrade compatibility, re-upgrade, and PostgreSQL marker gates passed on 2026-08-06. Deployment-environment migration qualification remains required. | 2026-08-06 |
+| SEC-033 | Patient identity authority and document corroboration | Treating OCR identity as account authority could select, create, or rebind patient ownership; fuzzy matching or source precedence could hide a material conflict; benchmark truth could leak into a production policy. | Authenticated and authorized workflow context is authoritative for patient ownership. OCR identity is corroborating document evidence only and never creates, selects, or changes ownership. Closed, value-free field statuses produce confirmed, discrepancy, insufficient, or conflicting states; unresolved discrepancy blocks automatic clinical commit. No normalization, fuzzy comparison, source precedence, or cross-tenant evidence may suppress a material discrepancy. Consent and authorization remain independently mandatory, identity decisions expose no raw values, and runtime AUTO_COMMIT remains disabled. | `app/ai/identity_decision.py`; `scripts/run_textract_accuracy_benchmark.py` | `test_identity_decision.py`; benchmark integrity and sanitized replay tests | Partially enforced; pure decision contract and benchmark diagnostics are local-only, production runtime integration and quarantine evidence preservation are deferred | 2026-08-10 |
 
 ### Current-query replay qualification invariant
 
@@ -87,6 +88,32 @@ fails, so the benchmark remains unqualified. No real patient data, clinical
 validation, hospital-readiness, or production-accuracy claim is supported;
 AUTO_COMMIT remains disabled and historical `pilot-v1-baseline` fixtures are
 available through Git history.
+
+### Patient identity authority and document corroboration invariant
+
+Nexa Care uses `AUTHORITATIVE_CONTEXT_WITH_DOCUMENT_CORROBORATION`:
+
+- OCR never changes patient ownership.
+- OCR identity never creates an authoritative account binding.
+- Authenticated and authorized workflow context remains authoritative for
+  patient ownership.
+- Document identity is corroborating evidence only.
+- An unresolved document identity discrepancy blocks automatic clinical
+  commit.
+- No normalization, fuzzy comparison, or source precedence may suppress a
+  material identity discrepancy.
+- Cross-tenant identity evidence never influences patient binding.
+- Consent and authorization remain independently mandatory.
+- Identity decisions are auditable without recording raw identity values.
+- Runtime `AUTO_COMMIT` remains disabled.
+
+The initial implementation is limited to a pure, deterministic, value-free
+decision contract and synthetic benchmark diagnostics. Runtime pipeline
+behavior remains unchanged: an OCR identity mismatch still raises
+`ExtractedIdentityMismatch`, terminates the job with
+`EXTRACTED_IDENTITY_MISMATCH`, and does not enter the `QUARANTINE` lane.
+Quarantine evidence preservation and production decision-model integration are
+deferred to a separately authorized and qualified milestone.
 
 ## 4. Prohibited patterns and safe alternatives
 
