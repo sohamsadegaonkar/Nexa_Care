@@ -7,6 +7,7 @@ import httpx
 import pytest
 from botocore.exceptions import ClientError, NoCredentialsError
 
+from app.ai.identity_decision import IdentityDecisionState
 from app.ai.extractor import (
     AwsTextractExtractionProvider,
     DemoExtractionProvider,
@@ -25,7 +26,10 @@ from app.core.config import (
     DocumentExtractionConfig,
     get_document_extraction_config,
 )
-from app.models.field_evidence import EvidenceIssue
+from app.models.field_evidence import (
+    EvidenceIssue,
+    IdentityBindingStatus,
+)
 from app.services.extraction_evidence_adapter import (
     CurrentExtractionBinding,
     adapt_current_extracted_field,
@@ -266,6 +270,64 @@ async def test_textract_invalid_geometry_is_retained_as_incomplete_not_fabricate
     )
     assert not evidence.visual_evidence_complete
     assert EvidenceIssue.BOUNDING_BOX_UNAVAILABLE in evidence.visual.issues
+
+
+@pytest.mark.parametrize(
+    ("identity_state", "expected_issue"),
+    [
+        (IdentityDecisionState.IDENTITY_CONFIRMED, None),
+        (
+            IdentityDecisionState.IDENTITY_DISCREPANCY,
+            EvidenceIssue.IDENTITY_MISMATCH,
+        ),
+        (
+            IdentityDecisionState.IDENTITY_CONFLICTING,
+            EvidenceIssue.IDENTITY_MISMATCH,
+        ),
+        (
+            IdentityDecisionState.IDENTITY_INSUFFICIENT,
+            EvidenceIssue.IDENTITY_UNAVAILABLE,
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_adapter_maps_document_identity_state_without_weakening_binding(
+    identity_state, expected_issue
+):
+    client = Mock()
+    client.analyze_document.return_value = textract_response()
+    document = await AwsTextractExtractionProvider(
+        textract_config(), client
+    ).extract_bytes(b"image", mime_type="image/png", request_id="req-identity")
+    item = document.field_evidence[0]
+    now = datetime.now(timezone.utc)
+
+    evidence = adapt_current_extracted_field(
+        document=document,
+        field_name=item.canonical_field_name,
+        raw_value=item.raw_value,
+        provider_evidence=item,
+        binding=CurrentExtractionBinding(
+            patient_id="11111111-1111-4111-8111-111111111111",
+            tenant_id="22222222-2222-4222-8222-222222222222",
+            source_document_id="33333333-3333-4333-8333-333333333333",
+            source_document_hash="a" * 64,
+            ingestion_id="33333333-3333-4333-8333-333333333333",
+            job_id="44444444-4444-4444-8444-444444444444",
+            attempt_number=1,
+            attempt_id="attempt-1",
+            created_at=now,
+            extracted_at=now,
+            document_identity_state=identity_state,
+        ),
+    )
+
+    assert evidence.identity.binding_status is IdentityBindingStatus.VERIFIED
+    if expected_issue is None:
+        assert EvidenceIssue.IDENTITY_MISMATCH not in evidence.identity.issues
+        assert EvidenceIssue.IDENTITY_UNAVAILABLE not in evidence.identity.issues
+    else:
+        assert expected_issue in evidence.identity.issues
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import DocumentExtractionError, get_medical_document_extractor
+from app.ai.identity_decision import (
+    IdentityDecision,
+    IdentityDecisionState,
+    IdentityFieldStatus,
+    decide_identity_state,
+)
 from app.ai.candidate_eligibility import (
     CANDIDATE_ELIGIBILITY_POLICY_VERSION,
     CandidateEligibility,
@@ -48,9 +54,17 @@ from app.services.crypto_kms import (
 
 logger = logging.getLogger("nexa_logger")
 
-
-class ExtractedIdentityMismatch(RuntimeError):
-    pass
+_IDENTITY_FIELDS = ("patient_name", "phone", "aadhaar_abha_id")
+_IDENTITY_ERROR_CODES = {
+    IdentityDecisionState.IDENTITY_DISCREPANCY: "EXTRACTED_IDENTITY_MISMATCH",
+    IdentityDecisionState.IDENTITY_CONFLICTING: "EXTRACTED_IDENTITY_MISMATCH",
+    IdentityDecisionState.IDENTITY_INSUFFICIENT: "EXTRACTED_IDENTITY_UNAVAILABLE",
+}
+_IDENTITY_REASON_CODES = {
+    IdentityDecisionState.IDENTITY_DISCREPANCY: "IDENTITY_MISMATCH",
+    IdentityDecisionState.IDENTITY_CONFLICTING: "IDENTITY_MISMATCH",
+    IdentityDecisionState.IDENTITY_INSUFFICIENT: "IDENTITY_UNAVAILABLE",
+}
 
 
 async def _rollback_and_reload_job(
@@ -64,18 +78,28 @@ async def _rollback_and_reload_job(
     ).scalar_one()
 
 
-async def _validate_extracted_identity(
+async def _assess_extracted_identity(
     extracted: Any, patient_id: uuid.UUID, db: AsyncSession
-) -> None:
-    """Quarantine non-empty OCR identity that disagrees with the bound patient."""
-    extracted_values = {
-        "patient_name": str(extracted.patient_name or "").strip(),
-        "phone": str(extracted.phone or "").strip(),
-        "aadhaar_abha_id": str(extracted.aadhaar_abha_id or "").strip(),
-    }
-    supplied = {name: value for name, value in extracted_values.items() if value}
-    if not supplied:
-        return
+) -> IdentityDecision | None:
+    """Compare authentic document assertions without retaining their values."""
+    assertions: dict[str, list[str]] = {}
+    field_evidence = getattr(extracted, "field_evidence", ()) or ()
+    for field_name in _IDENTITY_FIELDS:
+        authentic_values = [
+            str(item.raw_value).strip()
+            for item in field_evidence
+            if item.canonical_field_name == field_name
+            and str(item.raw_value).strip()
+        ]
+        if authentic_values:
+            assertions[field_name] = authentic_values
+            continue
+        summary_value = str(getattr(extracted, field_name, None) or "").strip()
+        if summary_value:
+            assertions[field_name] = [summary_value]
+    if not assertions:
+        return None
+
     row = (
         await db.execute(
             select(NexaVault)
@@ -83,25 +107,44 @@ async def _validate_extracted_identity(
             .limit(1)
         )
     ).scalar_one_or_none()
-    if row is None:
-        raise ExtractedIdentityMismatch()
-    kms = get_encryption_provider()
-    for field_name, extracted_value in supplied.items():
-        stored = getattr(row, field_name, None)
+
+    field_statuses: dict[str, IdentityFieldStatus] = {}
+    kms = None
+    for field_name, extracted_values in assertions.items():
+        stored = getattr(row, field_name, None) if row is not None else None
         if not stored:
-            raise ExtractedIdentityMismatch()
+            field_statuses[field_name] = IdentityFieldStatus.MISSING
+            continue
+        if kms is None:
+            kms = get_encryption_provider()
         canonical = await kms.decrypt_field(
             str(patient_id),
             field_name,
             EncryptedField.deserialize(stored, field_name),
             db,
         )
+        normalized_canonical = re.sub(r"[^a-z0-9]", "", canonical.casefold())
+        if not normalized_canonical:
+            field_statuses[field_name] = IdentityFieldStatus.MISSING
+            continue
+        comparisons = [
+            secrets.compare_digest(
+                normalized_canonical,
+                re.sub(r"[^a-z0-9]", "", value.casefold()),
+            )
+            for value in extracted_values
+        ]
+        if all(comparisons):
+            field_statuses[field_name] = IdentityFieldStatus.EXACT
+        elif any(comparisons):
+            field_statuses[field_name] = IdentityFieldStatus.CONFLICTING
+        else:
+            field_statuses[field_name] = IdentityFieldStatus.NONMATCHING
 
-        def normalize(value: str) -> str:
-            return re.sub(r"[^a-z0-9]", "", value.casefold())
-
-        if not secrets.compare_digest(normalize(canonical), normalize(extracted_value)):
-            raise ExtractedIdentityMismatch()
+    return decide_identity_state(
+        authoritative_context_present=True,
+        field_statuses=field_statuses,
+    )
 
 
 def _candidate_fields(document: Any) -> list[dict[str, Any]]:
@@ -255,7 +298,20 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         if extracted.field_evidence:
             job.extractor_version = extracted.field_evidence[0].provider_api_version
         del document_bytes
-        await _validate_extracted_identity(extracted, job.patient_id, db)
+        identity_decision = await _assess_extracted_identity(
+            extracted, job.patient_id, db
+        )
+        identity_state = identity_decision.state if identity_decision else None
+        identity_quarantine = (
+            identity_state is not None
+            and identity_state is not IdentityDecisionState.IDENTITY_CONFIRMED
+        )
+        identity_error_code = (
+            _IDENTITY_ERROR_CODES.get(identity_state) if identity_state else None
+        )
+        identity_reason_code = (
+            _IDENTITY_REASON_CODES.get(identity_state) if identity_state else None
+        )
 
         consent_active = False
         try:
@@ -328,16 +384,19 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                             if erasure_clear
                             else SnapshotState.IN_PROGRESS
                         ),
+                        document_identity_state=identity_state,
                     ),
                 )
             )
 
         if not evidence_records:
-            job.status = (
+            job.status = "quarantined" if identity_quarantine else (
                 "source_only" if consent_active and erasure_clear else "quarantined"
             )
             if job.status == "quarantined":
-                job.error_code = "LIVE_PROCESSING_AUTHORIZATION_BLOCKED"
+                job.error_code = (
+                    identity_error_code or "LIVE_PROCESSING_AUTHORIZATION_BLOCKED"
+                )
             job.completed_at = datetime.now(timezone.utc)
             await enqueue_audit_event(
                 db,
@@ -353,6 +412,8 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     "lane": (
                         "SOURCE_ONLY" if job.status == "source_only" else "QUARANTINE"
                     ),
+                    "reason_code": identity_reason_code,
+                    "identity_state": identity_state.value if identity_state else None,
                     "candidate_count": 0,
                     "eligible_candidate_count": eligibility_counts[
                         "eligible_candidate_count"
@@ -398,7 +459,11 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     actor_id=job.uploader_id or "SYSTEM_PIPELINE",
                     evaluated_at=routed_at,
                     quarantine_review_deadline=(
-                        routed_at if not consent_active or not erasure_clear else None
+                        routed_at
+                        if identity_quarantine
+                        or not consent_active
+                        or not erasure_clear
+                        else None
                     ),
                 )
             )
@@ -470,7 +535,13 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             result.routing.lane == "SOURCE_ONLY" for result in results
         )
         job.status = "quarantined" if quarantine_count else "source_only"
-        job.error_code = "EXTRACTION_EVIDENCE_QUARANTINED" if quarantine_count else None
+        job.error_code = (
+            identity_error_code
+            if identity_quarantine
+            else "EXTRACTION_EVIDENCE_QUARANTINED"
+            if quarantine_count
+            else None
+        )
         job.completed_at = routed_at
         await enqueue_audit_event(
             db,
@@ -484,8 +555,12 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                 "job_id": str(job.id),
                 "document_id": str(job.document_id),
                 "status": job.status,
+                "lane": "QUARANTINE" if quarantine_count else "SOURCE_ONLY",
+                "candidate_count": len(candidates),
                 "source_only_count": source_only_count,
                 "quarantine_count": quarantine_count,
+                "identity_state": identity_state.value if identity_state else None,
+                "reason_code": identity_reason_code,
                 **eligibility_counts,
             },
         )
@@ -497,11 +572,6 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             "quarantine_count": quarantine_count,
             **eligibility_counts,
         }
-    except ExtractedIdentityMismatch:
-        job = await _rollback_and_reload_job(db, job_uuid)
-        job.status = "identity_mismatch"
-        job.error_code = "EXTRACTED_IDENTITY_MISMATCH"
-        job.retryable = False
     except EncryptionError:
         job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "validation_failed"

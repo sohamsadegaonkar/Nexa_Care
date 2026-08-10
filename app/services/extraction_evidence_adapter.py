@@ -7,6 +7,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from pydantic import BaseModel, ConfigDict
 
+from app.ai.identity_decision import IdentityDecisionState
 from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
 from app.models.field_evidence import (
     ClinicalValueEvidence,
@@ -51,6 +52,7 @@ class CurrentExtractionBinding(BaseModel):
     consent_reference: str | None = None
     consent_state: SnapshotState = SnapshotState.UNKNOWN
     erasure_state: SnapshotState = SnapshotState.UNKNOWN
+    document_identity_state: IdentityDecisionState | None = None
 
 
 def adapt_current_extracted_field(
@@ -65,6 +67,16 @@ def adapt_current_extracted_field(
     identity_issues: set[EvidenceIssue] = set()
     if not binding.source_document_hash:
         identity_issues.add(EvidenceIssue.SOURCE_DOCUMENT_HASH_MISSING)
+    if binding.document_identity_state in {
+        IdentityDecisionState.IDENTITY_DISCREPANCY,
+        IdentityDecisionState.IDENTITY_CONFLICTING,
+    }:
+        identity_issues.add(EvidenceIssue.IDENTITY_MISMATCH)
+    elif (
+        binding.document_identity_state
+        is IdentityDecisionState.IDENTITY_INSUFFICIENT
+    ):
+        identity_issues.add(EvidenceIssue.IDENTITY_UNAVAILABLE)
 
     model_issues: set[EvidenceIssue] = set()
     visual_issues: set[EvidenceIssue] = set()

@@ -496,6 +496,10 @@ async def get_extraction_job(
         .scalars()
         .all()
     )
+    for row in candidate_rows:
+        _assert_candidate_authorization_binding(
+            candidate=row, job=job, provider=provider
+        )
     eligible_rows = [
         row for row in candidate_rows if getattr(row, "routing_eligible", True)
     ]
@@ -507,13 +511,32 @@ async def get_extraction_job(
         reason = getattr(row, "eligibility_reason_code", None)
         if isinstance(reason, str):
             ineligible_by_reason[reason] = ineligible_by_reason.get(reason, 0) + 1
-    kms = get_encryption_provider()
+    identity_reason_codes = {"IDENTITY_MISMATCH", "IDENTITY_UNAVAILABLE"}
+    identity_error_reasons = {
+        "EXTRACTED_IDENTITY_MISMATCH": "IDENTITY_MISMATCH",
+        "EXTRACTED_IDENTITY_UNAVAILABLE": "IDENTITY_UNAVAILABLE",
+    }
+    retained_reason_codes = {
+        reason
+        for row in candidate_rows
+        for reason in (row.reason_codes or [])
+    }
+    candidate_identity_quarantine = bool(
+        retained_reason_codes.intersection(identity_reason_codes)
+    )
+    job_identity_quarantine = (
+        job.error_code in identity_error_reasons
+        or job.status == "identity_mismatch"
+    )
+    identity_privacy_block = (
+        candidate_identity_quarantine or job_identity_quarantine
+    )
+    visible_rows = [] if identity_privacy_block else eligible_rows
     candidates = []
     try:
-        for row in eligible_rows:
-            _assert_candidate_authorization_binding(
-                candidate=row, job=job, provider=provider
-            )
+        kms = get_encryption_provider() if visible_rows else None
+        for row in visible_rows:
+            assert kms is not None
             value_context = f"extraction_candidate_value:{row.evidence_id}"
             source_context = f"extraction_candidate_source:{row.evidence_id}"
             raw_value = await kms.decrypt_field(
@@ -552,7 +575,15 @@ async def get_extraction_job(
         ) from exc
     lane = None
     reason_codes: list[str] = []
-    if candidate_rows:
+    if identity_privacy_block:
+        lane = "QUARANTINE"
+        projected_reason_codes = set(retained_reason_codes)
+        if job.error_code in identity_error_reasons:
+            projected_reason_codes.add(identity_error_reasons[job.error_code])
+        elif job.status == "identity_mismatch":
+            projected_reason_codes.add("IDENTITY_MISMATCH")
+        reason_codes = sorted(projected_reason_codes)
+    elif candidate_rows:
         lane = (
             "QUARANTINE"
             if any(row.lane == "QUARANTINE" for row in candidate_rows)
@@ -566,11 +597,17 @@ async def get_extraction_job(
         reason_codes = ["NO_CLINICAL_CANDIDATES"]
     elif job.status == "quarantined":
         lane = "QUARANTINE"
-        reason_codes = [job.error_code] if job.error_code else []
+        reason_codes = (
+            [identity_error_reasons[job.error_code]]
+            if job.error_code in identity_error_reasons
+            else [job.error_code]
+            if job.error_code
+            else []
+        )
 
     identity_validation = (
         "failed"
-        if job.status == "identity_mismatch"
+        if identity_privacy_block
         else "passed"
         if job.status
         in {
@@ -594,8 +631,8 @@ async def get_extraction_job(
         ),
         "routing_lane": lane,
         "routing_reasons": reason_codes,
-        "candidate_count": len(candidates),
-        "eligible_candidate_count": len(candidates),
+        "candidate_count": len(candidate_rows),
+        "eligible_candidate_count": len(eligible_rows),
         "ineligible_candidate_count": len(ineligible_rows),
         "ineligible_count_by_reason": dict(sorted(ineligible_by_reason.items())),
         "candidates": candidates,

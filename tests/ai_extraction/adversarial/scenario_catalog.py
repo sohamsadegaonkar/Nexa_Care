@@ -124,7 +124,7 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         "Document identity evidence conflicts with the patient bound to the job.",
         "Quarantine or reject the job and block all patient-record commitment; identity ambiguity must fail closed.",
         runtime_tested=True,
-        test_reference="tests/ai_extraction/adversarial/test_field_evidence_contract.py::test_scenario_8_identity_mismatch_is_explicit_and_blocking",
+        test_reference="tests/ai_extraction/adversarial/test_identity_discrepancy_quarantine.py::test_scenario_8_identity_discrepancy_is_encrypted_quarantined_and_idempotent",
     ),
     _scenario(
         9,
