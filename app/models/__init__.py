@@ -8,6 +8,12 @@ from app.models.consent_ledger import ConsentLedger
 from app.models.consent_sessions import ConsentSession
 from app.models.dek_store import PatientDEKStore
 from app.models.document_review import DocumentReviewQueue, DocumentReviewStatus
+from app.models.identity_review import (
+    IdentityReviewCaseRecord,
+    IdentityReviewCaseRouteRecord,
+    IdentityReviewDispositionRecord,
+    IdentityReviewOperationRecord,
+)
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
@@ -59,6 +65,10 @@ __all__ = [
     "ConsentSession",
     "DocumentReviewQueue",
     "DocumentReviewStatus",
+    "IdentityReviewCaseRecord",
+    "IdentityReviewCaseRouteRecord",
+    "IdentityReviewDispositionRecord",
+    "IdentityReviewOperationRecord",
     "PatientDEKStore",
     "Base",
     "TimestampMixin",

@@ -79,7 +79,7 @@ python scripts/run_pilot_migrations.py
 ```
 
 The repository and database must both resolve to the single Alembic head
-`20260806_eligibility_reason`. API container startup never runs migrations and
+`20260810_identity_review`. API container startup never runs migrations and
 must not be used to stamp or downgrade a database.
 
 `GET /healthz` is the dependency-free liveness probe for the container and load

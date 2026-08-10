@@ -118,7 +118,7 @@ async def test_provider_access_has_registry_provider_hospital_and_purpose():
 
 
 @pytest.mark.asyncio
-async def test_failed_started_denied_validation_and_consent_requests_are_excluded():
+async def test_non_access_and_identity_review_events_are_excluded():
     rows = [
         {"event_type": "PATIENT_RECORD_VIEW_STARTED", "status": "STARTED"},
         {"event_type": "PATIENT_RECORD_VIEW_FAILED", "status": "FAILED"},
@@ -126,6 +126,16 @@ async def test_failed_started_denied_validation_and_consent_requests_are_exclude
         {"event_type": "PROVIDER_ACCESS_DENIED", "status": "DENIED"},
         {"event_type": "SESSION_VALIDATION_FAILED", "status": "FAILED"},
         {"event_type": "CONSENT_REQUEST_CREATED", "status": "SUCCESS"},
+        {"event_type": "IDENTITY_REVIEW_CASE_CREATED", "status": "SUCCESS"},
+        {"event_type": "IDENTITY_REVIEW_CASE_ACCESSED", "status": "SUCCESS"},
+        {"event_type": "IDENTITY_REVIEW_CASE_CLAIMED", "status": "SUCCESS"},
+        {"event_type": "IDENTITY_REVIEW_SESSION_ROTATED", "status": "SUCCESS"},
+        {
+            "event_type": "IDENTITY_REVIEW_DISPOSITION_SUBMITTED",
+            "status": "SUCCESS",
+        },
+        {"event_type": "IDENTITY_REVIEW_ESCALATED", "status": "SUCCESS"},
+        {"event_type": "IDENTITY_REVIEW_ACCESS_REJECTED", "status": "REJECTED"},
     ]
     db = AsyncMock()
     with patch(

@@ -13,7 +13,7 @@ Never use real patient PHI.
   `DOCUMENT_AI_AWS_REGION=ap-south-1`.
 - Give the runtime identity only `textract:AnalyzeDocument` through the normal
   AWS SDK credential chain/IAM role. Do not configure access keys in app files.
-- Apply migrations through `20260806_eligibility_reason`.
+- Apply migrations through `20260810_identity_review`.
 - Use an authorized synthetic patient and a physical Android device that
   reports `device` in `adb devices -l`.
 - Prepare exactly one synthetic, single-page PDF/PNG/JPEG, at most 10 MB, with

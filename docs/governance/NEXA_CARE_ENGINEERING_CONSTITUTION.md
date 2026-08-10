@@ -163,7 +163,7 @@ Validation query:
 Forward-fix strategy:
 ```
 
-Current head is `20260806_eligibility_reason`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
+Current head is `20260810_identity_review`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
 
 ## 11. Frontend standard
 

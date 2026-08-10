@@ -63,6 +63,7 @@ from app.api.v2.nfc_routes import router as nfc_v2_router
 from app.api.v2.patient_routes import router as patient_v2_router
 from app.api.v2.patient_record_routes import router as patient_record_v2_router
 from app.api.v2.pipeline_routes import router as pipeline_v2_router
+from app.api.v2.identity_review_routes import identity_review_v2_router
 from app.api.v2.review_routes import router as review_v2_router
 from app.api.v2.dashboard_routes import router as dashboard_v2_router
 from app.api.v2.consent_history_routes import router as consent_history_v2_router
@@ -290,6 +291,7 @@ app.include_router(nfc_v2_router)
 app.include_router(patient_v2_router)
 app.include_router(patient_record_v2_router)
 app.include_router(pipeline_v2_router)
+app.include_router(identity_review_v2_router)
 app.include_router(review_v2_router)
 app.include_router(policy_v2_router)
 app.include_router(role_v2_router)
