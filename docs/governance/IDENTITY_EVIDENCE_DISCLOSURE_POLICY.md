@@ -56,6 +56,52 @@ E1 is the only currently identified candidate for a future disclosure
 expansion. E1 must contain no raw, canonical, masked, normalized, or hashed
 identity value, source text, or document content.
 
+The candidate label is historical policy context, not permission to begin E1
+implementation. A future policy-v2 proposal would require a redesigned
+disclosure primitive, not implementation of the currently proposed E1.
+
+```text
+E1_RUNTIME_IMPLEMENTATION_AUTHORIZED = NO
+E1_COUNT_VECTOR_DISCLOSURE = PROHIBITED_UNDER_CURRENT_ARCHITECTURE
+E1_CHOSEN_INPUT_ORACLE_RISK = HIGH
+E1_BINARY_PROBING_RISK = HIGH
+E1_DIFFERENCE_ORACLE_RISK = HIGH
+E1C_COUNT_VECTOR = NOT_SAFE_UNDER_CURRENT_ARCHITECTURE
+CURRENT_E1_TECHNICAL_RECOMMENDATION = NO_E1
+E1_APPROVAL_RECORD_STATUS = NOT_READY_FOR_CREATION
+```
+
+The current extraction boundary evaluates identity assertions present in the
+submitted document. A submitter who can influence document contents can vary
+which assertions appear across related uploads. Observing aggregate state or
+`exact_count`, `missing_count`, `nonmatching_count`, `conflicting_count`, or
+`evaluated_field_count` across those inputs can reveal hidden comparison
+behavior. For example, an abstract change from `upload A -> discrepancy` to
+`upload B -> confirmed` can expose the effect of a changed assertion. This is
+a chosen-input difference oracle even when no identity value is returned.
+
+Submitting one relevant assertion at a time can turn aggregate state or count
+buckets into a field-level binary oracle. The risk is therefore not limited to
+raw values or field labels.
+
+The proposed variants are evaluated as follows, and none is authorized by
+this milestone:
+
+- **E1A** — aggregate state only: still an oracle when input construction is
+  attacker-controlled.
+- **E1B** — aggregate state plus evaluated count: adds field-set information
+  and remains an oracle.
+- **E1C** — aggregate state plus all count buckets: not safe under the current
+  architecture and has the highest leakage.
+- **E1D** — binary corroboration/needs-review signal: less expressive but can
+  still be probed as a one-bit oracle.
+
+No current E1 variant has demonstrated sufficient privacy resistance for
+runtime authorization. This does not claim that every future aggregate signal
+is impossible; a future design may be reconsidered only after a new threat
+model and explicit approval. Human approval alone must not convert this known
+unsafe design into an implementation-authorized design.
+
 ### E2 — Field-specific value-free statuses
 
 Examples include:
@@ -198,7 +244,8 @@ does not require raw-identity encryption-ownership resolution, but must be
 verified to contain no raw, canonical, masked, normalized, or hashed identity,
 source text, or document content.
 
-The next possible engineering gate is:
+No current engineering gate is open for the proposed E1 design. After a
+privacy-resistant redesign, a future proposal may consider:
 
 ```text
 IDENTITY_EVIDENCE_SAFE_SUMMARY_PHASE_1
@@ -351,8 +398,12 @@ patient correction, incident workflow, and frontend qualification.
 The recommended next action is:
 
 ```text
-AUDIT_IDENTITY_EVIDENCE_DISCLOSURE_POLICY_V1
+DESIGN_PRIVACY_RESISTANT_IDENTITY_REVIEW_SIGNAL
 ```
+
+Do not create an E1 approval record for the currently proposed design. First
+produce a technically acceptable, privacy-resistant disclosure primitive.
+Only then may a human approval record be considered.
 
 ## 13. Maintenance
 

@@ -163,6 +163,23 @@ def test_identity_evidence_policy_requires_literal_reviewer_role() -> None:
     assert "current literal `identity_reviewer` role" in text
 
 
+def test_identity_e1_oracle_policy_is_closed() -> None:
+    text = _read(IDENTITY_POLICY)
+    for marker in (
+        "E1_RUNTIME_IMPLEMENTATION_AUTHORIZED = NO",
+        "E1_COUNT_VECTOR_DISCLOSURE = PROHIBITED_UNDER_CURRENT_ARCHITECTURE",
+        "E1_CHOSEN_INPUT_ORACLE_RISK = HIGH",
+        "E1_BINARY_PROBING_RISK = HIGH",
+        "E1_DIFFERENCE_ORACLE_RISK = HIGH",
+        "E1C_COUNT_VECTOR = NOT_SAFE_UNDER_CURRENT_ARCHITECTURE",
+        "CURRENT_E1_TECHNICAL_RECOMMENDATION = NO_E1",
+        "E1_APPROVAL_RECORD_STATUS = NOT_READY_FOR_CREATION",
+        "DESIGN_PRIVACY_RESISTANT_IDENTITY_REVIEW_SIGNAL",
+    ):
+        assert marker in text
+    assert "SEC-035" in _read(SECURITY)
+
+
 def test_governance_sources_do_not_contain_obvious_placeholder_secrets() -> None:
     forbidden = (
         "BEGIN PRIVATE KEY",
