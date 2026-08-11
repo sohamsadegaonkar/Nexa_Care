@@ -8,7 +8,8 @@ Before inspecting, designing, generating, modifying, or reviewing code, every co
 
 1. [Security Non-Regression Standard](docs/governance/SECURITY_NON_REGRESSION.md)
 2. [India Regulatory Baseline](docs/governance/INDIA_REGULATORY_BASELINE.md)
-3. [Engineering Constitution](docs/governance/NEXA_CARE_ENGINEERING_CONSTITUTION.md)
+3. [Identity Evidence Disclosure Policy](docs/governance/IDENTITY_EVIDENCE_DISCLOSURE_POLICY.md)
+4. [Engineering Constitution](docs/governance/NEXA_CARE_ENGINEERING_CONSTITUTION.md)
 
 The agent must identify which rules apply to its task. Before changing code, it must briefly record the affected security invariants, regulatory controls, product/engineering principles, required validation, and whether the task changes patient data, consent, access, audit, identity, AI extraction, storage, erasure, or emergency access.
 
@@ -18,9 +19,10 @@ The agent must identify which rules apply to its task. Before changing code, it 
 2. Applicable laws and binding regulations
 3. `SECURITY_NON_REGRESSION.md`
 4. `INDIA_REGULATORY_BASELINE.md`
-5. `NEXA_CARE_ENGINEERING_CONSTITUTION.md`
-6. Existing feature documentation
-7. Local conventions
+5. `IDENTITY_EVIDENCE_DISCLOSURE_POLICY.md`
+6. `NEXA_CARE_ENGINEERING_CONSTITUTION.md`
+7. Existing feature documentation
+8. Local conventions
 
 Choose the safer interpretation of conflicting internal rules and flag the conflict.
 
