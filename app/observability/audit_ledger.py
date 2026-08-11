@@ -34,7 +34,7 @@ from app.core.database import get_async_engine
 from app.core.request_context import trace_id_var
 from app.observability.safe_exceptions import log_safe_exception
 from app.observability.security_metrics import AUDIT_LEDGER_INTEGRITY_FAILURES
-from app.security.audit_context import AuditContext, derive_audit_partition
+from app.security.audit_context import AuditContext, AuditContextMissing, derive_audit_partition
 
 logger = logging.getLogger("nexa_logger")
 security_logger = logging.getLogger("nexa_security")
@@ -94,6 +94,7 @@ _READ_FOR_TARGET_SQL = text(
            chain_scope, protocol_version, sequence_number
     FROM public.audit_ledger
     WHERE resource = :target_id
+      AND chain_scope LIKE :chain_scope_prefix
     ORDER BY created_at DESC, audit_id DESC
     LIMIT :limit
     """
@@ -487,11 +488,33 @@ async def append_audit_log_for_stored_partition(
     )
 
 
-async def read_audit_events(target_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+def _trusted_scope_prefix(audit_context: AuditContext) -> str:
+    """Return the trusted hospital/tenant partition prefix for reads."""
+    if audit_context.hospital_id:
+        return f"hospital:{audit_context.hospital_id}:%"
+    if audit_context.tenant_id:
+        return f"tenant:{audit_context.tenant_id}:%"
+    raise AuditContextMissing(
+        "Tenant-sensitive audit reads require trusted hospital or tenant scope."
+    )
+
+
+async def read_audit_events(
+    target_id: str,
+    *,
+    audit_context: AuditContext,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    """Read patient audit events inside a trusted hospital/tenant scope."""
     bounded_limit = max(1, min(int(limit), 200))
     async with get_async_engine().connect() as connection:
         result = await connection.execute(
-            _READ_FOR_TARGET_SQL, {"target_id": str(target_id), "limit": bounded_limit}
+            _READ_FOR_TARGET_SQL,
+            {
+                "target_id": str(target_id),
+                "chain_scope_prefix": _trusted_scope_prefix(audit_context),
+                "limit": bounded_limit,
+            },
         )
         return [dict(row) for row in result.mappings().all()]
 

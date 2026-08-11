@@ -7,7 +7,7 @@ audit-before-write guarantee.
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
+from app.security.audit_context import AuditContext, AuditDomain, current_audit_context
 
 import logging
 import base64
@@ -47,6 +47,7 @@ from app.observability.audit_ledger import (
     read_audit_events,
     read_patient_access_history_events,
 )
+from app.services.audit_outbox import enqueue_audit_event
 
 logger = logging.getLogger("nexa_logger")
 
@@ -61,6 +62,50 @@ _ACCESS_HISTORY_SUCCESS_STATUSES = {
 _FORMER_PROVIDER_LABEL = "Former or unavailable provider"
 _UNKNOWN_FACILITY_LABEL = "Unknown facility"
 _UNKNOWN_PURPOSE_LABEL = "Purpose not recorded"
+
+
+async def _stage_patient_record_success_audit(
+    db: AsyncSession,
+    *,
+    actor_uid: str,
+    patient_id: str,
+    record_type: str,
+    record_id: str,
+) -> None:
+    """Stage the success audit intent in the clinical-write transaction.
+
+    The outbox insert deliberately does not commit.  If it cannot be staged,
+    the clinical row and timeline row must not be allowed to commit either.
+    """
+    try:
+        await enqueue_audit_event(
+            db,
+            audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+            idempotency_key=f"patient-record-append:{record_type}:{record_id}",
+            actor_id=actor_uid,
+            event_type="PATIENT_RECORD_APPEND_SUCCESS",
+            target_id=patient_id,
+            patient_id=patient_id,
+            metadata={"type": record_type, "record_id": record_id},
+        )
+    except Exception as exc:  # noqa: BLE001 - fail closed at the API boundary
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "AUDIT_DURABILITY_UNAVAILABLE"},
+        ) from exc
+
+
+async def _commit_patient_record_transaction(db: AsyncSession) -> None:
+    """Commit one clinical/timeline/outbox transaction or fail closed."""
+    try:
+        await db.commit()
+    except Exception as exc:  # noqa: BLE001 - do not expose database details
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "PATIENT_RECORD_WRITE_UNAVAILABLE"},
+        ) from exc
 
 
 def _encode_access_history_cursor(row: dict[str, Any]) -> str:
@@ -837,8 +882,14 @@ async def get_patient_audit_trail(
 ):
     """Admin & Auditor Console view: returns complete, unfiltered audit ledger trail for a patient."""
     _parse_uuid(id)
+    audit_context = AuditContext.for_hospital(
+        hospital_id=str(provider.hospital.hospital_id),
+        domain=AuditDomain.PATIENT_RECORD,
+    )
     try:
-        rows = await read_audit_events(str(id), limit=limit)
+        rows = await read_audit_events(
+            str(id), audit_context=audit_context, limit=limit
+        )
     except Exception as exc:
         logger.error(
             "Admin audit trail store unavailable",
@@ -1022,16 +1073,14 @@ async def append_vitals(
     if v_bp.id is None:
         raise RuntimeError("Vitals record identifier was not assigned during flush")
     record_id = str(v_bp.id)
-    await db.commit()
-
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+    await _stage_patient_record_success_audit(
+        db,
         actor_uid=actor_uid,
-        event_type="PATIENT_RECORD_APPEND_SUCCESS",
-        target_id=id,
-        status="SUCCESS",
-        metadata={"type": "vitals", "record_id": record_id},
+        patient_id=id,
+        record_type="vitals",
+        record_id=record_id,
     )
+    await _commit_patient_record_transaction(db)
 
     return {
         "record_id": record_id,
@@ -1101,16 +1150,14 @@ async def append_medications(
     if med.id is None:
         raise RuntimeError("Medication record identifier was not assigned during flush")
     record_id = str(med.id)
-    await db.commit()
-
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+    await _stage_patient_record_success_audit(
+        db,
         actor_uid=actor_uid,
-        event_type="PATIENT_RECORD_APPEND_SUCCESS",
-        target_id=id,
-        status="SUCCESS",
-        metadata={"type": "medications", "record_id": record_id},
+        patient_id=id,
+        record_type="medications",
+        record_id=record_id,
     )
+    await _commit_patient_record_transaction(db)
 
     return {
         "record_id": record_id,
@@ -1178,16 +1225,14 @@ async def append_labs(
     if lab.id is None:
         raise RuntimeError("Lab record identifier was not assigned during flush")
     record_id = str(lab.id)
-    await db.commit()
-
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+    await _stage_patient_record_success_audit(
+        db,
         actor_uid=actor_uid,
-        event_type="PATIENT_RECORD_APPEND_SUCCESS",
-        target_id=id,
-        status="SUCCESS",
-        metadata={"type": "labs", "record_id": record_id},
+        patient_id=id,
+        record_type="labs",
+        record_id=record_id,
     )
+    await _commit_patient_record_transaction(db)
 
     return {
         "record_id": record_id,
@@ -1261,16 +1306,14 @@ async def append_allergies(
     if alg.id is None:
         raise RuntimeError("Allergy record identifier was not assigned during flush")
     record_id = str(alg.id)
-    await db.commit()
-
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+    await _stage_patient_record_success_audit(
+        db,
         actor_uid=actor_uid,
-        event_type="PATIENT_RECORD_APPEND_SUCCESS",
-        target_id=id,
-        status="SUCCESS",
-        metadata={"type": "allergies", "record_id": record_id},
+        patient_id=id,
+        record_type="allergies",
+        record_id=record_id,
     )
+    await _commit_patient_record_transaction(db)
 
     return {
         "record_id": record_id,
@@ -1337,16 +1380,14 @@ async def append_documents(
     if doc.id is None:
         raise RuntimeError("Document record identifier was not assigned during flush")
     record_id = str(doc.id)
-    await db.commit()
-
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+    await _stage_patient_record_success_audit(
+        db,
         actor_uid=actor_uid,
-        event_type="PATIENT_RECORD_APPEND_SUCCESS",
-        target_id=id,
-        status="SUCCESS",
-        metadata={"type": "documents", "record_id": record_id},
+        patient_id=id,
+        record_type="documents",
+        record_id=record_id,
     )
+    await _commit_patient_record_transaction(db)
 
     return {
         "record_id": record_id,
