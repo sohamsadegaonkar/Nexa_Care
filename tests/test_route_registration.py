@@ -158,6 +158,12 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/pipeline/adjudication-cases/{case_id}/submissions"),
     ("POST", "/api/v2/pipeline/adjudication-submissions/{submission_id}/commit"),
     ("GET", "/api/v2/pipeline/adjudication-cases/{case_id}/source"),
+    ("POST", "/api/v2/pipeline/jobs/{job_id}/identity-review-cases"),
+    ("GET", "/api/v2/pipeline/patients/{patient_id}/identity-review-cases"),
+    ("GET", "/api/v2/pipeline/identity-review-cases/{case_id}"),
+    ("POST", "/api/v2/pipeline/identity-review-cases/{case_id}/claim"),
+    ("POST", "/api/v2/pipeline/identity-review-cases/{case_id}/recover-session"),
+    ("POST", "/api/v2/pipeline/identity-review-cases/{case_id}/dispositions"),
     ("GET", "/healthz"),
     ("GET", "/health"),
     # FastAPI auto-generates these documentation routes

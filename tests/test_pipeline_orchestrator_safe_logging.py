@@ -9,6 +9,7 @@ operation, correlation id, retryability) do.
 
 from __future__ import annotations
 
+import io
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -106,23 +107,40 @@ async def test_internal_failure_log_never_leaks_exception_text(
         side_effect=RuntimeError(SENSITIVE_EXCEPTION_TEXT)
     )
 
-    with (
-        patch(
-            "app.services.pipeline_orchestrator.get_document_storage",
-            return_value=fake_storage,
-        ),
-        patch(
-            "app.services.pipeline_orchestrator.append_audit_log_or_503",
-            AsyncMock(return_value=True),
-        ),
-        caplog.at_level(logging.ERROR, logger="nexa_logger"),
-    ):
-        result = await process_extraction_job(str(job.id), db)
+    logger = logging.getLogger("nexa_logger")
+    original_handlers = list(logger.handlers)
+    original_level = logger.level
+    original_disabled = logger.disabled
+    original_propagate = logger.propagate
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setLevel(logging.ERROR)
+    logger.addHandler(handler)
+    logger.setLevel(logging.ERROR)
+    logger.disabled = False
+    try:
+        with (
+            patch(
+                "app.services.pipeline_orchestrator.get_document_storage",
+                return_value=fake_storage,
+            ),
+            patch(
+                "app.services.pipeline_orchestrator.append_audit_log_or_503",
+                AsyncMock(return_value=True),
+            ),
+        ):
+            result = await process_extraction_job(str(job.id), db)
+    finally:
+        logger.handlers = original_handlers
+        logger.setLevel(original_level)
+        logger.disabled = original_disabled
+        logger.propagate = original_propagate
+        handler.close()
 
     assert result["status"] == "extraction_failed_terminal"
     assert result["error_code"] == "EXTRACTION_INTERNAL_ERROR"
 
-    emitted = "\n".join(record.getMessage() for record in caplog.records)
+    emitted = stream.getvalue()
 
     # The exception class and a stable, non-secret error code are fine to log.
     assert "RuntimeError" in emitted
