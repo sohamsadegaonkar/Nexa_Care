@@ -17,8 +17,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.dek_store import PatientDEKStore
 from app.models.patient_policy import PatientPolicy
 from app.observability.audit_ledger import read_patient_access_history_events
+from app.services.crypto_kms import get_encryption_provider
 from app.services.policy_service import PolicyService
 
 
@@ -262,6 +264,141 @@ async def test_runtime_table_schema_contracts(postgres_engine):
             "ix_audit_outbox_expired_lease",
             "ix_audit_outbox_dead_letter",
         } <= indexes
+
+
+@pytest.mark.asyncio
+async def test_patient_dek_store_schema_contract(postgres_engine):
+    async with postgres_engine.connect() as connection:
+        is_active = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT data_type, is_nullable, column_default
+                    FROM information_schema.columns
+                    WHERE table_schema = 'public'
+                      AND table_name = 'patient_dek_store'
+                      AND column_name = 'is_active'
+                    """
+                )
+            )
+        ).one()
+        assert tuple(is_active) == ("boolean", "NO", None)
+
+        unique_constraint = (
+            await connection.execute(
+                text(
+                    """
+                    SELECT pg_get_constraintdef(oid)
+                    FROM pg_constraint
+                    WHERE conrelid = 'public.patient_dek_store'::regclass
+                      AND conname = 'uq_patient_dek_version'
+                      AND contype = 'u'
+                    """
+                )
+            )
+        ).scalar_one()
+        assert unique_constraint == "UNIQUE (patient_id, dek_version)"
+
+        indexes = {
+            row[0]: row[1]
+            for row in (
+                await connection.execute(
+                    text(
+                        """
+                        SELECT indexname, indexdef
+                        FROM pg_indexes
+                        WHERE schemaname = 'public'
+                          AND tablename = 'patient_dek_store'
+                        """
+                    )
+                )
+            ).all()
+        }
+        assert "ix_patient_dek_store_patient_id" in indexes
+        assert "CREATE INDEX ix_patient_dek_store_patient_id" in indexes[
+            "ix_patient_dek_store_patient_id"
+        ]
+        assert "CREATE UNIQUE INDEX ix_patient_dek_store_patient_id" not in indexes[
+            "ix_patient_dek_store_patient_id"
+        ]
+
+
+@pytest.mark.asyncio
+async def test_patient_dek_runtime_generation_round_trip_and_rotation(postgres_engine):
+    patient_id = uuid.uuid4()
+    patient_ref = str(patient_id)
+    async with postgres_engine.connect() as connection:
+        transaction = await connection.begin()
+        try:
+            await connection.execute(
+                text("INSERT INTO public.patients (patient_uuid) VALUES (:patient_id)"),
+                {"patient_id": patient_id},
+            )
+            async with AsyncSession(bind=connection, expire_on_commit=False) as session:
+                provider = get_encryption_provider()
+                first = await provider.generate_dek(patient_ref, session)
+                assert first.dek_version == 1
+                encrypted_v1 = await provider.encrypt_field(
+                    patient_ref, "synthetic_field", "synthetic-value-v1", session
+                )
+                assert (
+                    await provider.decrypt_field(
+                        patient_ref, "synthetic_field", encrypted_v1, session
+                    )
+                    == "synthetic-value-v1"
+                )
+
+                second = await provider.rotate_dek(patient_ref, session)
+                assert second.dek_version == 2
+                encrypted_v2 = await provider.encrypt_field(
+                    patient_ref, "synthetic_field", "synthetic-value-v2", session
+                )
+                assert (
+                    await provider.decrypt_field(
+                        patient_ref, "synthetic_field", encrypted_v2, session
+                    )
+                    == "synthetic-value-v2"
+                )
+                assert (
+                    await provider.decrypt_field(
+                        patient_ref, "synthetic_field", encrypted_v1, session
+                    )
+                    == "synthetic-value-v1"
+                )
+
+                versions = (
+                    await session.execute(
+                        text(
+                            """
+                            SELECT dek_version, is_active
+                            FROM public.patient_dek_store
+                            WHERE patient_id = :patient_id
+                            ORDER BY dek_version
+                            """
+                        ),
+                        {"patient_id": patient_id},
+                    )
+                ).all()
+                assert versions == [(1, False), (2, True)]
+
+                with pytest.raises(IntegrityError):
+                    async with session.begin_nested():
+                        session.add(
+                            PatientDEKStore(
+                                patient_id=patient_id,
+                                wrapped_dek=b"duplicate",
+                                dek_iv=b"synthetic-iv",
+                                dek_version=2,
+                                algorithm="AES-256-GCM",
+                                wrapping_backend="local-aes-gcm",
+                                is_active=False,
+                                wrapping_key_type="patient",
+                                patient_wrapping_key_id="synthetic-duplicate",
+                            )
+                        )
+                        await session.flush()
+        finally:
+            await transaction.rollback()
 
 
 @pytest.mark.asyncio

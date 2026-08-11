@@ -89,7 +89,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 
 def test_migration_script_requires_exact_single_repository_head() -> None:
-    assert run_pilot_migrations.repository_heads() == ("20260810_identity_review",)
+    assert run_pilot_migrations.repository_heads() == ("20260812_dek_store_runtime",)
 
 
 def test_migration_script_scopes_url_and_redacts_command_output(
@@ -110,7 +110,7 @@ def test_migration_script_scopes_url_and_redacts_command_output(
         assert environment["DATABASE_URL"] == sensitive_url
         assert "MIGRATION_DATABASE_URL" not in environment
         stdout = (
-            "20260810_identity_review (head)\n" if arguments == ["current"] else ""
+            "20260812_dek_store_runtime (head)\n" if arguments == ["current"] else ""
         )
         return subprocess.CompletedProcess(arguments, 0, stdout=stdout, stderr="")
 
@@ -198,7 +198,7 @@ def test_pilot_operations_document_uses_current_contract() -> None:
 
     assert "CORS_ALLOWED_ORIGINS" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=aws_textract" in content
-    assert "20260810_identity_review" in content
+    assert "20260812_dek_store_runtime" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=remote" not in content
     assert "DOCUMENT_AI_API_URL` or `DOCUMENT_AI_API_KEY" in content
     assert "desiredCount=1" in content
@@ -212,6 +212,6 @@ def test_governance_contract_names_current_migration_head() -> None:
         encoding="utf-8"
     )
 
-    assert "Current head is `20260810_identity_review`" in constitution
-    assert "current head `20260810_identity_review`" in security
+    assert "Current head is `20260812_dek_store_runtime`" in constitution
+    assert "current head `20260812_dek_store_runtime`" in security
     assert "API containers never run migrations during startup" in security
