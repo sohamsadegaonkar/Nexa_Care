@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -65,6 +66,117 @@ _IDENTITY_REASON_CODES = {
     IdentityDecisionState.IDENTITY_CONFLICTING: "IDENTITY_MISMATCH",
     IdentityDecisionState.IDENTITY_INSUFFICIENT: "IDENTITY_UNAVAILABLE",
 }
+
+
+class ExtractionEvidenceInstanceCollision(RuntimeError):
+    """A persisted evidence ID is bound to a different immutable instance."""
+
+
+def _is_candidate_evidence_unique_violation(exc: BaseException) -> bool:
+    """Recognize only the PostgreSQL evidence-ID uniqueness violation.
+
+    SQLAlchemy may wrap the asyncpg exception, while asyncpg exposes the
+    constraint directly (and some adapters expose it through ``diag``).
+    Reconciliation is permitted only when both structured PostgreSQL markers
+    are present; human-readable exception text is intentionally ignored.
+    """
+    candidates: list[BaseException] = []
+    seen: set[int] = set()
+    pending: list[BaseException | None] = [exc]
+    while pending and len(candidates) < 4:
+        current = pending.pop(0)
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        candidates.append(current)
+        pending.extend(
+            getattr(current, name, None)
+            for name in ("orig", "__cause__", "__context__")
+        )
+    for candidate in candidates:
+        sqlstate = next(
+            (
+                getattr(candidate, name, None)
+                for name in ("sqlstate", "pgcode", "code")
+                if getattr(candidate, name, None) is not None
+            ),
+            None,
+        )
+        diagnostic = getattr(candidate, "diag", None)
+        constraint_name = getattr(candidate, "constraint_name", None) or getattr(
+            diagnostic, "constraint_name", None
+        )
+        if sqlstate == "23505" and constraint_name == "extraction_candidates_evidence_id_key":
+            return True
+    return False
+
+
+_CANDIDATE_BINDING_FIELDS = (
+    "evidence_id",
+    "job_id",
+    "source_document_id",
+    "patient_id",
+    "tenant_id",
+    "authorization_provider_id",
+    "field_name",
+    "provider_name",
+    "provider_version",
+    "lane",
+    "routing_eligible",
+    "eligibility_reason_code",
+    "eligibility_policy_version",
+)
+
+
+def _candidate_binding_matches(
+    existing: ExtractionCandidateRecord,
+    candidate: ExtractionCandidateRecord,
+) -> bool:
+    return all(
+        getattr(existing, field) == getattr(candidate, field)
+        for field in _CANDIDATE_BINDING_FIELDS
+    )
+
+
+async def _persist_candidate_idempotently(
+    db: AsyncSession, candidate: ExtractionCandidateRecord
+) -> bool:
+    """Persist one candidate, accepting only an exact same-instance replay.
+
+    The insert occurs inside a savepoint so PostgreSQL's unique constraint is
+    the concurrency authority. Only its specific evidence-ID conflict is
+    reloaded and compared; all other integrity failures remain failures.
+    """
+    # Minimal in-memory contract doubles used by pure orchestration tests do
+    # not expose SQLAlchemy savepoints; retain their pre-existing append/flush
+    # behavior while real AsyncSession instances use the guarded path below.
+    if not hasattr(db, "begin_nested"):
+        db.add(candidate)
+        await db.flush()
+        return False
+
+    try:
+        async with db.begin_nested():
+            db.add(candidate)
+            await db.flush()
+    except IntegrityError as exc:
+        if not _is_candidate_evidence_unique_violation(exc):
+            raise
+        existing = (
+            await db.execute(
+                select(ExtractionCandidateRecord)
+                .where(ExtractionCandidateRecord.evidence_id == candidate.evidence_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        if not _candidate_binding_matches(existing, candidate):
+            raise ExtractionEvidenceInstanceCollision(
+                "EVIDENCE_INSTANCE_ID_COLLISION"
+            )
+        return True
+    return False
 
 
 async def _rollback_and_reload_job(
@@ -492,7 +604,8 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     db,
                 )
             bbox = evidence.visual.bounding_box
-            db.add(
+            await _persist_candidate_idempotently(
+                db,
                 ExtractionCandidateRecord(
                     id=uuid.uuid4(),
                     evidence_id=evidence_uuid,
@@ -525,7 +638,7 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                         CANDIDATE_ELIGIBILITY_POLICY_VERSION,
                     ),
                     created_at=routed_at,
-                )
+                ),
             )
 
         quarantine_count = sum(
@@ -594,6 +707,11 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "extraction_failed_terminal"
         job.error_code = "DOCUMENT_STORAGE_UNAVAILABLE"
+        job.retryable = False
+    except ExtractionEvidenceInstanceCollision:
+        job = await _rollback_and_reload_job(db, job_uuid)
+        job.status = "extraction_failed_terminal"
+        job.error_code = "EVIDENCE_INSTANCE_ID_COLLISION"
         job.retryable = False
     except Exception as exc:
         job = await _rollback_and_reload_job(db, job_uuid)

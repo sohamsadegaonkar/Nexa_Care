@@ -438,6 +438,31 @@ into the same six areas as the adversarial catalog:
   response state, retry/supersession/addendum relationships, and consent and
   erasure snapshots.
 
+### Provider fingerprints and Nexa evidence instances
+
+The provider-owned `provider_evidence_hash` is an immutable fingerprint of an
+authentic provider observation and provenance. It may legitimately repeat when
+the same captured observation is processed in separate extraction workflows;
+it is not patient ownership, identity authority, or a persistence key.
+
+`evidence_id` is the Nexa identifier for one adapted evidence instance within a
+source-document, job, workflow, and attempt lifecycle. For hashed provider
+evidence it is a deterministic UUIDv5 over the internal
+`nexa-evidence-instance:v2` namespace, those lifecycle bindings, and the
+unchanged provider fingerprint. Therefore the same attempt replay receives the
+same evidence ID, while a new attempt receives a distinct evidence ID. Missing
+provider hashes retain the existing safe non-deterministic fallback; clinical or
+identity values are never substituted into the identity formula.
+
+The candidate `UNIQUE(evidence_id)` constraint remains the final persisted
+instance boundary. Exact same-attempt candidate replays are accepted only
+after immutable lifecycle and routing metadata are verified; an ID collision
+with different authoritative bindings fails closed. Workflow-scoped IDs also
+keep candidate value/source encryption contexts distinct across workflows.
+Provider evidence remains corroborative only: it never creates patient
+ownership, clinical authority, or automatic commit. Runtime `AUTO_COMMIT`
+remains disabled and human adjudication remains required.
+
 Document confidence and field confidence are different facts. The current
 provider payload supplies document-level confidence only; the adapter retains
 that value as `document_confidence` while recording `field_confidence=None`

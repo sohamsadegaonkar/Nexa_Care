@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
@@ -53,6 +54,34 @@ class CurrentExtractionBinding(BaseModel):
     consent_state: SnapshotState = SnapshotState.UNKNOWN
     erasure_state: SnapshotState = SnapshotState.UNKNOWN
     document_identity_state: IdentityDecisionState | None = None
+
+
+EVIDENCE_INSTANCE_ID_VERSION = "nexa-evidence-instance:v2"
+
+
+def _evidence_instance_id(
+    *, binding: CurrentExtractionBinding, provider_evidence_hash: str
+) -> str:
+    """Build a stable ID for one provider observation in one lifecycle.
+
+    The provider hash remains the provider-owned observation fingerprint.  The
+    lifecycle bindings make the persisted Nexa instance distinct across jobs,
+    workflows, documents, and attempts without including patient or tenant
+    identity in provider truth.
+    """
+    canonical_payload = json.dumps(
+        [
+            EVIDENCE_INSTANCE_ID_VERSION,
+            binding.source_document_id,
+            binding.job_id,
+            binding.workflow_id,
+            binding.attempt_id,
+            provider_evidence_hash,
+        ],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    )
+    return str(uuid5(NAMESPACE_URL, canonical_payload))
 
 
 def adapt_current_extracted_field(
@@ -114,7 +143,10 @@ def adapt_current_extracted_field(
 
     return ExtractedFieldEvidence(
         evidence_id=str(
-            uuid5(NAMESPACE_URL, f"nexa-textract:{provider_evidence.evidence_hash}")
+            _evidence_instance_id(
+                binding=binding,
+                provider_evidence_hash=provider_evidence.evidence_hash,
+            )
             if provider_evidence and provider_evidence.evidence_hash
             else uuid4()
         ),
