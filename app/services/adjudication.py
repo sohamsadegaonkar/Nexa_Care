@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 
 from pydantic import TypeAdapter, ValidationError
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.adjudication import (
@@ -26,10 +26,12 @@ from app.models.adjudication import (
 )
 from app.models.patient_records import LabResult, TimelineEvent, Vitals
 from app.models.pipeline import (
+    AdjudicationConflictResolutionRecord,
     AdjudicationCaseRecord,
     AdjudicationSubmissionRecord,
     DocumentStorage,
     ExtractionDecisionRecord,
+    ExtractionConflictRecord,
     ExtractionJob,
     ExtractionRoutingRecord,
 )
@@ -50,6 +52,7 @@ from app.services.document_storage import get_document_storage
 REVIEWER_ROLES = frozenset({"clinician", "clinical_reviewer"})
 _FIELD_ADAPTER = TypeAdapter(list[AdjudicatedClinicalField])
 _REASON_ADAPTER = TypeAdapter(list[AdjudicationReasonCode])
+_ADJUDICATION_CASE_LOCK_VERSION = "nexa-adjudication-case:v1"
 
 
 class AdjudicationError(RuntimeError):
@@ -58,6 +61,27 @@ class AdjudicationError(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def _case_lock_key(case_id: uuid.UUID) -> int:
+    canonical = json.dumps(
+        [_ADJUDICATION_CASE_LOCK_VERSION, str(case_id)],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return int.from_bytes(hashlib.sha256(canonical).digest()[:8], "big", signed=True)
+
+
+async def _acquire_case_mutation_lock(db: AsyncSession, case_id: uuid.UUID) -> None:
+    if not isinstance(db, AsyncSession):
+        return
+    bind = db.get_bind()
+    if getattr(bind.dialect, "name", None) != "postgresql":
+        return
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": _case_lock_key(case_id)},
+    )
 
 
 def _reviewer_role(provider: ProviderContext) -> str:
@@ -421,10 +445,12 @@ async def submit_case(
     reason_codes: list[AdjudicationReasonCode | str],
     idempotency_key: str,
     supersedes_submission_id: uuid.UUID | None = None,
+    resolved_conflict_ids: list[uuid.UUID] | None = None,
 ) -> AdjudicationSubmissionRecord:
     """Persist one immutable, canonical reviewer submission."""
     role = _reviewer_role(provider)
     _validate_idempotency_key(idempotency_key)
+    await _acquire_case_mutation_lock(db, case_id)
     case = (
         await db.execute(
             select(AdjudicationCaseRecord)
@@ -449,6 +475,48 @@ async def submit_case(
         validated_reasons = _REASON_ADAPTER.validate_python(reason_codes)
     except ValidationError as exc:
         raise AdjudicationError("ADJUDICATION_PAYLOAD_INVALID") from exc
+    resolved_conflict_ids = sorted(
+        set(resolved_conflict_ids or []), key=lambda value: value.hex
+    )
+    if outcome is not AdjudicationOutcome.ACCEPTED and resolved_conflict_ids:
+        raise AdjudicationError("ADJUDICATION_CONFLICT_RESOLUTION_INVALID")
+    if resolved_conflict_ids:
+        conflicts = (
+            (
+                await db.execute(
+                    select(ExtractionConflictRecord).where(
+                        ExtractionConflictRecord.id.in_(resolved_conflict_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(conflicts) != len(resolved_conflict_ids) or any(
+            conflict.tenant_id != case.tenant_id
+            or conflict.patient_id != case.patient_id
+            or conflict.job_id != case.job_id
+            or conflict.source_document_id != case.source_document_id
+            for conflict in conflicts
+        ):
+            raise AdjudicationError("ADJUDICATION_CONFLICT_BINDING_MISMATCH")
+    applicable_conflict_ids = set(
+        (
+            await db.execute(
+                select(ExtractionConflictRecord.id).where(
+                    ExtractionConflictRecord.tenant_id == case.tenant_id,
+                    ExtractionConflictRecord.patient_id == case.patient_id,
+                    ExtractionConflictRecord.job_id == case.job_id,
+                    ExtractionConflictRecord.source_document_id
+                    == case.source_document_id,
+                )
+            )
+        ).scalars()
+    )
+    if outcome is AdjudicationOutcome.ACCEPTED and not applicable_conflict_ids.issubset(
+        set(resolved_conflict_ids)
+    ):
+        raise AdjudicationError("ADJUDICATION_UNRESOLVED_CLINICAL_CONFLICT")
     now = datetime.now(timezone.utc)
     attempt = (
         await db.execute(
@@ -475,6 +543,7 @@ async def submit_case(
             attempt_number=attempt,
             outcome=outcome,
             fields=tuple(parsed),
+            resolved_conflict_ids=tuple(resolved_conflict_ids),
             supersedes_submission_id=(
                 str(supersedes_submission_id) if supersedes_submission_id else None
             ),
@@ -501,6 +570,7 @@ async def submit_case(
             "review_session_id": authoritative_session,
             "outcome": outcome.value,
             "fields": [item.model_dump(mode="json") for item in parsed],
+            "resolved_conflict_ids": [str(value) for value in resolved_conflict_ids],
             "supersedes_submission_id": (
                 str(supersedes_submission_id) if supersedes_submission_id else None
             ),
@@ -567,6 +637,7 @@ async def submit_case(
         attempt_number=attempt,
         outcome=outcome.value,
         clinical_payload=[item.model_dump(mode="json") for item in parsed],
+        resolved_conflict_ids=[str(value) for value in resolved_conflict_ids],
         supersedes_submission_id=supersedes_submission_id,
         submitted_at=now,
         resolved_at=now,
@@ -582,6 +653,28 @@ async def submit_case(
     # same-case composite FK is intentionally non-deferrable, and both flushes
     # remain inside the caller-owned transaction.
     await db.flush()
+    for conflict_id in resolved_conflict_ids:
+        db.add(
+            AdjudicationConflictResolutionRecord(
+                id=uuid.uuid4(),
+                submission_id=row.id,
+                conflict_id=conflict_id,
+                case_id=case.id,
+                created_at=now,
+            )
+        )
+    await db.flush()
+    if resolved_conflict_ids:
+        await enqueue_audit_event(
+            db,
+            audit_context=_audit_context(case.tenant_id),
+            idempotency_key=f"adjudication-conflict-resolution:{row.id}",
+            actor_id=provider.actor_uid,
+            event_type="ADJUDICATION_CONFLICT_RESOLUTION_ACCEPTED",
+            target_id=str(row.id),
+            patient_id=str(case.patient_id),
+            metadata={"resolved_conflict_count": len(resolved_conflict_ids)},
+        )
     case.status = outcome.value
     case.version += 1
     case.resolved_at = now
@@ -612,6 +705,7 @@ async def submit_case(
             "outcome": outcome.value,
             "field_categories": sorted({item.kind for item in parsed}),
             "reason_codes": [reason.value for reason in validated_reasons],
+            "resolved_conflict_count": len(resolved_conflict_ids),
             "supersedes_submission_id": (
                 str(supersedes_submission_id) if supersedes_submission_id else None
             ),
@@ -630,6 +724,7 @@ async def rotate_review_session(
     """Replace a lost session only for its still-pending original reviewer."""
     _reviewer_role(provider)
     new_session = _validate_session(new_review_session_id)
+    await _acquire_case_mutation_lock(db, case_id)
     case = (
         await db.execute(
             select(AdjudicationCaseRecord)
@@ -678,6 +773,23 @@ async def commit_submission(
 ) -> AdjudicationCaseRecord:
     """Commit accepted human data exactly once in the caller transaction."""
     _reviewer_role(provider)
+    case_id = (
+        await db.execute(
+            select(AdjudicationSubmissionRecord.case_id).where(
+                AdjudicationSubmissionRecord.id == submission_id
+            )
+        )
+    ).scalar_one_or_none()
+    if case_id is None:
+        raise AdjudicationError("ADJUDICATION_SUBMISSION_NOT_FOUND")
+    await _acquire_case_mutation_lock(db, case_id)
+    case = (
+        await db.execute(
+            select(AdjudicationCaseRecord)
+            .where(AdjudicationCaseRecord.id == case_id)
+            .with_for_update()
+        )
+    ).scalar_one()
     submission = (
         await db.execute(
             select(AdjudicationSubmissionRecord)
@@ -685,15 +797,8 @@ async def commit_submission(
             .with_for_update()
         )
     ).scalar_one_or_none()
-    if submission is None:
+    if submission is None or submission.case_id != case.id:
         raise AdjudicationError("ADJUDICATION_SUBMISSION_NOT_FOUND")
-    case = (
-        await db.execute(
-            select(AdjudicationCaseRecord)
-            .where(AdjudicationCaseRecord.id == submission.case_id)
-            .with_for_update()
-        )
-    ).scalar_one()
     authoritative_session = _assert_authoritative_session(case, review_session_id)
     if case.clinical_committed_at is not None:
         if case.accepted_submission_id == submission.id:
@@ -731,15 +836,44 @@ async def commit_submission(
         provider=provider,
         operation=DocumentProcessingOperation.COMMIT_VERIFIED_FIELDS,
     )
+    applicable_conflicts = set(
+        (
+            await db.execute(
+                select(ExtractionConflictRecord.id).where(
+                    ExtractionConflictRecord.tenant_id == case.tenant_id,
+                    ExtractionConflictRecord.patient_id == case.patient_id,
+                    ExtractionConflictRecord.job_id == case.job_id,
+                    ExtractionConflictRecord.source_document_id
+                    == case.source_document_id,
+                )
+            )
+        ).scalars()
+    )
+    declared_conflicts = {
+        uuid.UUID(str(value)) for value in (submission.resolved_conflict_ids or [])
+    }
+    durable_conflicts = set(
+        (
+            await db.execute(
+                select(AdjudicationConflictResolutionRecord.conflict_id).where(
+                    AdjudicationConflictResolutionRecord.submission_id == submission.id,
+                    AdjudicationConflictResolutionRecord.case_id == case.id,
+                )
+            )
+        ).scalars()
+    )
+    if (
+        not applicable_conflicts.issubset(declared_conflicts)
+        or declared_conflicts != durable_conflicts
+    ):
+        raise AdjudicationError("ADJUDICATION_UNRESOLVED_CLINICAL_CONFLICT")
     # JSONB round-trips aware datetimes as ISO strings; Pydantic still applies
     # the same closed union and clinical validators during reconstruction.
     try:
         # JSONB returns ISO timestamps as JSON strings. Validate through
         # Pydantic's JSON boundary so strict models deserialize datetime values
         # without weakening the protected clinical schema.
-        fields = _FIELD_ADAPTER.validate_json(
-            json.dumps(submission.clinical_payload)
-        )
+        fields = _FIELD_ADAPTER.validate_json(json.dumps(submission.clinical_payload))
         reasons = _REASON_ADAPTER.validate_python(submission.reason_codes)
         AdjudicationSubmission(
             submission_id=str(submission.id),
@@ -757,6 +891,7 @@ async def commit_submission(
             attempt_number=submission.attempt_number,
             outcome=AdjudicationOutcome(submission.outcome),
             fields=tuple(fields),
+            resolved_conflict_ids=tuple(declared_conflicts),
             supersedes_submission_id=(
                 str(submission.supersedes_submission_id)
                 if submission.supersedes_submission_id
@@ -790,6 +925,7 @@ async def commit_submission(
             "review_session_id": submission.review_session_id,
             "outcome": submission.outcome,
             "fields": [item.model_dump(mode="json") for item in fields],
+            "resolved_conflict_ids": sorted(str(value) for value in declared_conflicts),
             "supersedes_submission_id": (
                 str(submission.supersedes_submission_id)
                 if submission.supersedes_submission_id

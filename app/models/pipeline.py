@@ -193,6 +193,7 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
     tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
     authorization_provider_id: Mapped[str] = mapped_column(String(64), nullable=False)
     field_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    clinical_fact_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     encrypted_raw_value: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_page: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -233,6 +234,9 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
             "'INELIGIBLE_CLASSIFICATION_FAILED')",
             name="ck_extraction_candidates_eligibility",
         ),
+        UniqueConstraint(
+            "id", "evidence_id", name="uq_extraction_candidates_id_evidence"
+        ),
         Index(
             "ix_extraction_candidates_authorization_binding",
             "tenant_id",
@@ -241,11 +245,134 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
             "job_id",
         ),
         Index("ix_extraction_candidates_document", "source_document_id"),
+        Index("ix_extraction_candidates_clinical_fact", "clinical_fact_key"),
         Index(
             "ix_extraction_candidates_job_routing_eligible",
             "job_id",
             "routing_eligible",
         ),
+    )
+
+
+class ExtractionConflictRecord(Base, UUIDPrimaryKeyMixin):
+    """Append-only, non-authoritative set of incompatible candidate facts."""
+
+    __tablename__ = "extraction_conflicts"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    field_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    clinical_fact_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "char_length(clinical_fact_key) = 64",
+            name="ck_extraction_conflicts_fact_key_length",
+        ),
+        UniqueConstraint(
+            "job_id", "clinical_fact_key", name="uq_extraction_conflicts_job_fact"
+        ),
+        UniqueConstraint(
+            "id",
+            "tenant_id",
+            "patient_id",
+            "job_id",
+            "source_document_id",
+            name="uq_extraction_conflicts_authoritative_graph",
+        ),
+        Index("ix_extraction_conflicts_case_graph", "job_id", "source_document_id"),
+    )
+
+
+class ExtractionConflictMemberRecord(Base, UUIDPrimaryKeyMixin):
+    """Immutable membership linking every original candidate to its conflict."""
+
+    __tablename__ = "extraction_conflict_members"
+
+    conflict_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_conflicts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    candidate_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+    )
+    evidence_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["candidate_id", "evidence_id"],
+            ["extraction_candidates.id", "extraction_candidates.evidence_id"],
+            name="fk_conflict_member_candidate_evidence",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "conflict_id", "candidate_id", name="uq_conflict_member_candidate"
+        ),
+        UniqueConstraint(
+            "conflict_id", "evidence_id", name="uq_conflict_member_evidence"
+        ),
+        Index("ix_extraction_conflict_members_conflict", "conflict_id"),
+    )
+
+
+class DocumentSourceRelationshipRecord(Base, UUIDPrimaryKeyMixin):
+    """Append-only provenance edge from a newer source to an earlier source."""
+
+    __tablename__ = "document_source_relationships"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    related_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    relation_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    workflow_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_by: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "relation_type IN ('SUPERSEDES', 'ADDENDUM_TO')",
+            name="ck_document_source_relationships_type",
+        ),
+        CheckConstraint(
+            "source_document_id <> related_document_id",
+            name="ck_document_source_relationships_not_self",
+        ),
+        UniqueConstraint(
+            "source_document_id", name="uq_document_source_relationships_source"
+        ),
+        Index("ix_document_source_relationships_related", "related_document_id"),
     )
 
 
@@ -586,6 +713,9 @@ class AdjudicationSubmissionRecord(Base, UUIDPrimaryKeyMixin):
     attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
     outcome: Mapped[str] = mapped_column(String(32), nullable=False)
     clinical_payload: Mapped[list[dict]] = mapped_column(JSONB, nullable=False)
+    resolved_conflict_ids: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
     supersedes_submission_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("adjudication_submissions.id", ondelete="RESTRICT"),
@@ -640,4 +770,42 @@ class AdjudicationSubmissionRecord(Base, UUIDPrimaryKeyMixin):
         ),
         Index("ix_adjudication_submissions_case", "case_id"),
         Index("ix_adjudication_submissions_reviewer", "reviewer_id"),
+    )
+
+
+class AdjudicationConflictResolutionRecord(Base, UUIDPrimaryKeyMixin):
+    """Immutable proof that one protected submission resolved one conflict."""
+
+    __tablename__ = "adjudication_conflict_resolutions"
+
+    submission_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("adjudication_submissions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    conflict_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_conflicts.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    case_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("adjudication_cases.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "submission_id",
+            "conflict_id",
+            name="uq_adjudication_conflict_resolution",
+        ),
+        Index(
+            "ix_adjudication_conflict_resolutions_case_conflict",
+            "case_id",
+            "conflict_id",
+        ),
     )

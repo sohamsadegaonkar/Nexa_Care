@@ -76,6 +76,46 @@ def test_synthetic_json_fixture_exercises_production_parser():
     ]
 
 
+def test_table_fact_identity_requires_same_test_and_effective_date():
+    def lab_table(result: str, date: str):
+        headers = ["Test", "Result", "Date"]
+        values = ["Glucose", result, date]
+        blocks = [
+            {
+                "BlockType": "TABLE",
+                "Id": "table",
+                "Relationships": [
+                    {
+                        "Type": "CHILD",
+                        "Ids": [f"h{i}" for i in range(3)]
+                        + [f"v{i}" for i in range(3)],
+                    }
+                ],
+            }
+        ]
+        for index, value in enumerate(headers):
+            blocks.extend(
+                [
+                    cell(f"h{index}", 1, index + 1, [f"hw{index}"]),
+                    word(f"hw{index}", value),
+                ]
+            )
+        for index, value in enumerate(values):
+            blocks.extend(
+                [
+                    cell(f"v{index}", 2, index + 1, [f"vw{index}"]),
+                    word(f"vw{index}", value),
+                ]
+            )
+        return blocks
+
+    first = parse(lab_table("101", "2026-08-14"))[0]
+    conflicting = parse(lab_table("145", "2026-08-14"))[0]
+    repeated_later = parse(lab_table("145", "2026-08-15"))[0]
+    assert first.trusted_clinical_fact_id == conflicting.trusted_clinical_fact_id
+    assert first.trusted_clinical_fact_id != repeated_later.trusted_clinical_fact_id
+
+
 def test_queries_preserve_repeated_conflicting_answers_and_deduplicate_exact_evidence():
     blocks = [
         {

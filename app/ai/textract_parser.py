@@ -94,6 +94,31 @@ def compose_form_source_text(key_text: str, raw_value: str) -> str:
     return f"{key}{separator}{raw_value}"
 
 
+def _clinical_fact_id(
+    field: str, structured: dict[str, str | bool | None] | None
+) -> str | None:
+    """Identify a table fact only when exact structured context is complete.
+
+    Result values, page numbers, row indexes, confidence and source text are
+    excluded. A field name or test label without a date is not enough to infer
+    that repeated observations are the same clinical fact.
+    """
+    if not structured:
+        return None
+    test = str(structured.get("test") or "").strip().casefold()
+    effective_date = str(structured.get("date") or "").strip().casefold()
+    if field not in {"lab_result", "hba1c", "blood_glucose"} or not (
+        test and effective_date
+    ):
+        return None
+    payload = json.dumps(
+        ["textract-structured-fact/1.0", field, test, effective_date],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 class TextractBlockGraph:
     def __init__(
         self,
@@ -273,7 +298,7 @@ def _make(
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
-    return ProviderFieldEvidence(
+    evidence = ProviderFieldEvidence(
         canonical_field_name=field,
         raw_value=raw,
         source_text=source,
@@ -293,6 +318,8 @@ def _make(
         structured_value=structured,
         incomplete=incomplete,
     )
+    evidence._bind_trusted_clinical_fact_id(_clinical_fact_id(field, structured))
+    return evidence
 
 
 def parse_textract_blocks(

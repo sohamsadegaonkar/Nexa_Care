@@ -233,6 +233,7 @@ async def evaluate_and_persist_lane(
     actor_id: str,
     evaluated_at: datetime,
     quarantine_review_deadline: datetime | None = None,
+    earlier_decision_id: str | None = None,
 ) -> DurableRoutingResult:
     """Pure evaluation followed by caller-owned transactional persistence."""
     decision = evaluate_extraction_evidence(
@@ -240,6 +241,7 @@ async def evaluate_and_persist_lane(
         policy=policy,
         decision_id_factory=lambda: str(uuid.uuid4()),
         evaluated_at=evaluated_at,
+        earlier_decision_id=earlier_decision_id,
     )
     if decision.lane is DecisionLane.QUARANTINE and quarantine_review_deadline is None:
         # No unapproved retention duration is invented. A fail-closed item is

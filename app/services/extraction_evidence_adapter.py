@@ -54,6 +54,9 @@ class CurrentExtractionBinding(BaseModel):
     consent_state: SnapshotState = SnapshotState.UNKNOWN
     erasure_state: SnapshotState = SnapshotState.UNKNOWN
     document_identity_state: IdentityDecisionState | None = None
+    supersedes_evidence_id: str | None = None
+    addendum_to_evidence_id: str | None = None
+    lifecycle_issues: frozenset[EvidenceIssue] = frozenset()
 
 
 EVIDENCE_INSTANCE_ID_VERSION = "nexa-evidence-instance:v2"
@@ -101,10 +104,7 @@ def adapt_current_extracted_field(
         IdentityDecisionState.IDENTITY_CONFLICTING,
     }:
         identity_issues.add(EvidenceIssue.IDENTITY_MISMATCH)
-    elif (
-        binding.document_identity_state
-        is IdentityDecisionState.IDENTITY_INSUFFICIENT
-    ):
+    elif binding.document_identity_state is IdentityDecisionState.IDENTITY_INSUFFICIENT:
         identity_issues.add(EvidenceIssue.IDENTITY_UNAVAILABLE)
 
     model_issues: set[EvidenceIssue] = set()
@@ -226,8 +226,11 @@ def adapt_current_extracted_field(
             extracted_at=binding.extracted_at,
             source_received_at=binding.source_received_at,
             partial_provider_response=False,
+            supersedes_evidence_id=binding.supersedes_evidence_id,
+            addendum_to_evidence_id=binding.addendum_to_evidence_id,
             consent_state=binding.consent_state,
             consent_reference=binding.consent_reference,
             erasure_state=binding.erasure_state,
+            issues=binding.lifecycle_issues,
         ),
     )

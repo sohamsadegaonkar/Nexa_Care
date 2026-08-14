@@ -63,10 +63,16 @@ from app.models.pipeline import (
     DocumentStorage,
     AdjudicationCaseRecord,
     ExtractionCandidateRecord,
+    ExtractionConflictRecord,
     ExtractedFieldRecord,
     ExtractionJob,
     FieldCorrection,
     ReviewQueueItem,
+)
+from app.services.clinical_evidence_integrity import (
+    ClinicalEvidenceIntegrityError,
+    SourceRelationType,
+    create_source_relationship,
 )
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
@@ -144,6 +150,7 @@ class AdjudicationSubmissionRequest(BaseModel):
         default_factory=list, max_length=4
     )
     supersedes_submission_id: uuid.UUID | None = None
+    resolved_conflict_ids: list[uuid.UUID] = Field(default_factory=list, max_length=64)
 
 
 class RecoverAdjudicationSessionRequest(BaseModel):
@@ -291,6 +298,10 @@ async def upload_pipeline_document(
     patient_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
     source_system: str = Form(default="provider_web"),
+    related_document_id: uuid.UUID | None = Form(default=None),
+    source_relation_type: Literal["SUPERSEDES", "ADDENDUM_TO"] | None = Form(
+        default=None
+    ),
     provider: ProviderContext = Depends(get_current_provider),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
@@ -363,6 +374,11 @@ async def upload_pipeline_document(
             .scalars()
             .first()
         )
+        if related_document_id or source_relation_type:
+            raise HTTPException(
+                status_code=409,
+                detail={"error_code": "SOURCE_RELATION_DUPLICATE_UPLOAD_UNSUPPORTED"},
+            )
         return {
             "job_id": str(existing_job.id) if existing_job else None,
             "patient_id": str(pid_uuid),
@@ -401,12 +417,44 @@ async def upload_pipeline_document(
     db.add(ds)
     db.add(ej)
     try:
+        await db.flush()
+        if bool(related_document_id) != bool(source_relation_type):
+            raise ClinicalEvidenceIntegrityError("SOURCE_RELATION_INPUT_INCOMPLETE")
+        if related_document_id and source_relation_type:
+            await create_source_relationship(
+                db,
+                source_document_id=doc_uuid,
+                related_document_id=related_document_id,
+                tenant_id=tenant_id,
+                patient_id=pid_uuid,
+                relation_type=SourceRelationType(source_relation_type),
+                workflow_id=str(getattr(capability, "request_id", "")),
+                created_by=provider.actor_uid,
+                authorization_provider_id=provider.actor_uid,
+                authorization_hospital_id=provider.hospital.hospital_id,
+                consent_request_id=str(getattr(capability, "request_id", "")),
+                created_at=now,
+            )
         await db.commit()
-    except Exception:
+    except Exception as exc:
         await db.rollback()
         await storage.delete_document(
             stored.storage_ref, tenant_id=str(tenant_id), patient_id=str(pid_uuid)
         )
+        if isinstance(exc, ClinicalEvidenceIntegrityError):
+            error_code = str(exc)
+            source_relation_status = {
+                "SOURCE_RELATION_AUTHORIZATION_MISMATCH": 403,
+                "SOURCE_RELATION_PROVIDER_MISMATCH": 403,
+                "SOURCE_RELATION_CONSENT_INACTIVE": 403,
+                "SOURCE_RELATION_ERASURE_ACCESS_BLOCKED": 403,
+                "SOURCE_RELATION_AUTHORIZATION_UNAVAILABLE": 503,
+                "SOURCE_RELATION_ERASURE_REGISTRY_UNAVAILABLE": 503,
+            }.get(error_code, 409)
+            raise HTTPException(
+                status_code=source_relation_status,
+                detail={"error_code": error_code},
+            ) from exc
         raise
 
     await append_audit_log_or_503(
@@ -517,20 +565,15 @@ async def get_extraction_job(
         "EXTRACTED_IDENTITY_UNAVAILABLE": "IDENTITY_UNAVAILABLE",
     }
     retained_reason_codes = {
-        reason
-        for row in candidate_rows
-        for reason in (row.reason_codes or [])
+        reason for row in candidate_rows for reason in (row.reason_codes or [])
     }
     candidate_identity_quarantine = bool(
         retained_reason_codes.intersection(identity_reason_codes)
     )
     job_identity_quarantine = (
-        job.error_code in identity_error_reasons
-        or job.status == "identity_mismatch"
+        job.error_code in identity_error_reasons or job.status == "identity_mismatch"
     )
-    identity_privacy_block = (
-        candidate_identity_quarantine or job_identity_quarantine
-    )
+    identity_privacy_block = candidate_identity_quarantine or job_identity_quarantine
     visible_rows = [] if identity_privacy_block else eligible_rows
     candidates = []
     try:
@@ -1239,6 +1282,27 @@ def _case_response(case: AdjudicationCaseRecord) -> dict[str, Any]:
     }
 
 
+async def _case_response_with_conflicts(
+    db: AsyncSession, case: AdjudicationCaseRecord
+) -> dict[str, Any]:
+    response = _case_response(case)
+    response["unresolved_conflict_ids"] = [
+        str(value)
+        for value in (
+            await db.execute(
+                select(ExtractionConflictRecord.id).where(
+                    ExtractionConflictRecord.tenant_id == case.tenant_id,
+                    ExtractionConflictRecord.patient_id == case.patient_id,
+                    ExtractionConflictRecord.job_id == case.job_id,
+                    ExtractionConflictRecord.source_document_id
+                    == case.source_document_id,
+                )
+            )
+        ).scalars()
+    ]
+    return response
+
+
 @router.post("/routing/{routing_id}/adjudication-cases", status_code=201)
 async def create_routing_adjudication_case(
     routing_id: str,
@@ -1255,7 +1319,7 @@ async def create_routing_adjudication_case(
             review_session_id=payload.review_session_id,
         )
         await db.commit()
-        return _case_response(case)
+        return await _case_response_with_conflicts(db, case)
     except AdjudicationError as exc:
         await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
@@ -1280,7 +1344,7 @@ async def create_document_adjudication_case(
             review_session_id=payload.review_session_id,
         )
         await db.commit()
-        return _case_response(case)
+        return await _case_response_with_conflicts(db, case)
     except AdjudicationError as exc:
         await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
@@ -1306,7 +1370,7 @@ async def list_adjudication_cases(
             )
         )
     ).scalars()
-    return [_case_response(row) for row in rows]
+    return [await _case_response_with_conflicts(db, row) for row in rows]
 
 
 @router.get("/adjudication-cases/{case_id}")
@@ -1326,7 +1390,7 @@ async def get_adjudication_case(
     ).scalar_one_or_none()
     if row is None:
         raise HTTPException(404, detail={"error_code": "ADJUDICATION_CASE_NOT_FOUND"})
-    return _case_response(row)
+    return await _case_response_with_conflicts(db, row)
 
 
 @router.post("/adjudication-cases/{case_id}/recover-session")
@@ -1344,7 +1408,7 @@ async def recover_adjudication_session(
             new_review_session_id=payload.review_session_id,
         )
         await db.commit()
-        return _case_response(case)
+        return await _case_response_with_conflicts(db, case)
     except AdjudicationError as exc:
         await _finish_adjudication_failure(db, exc)
         raise _adjudication_failure(exc) from exc
@@ -1388,6 +1452,7 @@ async def create_adjudication_submission(
             reason_codes=payload.reason_codes,
             idempotency_key=payload.idempotency_key,
             supersedes_submission_id=payload.supersedes_submission_id,
+            resolved_conflict_ids=payload.resolved_conflict_ids,
         )
         await db.commit()
         return {
@@ -1396,6 +1461,7 @@ async def create_adjudication_submission(
             "outcome": row.outcome,
             "attempt_number": row.attempt_number,
             "content_hash": row.content_hash,
+            "resolved_conflict_ids": row.resolved_conflict_ids,
             "supersedes_submission_id": (
                 str(row.supersedes_submission_id)
                 if row.supersedes_submission_id

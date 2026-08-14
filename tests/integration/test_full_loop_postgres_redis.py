@@ -26,6 +26,7 @@ from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.ai.extractor import ExtractionProvider
+from app.core.database import get_async_engine, get_session_factory
 from app.ai.identity_decision import IdentityDecisionState
 from app.api.v2 import patient_record_routes
 from app.api.v2.consent_routes import _resolve_signed_approval_atomic
@@ -114,7 +115,9 @@ pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.redis]
 class SyntheticTestExtractionProvider(ExtractionProvider):
     """Deterministic offline provider used only at the extractor boundary."""
 
-    def __init__(self, document: ExtractedMedicalDocument, expected_bytes: bytes) -> None:
+    def __init__(
+        self, document: ExtractedMedicalDocument, expected_bytes: bytes
+    ) -> None:
         self.document = document
         self.expected_bytes = expected_bytes
         self.calls = 0
@@ -295,7 +298,9 @@ def _identity_mismatch_decision() -> tuple[DecisionLane, tuple[DecisionReason, .
         ),
         visual=VisualEvidence(
             page_number=0,
-            bounding_box=NormalizedBoundingBox(left=0.1, top=0.1, right=0.2, bottom=0.2),
+            bounding_box=NormalizedBoundingBox(
+                left=0.1, top=0.1, right=0.2, bottom=0.2
+            ),
             source_text="synthetic-value",
             source_span_start=0,
             source_span_end=15,
@@ -361,6 +366,12 @@ async def local_loop_services(monkeypatch):
     previous_runtime_redis = os.environ.get("UPSTASH_REDIS_URL")
     os.environ["DATABASE_URL"] = database_url
     os.environ["UPSTASH_REDIS_URL"] = redis_url
+    # Earlier suite tests can initialize the cached application engine before
+    # this opt-in fixture installs its isolated disposable runtime URL. Reset
+    # only those cache entries so the real outbox processor shares this test's
+    # explicitly configured loopback database rather than a stale engine.
+    get_session_factory.cache_clear()
+    get_async_engine.cache_clear()
     # Reuse one real client so the test owns and closes every Redis connection
     # created by the capability service.
     monkeypatch.setattr(
@@ -390,6 +401,8 @@ async def local_loop_services(monkeypatch):
             os.environ.pop("UPSTASH_REDIS_URL", None)
         else:
             os.environ["UPSTASH_REDIS_URL"] = previous_runtime_redis
+        get_session_factory.cache_clear()
+        get_async_engine.cache_clear()
 
 
 @pytest.mark.asyncio
@@ -616,7 +629,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
 
         # Test-auth seam: the patient approval envelope is seeded locally; the
         # capability and all subsequent validation are real Redis operations.
-        access_expires_at = (datetime.now(timezone.utc) + timedelta(minutes=20)).isoformat()
+        access_expires_at = (
+            datetime.now(timezone.utc) + timedelta(minutes=20)
+        ).isoformat()
         request_data = {
             "request_id": capability_request,
             "provider_id": str(provider_id),
@@ -649,7 +664,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
         # evidence adaptation, routing, candidate persistence, and job status.
         async with factory() as db:
             job_before = (
-                await db.execute(select(ExtractionJob).where(ExtractionJob.id == job_id))
+                await db.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == job_id)
+                )
             ).scalar_one()
             patient_binding_before = job_before.patient_id
             job_before_status = job_before.status
@@ -658,7 +675,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             assert job_before_status == "queued"
             orchestrator_result = await process_extraction_job(str(job_id), db)
             job_after = (
-                await db.execute(select(ExtractionJob).where(ExtractionJob.id == job_id))
+                await db.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == job_id)
+                )
             ).scalar_one()
             patient_binding_after = job_after.patient_id
             assert orchestrator_result["status"] == "source_only"
@@ -669,12 +688,16 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             assert extraction_provider.calls == 1
 
             candidates = (
-                await db.execute(
-                    select(ExtractionCandidateRecord).where(
-                        ExtractionCandidateRecord.job_id == job_id
+                (
+                    await db.execute(
+                        select(ExtractionCandidateRecord).where(
+                            ExtractionCandidateRecord.job_id == job_id
+                        )
                     )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
             assert len(candidates) == 1
             orchestrator_candidate = candidates[0]
             assert orchestrator_candidate.field_name == "hba1c"
@@ -796,14 +819,18 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             assert result["status"] == "committed"
             success_key = f"patient-record-append:vitals:{result['record_id']}"
             success_row = (
-                await db.execute(
-                    text(
-                        "SELECT event_type, patient_id, chain_partition, payload "
-                        "FROM public.audit_outbox WHERE idempotency_key = :key"
-                    ),
-                    {"key": success_key},
+                (
+                    await db.execute(
+                        text(
+                            "SELECT event_type, patient_id, chain_partition, payload "
+                            "FROM public.audit_outbox WHERE idempotency_key = :key"
+                        ),
+                        {"key": success_key},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             assert success_row["event_type"] == "PATIENT_RECORD_APPEND_SUCCESS"
             assert str(success_row["patient_id"]) == str(patient_id)
             assert success_row["chain_partition"].startswith("hospital:")
@@ -816,7 +843,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
                 str(patient_id), provider=provider, capability=object(), db=db
             )
             assert any(row["value"] == "130/80" for row in readback["vitals"])
-            assert any(row["source"] == "human_adjudicated" for row in readback["vitals"])
+            assert any(
+                row["source"] == "human_adjudicated" for row in readback["vitals"]
+            )
 
         # Real audit-outbox failure after flush must roll the clinical rows back.
         async def fail_enqueue(*args, **kwargs):
@@ -847,7 +876,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
                         db=db,
                     )
                 assert failure.value.status_code == 503
-                assert failure.value.detail["error_code"] == "AUDIT_DURABILITY_UNAVAILABLE"
+                assert (
+                    failure.value.detail["error_code"] == "AUDIT_DURABILITY_UNAVAILABLE"
+                )
         finally:
             monkeypatch.setattr(
                 patient_record_routes,
@@ -862,7 +893,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             ).scalars().all() == []
             assert (
                 await db.execute(
-                    select(TimelineEvent).where(TimelineEvent.patient_id == failed_patient)
+                    select(TimelineEvent).where(
+                        TimelineEvent.patient_id == failed_patient
+                    )
                 )
             ).scalars().all() == []
             assert (
@@ -881,7 +914,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             processed = await process_outbox_batch(db, worker_id="local-qualification")
             assert processed["claimed"] >= 1
             assert processed["processed"] == processed["claimed"]
-            replay = await process_outbox_batch(db, worker_id="local-qualification-replay")
+            replay = await process_outbox_batch(
+                db, worker_id="local-qualification-replay"
+            )
             assert replay["claimed"] == 0
 
         # Same patient UUID in two hospital partitions remains isolated.
@@ -904,7 +939,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
                 )
                 await db.commit()
         async with factory() as db:
-            processed = await process_outbox_batch(db, worker_id="local-qualification-isolation")
+            processed = await process_outbox_batch(
+                db, worker_id="local-qualification-isolation"
+            )
             assert processed["processed"] >= 2
         events_a = await read_audit_events(
             str(patient_id),
@@ -919,9 +956,13 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             ),
         )
         assert any(row["event_type"] == "QUALIFICATION_HOSPITAL_A" for row in events_a)
-        assert not any(row["event_type"] == "QUALIFICATION_HOSPITAL_B" for row in events_a)
+        assert not any(
+            row["event_type"] == "QUALIFICATION_HOSPITAL_B" for row in events_a
+        )
         assert any(row["event_type"] == "QUALIFICATION_HOSPITAL_B" for row in events_b)
-        assert not any(row["event_type"] == "QUALIFICATION_HOSPITAL_A" for row in events_b)
+        assert not any(
+            row["event_type"] == "QUALIFICATION_HOSPITAL_A" for row in events_b
+        )
 
         # Patient-facing access history is a projection, not raw ledger rows.
         await append_audit_log(
@@ -941,7 +982,9 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
             history = await read_patient_access_history_events(
                 db, str(patient_id), limit=20
             )
-            assert any(row["event_type"] == "PATIENT_RECORD_READ_SUCCESS" for row in history)
+            assert any(
+                row["event_type"] == "PATIENT_RECORD_READ_SUCCESS" for row in history
+            )
 
         # Identity mismatch remains quarantine-only and cannot become SOURCE_ONLY.
         lane, reasons = _identity_mismatch_decision()
@@ -1010,15 +1053,19 @@ async def test_local_postgres_commit_failure_rollback(local_loop_services):
                 db, patient_id
             )
             trigger_metadata = (
-                await db.execute(
-                    text(
-                        "SELECT t.tgdeferrable, t.tginitdeferred "
-                        "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
-                        "WHERE c.relname = 'audit_outbox' AND t.tgname = :name"
-                    ),
-                    {"name": trigger_name},
+                (
+                    await db.execute(
+                        text(
+                            "SELECT t.tgdeferrable, t.tginitdeferred "
+                            "FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                            "WHERE c.relname = 'audit_outbox' AND t.tgname = :name"
+                        ),
+                        {"name": trigger_name},
+                    )
                 )
-            ).mappings().one()
+                .mappings()
+                .one()
+            )
             assert trigger_metadata["tgdeferrable"] is True
             assert trigger_metadata["tginitdeferred"] is True
 
@@ -1057,7 +1104,9 @@ async def test_local_postgres_commit_failure_rollback(local_loop_services):
             finally:
                 event.remove(sync_bind, "before_cursor_execute", capture_sql)
             assert failure.value.status_code == 503
-            assert failure.value.detail["error_code"] == "PATIENT_RECORD_WRITE_UNAVAILABLE"
+            assert (
+                failure.value.detail["error_code"] == "PATIENT_RECORD_WRITE_UNAVAILABLE"
+            )
 
         assert flushed == {"clinical", "timeline", "outbox"}
 

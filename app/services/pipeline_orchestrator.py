@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import DocumentExtractionError, get_medical_document_extractor
@@ -29,9 +29,14 @@ from app.ai.candidate_eligibility import (
 )
 from app.core.config import get_document_extraction_config
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
-from app.models.pipeline import ExtractionCandidateRecord, ExtractionJob
+from app.models.pipeline import (
+    DocumentSourceRelationshipRecord,
+    ExtractionCandidateRecord,
+    ExtractionDecisionRecord,
+    ExtractionJob,
+)
 from app.models.extraction_decision import ExtractionDecisionPolicy
-from app.models.field_evidence import SnapshotState
+from app.models.field_evidence import EvidenceIssue, SnapshotState
 from app.models.shards import NexaVault
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.observability.safe_exceptions import log_safe_exception
@@ -47,6 +52,11 @@ from app.services.approved_access_capability import (
 from app.security.erasure_registry import check_erasure_registry
 from app.services.audit_outbox import enqueue_audit_event
 from app.services.extraction_routing import evaluate_and_persist_lane
+from app.services.clinical_evidence_integrity import (
+    SourceRelationType,
+    clinical_fact_key,
+    persist_conflict_set,
+)
 from app.services.crypto_kms import (
     EncryptedField,
     EncryptionError,
@@ -66,6 +76,16 @@ _IDENTITY_REASON_CODES = {
     IdentityDecisionState.IDENTITY_CONFLICTING: "IDENTITY_MISMATCH",
     IdentityDecisionState.IDENTITY_INSUFFICIENT: "IDENTITY_UNAVAILABLE",
 }
+_SUPPORTED_PRIOR_EXTRACTION_STATUSES = frozenset(
+    {"source_only", "quarantined", "review_pending", "ready_for_commit", "committed"}
+)
+
+
+def _is_postgresql_session(db: AsyncSession) -> bool:
+    if not isinstance(db, AsyncSession):
+        return False
+    bind = db.get_bind()
+    return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
 
 
 class ExtractionEvidenceInstanceCollision(RuntimeError):
@@ -106,7 +126,10 @@ def _is_candidate_evidence_unique_violation(exc: BaseException) -> bool:
         constraint_name = getattr(candidate, "constraint_name", None) or getattr(
             diagnostic, "constraint_name", None
         )
-        if sqlstate == "23505" and constraint_name == "extraction_candidates_evidence_id_key":
+        if (
+            sqlstate == "23505"
+            and constraint_name == "extraction_candidates_evidence_id_key"
+        ):
             return True
     return False
 
@@ -119,6 +142,7 @@ _CANDIDATE_BINDING_FIELDS = (
     "tenant_id",
     "authorization_provider_id",
     "field_name",
+    "clinical_fact_key",
     "provider_name",
     "provider_version",
     "lane",
@@ -133,7 +157,7 @@ def _candidate_binding_matches(
     candidate: ExtractionCandidateRecord,
 ) -> bool:
     return all(
-        getattr(existing, field) == getattr(candidate, field)
+        getattr(existing, field, None) == getattr(candidate, field, None)
         for field in _CANDIDATE_BINDING_FIELDS
     )
 
@@ -172,9 +196,7 @@ async def _persist_candidate_idempotently(
         if existing is None:
             raise
         if not _candidate_binding_matches(existing, candidate):
-            raise ExtractionEvidenceInstanceCollision(
-                "EVIDENCE_INSTANCE_ID_COLLISION"
-            )
+            raise ExtractionEvidenceInstanceCollision("EVIDENCE_INSTANCE_ID_COLLISION")
         return True
     return False
 
@@ -200,8 +222,7 @@ async def _assess_extracted_identity(
         authentic_values = [
             str(item.raw_value).strip()
             for item in field_evidence
-            if item.canonical_field_name == field_name
-            and str(item.raw_value).strip()
+            if item.canonical_field_name == field_name and str(item.raw_value).strip()
         ]
         if authentic_values:
             assertions[field_name] = authentic_values
@@ -286,6 +307,10 @@ def _candidate_fields(document: Any) -> list[dict[str, Any]]:
                     "raw_value": candidate.representative.raw_value,
                     "provider_evidence": candidate.representative,
                     "semantic_candidate": candidate,
+                    "clinical_fact_key": clinical_fact_key(
+                        candidate.representative.canonical_field_name,
+                        candidate.representative.trusted_clinical_fact_id,
+                    ),
                     "routing_eligible": eligible,
                     "eligibility_reason_code": (
                         None if eligible else classification.value
@@ -324,6 +349,208 @@ def _eligibility_counts(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         "ineligible_candidate_count": len(ineligible),
         "ineligible_count_by_reason": dict(sorted(by_reason.items())),
     }
+
+
+def _candidate_fact_value(item: dict[str, Any]) -> tuple[str, str | None]:
+    """Compare only exact provider assertions; never infer clinical equivalence."""
+    evidence = item.get("provider_evidence")
+    if evidence is None:
+        return (str(item["raw_value"]), None)
+    value = evidence.normalized_value or evidence.raw_value
+    unit = evidence.normalized_unit or evidence.raw_unit
+    return (value, unit)
+
+
+def _mark_conflicting_evidence(
+    candidates: list[dict[str, Any]], evidence_records: list[Any]
+) -> dict[str, list[int]]:
+    groups: dict[str, list[int]] = {}
+    for index, item in enumerate(candidates):
+        key = item.get("clinical_fact_key")
+        if key:
+            groups.setdefault(key, []).append(index)
+    conflicts: dict[str, list[int]] = {}
+    for key, indexes in groups.items():
+        if len({_candidate_fact_value(candidates[index]) for index in indexes}) < 2:
+            continue
+        conflicts[key] = indexes
+        for index in indexes:
+            evidence = evidence_records[index]
+            issues = set(evidence.clinical_value.issues)
+            issues.add(EvidenceIssue.CLINICAL_VALUE_AMBIGUOUS)
+            evidence_records[index] = evidence.model_copy(
+                update={
+                    "clinical_value": evidence.clinical_value.model_copy(
+                        update={"issues": frozenset(issues)}
+                    )
+                }
+            )
+    # Different same-field assertions without one shared explicit fact key are
+    # review ambiguity, not a proven durable conflict. Mark every observation
+    # without guessing that repeated measurements represent the same fact.
+    by_field: dict[str, list[int]] = {}
+    for index, item in enumerate(candidates):
+        by_field.setdefault(str(item["field_name"]), []).append(index)
+    conflict_member_indexes = {
+        index for indexes in conflicts.values() for index in indexes
+    }
+    for indexes in by_field.values():
+        if len({_candidate_fact_value(candidates[index]) for index in indexes}) < 2:
+            continue
+        keys = {candidates[index].get("clinical_fact_key") for index in indexes}
+        if len(keys) == 1 and None not in keys:
+            continue
+        for index in indexes:
+            if index in conflict_member_indexes:
+                continue
+            evidence = evidence_records[index]
+            issues = set(evidence.clinical_value.issues)
+            issues.add(EvidenceIssue.CLINICAL_VALUE_AMBIGUOUS)
+            evidence_records[index] = evidence.model_copy(
+                update={
+                    "clinical_value": evidence.clinical_value.model_copy(
+                        update={"issues": frozenset(issues)}
+                    )
+                }
+            )
+    return conflicts
+
+
+async def _resolve_source_predecessors(
+    db: AsyncSession,
+    *,
+    job: ExtractionJob,
+    candidates: list[dict[str, Any]],
+) -> list[
+    tuple[
+        str | None,
+        str | None,
+        str | None,
+        frozenset[EvidenceIssue],
+        ExtractionCandidateRecord | None,
+    ]
+]:
+    # Pure orchestration doubles do not implement relational source graphs.
+    if not hasattr(db, "begin_nested"):
+        return [(None, None, None, frozenset(), None) for _ in candidates]
+    relation = (
+        await db.execute(
+            select(DocumentSourceRelationshipRecord).where(
+                DocumentSourceRelationshipRecord.source_document_id == job.document_id
+            )
+        )
+    ).scalar_one_or_none()
+    empty = [(None, None, None, frozenset(), None) for _ in candidates]
+    if relation is None:
+        return empty
+    if relation.tenant_id != job.tenant_id or relation.patient_id != job.patient_id:
+        return [
+            (None, None, None, frozenset({EvidenceIssue.SUPERSESSION_UNRESOLVED}), None)
+            for _ in candidates
+        ]
+
+    resolved = []
+    for item in candidates:
+        key = item.get("clinical_fact_key")
+        prior_graph = []
+        if key:
+            prior_graph = (
+                await db.execute(
+                    select(ExtractionCandidateRecord, ExtractionDecisionRecord)
+                    .join(
+                        ExtractionJob,
+                        ExtractionJob.id == ExtractionCandidateRecord.job_id,
+                    )
+                    .join(
+                        ExtractionDecisionRecord,
+                        and_(
+                            ExtractionDecisionRecord.evidence_id
+                            == ExtractionCandidateRecord.evidence_id,
+                            ExtractionDecisionRecord.job_id
+                            == ExtractionCandidateRecord.job_id,
+                            ExtractionDecisionRecord.source_document_id
+                            == ExtractionCandidateRecord.source_document_id,
+                            ExtractionDecisionRecord.tenant_id
+                            == ExtractionCandidateRecord.tenant_id,
+                            ExtractionDecisionRecord.patient_id
+                            == ExtractionCandidateRecord.patient_id,
+                        ),
+                    )
+                    .where(
+                        ExtractionCandidateRecord.source_document_id
+                        == relation.related_document_id,
+                        ExtractionCandidateRecord.tenant_id == job.tenant_id,
+                        ExtractionCandidateRecord.patient_id == job.patient_id,
+                        ExtractionCandidateRecord.clinical_fact_key == key,
+                        ExtractionJob.document_id == relation.related_document_id,
+                        ExtractionJob.tenant_id == job.tenant_id,
+                        ExtractionJob.patient_id == job.patient_id,
+                        ExtractionJob.status.in_(_SUPPORTED_PRIOR_EXTRACTION_STATUSES),
+                        ExtractionDecisionRecord.organization_id == job.tenant_id,
+                        ExtractionDecisionRecord.lane == ExtractionCandidateRecord.lane,
+                        ExtractionDecisionRecord.auto_commit_feature_enabled.is_(False),
+                    )
+                )
+            ).all()
+        if len(prior_graph) != 1:
+            resolved.append(
+                (
+                    None,
+                    None,
+                    None,
+                    frozenset({EvidenceIssue.SUPERSESSION_UNRESOLVED}),
+                    None,
+                )
+            )
+            continue
+        prior_candidate, prior_decision = prior_graph[0]
+        earlier_decision_id = None
+        supersedes_id = None
+        addendum_id = None
+        if relation.relation_type == SourceRelationType.SUPERSEDES.value:
+            supersedes_id = str(prior_candidate.evidence_id)
+            earlier_decision_id = str(prior_decision.id)
+        elif relation.relation_type == SourceRelationType.ADDENDUM_TO.value:
+            addendum_id = str(prior_candidate.evidence_id)
+        else:
+            resolved.append(
+                (
+                    None,
+                    None,
+                    None,
+                    frozenset({EvidenceIssue.SUPERSESSION_UNRESOLVED}),
+                    None,
+                )
+            )
+            continue
+        resolved.append(
+            (
+                supersedes_id,
+                addendum_id,
+                earlier_decision_id,
+                frozenset(),
+                prior_candidate,
+            )
+        )
+    if _is_postgresql_session(db):
+        await enqueue_audit_event(
+            db,
+            audit_context=AuditContext.for_tenant(
+                tenant_id=str(job.tenant_id), domain=AuditDomain.PIPELINE
+            ),
+            idempotency_key=f"source-relation-processing:{job.id}:{job.attempt_count}",
+            actor_id=str(job.authorization_provider_id),
+            event_type="SOURCE_RELATION_PROCESSING_DECISION",
+            target_id=str(job.id),
+            patient_id=str(job.patient_id),
+            metadata={
+                "relation_type": relation.relation_type,
+                "candidate_count": len(candidates),
+                "linked_count": sum(not item[3] for item in resolved),
+                "unresolved_count": sum(bool(item[3]) for item in resolved),
+            },
+        )
+    return resolved
 
 
 async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any]:
@@ -459,8 +686,22 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         candidates = _candidate_fields(extracted)
         eligibility_counts = _eligibility_counts(candidates)
         extracted_at = datetime.now(timezone.utc)
+        source_predecessors = await _resolve_source_predecessors(
+            db, job=job, candidates=candidates
+        )
         evidence_records = []
-        for item in candidates:
+        earlier_decision_ids: list[str | None] = []
+        prior_candidates: list[ExtractionCandidateRecord | None] = []
+        for item, predecessor in zip(candidates, source_predecessors, strict=True):
+            (
+                supersedes_id,
+                addendum_id,
+                earlier_decision_id,
+                lifecycle_issues,
+                prior_candidate,
+            ) = predecessor
+            earlier_decision_ids.append(earlier_decision_id)
+            prior_candidates.append(prior_candidate)
             evidence_records.append(
                 adapt_current_extracted_field(
                     document=extracted,
@@ -497,13 +738,51 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                             else SnapshotState.IN_PROGRESS
                         ),
                         document_identity_state=identity_state,
+                        supersedes_evidence_id=supersedes_id,
+                        addendum_to_evidence_id=addendum_id,
+                        lifecycle_issues=lifecycle_issues,
                     ),
                 )
             )
 
+        conflict_groups = _mark_conflicting_evidence(candidates, evidence_records)
+        kms = get_encryption_provider()
+        cross_source_conflicts: dict[str, tuple[int, ExtractionCandidateRecord]] = {}
+        for index, prior_candidate in enumerate(prior_candidates):
+            if prior_candidate is None:
+                continue
+            prior_raw = await kms.decrypt_field(
+                str(job.patient_id),
+                f"extraction_candidate_value:{prior_candidate.evidence_id}",
+                EncryptedField.deserialize(
+                    prior_candidate.encrypted_raw_value,
+                    f"extraction_candidate_value:{prior_candidate.evidence_id}",
+                ),
+                db,
+            )
+            if prior_raw == evidence_records[index].clinical_value.raw_value:
+                continue
+            key = candidates[index].get("clinical_fact_key")
+            if key:
+                cross_source_conflicts[key] = (index, prior_candidate)
+                evidence = evidence_records[index]
+                issues = set(evidence.clinical_value.issues)
+                issues.add(EvidenceIssue.CLINICAL_VALUE_AMBIGUOUS)
+                evidence_records[index] = evidence.model_copy(
+                    update={
+                        "clinical_value": evidence.clinical_value.model_copy(
+                            update={"issues": frozenset(issues)}
+                        )
+                    }
+                )
+
         if not evidence_records:
-            job.status = "quarantined" if identity_quarantine else (
-                "source_only" if consent_active and erasure_clear else "quarantined"
+            job.status = (
+                "quarantined"
+                if identity_quarantine
+                else (
+                    "source_only" if consent_active and erasure_clear else "quarantined"
+                )
             )
             if job.status == "quarantined":
                 job.error_code = (
@@ -548,7 +827,9 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
 
         results = []
         routed_at = datetime.now(timezone.utc)
-        for item, evidence in zip(candidates, evidence_records, strict=True):
+        for item, evidence, earlier_decision_id in zip(
+            candidates, evidence_records, earlier_decision_ids, strict=True
+        ):
             policy = ExtractionDecisionPolicy(
                 patient_id=str(job.patient_id),
                 tenant_id=str(job.tenant_id),
@@ -577,12 +858,13 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                         or not erasure_clear
                         else None
                     ),
+                    earlier_decision_id=earlier_decision_id,
                 )
             )
 
-        kms = get_encryption_provider()
-        for item, evidence, result in zip(
-            candidates, evidence_records, results, strict=True
+        persisted_candidates: dict[int, ExtractionCandidateRecord] = {}
+        for index, (item, evidence, result) in enumerate(
+            zip(candidates, evidence_records, results, strict=True)
         ):
             if item.get("provider_evidence") is None:
                 continue
@@ -604,41 +886,80 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
                     db,
                 )
             bbox = evidence.visual.bounding_box
-            await _persist_candidate_idempotently(
-                db,
-                ExtractionCandidateRecord(
-                    id=uuid.uuid4(),
-                    evidence_id=evidence_uuid,
-                    job_id=job.id,
-                    source_document_id=job.document_id,
-                    patient_id=job.patient_id,
-                    tenant_id=job.tenant_id,
-                    authorization_provider_id=str(job.authorization_provider_id),
-                    field_name=evidence.clinical_value.field_name,
-                    encrypted_raw_value=encrypted_value.serialize(),
-                    encrypted_source_text=(
-                        encrypted_source.serialize() if encrypted_source else None
-                    ),
-                    source_page=evidence.visual.page_number,
-                    source_bbox=(
-                        [bbox.left, bbox.top, bbox.right, bbox.bottom] if bbox else None
-                    ),
-                    field_confidence=evidence.model.field_confidence,
-                    document_confidence=evidence.model.document_confidence,
-                    provider_name=evidence.model.provider_name or "unknown",
-                    provider_version=evidence.model.model_version or "unknown",
-                    extracted_at=evidence.model.extracted_at,
-                    evidence_complete=evidence.visual_evidence_complete,
-                    lane=result.routing.lane,
-                    reason_codes=list(result.decision.reason_codes),
-                    routing_eligible=item.get("routing_eligible", True),
-                    eligibility_reason_code=item.get("eligibility_reason_code"),
-                    eligibility_policy_version=item.get(
-                        "eligibility_policy_version",
-                        CANDIDATE_ELIGIBILITY_POLICY_VERSION,
-                    ),
-                    created_at=routed_at,
+            candidate_row = ExtractionCandidateRecord(
+                id=uuid.uuid4(),
+                evidence_id=evidence_uuid,
+                job_id=job.id,
+                source_document_id=job.document_id,
+                patient_id=job.patient_id,
+                tenant_id=job.tenant_id,
+                authorization_provider_id=str(job.authorization_provider_id),
+                field_name=evidence.clinical_value.field_name,
+                clinical_fact_key=item.get("clinical_fact_key"),
+                encrypted_raw_value=encrypted_value.serialize(),
+                encrypted_source_text=(
+                    encrypted_source.serialize() if encrypted_source else None
                 ),
+                source_page=evidence.visual.page_number,
+                source_bbox=(
+                    [bbox.left, bbox.top, bbox.right, bbox.bottom] if bbox else None
+                ),
+                field_confidence=evidence.model.field_confidence,
+                document_confidence=evidence.model.document_confidence,
+                provider_name=evidence.model.provider_name or "unknown",
+                provider_version=evidence.model.model_version or "unknown",
+                extracted_at=evidence.model.extracted_at,
+                evidence_complete=evidence.visual_evidence_complete,
+                lane=result.routing.lane,
+                reason_codes=list(result.decision.reason_codes),
+                routing_eligible=item.get("routing_eligible", True),
+                eligibility_reason_code=item.get("eligibility_reason_code"),
+                eligibility_policy_version=item.get(
+                    "eligibility_policy_version",
+                    CANDIDATE_ELIGIBILITY_POLICY_VERSION,
+                ),
+                created_at=routed_at,
+            )
+            idempotent_candidate = await _persist_candidate_idempotently(
+                db,
+                candidate_row,
+            )
+            if idempotent_candidate:
+                candidate_row = (
+                    await db.execute(
+                        select(ExtractionCandidateRecord).where(
+                            ExtractionCandidateRecord.evidence_id == evidence_uuid
+                        )
+                    )
+                ).scalar_one()
+            persisted_candidates[index] = candidate_row
+
+        for fact_key, indexes in conflict_groups.items():
+            member_rows = [persisted_candidates[index] for index in indexes]
+            await persist_conflict_set(
+                db,
+                tenant_id=job.tenant_id,
+                patient_id=job.patient_id,
+                job_id=job.id,
+                source_document_id=job.document_id,
+                field_name=member_rows[0].field_name,
+                fact_key=fact_key,
+                candidates=member_rows,
+                created_at=routed_at,
+            )
+        for fact_key, (index, prior_candidate) in cross_source_conflicts.items():
+            current_candidate = persisted_candidates[index]
+            await persist_conflict_set(
+                db,
+                tenant_id=job.tenant_id,
+                patient_id=job.patient_id,
+                job_id=job.id,
+                source_document_id=job.document_id,
+                field_name=current_candidate.field_name,
+                fact_key=fact_key,
+                candidates=[prior_candidate, current_candidate],
+                created_at=routed_at,
+                related_document_id=prior_candidate.source_document_id,
             )
 
         quarantine_count = sum(

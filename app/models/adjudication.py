@@ -8,6 +8,7 @@ import math
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -182,6 +183,7 @@ class AdjudicationSubmission(_FrozenModel):
     attempt_number: int = Field(ge=1)
     outcome: AdjudicationOutcome
     fields: tuple[AdjudicatedClinicalField, ...] = ()
+    resolved_conflict_ids: tuple[UUID, ...] = ()
     supersedes_submission_id: str | None = None
     submitted_at: datetime
     resolved_at: datetime
@@ -196,6 +198,13 @@ class AdjudicationSubmission(_FrozenModel):
             raise ValueError("accepted adjudication requires structured fields")
         if self.outcome is not AdjudicationOutcome.ACCEPTED and self.fields:
             raise ValueError("non-accepted adjudication cannot carry clinical fields")
+        if (
+            self.outcome is not AdjudicationOutcome.ACCEPTED
+            and self.resolved_conflict_ids
+        ):
+            raise ValueError("only accepted adjudication can resolve conflicts")
+        if len(set(self.resolved_conflict_ids)) != len(self.resolved_conflict_ids):
+            raise ValueError("duplicate conflict resolution")
         if self.outcome is AdjudicationOutcome.PENDING:
             raise ValueError("pending is a case state, not a submission outcome")
         if len(set(self.reason_codes)) != len(self.reason_codes):

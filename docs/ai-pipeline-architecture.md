@@ -574,6 +574,82 @@ updated only when executable tests exercise the production control; this
 milestone preserves the existing declared runtime scenario set without
 claiming real PostgreSQL, Redis, object-storage, provider, KMS, or device
 evidence.
+### Durable clinical conflicts and source relationships
+
+Revision `20260814_conflict_supersession` adds append-only conflict sets and
+source-document relationship edges. A conflict set is non-authoritative: it
+binds every original encrypted candidate/evidence instance to the same tenant,
+patient, job and source graph, but never selects a winner or changes a clinical
+record. The orchestrator marks incompatible values with
+`CLINICAL_VALUE_AMBIGUOUS`, preserves every observation, and runtime
+`AUTO_COMMIT` remains disabled.
+
+Conflict identity is deliberately conservative. The value-free
+`clinical_fact_key` is SHA-256 over `clinical-fact-key/1.0`, the canonical field
+name, and a private Nexa-owned structured-fact identity. Provider JSON cannot
+set that identity: the public evidence model rejects extra input and the
+Nexa-controlled Textract table parser binds it only at the trusted in-process
+boundary when an exact laboratory test and effective date are both present.
+Field name, result value, source text, page, row order and confidence do not
+establish sameness. Repeated measurements with different dates therefore remain
+separate observations. Query and Form evidence without sufficient exact context
+gets no fact identity; incompatible same-field observations are preserved and
+marked `CLINICAL_VALUE_AMBIGUOUS` as insufficient-context ambiguity, not called
+a proven conflict and never granted automatic clinical authority.
+
+PostgreSQL transaction-scoped advisory locks serialize each canonical conflict
+graph by tenant, patient, job and fact key. Conflict lookup, creation and member
+reconciliation happen under that lock. A composite foreign key proves every
+member's candidate and evidence identifiers refer to the same candidate. The
+conflict, member and resolution tables are append-only: migration-owned triggers
+reject unsupported update or delete, and conflict resolution adds immutable
+resolution rows rather than mutating membership or selecting an automatic
+winner.
+
+An accepted adjudication submission must explicitly list every applicable
+conflict identifier. That list is protected by the immutable submission hash
+and materialized as append-only resolution rows. Submission and clinical
+commit both fail closed with
+`ADJUDICATION_UNRESOLVED_CLINICAL_CONFLICT` when the current accepted
+submission lacks complete resolution authority. A superseding submission must
+declare the conflicts again; an earlier submission's declaration does not
+carry forward.
+
+`document_source_relationships` records one authorized ingestion-originated
+`SUPERSEDES` or `ADDENDUM_TO` edge from a newer document to an earlier document.
+Both sources must already belong to the same tenant and patient; self-links,
+cycles, cross-boundary links, unknown types, and incompatible duplicate edges
+are rejected. OCR/provider output cannot create these edges. The edge is
+provenance, not truth: the earlier source and all evidence remain immutable and
+an addendum never implies deletion.
+
+Relationship mutation is serialized with a PostgreSQL transaction-scoped
+advisory lock derived deterministically from the tenant and patient. After the
+lock is acquired, the service reloads both documents and the graph, proves the
+current provider owns both source workflows, revalidates the current live
+document-processing capability, and checks the authoritative erasure registry
+immediately before insertion. Revoked consent, active erasure, unavailable
+authorization/erasure state, cross-tenant/patient/provider sources, cycles and
+depth overflow fail closed with no relationship row. Historical ingestion
+consent need not be reactivated; authority comes from the caller's current live
+patient-document capability. Database triggers make every persisted edge
+append-only.
+
+For a related source, the orchestrator resolves field linkage only when exactly
+one earlier candidate shares the explicit clinical-fact key. A resolved
+`SUPERSEDES` edge fills `supersedes_evidence_id` and links the new immutable
+decision through `earlier_decision_id`; `ADDENDUM_TO` fills
+`addendum_to_evidence_id` without deletion semantics. Missing or multiple prior
+candidates add `SUPERSESSION_UNRESOLVED` and route to quarantine. A corrected
+source whose value conflicts with the earlier same-fact observation remains
+conflict-controlled until explicit human adjudication.
+
+Successful conflict creation, member addition, conflict-resolution acceptance,
+source-edge creation and source-link processing decisions stage minimal,
+value-free events in the same transactional audit outbox. Rejected operations
+roll back with their protected mutation; the current architecture does not open
+a separate connection to force a rejection event to survive rollback.
+
 ### Human source adjudication
 
 An extraction decision records the evidence-policy result; routing records its

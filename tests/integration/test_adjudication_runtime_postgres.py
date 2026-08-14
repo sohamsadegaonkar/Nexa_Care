@@ -183,6 +183,7 @@ async def _submit(factory, provider, case_id, session_id, key, payload):
 async def test_jsonb_commit_retry_collision_and_concurrency():
     engine = create_async_engine(_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    patient = None
     try:
         provider, patient, case_id, session_id = await _case(factory)
         frozen = datetime(2026, 7, 29, 12, 0, tzinfo=timezone.utc)
@@ -201,9 +202,7 @@ async def test_jsonb_commit_retry_collision_and_concurrency():
         submission_id = accepted[0]
         accepted_key = keys[results.index(submission_id)]
         assert (
-            await _submit(
-                factory, provider, case_id, session_id, accepted_key, payload
-            )
+            await _submit(factory, provider, case_id, session_id, accepted_key, payload)
             == submission_id
         )
         assert (
@@ -261,6 +260,13 @@ async def test_jsonb_commit_retry_collision_and_concurrency():
                 )
             ).scalar_one() == 1
     finally:
+        if patient is not None:
+            async with factory() as db:
+                await db.execute(
+                    text("DELETE FROM public.audit_outbox WHERE patient_id = :patient"),
+                    {"patient": str(patient)},
+                )
+                await db.commit()
         await engine.dispose()
 
 
@@ -274,8 +280,9 @@ async def _expect_code(awaitable, code):
 async def test_source_recovery_consent_erasure_and_audit_privacy():
     engine = create_async_engine(_url())
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    patient = None
     try:
-        provider, _, case_id, old_session = await _case(factory)
+        provider, patient, case_id, old_session = await _case(factory)
 
         async def recover(value):
             async with factory() as db:
@@ -293,9 +300,9 @@ async def test_source_recovery_consent_erasure_and_audit_privacy():
             f"recovered-{uuid.uuid4().hex}",
         ]
         with patch("app.services.adjudication._live_access", AsyncMock()):
-            assert set(await asyncio.gather(*(recover(value) for value in sessions))) == set(
-                sessions
-            )
+            assert set(
+                await asyncio.gather(*(recover(value) for value in sessions))
+            ) == set(sessions)
         async with factory() as db:
             case = (
                 await db.execute(
@@ -407,4 +414,11 @@ async def test_source_recovery_consent_erasure_and_audit_privacy():
             ):
                 assert protected not in payloads
     finally:
+        if patient is not None:
+            async with factory() as db:
+                await db.execute(
+                    text("DELETE FROM public.audit_outbox WHERE patient_id = :patient"),
+                    {"patient": str(patient)},
+                )
+                await db.commit()
         await engine.dispose()

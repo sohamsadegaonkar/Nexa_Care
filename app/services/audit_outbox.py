@@ -10,8 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.security.audit_context import AuditContext, derive_audit_partition
 
-_OUTBOX_INSERT_SQL = text(
-    """
+_OUTBOX_INSERT = """
     INSERT INTO public.audit_outbox
         (id, event_id, idempotency_key, chain_partition, event_type, actor_id,
          tenant_id, patient_id, payload, status, attempt_count, available_at, created_at)
@@ -19,6 +18,19 @@ _OUTBOX_INSERT_SQL = text(
         (gen_random_uuid(), gen_random_uuid(), :idempotency_key, :chain_partition,
          :event_type, :actor_id, :tenant_id, :patient_id, CAST(:payload AS JSONB),
          'pending', 0, now(), now())
+"""
+_OUTBOX_INSERT_TENANT_SQL = text(
+    _OUTBOX_INSERT
+    + """
+    ON CONFLICT (tenant_id, idempotency_key) WHERE tenant_id IS NOT NULL
+    DO NOTHING
+    """
+)
+_OUTBOX_INSERT_GLOBAL_SQL = text(
+    _OUTBOX_INSERT
+    + """
+    ON CONFLICT (idempotency_key) WHERE tenant_id IS NULL
+    DO NOTHING
     """
 )
 
@@ -45,7 +57,11 @@ async def enqueue_audit_event(
         "audit_domain": audit_context.domain.value,
     }
     await db.execute(
-        _OUTBOX_INSERT_SQL,
+        (
+            _OUTBOX_INSERT_TENANT_SQL
+            if audit_context.tenant_id is not None
+            else _OUTBOX_INSERT_GLOBAL_SQL
+        ),
         {
             "idempotency_key": idempotency_key,
             "chain_partition": derive_audit_partition(audit_context),
