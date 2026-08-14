@@ -133,6 +133,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.CLINICAL_VALUE, EvidenceGroup.LIFECYCLE},
         "Different pages assert incompatible values for the same clinical fact.",
         "Preserve both sources as conflicting candidates, prevent silent selection, and require explicit human resolution before clinical commitment.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_clinical_conflict_supersession_postgres.py::test_scenario_9_production_orchestrator_persists_exact_conflict",
     ),
     _scenario(
         10,
@@ -261,6 +263,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.CLINICAL_VALUE, EvidenceGroup.LIFECYCLE},
         "A corrected addendum changes a clinical value previously extracted from an earlier source.",
         "Preserve both immutable versions and explicit supersession provenance; never silently overwrite the earlier value.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_clinical_conflict_supersession_postgres.py::test_scenario_23_production_upload_revalidates_related_source",
     ),
     _scenario(
         24,

@@ -75,6 +75,7 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
         4,
         5,
         8,
+        9,
         12,
         13,
         16,
@@ -83,6 +84,7 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
         20,
         21,
         22,
+        23,
         24,
     ]
     assert len(runtime_scenarios) < len(SCENARIOS)
