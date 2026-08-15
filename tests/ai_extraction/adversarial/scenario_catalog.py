@@ -115,6 +115,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.LIFECYCLE, EvidenceGroup.MODEL_EVIDENCE},
         "A partial response is followed by a retry that may repeat or disagree with earlier fields.",
         "Discard partial results as clinical candidates and reconcile the complete retry idempotently without duplicate or mixed-attempt records.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_clinical_conflict_supersession_postgres.py::test_scenario_9_production_orchestrator_persists_exact_conflict",
     ),
     _scenario(
         8,
@@ -151,6 +153,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.POLICY_EVIDENCE, EvidenceGroup.LIFECYCLE},
         "The source cannot be safely decoded under the approved document policy.",
         "Reject processing with a stable non-sensitive failure state; never fabricate, partially parse, or commit clinical output.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_clinical_conflict_supersession_postgres.py::test_scenario_11_local_invalid_document_creates_no_clinical_graph",
     ),
     _scenario(
         12,
@@ -179,6 +183,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.MODEL_EVIDENCE, EvidenceGroup.LIFECYCLE},
         "One job or retry spans a provider or model-version transition.",
         "Pin and preserve the version used for each attempt, prevent mixed-version evidence in one result, and require a new traceable evaluation when versions change.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_clinical_conflict_supersession_postgres.py::test_scenario_9_production_orchestrator_persists_exact_conflict",
     ),
     _scenario(
         15,
