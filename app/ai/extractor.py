@@ -13,10 +13,11 @@ import logging
 import random
 import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal
 
 import boto3
 import httpx
@@ -31,9 +32,41 @@ from pydantic import ValidationError
 
 from app.ai.textract_parser import parse_textract_blocks
 from app.core.config import DocumentExtractionConfig, get_document_extraction_config
-from app.models.ai_models import ExtractedMedicalDocument
+from app.models.ai_models import (
+    ExtractedMedicalDocument,
+    ProviderAttemptOutcome,
+    ProviderAttemptTrace,
+)
 
 logger = logging.getLogger("nexa_logger")
+
+
+@dataclass(frozen=True, slots=True)
+class ExtractionProviderResult:
+    """Complete result returned only by a validated Nexa adapter invocation.
+
+    This is deliberately constructible Python data, not a secret capability.
+    The orchestrator accepts it only after comparing its server-owned metadata
+    to the actual configured adapter instance that it invoked.
+    """
+
+    document: ExtractedMedicalDocument
+    provider_adapter: str
+    provider_contract_version: str
+    provider_model_version: str | None
+    response_complete: Literal[True]
+    provider_attempt_traces: tuple[ProviderAttemptTrace, ...]
+
+    def __post_init__(self) -> None:
+        if not self.provider_adapter or not self.provider_contract_version:
+            raise ValueError("provider result provenance must be present")
+        if self.response_complete is not True:
+            raise ValueError("provider result must represent complete success")
+        if self.provider_attempt_traces and (
+            self.provider_attempt_traces[-1].outcome
+            is not ProviderAttemptOutcome.SUCCEEDED
+        ):
+            raise ValueError("provider result must end with successful subattempt")
 
 
 class DocumentExtractionError(RuntimeError):
@@ -42,9 +75,16 @@ class DocumentExtractionError(RuntimeError):
     error_code = "EXTRACTION_FAILED"
     retryable = False
 
-    def __init__(self, message: str, *, upstream_status: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        upstream_status: int | None = None,
+        provider_attempt_traces: tuple[ProviderAttemptTrace, ...] = (),
+    ) -> None:
         super().__init__(message)
         self.upstream_status = upstream_status
+        self.provider_attempt_traces = provider_attempt_traces
 
 
 class RetryableDocumentExtractionError(DocumentExtractionError):
@@ -80,6 +120,8 @@ TEXTRACT_SUPPORTED_MIME_TYPES = frozenset(
 # Nine controlled, extraction-only questions. This remains below Textract's
 # synchronous limit of 15 queries per page.
 TEXTRACT_PILOT_QUERY_SET_VERSION = "pilot-v2-diagnosis-label"
+REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION = "remote-medical-document/1.0"
+DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION = "demo-medical-document/1.0"
 TEXTRACT_PILOT_QUERIES: tuple[tuple[str, str], ...] = (
     ("patient_name", "What is the patient name?"),
     ("phone", "What patient phone or mobile number is directly written?"),
@@ -116,14 +158,91 @@ _INVALID_DOCUMENT_CODES = frozenset(
 )
 
 
+def _trace(
+    *,
+    subattempt: int,
+    adapter: str,
+    contract_version: str,
+    outcome: ProviderAttemptOutcome,
+    error_code: str | None = None,
+    model_version: str | None = None,
+) -> ProviderAttemptTrace:
+    return ProviderAttemptTrace(
+        provider_subattempt_number=subattempt,
+        provider_adapter=adapter,
+        provider_contract_version=contract_version,
+        provider_model_version=model_version,
+        outcome=outcome,
+        error_code=error_code,
+        response_complete=outcome is ProviderAttemptOutcome.SUCCEEDED,
+        occurred_at=datetime.now(timezone.utc),
+    )
+
+
+def _complete_provider_result(
+    document: ExtractedMedicalDocument,
+    *,
+    adapter: str,
+    contract_version: str,
+    model_version: str | None,
+    traces: tuple[ProviderAttemptTrace, ...],
+) -> ExtractionProviderResult:
+    """Create a complete envelope after checked-in adapter validation."""
+
+    evidence_pairs = {
+        (item.provider_name, item.provider_api_version)
+        for item in document.field_evidence
+    }
+    if len(evidence_pairs) > 1:
+        raise ProviderResponseError("Extraction response failed provenance validation")
+    if adapter == "aws_textract" and evidence_pairs:
+        provider_name, evidence_version = next(iter(evidence_pairs))
+        if provider_name != "aws_textract" or evidence_version != model_version:
+            raise ProviderResponseError(
+                "Extraction response failed provenance validation"
+            )
+    if adapter == "remote" and evidence_pairs:
+        _, evidence_version = next(iter(evidence_pairs))
+        model_version = evidence_version
+        document.field_evidence = [
+            item.model_copy(update={"provider_name": "remote"})
+            for item in document.field_evidence
+        ]
+    if traces and traces[-1].outcome is ProviderAttemptOutcome.SUCCEEDED:
+        traces = (
+            *traces[:-1],
+            replace(traces[-1], provider_model_version=model_version),
+        )
+    return ExtractionProviderResult(
+        document=document,
+        provider_adapter=adapter,
+        provider_contract_version=contract_version,
+        provider_model_version=model_version,
+        response_complete=True,
+        provider_attempt_traces=traces,
+    )
+
+
 class ExtractionProvider(ABC):
+    """Configured Nexa extraction adapter; no general plugin trust is implied."""
+
+    @property
+    @abstractmethod
+    def adapter_identity(self) -> str:
+        """Return the closed Nexa-controlled adapter identity."""
+
+    @property
+    @abstractmethod
+    def contract_version(self) -> str:
+        """Return the Nexa-controlled adapter contract version."""
+
     @abstractmethod
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         """Return validated extraction output without persisting it."""
 
-    async def extract_data(self, file_path: str) -> ExtractedMedicalDocument:
+    async def extract_data(self, file_path: str) -> ExtractionProviderResult:
         path = Path(file_path)
         try:
             data = await asyncio.to_thread(path.read_bytes)
@@ -140,6 +259,14 @@ class ExtractionProvider(ABC):
 
 
 class RemoteExtractionProvider(ExtractionProvider):
+    @property
+    def adapter_identity(self) -> str:
+        return "remote"
+
+    @property
+    def contract_version(self) -> str:
+        return REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION
+
     def __init__(
         self, config: DocumentExtractionConfig, client: httpx.AsyncClient | None = None
     ) -> None:
@@ -152,10 +279,11 @@ class RemoteExtractionProvider(ExtractionProvider):
 
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         started = time.perf_counter()
         last_error: DocumentExtractionError | None = None
-        for attempt in range(1, self.config.max_attempts + 1):
+        traces: list[ProviderAttemptTrace] = []
+        for attempt in range(1, self.config.provider_max_attempts + 1):
             try:
                 client = self._client or httpx.AsyncClient(
                     timeout=self.config.timeout_seconds
@@ -189,8 +317,50 @@ class RemoteExtractionProvider(ExtractionProvider):
                 try:
                     result = ExtractedMedicalDocument.model_validate(response.json())
                 except (ValueError, ValidationError) as exc:
-                    raise InvalidDocumentError(
-                        "Extraction response failed schema validation"
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="remote",
+                            contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                            outcome=ProviderAttemptOutcome.INVALID_RESPONSE,
+                            error_code=ProviderResponseError.error_code,
+                        )
+                    )
+                    raise ProviderResponseError(
+                        "Extraction response failed schema validation",
+                        provider_attempt_traces=tuple(traces),
+                    ) from exc
+                try:
+                    result = _complete_provider_result(
+                        result,
+                        adapter="remote",
+                        contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                        model_version=None,
+                        traces=tuple(
+                            traces
+                            + [
+                                _trace(
+                                    subattempt=attempt,
+                                    adapter="remote",
+                                    contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                                    outcome=ProviderAttemptOutcome.SUCCEEDED,
+                                )
+                            ]
+                        ),
+                    )
+                except ProviderResponseError as exc:
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="remote",
+                            contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                            outcome=ProviderAttemptOutcome.INVALID_RESPONSE,
+                            error_code=exc.error_code,
+                        )
+                    )
+                    raise ProviderResponseError(
+                        "Extraction response failed provenance validation",
+                        provider_attempt_traces=tuple(traces),
                     ) from exc
                 logger.info(
                     json.dumps(
@@ -208,12 +378,56 @@ class RemoteExtractionProvider(ExtractionProvider):
                     "Extraction provider network failure"
                 )
                 last_error.__cause__ = exc
+                traces.append(
+                    _trace(
+                        subattempt=attempt,
+                        adapter="remote",
+                        contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                        outcome=(
+                            ProviderAttemptOutcome.TIMEOUT
+                            if isinstance(exc, httpx.TimeoutException)
+                            else ProviderAttemptOutcome.RETRYABLE_ERROR
+                        ),
+                        error_code=last_error.error_code,
+                    )
+                )
             except RetryableDocumentExtractionError as exc:
                 last_error = exc
-            except DocumentExtractionError:
-                raise
+                traces.append(
+                    _trace(
+                        subattempt=attempt,
+                        adapter="remote",
+                        contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                        outcome=ProviderAttemptOutcome.RETRYABLE_ERROR,
+                        error_code=last_error.error_code,
+                    )
+                )
+            except DocumentExtractionError as exc:
+                if exc.provider_attempt_traces:
+                    raise
+                outcome = (
+                    ProviderAttemptOutcome.INVALID_DOCUMENT
+                    if exc.error_code == InvalidDocumentError.error_code
+                    else ProviderAttemptOutcome.CREDENTIALS_UNAVAILABLE
+                    if exc.error_code == ProviderCredentialsUnavailableError.error_code
+                    else ProviderAttemptOutcome.INVALID_RESPONSE
+                )
+                traces.append(
+                    _trace(
+                        subattempt=attempt,
+                        adapter="remote",
+                        contract_version=REMOTE_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                        outcome=outcome,
+                        error_code=exc.error_code,
+                    )
+                )
+                raise type(exc)(
+                    str(exc),
+                    upstream_status=exc.upstream_status,
+                    provider_attempt_traces=tuple(traces),
+                ) from exc
 
-            if attempt < self.config.max_attempts:
+            if attempt < self.config.provider_max_attempts:
                 delay = min(4.0, 0.25 * (2 ** (attempt - 1))) + random.uniform(0, 0.2)
                 await asyncio.sleep(delay)
 
@@ -223,18 +437,30 @@ class RemoteExtractionProvider(ExtractionProvider):
                 {
                     "event": "document_extraction_retry_exhausted",
                     "request_id": request_id,
-                    "attempt_count": self.config.max_attempts,
+                    "attempt_count": self.config.provider_max_attempts,
                     "error_code": last_error.error_code,
                     "upstream_status": last_error.upstream_status,
                     "latency_ms": round((time.perf_counter() - started) * 1000),
                 }
             )
         )
-        raise last_error
+        raise type(last_error)(
+            str(last_error),
+            upstream_status=last_error.upstream_status,
+            provider_attempt_traces=tuple(traces),
+        ) from last_error
 
 
 class AwsTextractExtractionProvider(ExtractionProvider):
     """Synchronous single-page Textract Queries adapter."""
+
+    @property
+    def adapter_identity(self) -> str:
+        return "aws_textract"
+
+    @property
+    def contract_version(self) -> str:
+        return TEXTRACT_PILOT_QUERY_SET_VERSION
 
     def __init__(
         self,
@@ -323,7 +549,7 @@ class AwsTextractExtractionProvider(ExtractionProvider):
 
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         if mime_type not in TEXTRACT_SUPPORTED_MIME_TYPES:
             raise InvalidDocumentError("Document type is not supported")
         if not document_bytes or len(document_bytes) > TEXTRACT_MAX_SYNC_BYTES:
@@ -331,7 +557,8 @@ class AwsTextractExtractionProvider(ExtractionProvider):
 
         started = time.perf_counter()
         last_error: DocumentExtractionError | None = None
-        for attempt in range(1, self.config.max_attempts + 1):
+        traces: list[ProviderAttemptTrace] = []
+        for attempt in range(1, self.config.provider_max_attempts + 1):
             try:
                 client = self._get_client()
                 response = await asyncio.wait_for(
@@ -348,7 +575,56 @@ class AwsTextractExtractionProvider(ExtractionProvider):
                     ),
                     timeout=self.config.timeout_seconds,
                 )
-                result = self._parse_response(response)
+                try:
+                    result = self._parse_response(response)
+                    model_version = response.get("AnalyzeDocumentModelVersion")
+                    result = _complete_provider_result(
+                        result,
+                        adapter="aws_textract",
+                        contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                        model_version=(
+                            model_version.strip()
+                            if isinstance(model_version, str) and model_version.strip()
+                            else "unknown"
+                        ),
+                        traces=tuple(
+                            traces
+                            + [
+                                _trace(
+                                    subattempt=attempt,
+                                    adapter="aws_textract",
+                                    contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                                    model_version=(
+                                        model_version.strip()
+                                        if isinstance(model_version, str)
+                                        and model_version.strip()
+                                        else "unknown"
+                                    ),
+                                    outcome=ProviderAttemptOutcome.SUCCEEDED,
+                                )
+                            ]
+                        ),
+                    )
+                except (ProviderResponseError, InvalidDocumentError) as exc:
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="aws_textract",
+                            contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                            outcome=(
+                                ProviderAttemptOutcome.INVALID_DOCUMENT
+                                if exc.error_code == InvalidDocumentError.error_code
+                                else ProviderAttemptOutcome.INVALID_RESPONSE
+                            ),
+                            error_code=exc.error_code,
+                        )
+                    )
+                    raise type(exc)(
+                        "Extraction provider returned an invalid document"
+                        if exc.error_code == InvalidDocumentError.error_code
+                        else "Extraction response failed schema or provenance validation",
+                        provider_attempt_traces=tuple(traces),
+                    ) from exc
                 if self._successful_response_observer is not None:
                     self._successful_response_observer(response)
                 logger.info(
@@ -358,7 +634,7 @@ class AwsTextractExtractionProvider(ExtractionProvider):
                             "request_id": request_id,
                             "provider": "aws_textract",
                             "attempt": attempt,
-                            "candidate_count": len(result.field_evidence),
+                            "candidate_count": len(result.document.field_evidence),
                             "latency_ms": round((time.perf_counter() - started) * 1000),
                         }
                     )
@@ -367,9 +643,28 @@ class AwsTextractExtractionProvider(ExtractionProvider):
             except asyncio.TimeoutError as exc:
                 last_error = ProviderTimeoutError("Extraction provider timed out")
                 last_error.__cause__ = exc
+                traces.append(
+                    _trace(
+                        subattempt=attempt,
+                        adapter="aws_textract",
+                        contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                        outcome=ProviderAttemptOutcome.TIMEOUT,
+                        error_code=last_error.error_code,
+                    )
+                )
             except (NoCredentialsError, PartialCredentialsError) as exc:
+                traces.append(
+                    _trace(
+                        subattempt=attempt,
+                        adapter="aws_textract",
+                        contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                        outcome=ProviderAttemptOutcome.CREDENTIALS_UNAVAILABLE,
+                        error_code=ProviderCredentialsUnavailableError.error_code,
+                    )
+                )
                 raise ProviderCredentialsUnavailableError(
-                    "Extraction provider credentials are unavailable"
+                    "Extraction provider credentials are unavailable",
+                    provider_attempt_traces=tuple(traces),
                 ) from exc
             except ClientError as exc:
                 code = str(exc.response.get("Error", {}).get("Code", ""))
@@ -384,27 +679,79 @@ class AwsTextractExtractionProvider(ExtractionProvider):
                         )
                     )
                     last_error.__cause__ = exc
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="aws_textract",
+                            contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                            outcome=(
+                                ProviderAttemptOutcome.THROTTLED
+                                if "Throttl" in code or "Throughput" in code
+                                else ProviderAttemptOutcome.RETRYABLE_ERROR
+                            ),
+                            error_code=last_error.error_code,
+                        )
+                    )
                 elif code in _INVALID_DOCUMENT_CODES:
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="aws_textract",
+                            contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                            outcome=ProviderAttemptOutcome.INVALID_DOCUMENT,
+                            error_code=InvalidDocumentError.error_code,
+                        )
+                    )
                     raise InvalidDocumentError(
-                        "Extraction provider rejected document"
+                        "Extraction provider rejected document",
+                        provider_attempt_traces=tuple(traces),
                     ) from exc
                 elif code in {"AccessDeniedException", "UnrecognizedClientException"}:
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="aws_textract",
+                            contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                            outcome=ProviderAttemptOutcome.CREDENTIALS_UNAVAILABLE,
+                            error_code=ProviderCredentialsUnavailableError.error_code,
+                        )
+                    )
                     raise ProviderCredentialsUnavailableError(
-                        "Extraction provider credentials are unavailable"
+                        "Extraction provider credentials are unavailable",
+                        provider_attempt_traces=tuple(traces),
                     ) from exc
                 else:
+                    traces.append(
+                        _trace(
+                            subattempt=attempt,
+                            adapter="aws_textract",
+                            contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                            outcome=ProviderAttemptOutcome.INVALID_RESPONSE,
+                            error_code=ProviderResponseError.error_code,
+                        )
+                    )
                     raise ProviderResponseError(
-                        "Extraction provider request failed safely"
+                        "Extraction provider request failed safely",
+                        provider_attempt_traces=tuple(traces),
                     ) from exc
             except BotoCoreError as exc:
                 last_error = RetryableDocumentExtractionError(
                     "Extraction provider temporarily unavailable"
                 )
                 last_error.__cause__ = exc
+                traces.append(
+                    _trace(
+                        subattempt=attempt,
+                        adapter="aws_textract",
+                        contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+                        outcome=ProviderAttemptOutcome.RETRYABLE_ERROR,
+                        error_code=last_error.error_code,
+                    )
+                )
             except DocumentExtractionError:
                 raise
 
-            if attempt < self.config.max_attempts:
+            if attempt < self.config.provider_max_attempts:
                 delay = min(4.0, 0.25 * (2 ** (attempt - 1))) + random.uniform(0, 0.2)
                 await asyncio.sleep(delay)
 
@@ -415,23 +762,35 @@ class AwsTextractExtractionProvider(ExtractionProvider):
                     "event": "document_extraction_retry_exhausted",
                     "request_id": request_id,
                     "provider": "aws_textract",
-                    "attempt_count": self.config.max_attempts,
+                    "attempt_count": self.config.provider_max_attempts,
                     "error_code": last_error.error_code,
                     "latency_ms": round((time.perf_counter() - started) * 1000),
                 }
             )
         )
-        raise last_error
+        raise type(last_error)(
+            str(last_error),
+            upstream_status=last_error.upstream_status,
+            provider_attempt_traces=tuple(traces),
+        ) from last_error
 
 
 class DemoExtractionProvider(ExtractionProvider):
     """Deterministic synthetic provider for explicit test/demo environments."""
 
+    @property
+    def adapter_identity(self) -> str:
+        return "demo"
+
+    @property
+    def contract_version(self) -> str:
+        return DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION
+
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         _ = (document_bytes, mime_type, request_id)
-        return ExtractedMedicalDocument(
+        result = ExtractedMedicalDocument(
             patient_name="Synthetic Patient",
             aadhaar_abha_id="SYNTHETIC-ID",
             phone="0000000000",
@@ -439,6 +798,13 @@ class DemoExtractionProvider(ExtractionProvider):
             lab_results=[],
             prescriptions=[],
             extraction_confidence=0.50,
+        )
+        return _complete_provider_result(
+            result,
+            adapter="demo",
+            contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+            model_version=None,
+            traces=(),
         )
 
 
@@ -449,16 +815,19 @@ _extractor_singleton: ExtractionProvider | None = None
 _extractor_fingerprint: tuple[Any, ...] | None = None
 
 
-def get_medical_document_extractor() -> ExtractionProvider:
+def get_medical_document_extractor(
+    config: DocumentExtractionConfig | None = None,
+) -> ExtractionProvider:
     global _extractor_singleton, _extractor_fingerprint
-    config = get_document_extraction_config()
+    config = config or get_document_extraction_config()
     fingerprint = (
         config.provider,
         config.environment,
         config.api_url,
         config.aws_region,
         config.timeout_seconds,
-        config.max_attempts,
+        config.provider_max_attempts,
+        config.job_max_attempts,
     )
     if _extractor_singleton is None or _extractor_fingerprint != fingerprint:
         if config.provider == "demo":

@@ -16,11 +16,11 @@ def _revision():
     return ScriptDirectory.from_config(config).get_revision(REVISION)
 
 
-def test_conflict_supersession_is_the_forward_head() -> None:
+def test_conflict_supersession_precedes_provider_attempt_history() -> None:
     revision = _revision()
     assert revision is not None
     assert revision.down_revision == "20260812_dek_store_runtime"
-    assert revision.nextrev == frozenset()
+    assert revision.nextrev == frozenset({"20260815_extract_attempt_events"})
 
 
 def test_conflict_supersession_has_closed_constraints_and_restrictive_fks() -> None:

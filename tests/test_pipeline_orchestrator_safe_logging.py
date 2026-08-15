@@ -17,6 +17,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.ai.extractor import (
+    DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+    DemoExtractionProvider,
+    ExtractionProviderResult,
+)
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.pipeline import ExtractionJob
 from app.models.ai_models import ExtractedMedicalDocument
@@ -28,6 +33,23 @@ SENSITIVE_EXCEPTION_TEXT = (
     "?X-Amz-Signature=deadbeefcafebabe1234567890&X-Amz-Credential=AKIAFAKEKEYID, "
     "access token Bearer eyJhbGciOiJIUzI1NiJ9.fake.token.value"
 )
+
+
+def _trusted_document(document: ExtractedMedicalDocument) -> ExtractionProviderResult:
+    return ExtractionProviderResult(
+        document=document,
+        provider_adapter="demo",
+        provider_contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+        provider_model_version=None,
+        response_complete=True,
+        provider_attempt_traces=(),
+    )
+
+
+def _fixture_demo_extractor(result: ExtractionProviderResult) -> DemoExtractionProvider:
+    extractor = DemoExtractionProvider()
+    extractor.extract_bytes = AsyncMock(return_value=result)
+    return extractor
 
 
 class _FakeScalarResult:
@@ -170,16 +192,17 @@ async def test_document_only_confidence_routes_source_only_without_staging():
     db = _FakeDB(job, document)
     fake_storage = AsyncMock()
     fake_storage.get_document_bytes = AsyncMock(return_value=b"%PDF-1.7")
-    fake_extractor = AsyncMock()
-    fake_extractor.extract_bytes = AsyncMock(
-        return_value=ExtractedMedicalDocument(
-            patient_name="",
-            aadhaar_abha_id="",
-            phone="",
-            diagnoses=["Hypertension"],
-            lab_results=[],
-            prescriptions=[],
-            extraction_confidence=0.99,
+    fake_extractor = _fixture_demo_extractor(
+        _trusted_document(
+            ExtractedMedicalDocument(
+                patient_name="",
+                aadhaar_abha_id="",
+                phone="",
+                diagnoses=["Hypertension"],
+                lab_results=[],
+                prescriptions=[],
+                extraction_confidence=0.99,
+            )
         )
     )
 
@@ -191,6 +214,12 @@ async def test_document_only_confidence_routes_source_only_without_staging():
         patch(
             "app.services.pipeline_orchestrator.get_medical_document_extractor",
             return_value=fake_extractor,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.get_document_extraction_config",
+            return_value=type(
+                "Config", (), {"provider": "demo", "job_max_attempts": 2}
+            )(),
         ),
         patch(
             "app.services.pipeline_orchestrator.append_audit_log_or_503",
@@ -236,16 +265,17 @@ async def test_routing_failure_rolls_back_before_terminal_job_update():
     db = _FakeDB(job, document)
     fake_storage = AsyncMock()
     fake_storage.get_document_bytes = AsyncMock(return_value=b"%PDF-1.7")
-    fake_extractor = AsyncMock()
-    fake_extractor.extract_bytes = AsyncMock(
-        return_value=ExtractedMedicalDocument(
-            patient_name="",
-            aadhaar_abha_id="",
-            phone="",
-            diagnoses=["Synthetic diagnosis"],
-            lab_results=[],
-            prescriptions=[],
-            extraction_confidence=0.8,
+    fake_extractor = _fixture_demo_extractor(
+        _trusted_document(
+            ExtractedMedicalDocument(
+                patient_name="",
+                aadhaar_abha_id="",
+                phone="",
+                diagnoses=["Synthetic diagnosis"],
+                lab_results=[],
+                prescriptions=[],
+                extraction_confidence=0.8,
+            )
         )
     )
     with (
@@ -256,6 +286,12 @@ async def test_routing_failure_rolls_back_before_terminal_job_update():
         patch(
             "app.services.pipeline_orchestrator.get_medical_document_extractor",
             return_value=fake_extractor,
+        ),
+        patch(
+            "app.services.pipeline_orchestrator.get_document_extraction_config",
+            return_value=type(
+                "Config", (), {"provider": "demo", "job_max_attempts": 2}
+            )(),
         ),
         patch(
             "app.services.pipeline_orchestrator.append_audit_log_or_503",

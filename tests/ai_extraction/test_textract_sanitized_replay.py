@@ -28,11 +28,7 @@ COMMITTED_REPLAY = BENCHMARK / "sanitized-replay"
 HISTORICAL_QUERIES = tuple(
     (
         alias,
-        (
-            "What diagnosis is directly written?"
-            if alias == "diagnosis"
-            else question
-        ),
+        ("What diagnosis is directly written?" if alias == "diagnosis" else question),
     )
     for alias, question in TEXTRACT_PILOT_QUERIES
 )
@@ -164,9 +160,7 @@ def test_sanitization_rejects_missing_relationship_target():
 
 def test_query_registry_validation_is_closed_and_value_free():
     sanitized = sanitize_textract_response(response())
-    validate_sanitized_query_registry(
-        sanitized, expected_queries=TEST_RESPONSE_QUERIES
-    )
+    validate_sanitized_query_registry(sanitized, expected_queries=TEST_RESPONSE_QUERIES)
 
     drifted = json.loads(json.dumps(sanitized))
     drifted["Blocks"][1]["Query"]["Text"] = "Different question"
@@ -224,7 +218,9 @@ def test_query_registry_rejects_extra_alias_without_value_disclosure():
         )
 
     assert str(error.value) == "SANITIZED_QUERY_REGISTRY_DRIFT"
-    _assert_value_free(error.value, "unregistered", "Extra synthetic question", "b-extra")
+    _assert_value_free(
+        error.value, "unregistered", "Extra synthetic question", "b-extra"
+    )
 
 
 def test_query_registry_rejects_empty_alias_without_value_disclosure():
@@ -323,7 +319,7 @@ async def test_replay_uses_production_parser_without_boto3(monkeypatch, tmp_path
     live_parsed = AwsTextractExtractionProvider._parse_response(response())
     assert [
         (item.canonical_field_name, item.raw_value, item.page_number)
-        for item in replayed.field_evidence
+        for item in replayed.document.field_evidence
     ] == [
         (item.canonical_field_name, item.raw_value, item.page_number)
         for item in live_parsed.field_evidence
@@ -344,9 +340,7 @@ async def test_benchmark_replay_reports_zero_live_calls(monkeypatch, tmp_path):
     )
     result = await _run_explicit_replay(
         directory,
-        json.loads(
-            (BENCHMARK / "synthetic-manifest.json").read_text(encoding="utf-8")
-        ),
+        json.loads((BENCHMARK / "synthetic-manifest.json").read_text(encoding="utf-8")),
         expected_queries=TEST_RESPONSE_QUERIES,
         version="test-response",
     )
@@ -485,9 +479,7 @@ async def test_committed_replay_is_the_offline_qualification_baseline(monkeypatc
     )
     result = await _run_explicit_replay(
         COMMITTED_REPLAY,
-        json.loads(
-            (BENCHMARK / "synthetic-manifest.json").read_text(encoding="utf-8")
-        ),
+        json.loads((BENCHMARK / "synthetic-manifest.json").read_text(encoding="utf-8")),
         expected_queries=TEXTRACT_PILOT_QUERIES,
         version=TEXTRACT_PILOT_QUERY_SET_VERSION,
     )
@@ -720,19 +712,13 @@ def test_replay_rejects_missing_extra_and_malformed_fixture_sets(tmp_path):
     directory = tmp_path / "replay"
     directory.mkdir()
     with pytest.raises(SanitizedReplayError, match="SANITIZED_REPLAY_SET_INVALID"):
-        _provider(
-            directory, 1, expected_queries=TEST_RESPONSE_QUERIES, version="test"
-        )
+        _provider(directory, 1, expected_queries=TEST_RESPONSE_QUERIES, version="test")
     malformed = tmp_path / "malformed"
     malformed.mkdir()
     (malformed / "case-01.json").write_text("not-json", encoding="utf-8")
     with pytest.raises(SanitizedReplayError, match="SANITIZED_REPLAY_FIXTURE_INVALID"):
-        _provider(
-            malformed, 1, expected_queries=TEST_RESPONSE_QUERIES, version="test"
-        )
+        _provider(malformed, 1, expected_queries=TEST_RESPONSE_QUERIES, version="test")
     (directory / "case-01.json").write_text("{}", encoding="utf-8")
     (directory / "extra.json").write_text("{}", encoding="utf-8")
     with pytest.raises(SanitizedReplayError, match="SANITIZED_REPLAY_SET_INVALID"):
-        _provider(
-            directory, 1, expected_queries=TEST_RESPONSE_QUERIES, version="test"
-        )
+        _provider(directory, 1, expected_queries=TEST_RESPONSE_QUERIES, version="test")

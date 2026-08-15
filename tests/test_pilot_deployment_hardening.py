@@ -90,7 +90,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 def test_migration_script_requires_exact_single_repository_head() -> None:
     assert run_pilot_migrations.repository_heads() == (
-        "20260814_conflict_supersession",
+        "20260815_extract_attempt_events",
     )
 
 
@@ -112,7 +112,7 @@ def test_migration_script_scopes_url_and_redacts_command_output(
         assert environment["DATABASE_URL"] == sensitive_url
         assert "MIGRATION_DATABASE_URL" not in environment
         stdout = (
-            "20260814_conflict_supersession (head)\n"
+            "20260815_extract_attempt_events (head)\n"
             if arguments == ["current"]
             else ""
         )

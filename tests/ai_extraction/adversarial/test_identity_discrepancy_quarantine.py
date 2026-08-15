@@ -11,11 +11,23 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.ai.extractor import (
+    DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+    DemoExtractionProvider,
+    ExtractionProviderResult,
+)
 from app.ai.identity_decision import IdentityDecisionState
-from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
+from app.models.ai_models import (
+    ExtractedMedicalDocument,
+    ProviderFieldEvidence,
+)
 from app.models.extraction_decision import DecisionLane, DecisionReason
 from app.models.field_evidence import EvidenceIssue, NormalizedBoundingBox
-from app.models.pipeline import DocumentStorage, ExtractionCandidateRecord, ExtractionJob
+from app.models.pipeline import (
+    DocumentStorage,
+    ExtractionCandidateRecord,
+    ExtractionJob,
+)
 from app.services.adjudication import AdjudicationError, create_case
 from app.services.crypto_kms import EncryptedField
 from app.services.extraction_decision_engine import evaluate_extraction_evidence
@@ -83,9 +95,7 @@ def _provider_evidence(
         raw_value=value,
         source_text=value,
         page_number=0,
-        bounding_box=NormalizedBoundingBox(
-            left=0.1, top=0.1, right=0.4, bottom=0.2
-        ),
+        bounding_box=NormalizedBoundingBox(left=0.1, top=0.1, right=0.4, bottom=0.2),
         field_confidence=0.98,
         provider_name="synthetic-provider",
         provider_api_version="synthetic-v1",
@@ -106,7 +116,7 @@ def _document(*identity_evidence: ProviderFieldEvidence, clinical: bool = True):
     evidence = list(identity_evidence)
     if clinical:
         evidence.append(_clinical_evidence())
-    return ExtractedMedicalDocument(
+    document = ExtractedMedicalDocument(
         patient_name="",
         phone="",
         aadhaar_abha_id="",
@@ -116,6 +126,20 @@ def _document(*identity_evidence: ProviderFieldEvidence, clinical: bool = True):
         extraction_confidence=0.99,
         field_evidence=evidence,
     )
+    return document
+
+
+class _FixtureDemoProvider(DemoExtractionProvider):
+    def __init__(self, document: ExtractedMedicalDocument) -> None:
+        self._result = ExtractionProviderResult(
+            document=document,
+            provider_adapter="demo",
+            provider_contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+            provider_model_version="synthetic-v1",
+            response_complete=True,
+            provider_attempt_traces=(),
+        )
+        self.extract_bytes = AsyncMock(return_value=self._result)
 
 
 def _job_and_document():
@@ -165,9 +189,7 @@ async def _run_pipeline(
         ),
         phone=_encrypted_placeholder("phone") if canonical_available else None,
         aadhaar_abha_id=(
-            _encrypted_placeholder("aadhaar_abha_id")
-            if canonical_available
-            else None
+            _encrypted_placeholder("aadhaar_abha_id") if canonical_available else None
         ),
     )
     db_results = [job, document]
@@ -178,7 +200,7 @@ async def _run_pipeline(
     db = _DB(db_results)
 
     storage = SimpleNamespace(get_document_bytes=AsyncMock(return_value=b"%PDF-1.7"))
-    extractor = SimpleNamespace(extract_bytes=AsyncMock(return_value=extracted))
+    extractor = _FixtureDemoProvider(extracted)
 
     async def decrypt(_patient_id, field_name, _encrypted, _db):
         if field_name == "patient_name":
@@ -231,7 +253,9 @@ async def _run_pipeline(
         ),
         patch(
             "app.services.pipeline_orchestrator.get_document_extraction_config",
-            return_value=SimpleNamespace(provider="synthetic", max_attempts=2),
+            return_value=SimpleNamespace(
+                provider="demo", provider_max_attempts=2, job_max_attempts=2
+            ),
         ),
         patch(
             "app.services.pipeline_orchestrator.get_encryption_provider",
@@ -259,9 +283,7 @@ async def _run_pipeline(
         ),
     ):
         result = await process_extraction_job(str(job.id), db)
-        second_result = (
-            await process_extraction_job(str(job.id), db) if rerun else None
-        )
+        second_result = await process_extraction_job(str(job.id), db) if rerun else None
 
     return SimpleNamespace(
         result=result,
@@ -394,10 +416,14 @@ async def test_scenario_8_identity_discrepancy_is_encrypted_quarantined_and_idem
         (
             (
                 _identity(
-                    "SYNTHETIC_WRONG_QUERY", source_type="QUERY_RESULT", block_id="wrong-query"
+                    "SYNTHETIC_WRONG_QUERY",
+                    source_type="QUERY_RESULT",
+                    block_id="wrong-query",
                 ),
                 _identity(
-                    "SYNTHETIC_WRONG_FORM", source_type="KEY_VALUE_SET", block_id="wrong-form-2"
+                    "SYNTHETIC_WRONG_FORM",
+                    source_type="KEY_VALUE_SET",
+                    block_id="wrong-form-2",
                 ),
             ),
             IdentityDecisionState.IDENTITY_DISCREPANCY,
@@ -408,9 +434,7 @@ async def test_scenario_8_identity_discrepancy_is_encrypted_quarantined_and_idem
 async def test_query_and_form_assertions_have_no_source_precedence(
     assertions, expected_state
 ):
-    run = await _run_pipeline(
-        _document(*assertions), identity_asserted=True
-    )
+    run = await _run_pipeline(_document(*assertions), identity_asserted=True)
 
     assert run.job.status == "quarantined"
     assert run.job.error_code == "EXTRACTED_IDENTITY_MISMATCH"
@@ -457,8 +481,7 @@ async def test_missing_canonical_reference_uses_identity_unavailable_quarantine(
 async def test_zero_clinical_candidates_with_identity_mismatch_still_quarantines():
     run = await _run_pipeline(
         _document(
-            _identity(WRONG_NAME, source_type="QUERY_RESULT", block_id="wrong-empty")
-            ,
+            _identity(WRONG_NAME, source_type="QUERY_RESULT", block_id="wrong-empty"),
             clinical=False,
         ),
         identity_asserted=True,

@@ -15,7 +15,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.ai.extractor import DocumentExtractionError, get_medical_document_extractor
+from app.ai.extractor import (
+    AwsTextractExtractionProvider,
+    DemoExtractionProvider,
+    DocumentExtractionError,
+    ExtractionProviderResult,
+    ProviderResponseError,
+    RemoteExtractionProvider,
+    get_medical_document_extractor,
+)
 from app.ai.identity_decision import (
     IdentityDecision,
     IdentityDecisionState,
@@ -29,6 +37,7 @@ from app.ai.candidate_eligibility import (
 )
 from app.core.config import get_document_extraction_config
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
+from app.models.ai_models import ExtractedMedicalDocument
 from app.models.pipeline import (
     DocumentSourceRelationshipRecord,
     ExtractionCandidateRecord,
@@ -62,6 +71,10 @@ from app.services.crypto_kms import (
     EncryptionError,
     get_encryption_provider,
 )
+from app.services.extraction_attempt_history import (
+    ExtractionAttemptEventCollision,
+    persist_provider_attempt_events,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -79,6 +92,11 @@ _IDENTITY_REASON_CODES = {
 _SUPPORTED_PRIOR_EXTRACTION_STATUSES = frozenset(
     {"source_only", "quarantined", "review_pending", "ready_for_commit", "committed"}
 )
+_APPROVED_PROVIDER_TYPES = {
+    "aws_textract": AwsTextractExtractionProvider,
+    "remote": RemoteExtractionProvider,
+    "demo": DemoExtractionProvider,
+}
 
 
 def _is_postgresql_session(db: AsyncSession) -> bool:
@@ -86,6 +104,58 @@ def _is_postgresql_session(db: AsyncSession) -> bool:
         return False
     bind = db.get_bind()
     return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
+
+
+def _validated_provider_result(
+    result: object,
+    *,
+    extractor: object,
+    configured_provider: str,
+) -> ExtractionProviderResult:
+    """Validate adapter execution provenance before clinical interpretation.
+
+    A result envelope is ordinary constructible Python data.  Its authority is
+    derived here from the configured checked-in adapter instance that the
+    factory selected and actually invoked, never from a token or payload field.
+    """
+
+    expected_type = _APPROVED_PROVIDER_TYPES.get(configured_provider)
+    if (
+        expected_type is None
+        or not isinstance(extractor, expected_type)
+        or not isinstance(result, ExtractionProviderResult)
+        or result.response_complete is not True
+        or result.provider_adapter != extractor.adapter_identity
+        or result.provider_contract_version != extractor.contract_version
+    ):
+        raise ProviderResponseError("Extraction result failed adapter validation")
+
+    if not isinstance(result.document, ExtractedMedicalDocument):
+        raise ProviderResponseError("Extraction result failed adapter validation")
+    traces = result.provider_attempt_traces
+    if any(
+        trace.provider_adapter != extractor.adapter_identity
+        or trace.provider_contract_version != extractor.contract_version
+        for trace in traces
+    ) or (traces and traces[-1].outcome.value != "SUCCEEDED"):
+        raise ProviderResponseError("Extraction result failed adapter validation")
+
+    evidence_pairs = {
+        (item.provider_name, item.provider_api_version)
+        for item in result.document.field_evidence
+    }
+    if len(evidence_pairs) > 1:
+        raise ProviderResponseError("Extraction result failed adapter validation")
+    if evidence_pairs:
+        provider_name, model_version = next(iter(evidence_pairs))
+        if (
+            extractor.adapter_identity != "demo"
+            and provider_name != extractor.adapter_identity
+        ):
+            raise ProviderResponseError("Extraction result failed adapter validation")
+        if model_version != result.provider_model_version:
+            raise ProviderResponseError("Extraction result failed adapter validation")
+    return result
 
 
 class ExtractionEvidenceInstanceCollision(RuntimeError):
@@ -588,11 +658,14 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         if now - started < timedelta(minutes=15):
             return {"job_id": str(job.id), "status": "extracting", "idempotent": True}
 
+    # This immutable snapshot owns both budgets throughout this JOB ATTEMPT.
+    config = get_document_extraction_config()
     job.status = "extracting"
     job.processing_started_at = now
     job.attempt_count = int(job.attempt_count or 0) + 1
     job.error_code = None
     job.retryable = False
+    job.extractor_provider = config.provider
     await db.commit()
 
     await append_audit_log_or_503(
@@ -626,16 +699,39 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             tenant_id=str(job.tenant_id),
             patient_id=str(job.patient_id),
         )
-        config = get_document_extraction_config()
-        job.extractor_provider = config.provider
-        extractor = get_medical_document_extractor()
-        extracted = await extractor.extract_bytes(
+        extractor = get_medical_document_extractor(config)
+        provider_result = await extractor.extract_bytes(
             document_bytes,
             mime_type=document.content_type,
             request_id=job.request_id or str(job.id),
         )
-        if extracted.field_evidence:
-            job.extractor_version = extracted.field_evidence[0].provider_api_version
+        provider_result = _validated_provider_result(
+            provider_result,
+            extractor=extractor,
+            configured_provider=config.provider,
+        )
+        extracted = provider_result.document
+        await persist_provider_attempt_events(
+            db,
+            job=job,
+            traces=provider_result.provider_attempt_traces,
+        )
+        job.extractor_provider = provider_result.provider_adapter
+        job.extractor_version = provider_result.provider_model_version
+        # Preserve trusted lifecycle provenance before protected interpretation.
+        await db.commit()
+        if _is_postgresql_session(db):
+            job = (
+                await db.execute(
+                    select(ExtractionJob)
+                    .where(ExtractionJob.id == job_uuid)
+                    .with_for_update()
+                )
+            ).scalar_one()
+            if job.status != "extracting" or job.attempt_count < 1:
+                raise ProviderResponseError(
+                    "Extraction lifecycle state changed unexpectedly"
+                )
         del document_bytes
         identity_decision = await _assess_extracted_identity(
             extracted, job.patient_id, db
@@ -1013,8 +1109,12 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job.retryable = False
     except DocumentExtractionError as exc:
         job = await _rollback_and_reload_job(db, job_uuid)
-        retry_budget = get_document_extraction_config().max_attempts
-        exhausted = exc.retryable and job.attempt_count >= retry_budget
+        await persist_provider_attempt_events(
+            db,
+            job=job,
+            traces=exc.provider_attempt_traces,
+        )
+        exhausted = exc.retryable and job.attempt_count >= config.job_max_attempts
         job.status = (
             "quarantined"
             if exhausted
@@ -1033,6 +1133,11 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "extraction_failed_terminal"
         job.error_code = "EVIDENCE_INSTANCE_ID_COLLISION"
+        job.retryable = False
+    except ExtractionAttemptEventCollision:
+        job = await _rollback_and_reload_job(db, job_uuid)
+        job.status = "extraction_failed_terminal"
+        job.error_code = "EXTRACTION_ATTEMPT_EVENT_COLLISION"
         job.retryable = False
     except Exception as exc:
         job = await _rollback_and_reload_job(db, job_uuid)

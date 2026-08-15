@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException, UploadFile
@@ -19,7 +19,20 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
 
 from app.api.v2.pipeline_routes import upload_pipeline_document
-from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
+from app.ai.extractor import (
+    DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+    AwsTextractExtractionProvider,
+    DemoExtractionProvider,
+    ExtractionProviderResult,
+    ProviderTimeoutError,
+)
+from app.core.config import DocumentExtractionConfig
+from app.models.ai_models import (
+    ExtractedMedicalDocument,
+    ProviderAttemptOutcome,
+    ProviderAttemptTrace,
+    ProviderFieldEvidence,
+)
 from app.models.adjudication import AdjudicationOutcome, AdjudicationReasonCode
 from app.models.erasure_tombstone import (
     ErasureAssurance,
@@ -37,6 +50,7 @@ from app.models.pipeline import (
     ExtractionConflictRecord,
     ExtractionDecisionRecord,
     ExtractionJob,
+    ExtractionRoutingRecord,
 )
 from app.models.field_evidence import EvidenceIssue, NormalizedBoundingBox
 from app.models.provider import HospitalRegistry
@@ -310,6 +324,7 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
         document=document_id,
         status="queued",
     )
+    job.attempt_count = 0
 
     def observation(value: str, block_id: str) -> ProviderFieldEvidence:
         row = ProviderFieldEvidence(
@@ -325,7 +340,7 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
             ),
             field_confidence=0.99,
             provider_name="SYNTHETIC_POLICY_FIXTURE",
-            provider_api_version="qualification/1.0",
+            provider_api_version="Y",
             extraction_timestamp=datetime.now(timezone.utc),
             evidence_hash=(block_id.encode().hex() + "0" * 64)[:64],
             source_type="CELL",
@@ -353,6 +368,25 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
         extraction_confidence=0.99,
         field_evidence=[observation("7.2", "fact-a"), observation("8.4", "fact-b")],
     )
+    extracted_result = ExtractionProviderResult(
+        document=extracted,
+        provider_adapter="demo",
+        provider_contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+        provider_model_version="Y",
+        response_complete=True,
+        provider_attempt_traces=(
+            ProviderAttemptTrace(
+                provider_subattempt_number=1,
+                provider_adapter="demo",
+                provider_contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                provider_model_version="Y",
+                outcome=ProviderAttemptOutcome.SUCCEEDED,
+                error_code=None,
+                response_complete=True,
+                occurred_at=datetime.now(timezone.utc),
+            ),
+        ),
+    )
 
     async def encrypt(_patient_id, field_name, value, _db):
         return EncryptedField(
@@ -364,7 +398,30 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
         )
 
     storage = SimpleNamespace(get_document_bytes=AsyncMock(return_value=b"synthetic"))
-    extractor = SimpleNamespace(extract_bytes=AsyncMock(return_value=extracted))
+    # The first controlled fault represents partial synthetic value A that is
+    # never returned across the trusted boundary.  Only the complete Y result
+    # below is permitted to become durable clinical evidence.
+    extractor = DemoExtractionProvider()
+    extractor.extract_bytes = AsyncMock(
+        side_effect=[
+            ProviderTimeoutError(
+                "controlled provider timeout",
+                provider_attempt_traces=(
+                    ProviderAttemptTrace(
+                        provider_subattempt_number=1,
+                        provider_adapter="demo",
+                        provider_contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+                        provider_model_version="X",
+                        outcome=ProviderAttemptOutcome.TIMEOUT,
+                        error_code="EXTRACTION_PROVIDER_TIMEOUT",
+                        response_complete=False,
+                        occurred_at=datetime.now(timezone.utc),
+                    ),
+                ),
+            ),
+            extracted_result,
+        ]
+    )
     kms = SimpleNamespace(encrypt_field=AsyncMock(side_effect=encrypt))
     try:
         async with factory() as db:
@@ -388,7 +445,9 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
                     "app.services.pipeline_orchestrator."
                     "get_document_extraction_config",
                     return_value=SimpleNamespace(
-                        provider="synthetic_policy_fixture", max_attempts=2
+                        provider="demo",
+                        provider_max_attempts=2,
+                        job_max_attempts=2,
                     ),
                 ),
                 patch(
@@ -405,6 +464,43 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
                     AsyncMock(return_value=True),
                 ),
             ):
+                first_result = await pipeline_orchestrator.process_extraction_job(
+                    str(job.id), db
+                )
+                assert first_result == {
+                    "job_id": str(job.id),
+                    "status": "extraction_failed_retryable",
+                    "error_code": "EXTRACTION_PROVIDER_TIMEOUT",
+                    "retryable": True,
+                }
+                assert (
+                    await db.execute(
+                        select(func.count(ExtractionCandidateRecord.id)).where(
+                            ExtractionCandidateRecord.job_id == job.id
+                        )
+                    )
+                ).scalar_one() == 0
+                assert (
+                    await db.execute(
+                        select(func.count(ExtractionDecisionRecord.id)).where(
+                            ExtractionDecisionRecord.job_id == job.id
+                        )
+                    )
+                ).scalar_one() == 0
+                assert (
+                    await db.execute(
+                        select(func.count(ExtractionRoutingRecord.id)).where(
+                            ExtractionRoutingRecord.job_id == job.id
+                        )
+                    )
+                ).scalar_one() == 0
+                assert (
+                    await db.execute(
+                        select(func.count(ExtractionConflictRecord.id)).where(
+                            ExtractionConflictRecord.job_id == job.id
+                        )
+                    )
+                ).scalar_one() == 0
                 result = await pipeline_orchestrator.process_extraction_job(
                     str(job.id), db
                 )
@@ -423,6 +519,7 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
                 .all()
             )
             assert len(candidates) == 2
+            assert {row.provider_version for row in candidates} == {"Y"}
             assert len({row.clinical_fact_key for row in candidates}) == 1
             assert all(
                 "CLINICAL_VALUE_AMBIGUOUS" in row.reason_codes for row in candidates
@@ -461,6 +558,22 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
             )
             assert len(decisions) == 2
             assert all(not row.auto_commit_feature_enabled for row in decisions)
+            lifecycle_rows = (
+                await db.execute(
+                    text(
+                        "SELECT job_attempt_number, provider_model_version, outcome, "
+                        "response_complete FROM public.extraction_attempt_events "
+                        "WHERE job_id = :job ORDER BY job_attempt_number"
+                    ),
+                    {"job": job.id},
+                )
+            ).all()
+            assert lifecycle_rows == [
+                (1, "X", "TIMEOUT", False),
+                (2, "Y", "SUCCEEDED", True),
+            ]
+            persisted_job = await db.get(ExtractionJob, job.id)
+            assert persisted_job.extractor_version == "Y"
             audit_payloads = (
                 (
                     await db.execute(
@@ -481,6 +594,85 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
                 {"patient": str(patient)},
             )
             await db.commit()
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_scenario_11_local_invalid_document_creates_no_clinical_graph() -> None:
+    """An empty local document is terminal before any fake provider call."""
+
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    tenant, patient, document_id = (uuid.uuid4() for _ in range(3))
+    job = _job(tenant=tenant, patient=patient, document=document_id, status="queued")
+    client = Mock()
+    provider = AwsTextractExtractionProvider(
+        DocumentExtractionConfig(
+            provider="aws_textract",
+            environment="test",
+            provider_max_attempts=2,
+            job_max_attempts=2,
+        ),
+        client,
+    )
+    try:
+        async with factory() as db:
+            await _seed_identity_graph(db, tenant=tenant, patient=patient)
+            db.add(_document(tenant=tenant, patient=patient, document_id=document_id))
+            db.add(job)
+            await db.commit()
+
+        async with factory() as db:
+            with (
+                patch(
+                    "app.services.pipeline_orchestrator.get_document_storage",
+                    return_value=SimpleNamespace(
+                        get_document_bytes=AsyncMock(return_value=b"")
+                    ),
+                ),
+                patch(
+                    "app.services.pipeline_orchestrator.get_medical_document_extractor",
+                    return_value=provider,
+                ),
+                patch(
+                    "app.services.pipeline_orchestrator.get_document_extraction_config",
+                    return_value=provider.config,
+                ),
+                patch(
+                    "app.services.pipeline_orchestrator.append_audit_log_or_503",
+                    AsyncMock(return_value=True),
+                ),
+            ):
+                result = await pipeline_orchestrator.process_extraction_job(
+                    str(job.id), db
+                )
+            assert result["status"] == "extraction_failed_terminal"
+            assert result["error_code"] == "INVALID_DOCUMENT"
+            assert result["retryable"] is False
+            assert client.analyze_document.call_count == 0
+
+        async with factory() as db:
+            for model in (
+                ExtractionCandidateRecord,
+                ExtractionDecisionRecord,
+                ExtractionRoutingRecord,
+                ExtractionConflictRecord,
+            ):
+                assert (
+                    await db.execute(
+                        select(func.count(model.id)).where(model.job_id == job.id)
+                    )
+                ).scalar_one() == 0
+            assert (
+                await db.execute(
+                    text(
+                        "SELECT count(*) FROM public.extraction_attempt_events "
+                        "WHERE job_id = :job"
+                    ),
+                    {"job": job.id},
+                )
+            ).scalar_one() == 0
     finally:
         await engine.dispose()
 

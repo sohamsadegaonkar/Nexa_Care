@@ -233,7 +233,8 @@ policies, roles, documents, patient records, review.
 DOCUMENT_EXTRACTION_PROVIDER=aws_textract
 DOCUMENT_AI_AWS_REGION=ap-south-1
 DOCUMENT_AI_TIMEOUT_SECONDS=30
-DOCUMENT_AI_MAX_ATTEMPTS=3
+DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS=3
+DOCUMENT_AI_JOB_MAX_ATTEMPTS=3
 ```
 
 Use the normal AWS SDK credential chain. Never place access keys in Nexa Care
@@ -251,6 +252,57 @@ AWS synchronous Textract supports JPEG, PNG, PDF, and TIFF, up to 10 MB in
 memory; PDF/TIFF are limited to one page, with at most 15 queries per page.
 This adapter deliberately accepts only single-page PDF/PNG/JPEG/TIFF and never
 silently truncates a multi-page file.
+
+### Provider lifecycle boundary
+
+The extraction lifecycle distinguishes three bounded concepts: a **job
+attempt** (a recovery attempt for one persisted job), a **provider
+subattempt** (one call inside the configured provider retry budget), and a
+**complete extraction result** (the only result allowed to enter identity
+assessment or evidence adaptation). `DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS` and
+`DOCUMENT_AI_JOB_MAX_ATTEMPTS` are independent integers in the range 1--5; the
+maximum possible provider calls is their explicit product. The legacy
+`DOCUMENT_AI_MAX_ATTEMPTS` remains a deprecated fallback only and emits a
+value-free configuration warning whenever it supplies either budget.
+
+Each job invocation resolves one immutable extraction configuration snapshot.
+Provider/network JSON, SDK response content, remote model strings, and
+arbitrary Pydantic payload fields are untrusted. A checked-in configured Nexa
+adapter returns a frozen `ExtractionProviderResult` only after transport, SDK,
+schema, parser, and single-provider/model coherence validation completes. The
+orchestrator then independently verifies the envelope against the adapter
+instance it actually invoked: its closed adapter identity, server-owned
+contract version, complete-success state, attempt trace, and document/model
+coherence must all agree before identity processing, decision/routing, or
+candidate persistence.
+
+The envelope is ordinary constructible Python data; it is not a secret token
+or a module-private capability. Constructing one, or placing adapter/contract
+claims in provider JSON, does not authorize clinical interpretation. The trust
+boundary is the configured adapter execution path plus orchestrator
+validation. Nexa makes no isolation claim against malicious arbitrary code
+already executing inside the backend Python process: that code is within the
+application trusted computing base and could otherwise monkeypatch factories,
+database functions, or orchestration itself.
+
+Provider subattempt provenance is stored in the append-only
+`extraction_attempt_events` table before any clinical interpretation. It
+contains only lifecycle metadata: deterministic event identity, tenant/patient
+and job/document bindings, attempt numbers, controlled adapter/contract/model
+versions, closed outcome, stable error code, completion flag, and timestamp.
+It contains no OCR payload, source text, clinical value, identifier, or
+provider error message. PostgreSQL rejects direct updates and deletes. Its
+insert trigger derives and validates the redundant tenant, patient, and source
+document bindings against the authoritative job and document rows, so a direct
+database write cannot cross-bind lifecycle provenance. Restrictive
+job/document foreign keys preserve provenance through ordinary cleanup;
+cryptographic erasure remains the governing patient-data control.
+
+Textract remains a one-page synchronous integration. A timed-out worker thread
+is not killed, but any late response is barred from parsing, trusted binding,
+candidate persistence, routing, or clinical commit. This is a current one-page
+timeout safety boundary, not multi-page runtime support or a hospital-pilot
+qualification claim.
 
 The block graph is indexed once by Textract block ID. It follows only returned
 query/answer, key/value, table/cell, merged-cell, word, line, and selection

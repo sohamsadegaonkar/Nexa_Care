@@ -254,6 +254,81 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
     )
 
 
+class ExtractionAttemptEventRecord(Base):
+    """Append-only, value-free provenance for one provider subattempt."""
+
+    __tablename__ = "extraction_attempt_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), primary_key=True, nullable=False
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    job_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("document_storage.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    job_attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_subattempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_adapter: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_model_version: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    response_complete: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "job_attempt_number >= 1",
+            name="ck_extraction_attempt_events_job_attempt_positive",
+        ),
+        CheckConstraint(
+            "provider_subattempt_number >= 1",
+            name="ck_extraction_attempt_events_provider_subattempt_positive",
+        ),
+        CheckConstraint(
+            "outcome IN ('SUCCEEDED', 'TIMEOUT', 'THROTTLED', "
+            "'RETRYABLE_ERROR', 'INVALID_DOCUMENT', 'INVALID_RESPONSE', "
+            "'CREDENTIALS_UNAVAILABLE')",
+            name="ck_extraction_attempt_events_outcome",
+        ),
+        CheckConstraint(
+            "(outcome = 'SUCCEEDED' AND response_complete = true "
+            "AND error_code IS NULL) OR "
+            "(outcome <> 'SUCCEEDED' AND response_complete = false)",
+            name="ck_extraction_attempt_events_completion",
+        ),
+        UniqueConstraint(
+            "job_id",
+            "job_attempt_number",
+            "provider_subattempt_number",
+            name="uq_extraction_attempt_events_logical_identity",
+        ),
+        Index(
+            "ix_extraction_attempt_events_job_attempt",
+            "job_id",
+            "job_attempt_number",
+        ),
+        Index(
+            "ix_extraction_attempt_events_tenant_patient_job",
+            "tenant_id",
+            "patient_id",
+            "job_id",
+        ),
+    )
+
+
 class ExtractionConflictRecord(Base, UUIDPrimaryKeyMixin):
     """Append-only, non-authoritative set of incompatible candidate facts."""
 

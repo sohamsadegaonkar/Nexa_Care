@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260814_conflict_supersession"
+EXPECTED_HEAD = "20260815_extract_attempt_events"
 
 
 def _scripts() -> ScriptDirectory:
@@ -33,9 +33,15 @@ def test_eligibility_reason_head_descends_from_candidate_eligibility() -> None:
 
 
 def test_conflict_supersession_descends_from_dek_store_runtime() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision("20260814_conflict_supersession")
     assert revision is not None
     assert revision.down_revision == "20260812_dek_store_runtime"
+
+
+def test_provider_attempt_history_descends_from_conflict_supersession() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260814_conflict_supersession"
 
 
 def test_migration_revision_ids_fit_alembic_version_column() -> None:

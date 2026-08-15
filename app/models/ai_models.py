@@ -2,12 +2,53 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from app.models.field_evidence import NormalizedBoundingBox
+
+
+class ProviderAttemptOutcome(str, Enum):
+    """Closed, value-free outcomes for one actual provider call."""
+
+    SUCCEEDED = "SUCCEEDED"
+    TIMEOUT = "TIMEOUT"
+    THROTTLED = "THROTTLED"
+    RETRYABLE_ERROR = "RETRYABLE_ERROR"
+    INVALID_DOCUMENT = "INVALID_DOCUMENT"
+    INVALID_RESPONSE = "INVALID_RESPONSE"
+    CREDENTIALS_UNAVAILABLE = "CREDENTIALS_UNAVAILABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderAttemptTrace:
+    """Server-owned, value-free trace of an actual provider subattempt."""
+
+    provider_subattempt_number: int
+    provider_adapter: str
+    provider_contract_version: str
+    provider_model_version: str | None
+    outcome: ProviderAttemptOutcome
+    error_code: str | None
+    response_complete: bool
+    occurred_at: datetime
+
+    def __post_init__(self) -> None:
+        if self.provider_subattempt_number < 1:
+            raise ValueError("provider subattempt number must be positive")
+        if not self.provider_adapter or not self.provider_contract_version:
+            raise ValueError("provider attempt provenance must be present")
+        if self.occurred_at.tzinfo is None:
+            raise ValueError("provider attempt timestamp must be timezone-aware")
+        if self.outcome is ProviderAttemptOutcome.SUCCEEDED:
+            if not self.response_complete or self.error_code is not None:
+                raise ValueError("successful provider attempts must be complete")
+        elif self.response_complete:
+            raise ValueError("failed provider attempts cannot be complete")
 
 
 class ProviderFieldEvidence(BaseModel):

@@ -151,9 +151,7 @@ def _identity_state_counts(counter: Counter[str]) -> dict[str, int]:
 
 
 def _identity_metrics(counter: Counter[str]) -> dict[str, float | None]:
-    true_match_total = (
-        counter["TRUE_MATCH_ACCEPTED"] + counter["TRUE_MATCH_REJECTED"]
-    )
+    true_match_total = counter["TRUE_MATCH_ACCEPTED"] + counter["TRUE_MATCH_REJECTED"]
     mismatch_total = counter["MISMATCH_REJECTED"] + counter["MISMATCH_ACCEPTED"]
     return {
         "patient_identity_match_acceptance_rate": _ratio(
@@ -417,7 +415,7 @@ async def run_benchmark(
             continue
 
         counts["successful"] += 1
-        actual = result.field_evidence
+        actual = result.document.field_evidence
         candidates = group_semantic_candidates(actual)
         counts["evidence"] += len(actual)
         counts["candidates"] += len(candidates)
@@ -1212,9 +1210,9 @@ def main() -> int:
         }
         if args.replay_sanitized is not None:
             try:
-                fixture_version = json.loads(
-                    manifest.read_text(encoding="utf-8")
-                ).get("query_registry_version")
+                fixture_version = json.loads(manifest.read_text(encoding="utf-8")).get(
+                    "query_registry_version"
+                )
             except (OSError, json.JSONDecodeError):
                 fixture_version = None
             result["query_registry"] = {

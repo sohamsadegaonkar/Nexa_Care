@@ -10,6 +10,7 @@ import boto3
 import pytest
 
 from app.ai.extractor import (
+    ExtractionProviderResult,
     InvalidDocumentError,
     TEXTRACT_PILOT_QUERIES,
     TEXTRACT_PILOT_QUERY_SET_VERSION,
@@ -102,13 +103,24 @@ class SequenceProvider:
         self.outcomes = outcomes
         self.calls = 0
 
-    async def extract_bytes(self, *args, **kwargs) -> ExtractedMedicalDocument:
+    async def extract_bytes(self, *args, **kwargs) -> ExtractionProviderResult:
         _ = (args, kwargs)
         outcome = self.outcomes[self.calls]
         self.calls += 1
         if isinstance(outcome, BaseException):
             raise outcome
-        return outcome
+        if isinstance(outcome, ExtractionProviderResult):
+            return outcome
+        assert isinstance(outcome, ExtractedMedicalDocument)
+        versions = {item.provider_api_version for item in outcome.field_evidence}
+        return ExtractionProviderResult(
+            document=outcome,
+            provider_adapter="aws_textract",
+            provider_contract_version=TEXTRACT_PILOT_QUERY_SET_VERSION,
+            provider_model_version=next(iter(versions)) if len(versions) == 1 else None,
+            response_complete=True,
+            provider_attempt_traces=(),
+        )
 
 
 def _successful_outcomes(manifest: dict[str, Any]) -> list[ExtractedMedicalDocument]:
@@ -458,9 +470,7 @@ async def test_committed_replay_identity_decomposition_is_value_free_and_fail_cl
         == 3
     )
     assert (
-        classification["counts_by_class"]["MALFORMED_QUERY_ONLY"][
-            "exact_candidates"
-        ]
+        classification["counts_by_class"]["MALFORMED_QUERY_ONLY"]["exact_candidates"]
         == 5
     )
     assert (
@@ -470,9 +480,7 @@ async def test_committed_replay_identity_decomposition_is_value_free_and_fail_cl
         == 3
     )
     assert (
-        classification["counts_by_class"]["IDENTITY_NONMATCHING"][
-            "exact_candidates"
-        ]
+        classification["counts_by_class"]["IDENTITY_NONMATCHING"]["exact_candidates"]
         == 1
     )
 

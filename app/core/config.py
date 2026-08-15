@@ -73,7 +73,8 @@ class DocumentExtractionConfig:
     api_key: str | None = None
     aws_region: str = "ap-south-1"
     timeout_seconds: float = 30.0
-    max_attempts: int = 3
+    provider_max_attempts: int = 3
+    job_max_attempts: int = 3
 
 
 @dataclass(frozen=True)
@@ -200,14 +201,29 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
 
     try:
         timeout_seconds = float(os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "30"))
-        max_attempts = int(os.getenv("DOCUMENT_AI_MAX_ATTEMPTS", "3"))
+        legacy_max_attempts = os.getenv("DOCUMENT_AI_MAX_ATTEMPTS")
+        provider_max_attempts = int(
+            os.getenv("DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS", legacy_max_attempts or "3")
+        )
+        job_max_attempts = int(
+            os.getenv("DOCUMENT_AI_JOB_MAX_ATTEMPTS", legacy_max_attempts or "3")
+        )
     except ValueError as exc:
         raise ConfigError(
             "Document extraction timeout/retry configuration is invalid"
         ) from exc
-    if timeout_seconds <= 0 or not 1 <= max_attempts <= 5:
+    if timeout_seconds <= 0 or not (
+        1 <= provider_max_attempts <= 5 and 1 <= job_max_attempts <= 5
+    ):
         raise ConfigError(
-            "Document extraction timeout must be positive and max attempts must be 1..5"
+            "Document extraction timeout must be positive and retry budgets must be 1..5"
+        )
+    if legacy_max_attempts is not None and (
+        os.getenv("DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS") is None
+        or os.getenv("DOCUMENT_AI_JOB_MAX_ATTEMPTS") is None
+    ):
+        logger.warning(
+            "DOCUMENT_AI_MAX_ATTEMPTS is deprecated; configure separate provider and job retry budgets"
         )
     if provider == "aws_textract":
         aws_region = os.getenv("DOCUMENT_AI_AWS_REGION", "ap-south-1").strip()
@@ -218,7 +234,8 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
             environment=environment,
             aws_region=aws_region,
             timeout_seconds=timeout_seconds,
-            max_attempts=max_attempts,
+            provider_max_attempts=provider_max_attempts,
+            job_max_attempts=job_max_attempts,
         )
 
     api_url = _require_env("DOCUMENT_AI_API_URL").strip()
@@ -235,7 +252,8 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
         api_url=api_url,
         api_key=api_key,
         timeout_seconds=timeout_seconds,
-        max_attempts=max_attempts,
+        provider_max_attempts=provider_max_attempts,
+        job_max_attempts=job_max_attempts,
     )
 
 

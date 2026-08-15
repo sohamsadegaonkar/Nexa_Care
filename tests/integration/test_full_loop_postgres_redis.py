@@ -25,7 +25,11 @@ from redis.asyncio import Redis
 from sqlalchemy import event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.ai.extractor import ExtractionProvider
+from app.ai.extractor import (
+    DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+    DemoExtractionProvider,
+    ExtractionProviderResult,
+)
 from app.core.database import get_async_engine, get_session_factory
 from app.ai.identity_decision import IdentityDecisionState
 from app.api.v2 import patient_record_routes
@@ -112,7 +116,7 @@ from app.security.document_processing_policy import DocumentProcessingOperation
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.redis]
 
 
-class SyntheticTestExtractionProvider(ExtractionProvider):
+class SyntheticTestExtractionProvider(DemoExtractionProvider):
     """Deterministic offline provider used only at the extractor boundary."""
 
     def __init__(
@@ -124,13 +128,20 @@ class SyntheticTestExtractionProvider(ExtractionProvider):
 
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         if mime_type != "application/pdf" or not request_id:
             raise AssertionError("synthetic provider received invalid runtime inputs")
         if document_bytes != self.expected_bytes:
             raise AssertionError("runtime storage returned unexpected document bytes")
         self.calls += 1
-        return self.document
+        return ExtractionProviderResult(
+            document=self.document,
+            provider_adapter="demo",
+            provider_contract_version=DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+            provider_model_version="synthetic-test-v1",
+            response_complete=True,
+            provider_attempt_traces=(),
+        )
 
 
 def _synthetic_extracted_document(
@@ -498,7 +509,7 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
         monkeypatch.setattr(
             pipeline_orchestrator,
             "get_medical_document_extractor",
-            lambda: extraction_provider,
+            lambda _config=None: extraction_provider,
         )
         storage = get_document_storage()
         stored_document = await storage.put_document(

@@ -10,8 +10,12 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from app.ai.extractor import AwsTextractExtractionProvider, ExtractionProvider
-from app.models.ai_models import ExtractedMedicalDocument
+from app.ai.extractor import (
+    TEXTRACT_PILOT_QUERY_SET_VERSION,
+    AwsTextractExtractionProvider,
+    ExtractionProvider,
+    ExtractionProviderResult,
+)
 
 ALLOWED_BLOCK_FIELDS = frozenset(
     {
@@ -223,12 +227,20 @@ class CaseIndexedCaptureProvider(ExtractionProvider):
         self.session = session
         self.case_index: int | None = None
 
+    @property
+    def adapter_identity(self) -> str:
+        return self.provider.adapter_identity
+
+    @property
+    def contract_version(self) -> str:
+        return self.provider.contract_version
+
     def set_benchmark_case_index(self, case_index: int) -> None:
         self.case_index = case_index
 
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         return await self.provider.extract_bytes(
             document_bytes, mime_type=mime_type, request_id=request_id
         )
@@ -240,6 +252,9 @@ class CaseIndexedCaptureProvider(ExtractionProvider):
 
 
 class SanitizedReplayProvider(ExtractionProvider):
+    adapter_identity = "aws_textract"
+    contract_version = TEXTRACT_PILOT_QUERY_SET_VERSION
+
     def __init__(
         self,
         directory: Path,
@@ -295,10 +310,21 @@ class SanitizedReplayProvider(ExtractionProvider):
 
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
-    ) -> ExtractedMedicalDocument:
+    ) -> ExtractionProviderResult:
         _ = (document_bytes, mime_type, request_id)
         if self.case_index is None or self.case_index not in self._fixtures:
             raise SanitizedReplayError("SANITIZED_REPLAY_INDEX_INVALID")
-        return AwsTextractExtractionProvider._parse_response(
-            self._fixtures[self.case_index]
+        response = self._fixtures[self.case_index]
+        model_version = response.get("AnalyzeDocumentModelVersion")
+        return ExtractionProviderResult(
+            document=AwsTextractExtractionProvider._parse_response(response),
+            provider_adapter=self.adapter_identity,
+            provider_contract_version=self.contract_version,
+            provider_model_version=(
+                model_version.strip()
+                if isinstance(model_version, str) and model_version.strip()
+                else "unknown"
+            ),
+            response_complete=True,
+            provider_attempt_traces=(),
         )

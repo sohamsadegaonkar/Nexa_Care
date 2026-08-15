@@ -11,7 +11,6 @@ from app.ai.identity_decision import IdentityDecisionState
 from app.ai.extractor import (
     AwsTextractExtractionProvider,
     DemoExtractionProvider,
-    InvalidDocumentError,
     ProviderCredentialsUnavailableError,
     ProviderResponseError,
     ProviderThrottledError,
@@ -43,8 +42,15 @@ def remote_config(**overrides):
         api_url="https://extract.example/v1",
         api_key="secret",
         timeout_seconds=1,
-        max_attempts=2,
+        provider_max_attempts=2,
+        job_max_attempts=2,
     )
+    legacy_attempts = overrides.pop("max_attempts", None)
+    if legacy_attempts is not None:
+        overrides.update(
+            provider_max_attempts=legacy_attempts,
+            job_max_attempts=legacy_attempts,
+        )
     values.update(overrides)
     return DocumentExtractionConfig(**values)
 
@@ -73,8 +79,15 @@ def textract_config(**overrides):
         environment="test",
         aws_region="ap-south-1",
         timeout_seconds=1,
-        max_attempts=2,
+        provider_max_attempts=2,
+        job_max_attempts=2,
     )
+    legacy_attempts = overrides.pop("max_attempts", None)
+    if legacy_attempts is not None:
+        overrides.update(
+            provider_max_attempts=legacy_attempts,
+            job_max_attempts=legacy_attempts,
+        )
     values.update(overrides)
     return DocumentExtractionConfig(**values)
 
@@ -126,7 +139,7 @@ async def test_remote_provider_validates_response_schema():
     result = await RemoteExtractionProvider(remote_config(), client).extract_bytes(
         b"%PDF-1.7", mime_type="application/pdf", request_id="req-1"
     )
-    assert result.extraction_confidence == 0.7
+    assert result.document.extraction_confidence == 0.7
 
 
 @pytest.mark.asyncio
@@ -149,10 +162,11 @@ async def test_invalid_upstream_payload_is_terminal():
     )()
     client = AsyncMock()
     client.post.return_value = response
-    with pytest.raises(InvalidDocumentError):
+    with pytest.raises(ProviderResponseError) as exc:
         await RemoteExtractionProvider(remote_config(), client).extract_bytes(
             b"%PDF-1.7", mime_type="application/pdf", request_id="req-invalid"
         )
+    assert exc.value.error_code == "EXTRACTION_RESPONSE_INVALID"
 
 
 @pytest.mark.asyncio
@@ -165,7 +179,7 @@ async def test_demo_provider_has_no_filename_behavior():
         for name in ("panel.pdf", "demo.pdf", "aarav.pdf")
     ]
     assert results[0] == results[1] == results[2]
-    assert results[0].diagnoses == []
+    assert results[0].document.diagnoses == []
 
 
 @pytest.mark.parametrize("environment", ["production", "staging", "preview", "pilot"])
@@ -221,7 +235,7 @@ async def test_textract_query_maps_authentic_field_evidence():
     result = await AwsTextractExtractionProvider(
         textract_config(), client
     ).extract_bytes(b"%PDF-1.7", mime_type="application/pdf", request_id="req-map")
-    item = result.field_evidence[0]
+    item = result.document.field_evidence[0]
     assert item.canonical_field_name == "hba1c"
     assert item.raw_value == item.source_text == "7.2 %"
     assert item.page_number == 0
@@ -232,7 +246,7 @@ async def test_textract_query_maps_authentic_field_evidence():
         "bottom": 0.30000000000000004,
     }
     assert item.field_confidence == pytest.approx(0.974)
-    assert result.extraction_confidence is None
+    assert result.document.extraction_confidence is None
     request = client.analyze_document.call_args.kwargs
     assert request["FeatureTypes"] == ["QUERIES", "FORMS", "TABLES"]
     assert request["QueriesConfig"]["Queries"][0]["Pages"] == ["1"]
@@ -247,11 +261,11 @@ async def test_textract_invalid_geometry_is_retained_as_incomplete_not_fabricate
     document = await AwsTextractExtractionProvider(
         textract_config(), client
     ).extract_bytes(b"image", mime_type="image/png", request_id="req-geometry")
-    item = document.field_evidence[0]
+    item = document.document.field_evidence[0]
     assert item.bounding_box is None
     now = datetime.now(timezone.utc)
     evidence = adapt_current_extracted_field(
-        document=document,
+        document=document.document,
         field_name=item.canonical_field_name,
         raw_value=item.raw_value,
         provider_evidence=item,
@@ -299,11 +313,11 @@ async def test_adapter_maps_document_identity_state_without_weakening_binding(
     document = await AwsTextractExtractionProvider(
         textract_config(), client
     ).extract_bytes(b"image", mime_type="image/png", request_id="req-identity")
-    item = document.field_evidence[0]
+    item = document.document.field_evidence[0]
     now = datetime.now(timezone.utc)
 
     evidence = adapt_current_extracted_field(
-        document=document,
+        document=document.document,
         field_name=item.canonical_field_name,
         raw_value=item.raw_value,
         provider_evidence=item,
@@ -337,7 +351,7 @@ async def test_textract_empty_answer_is_omitted():
     result = await AwsTextractExtractionProvider(
         textract_config(), client
     ).extract_bytes(b"image", mime_type="image/jpeg", request_id="req-empty")
-    assert result.field_evidence == []
+    assert result.document.field_evidence == []
 
 
 @pytest.mark.asyncio
