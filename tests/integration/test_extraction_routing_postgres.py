@@ -40,6 +40,7 @@ async def test_extraction_routing_tables_and_safe_lane_constraints_exist():
         assert {
             "ck_extraction_decisions_safe_lane",
             "ck_extraction_decisions_auto_commit_disabled",
+            "ck_extraction_decisions_organization_tenant",
             "ck_extraction_routing_safe_lane",
             "ck_extraction_routing_status",
             "ck_extraction_routing_lane_state",

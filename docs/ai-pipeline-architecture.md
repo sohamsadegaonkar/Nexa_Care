@@ -761,3 +761,36 @@ from its review and commit screens; the current adjudication workspace never
 calls the legacy job commit endpoint. Supersession is intentionally unavailable
 because the safe case-detail response does not expose the accepted structured
 submission required for full reconfirmation.
+
+### Exact clinical commit idempotency and graph binding
+
+An accepted human submission identifies a clinical observation only by the
+server-owned tuple of patient, authoritative `source_document_id`, exact vital
+type or exact laboratory test name, and the aware effective timestamp. The
+clinical value, unit, reference range, reviewer, job, and submission are
+protected content, not identity components. No fuzzy, OCR, embedding, name,
+case-insensitive, or global content-hash matching is used. A different source
+document therefore remains a distinct provenance-bearing observation even when
+its content is identical.
+
+PostgreSQL transaction-scoped advisory locks acquire all submission fact locks
+in deterministic order. A same-identity row with exactly matching protected
+content is reused; its human-adjudicated timeline event is reused as well. A
+different value or any other protected-content mismatch fails closed with
+`ADJUDICATION_CLINICAL_FACT_COLLISION`. Duplicate identities inside one
+submission fail closed with `ADJUDICATION_DUPLICATE_CLINICAL_FACT`. New and
+reused fields are reported only as value-free audit counts, and the caller's
+transaction remains atomic across all fields.
+
+The `20260815_clinical_commit_guard` migration adds partial unique indexes for
+human-adjudicated source facts and timeline references. It fails closed when
+pre-existing duplicates or binding mismatches are found; it never selects a
+winner, merges rows, or deletes provenance. It also adds authoritative
+composite keys and foreign keys linking document, job, candidate, decision, and
+routing graphs across tenant and patient boundaries. `DocumentStorage`
+deduplication remains scoped to `(tenant_id, patient_id, content_hash)` and is
+never global.
+
+These database controls preserve same-job extraction locking, consent and
+erasure revalidation, source supersession/conflict integrity, and disabled
+`AUTO_COMMIT`. Scenario 6 is not changed or claimed solved.

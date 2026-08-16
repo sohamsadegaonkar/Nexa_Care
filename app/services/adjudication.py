@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from pydantic import TypeAdapter, ValidationError
 from sqlalchemy import func, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.adjudication import (
@@ -53,6 +54,14 @@ REVIEWER_ROLES = frozenset({"clinician", "clinical_reviewer"})
 _FIELD_ADAPTER = TypeAdapter(list[AdjudicatedClinicalField])
 _REASON_ADAPTER = TypeAdapter(list[AdjudicationReasonCode])
 _ADJUDICATION_CASE_LOCK_VERSION = "nexa-adjudication-case:v1"
+_CLINICAL_FACT_LOCK_VERSION = "nexa-clinical-fact:v1"
+_C1_CLINICAL_UNIQUE_CONSTRAINTS = frozenset(
+    {
+        "uq_patient_vitals_human_source_fact",
+        "uq_patient_lab_results_human_source_fact",
+        "uq_timeline_events_human_reference",
+    }
+)
 
 
 class AdjudicationError(RuntimeError):
@@ -61,6 +70,36 @@ class AdjudicationError(RuntimeError):
     def __init__(self, code: str):
         self.code = code
         super().__init__(code)
+
+
+def _is_expected_c1_unique_violation(exc: BaseException) -> bool:
+    """Recognize only the C1 clinical-fact uniqueness defenses."""
+    pending: list[BaseException | None] = [exc]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if current is None or id(current) in seen:
+            continue
+        seen.add(id(current))
+        diagnostic = getattr(current, "diag", None)
+        sqlstate = next(
+            (
+                getattr(current, name, None)
+                for name in ("sqlstate", "pgcode", "code")
+                if getattr(current, name, None) is not None
+            ),
+            None,
+        )
+        constraint = getattr(current, "constraint_name", None) or getattr(
+            diagnostic, "constraint_name", None
+        )
+        if sqlstate == "23505" and constraint in _C1_CLINICAL_UNIQUE_CONSTRAINTS:
+            return True
+        pending.extend(
+            getattr(current, name, None)
+            for name in ("orig", "__cause__", "__context__")
+        )
+    return False
 
 
 def _case_lock_key(case_id: uuid.UUID) -> int:
@@ -82,6 +121,228 @@ async def _acquire_case_mutation_lock(db: AsyncSession, case_id: uuid.UUID) -> N
         text("SELECT pg_advisory_xact_lock(:lock_key)"),
         {"lock_key": _case_lock_key(case_id)},
     )
+
+
+def _clinical_fact_identity(
+    field: VitalClinicalField | LabClinicalField,
+    *,
+    patient_id: uuid.UUID,
+    source_document_id: uuid.UUID,
+) -> tuple[str, str, str, str, str]:
+    """Return the exact, value-free identity of one authoritative observation."""
+    if isinstance(field, VitalClinicalField):
+        observation = field.vital_type
+        kind = "VITAL"
+    else:
+        observation = field.test_name
+        kind = "LAB_RESULT"
+    return (
+        kind,
+        str(patient_id),
+        str(source_document_id),
+        observation,
+        field.effective_at.isoformat(),
+    )
+
+
+def _clinical_fact_lock_key(identity: tuple[str, ...]) -> int:
+    canonical = json.dumps(
+        [_CLINICAL_FACT_LOCK_VERSION, *identity],
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode()
+    return int.from_bytes(hashlib.sha256(canonical).digest()[:8], "big", signed=True)
+
+
+async def _acquire_clinical_fact_locks(
+    db: AsyncSession, identities: set[tuple[str, ...]]
+) -> None:
+    """Serialize exact source-fact commits across workers in PostgreSQL."""
+    if not isinstance(db, AsyncSession):
+        return
+    bind = db.get_bind()
+    if getattr(bind.dialect, "name", None) != "postgresql":
+        return
+    for identity in sorted(identities):
+        await db.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _clinical_fact_lock_key(identity)},
+        )
+
+
+def _assert_no_duplicate_clinical_identities(
+    fields: list[VitalClinicalField | LabClinicalField],
+    *,
+    patient_id: uuid.UUID,
+    source_document_id: uuid.UUID,
+) -> set[tuple[str, ...]]:
+    identities = [
+        _clinical_fact_identity(
+            field,
+            patient_id=patient_id,
+            source_document_id=source_document_id,
+        )
+        for field in fields
+    ]
+    if len(identities) != len(set(identities)):
+        raise AdjudicationError("ADJUDICATION_DUPLICATE_CLINICAL_FACT")
+    return set(identities)
+
+
+async def _existing_vital(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    source_document_id: uuid.UUID,
+    field: VitalClinicalField,
+) -> Vitals | None:
+    return (
+        await db.execute(
+            select(Vitals).where(
+                Vitals.patient_id == patient_id,
+                Vitals.source_document_id == source_document_id,
+                Vitals.type == field.vital_type,
+                Vitals.recorded_at == field.effective_at,
+                Vitals.source == "human_adjudicated",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+async def _existing_lab(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    source_document_id: uuid.UUID,
+    field: LabClinicalField,
+) -> LabResult | None:
+    return (
+        await db.execute(
+            select(LabResult).where(
+                LabResult.patient_id == patient_id,
+                LabResult.source_document_id == source_document_id,
+                LabResult.test_name == field.test_name,
+                LabResult.recorded_at == field.effective_at,
+                LabResult.source == "human_adjudicated",
+            )
+        )
+    ).scalar_one_or_none()
+
+
+def _vital_content_matches(
+    record: Vitals,
+    field: VitalClinicalField,
+    patient_id: uuid.UUID,
+    source_document_id: uuid.UUID,
+) -> bool:
+    return (
+        record.patient_id == patient_id
+        and record.source_document_id == source_document_id
+        and record.type == field.vital_type
+        and record.value == str(field.normalized_value)
+        and record.unit == field.unit
+        and record.recorded_at == field.effective_at
+        and record.source == "human_adjudicated"
+        and record.confidence is None
+        and record.risk_level == "LOW_RISK"
+    )
+
+
+def _lab_content_matches(
+    record: LabResult,
+    field: LabClinicalField,
+    patient_id: uuid.UUID,
+    source_document_id: uuid.UUID,
+) -> bool:
+    return (
+        record.patient_id == patient_id
+        and record.source_document_id == source_document_id
+        and record.test_name == field.test_name
+        and record.value == str(field.normalized_value)
+        and record.unit == field.unit
+        and record.reference_range == field.reference_range
+        and record.is_abnormal == field.is_abnormal
+        and record.recorded_at == field.effective_at
+        and record.source == "human_adjudicated"
+        and record.confidence is None
+        and record.risk_level == "MEDIUM_RISK"
+    )
+
+
+async def _ensure_timeline_event(
+    db: AsyncSession,
+    *,
+    record: Vitals | LabResult,
+    event_type: str,
+    effective_at: datetime,
+    patient_id: uuid.UUID,
+) -> bool:
+    """Create one value-free timeline event, or reuse its exact existing row."""
+    existing = (
+        (
+            await db.execute(
+                select(TimelineEvent).where(
+                    TimelineEvent.event_ref_id == record.id,
+                    TimelineEvent.source == "human_adjudicated",
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if len(existing) > 1:
+        raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
+    if existing:
+        event = existing[0]
+        if not (
+            event.patient_id == patient_id
+            and event.event_type == event_type
+            and event.event_ref_id == record.id
+            and event.occurred_at == effective_at
+            and event.source == "human_adjudicated"
+        ):
+            raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
+        return False
+    event = TimelineEvent(
+        patient_id=patient_id,
+        event_type=event_type,
+        event_ref_id=record.id,
+        occurred_at=effective_at,
+        source="human_adjudicated",
+        summary="Human-adjudicated archived document observation",
+    )
+    try:
+        async with db.begin_nested():
+            db.add(event)
+            await db.flush()
+    except IntegrityError as exc:
+        if not _is_expected_c1_unique_violation(exc):
+            raise
+        existing = (
+            (
+                await db.execute(
+                    select(TimelineEvent).where(
+                        TimelineEvent.event_ref_id == record.id,
+                        TimelineEvent.source == "human_adjudicated",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if len(existing) != 1:
+            raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION") from exc
+        event = existing[0]
+        if not (
+            event.patient_id == patient_id
+            and event.event_type == event_type
+            and event.event_ref_id == record.id
+            and event.occurred_at == effective_at
+            and event.source == "human_adjudicated"
+        ):
+            raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION") from exc
+        return False
+    return True
 
 
 def _reviewer_role(provider: ProviderContext) -> str:
@@ -939,46 +1200,119 @@ async def commit_submission(
     if submission.content_hash != expected_hash:
         raise AdjudicationError("ADJUDICATION_CONTENT_HASH_MISMATCH")
     now = datetime.now(timezone.utc)
+    identities = _assert_no_duplicate_clinical_identities(
+        fields,
+        patient_id=case.patient_id,
+        source_document_id=case.source_document_id,
+    )
+    await _acquire_clinical_fact_locks(db, identities)
+    new_field_count = 0
+    reused_field_count = 0
     for field in fields:
         if isinstance(field, VitalClinicalField):
-            record = Vitals(
+            record = await _existing_vital(
+                db,
                 patient_id=case.patient_id,
-                type=field.vital_type,
-                value=str(field.normalized_value),
-                unit=field.unit,
-                recorded_at=field.effective_at,
-                source="human_adjudicated",
-                confidence=None,
-                risk_level="LOW_RISK",
                 source_document_id=case.source_document_id,
+                field=field,
             )
+            if record is not None:
+                if not _vital_content_matches(
+                    record, field, case.patient_id, case.source_document_id
+                ):
+                    raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
+                reused_field_count += 1
+            else:
+                record = Vitals(
+                    patient_id=case.patient_id,
+                    type=field.vital_type,
+                    value=str(field.normalized_value),
+                    unit=field.unit,
+                    recorded_at=field.effective_at,
+                    source="human_adjudicated",
+                    confidence=None,
+                    risk_level="LOW_RISK",
+                    source_document_id=case.source_document_id,
+                )
+                try:
+                    async with db.begin_nested():
+                        db.add(record)
+                        await db.flush()
+                except IntegrityError as exc:
+                    if not _is_expected_c1_unique_violation(exc):
+                        raise
+                    record = await _existing_vital(
+                        db,
+                        patient_id=case.patient_id,
+                        source_document_id=case.source_document_id,
+                        field=field,
+                    )
+                    if record is None or not _vital_content_matches(
+                        record, field, case.patient_id, case.source_document_id
+                    ):
+                        raise AdjudicationError(
+                            "ADJUDICATION_CLINICAL_FACT_COLLISION"
+                        ) from exc
+                    reused_field_count += 1
+                else:
+                    new_field_count += 1
             event_type = "vital_human_adjudicated"
-        elif isinstance(field, LabClinicalField):
-            record = LabResult(
+        else:
+            record = await _existing_lab(
+                db,
                 patient_id=case.patient_id,
-                test_name=field.test_name,
-                value=str(field.normalized_value),
-                unit=field.unit,
-                reference_range=field.reference_range,
-                is_abnormal=field.is_abnormal,
-                recorded_at=field.effective_at,
-                source="human_adjudicated",
-                confidence=None,
-                risk_level="MEDIUM_RISK",
                 source_document_id=case.source_document_id,
+                field=field,
             )
+            if record is not None:
+                if not _lab_content_matches(
+                    record, field, case.patient_id, case.source_document_id
+                ):
+                    raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
+                reused_field_count += 1
+            else:
+                record = LabResult(
+                    patient_id=case.patient_id,
+                    test_name=field.test_name,
+                    value=str(field.normalized_value),
+                    unit=field.unit,
+                    reference_range=field.reference_range,
+                    is_abnormal=field.is_abnormal,
+                    recorded_at=field.effective_at,
+                    source="human_adjudicated",
+                    confidence=None,
+                    risk_level="MEDIUM_RISK",
+                    source_document_id=case.source_document_id,
+                )
+                try:
+                    async with db.begin_nested():
+                        db.add(record)
+                        await db.flush()
+                except IntegrityError as exc:
+                    if not _is_expected_c1_unique_violation(exc):
+                        raise
+                    record = await _existing_lab(
+                        db,
+                        patient_id=case.patient_id,
+                        source_document_id=case.source_document_id,
+                        field=field,
+                    )
+                    if record is None or not _lab_content_matches(
+                        record, field, case.patient_id, case.source_document_id
+                    ):
+                        raise AdjudicationError(
+                            "ADJUDICATION_CLINICAL_FACT_COLLISION"
+                        ) from exc
+                    reused_field_count += 1
+                else:
+                    new_field_count += 1
             event_type = "lab_human_adjudicated"
-        db.add(record)
-        await db.flush()
-        db.add(
-            TimelineEvent(
-                patient_id=case.patient_id,
-                event_type=event_type,
-                event_ref_id=record.id,
-                occurred_at=field.effective_at,
-                source="human_adjudicated",
-                summary="Human-adjudicated archived document observation",
-            )
+        await _ensure_timeline_event(
+            db,
+            record=record,
+            event_type=event_type,
+            effective_at=field.effective_at,
+            patient_id=case.patient_id,
         )
     case.clinical_committed_at = now
     await enqueue_audit_event(
@@ -989,7 +1323,12 @@ async def commit_submission(
         event_type="ADJUDICATION_CLINICAL_COMMIT_COMPLETED",
         target_id=str(submission.id),
         patient_id=str(case.patient_id),
-        metadata={"field_count": len(fields), "provenance": "human_adjudicated"},
+        metadata={
+            "field_count": len(fields),
+            "new_field_count": new_field_count,
+            "reused_field_count": reused_field_count,
+            "provenance": "human_adjudicated",
+        },
     )
     await db.flush()
     return case

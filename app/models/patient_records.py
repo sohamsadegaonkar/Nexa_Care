@@ -9,7 +9,15 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, Index, String
+from sqlalchemy import (
+    Boolean,
+    CheckConstraint,
+    DateTime,
+    Float,
+    ForeignKeyConstraint,
+    Index,
+    String,
+)
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -58,6 +66,23 @@ class Vitals(Base, UUIDPrimaryKeyMixin):
         CheckConstraint(
             "source != 'ai_extracted' OR (confidence IS NOT NULL AND risk_level IS NOT NULL AND source_document_id IS NOT NULL)",
             name="ck_patient_vitals_provenance_complete",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "patient_id"],
+            ["document_storage.id", "document_storage.patient_id"],
+            name="fk_patient_vitals_source_patient",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "uq_patient_vitals_human_source_fact",
+            "patient_id",
+            "source_document_id",
+            "type",
+            "recorded_at",
+            unique=True,
+            postgresql_where=(
+                (source == "human_adjudicated") & source_document_id.is_not(None)
+            ),
         ),
     )
 
@@ -128,6 +153,23 @@ class LabResult(Base, UUIDPrimaryKeyMixin):
         CheckConstraint(
             "source != 'ai_extracted' OR (confidence IS NOT NULL AND risk_level IS NOT NULL AND source_document_id IS NOT NULL)",
             name="ck_patient_lab_results_provenance_complete",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "patient_id"],
+            ["document_storage.id", "document_storage.patient_id"],
+            name="fk_patient_lab_results_source_patient",
+            ondelete="RESTRICT",
+        ),
+        Index(
+            "uq_patient_lab_results_human_source_fact",
+            "patient_id",
+            "source_document_id",
+            "test_name",
+            "recorded_at",
+            unique=True,
+            postgresql_where=(
+                (source == "human_adjudicated") & source_document_id.is_not(None)
+            ),
         ),
     )
 
@@ -205,4 +247,13 @@ class TimelineEvent(Base, UUIDPrimaryKeyMixin):
 
     __table_args__ = (
         Index("ix_timeline_events_patient_occurred", "patient_id", "occurred_at"),
+        Index(
+            "uq_timeline_events_human_reference",
+            "event_type",
+            "event_ref_id",
+            unique=True,
+            postgresql_where=(
+                (source == "human_adjudicated") & event_ref_id.is_not(None)
+            ),
+        ),
     )

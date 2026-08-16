@@ -58,6 +58,17 @@ class DocumentStorage(Base, UUIDPrimaryKeyMixin):
 
     __table_args__ = (
         UniqueConstraint(
+            "id",
+            "patient_id",
+            name="uq_document_storage_id_patient",
+        ),
+        UniqueConstraint(
+            "id",
+            "tenant_id",
+            "patient_id",
+            name="uq_document_storage_id_tenant_patient",
+        ),
+        UniqueConstraint(
             "tenant_id",
             "patient_id",
             "content_hash",
@@ -113,6 +124,23 @@ class ExtractionJob(Base, UUIDPrimaryKeyMixin):
     )
 
     __table_args__ = (
+        UniqueConstraint(
+            "id",
+            "tenant_id",
+            "patient_id",
+            "document_id",
+            name="uq_extraction_jobs_authoritative_graph",
+        ),
+        ForeignKeyConstraint(
+            ["document_id", "tenant_id", "patient_id"],
+            [
+                "document_storage.id",
+                "document_storage.tenant_id",
+                "document_storage.patient_id",
+            ],
+            name="fk_extraction_jobs_authoritative_document_graph",
+            ondelete="CASCADE",
+        ),
         Index(
             "ix_extraction_jobs_authorization_binding",
             "patient_id",
@@ -236,6 +264,27 @@ class ExtractionCandidateRecord(Base, UUIDPrimaryKeyMixin):
         ),
         UniqueConstraint(
             "id", "evidence_id", name="uq_extraction_candidates_id_evidence"
+        ),
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id", "patient_id", "source_document_id"],
+            [
+                "extraction_jobs.id",
+                "extraction_jobs.tenant_id",
+                "extraction_jobs.patient_id",
+                "extraction_jobs.document_id",
+            ],
+            name="fk_extraction_candidates_authoritative_job_graph",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "tenant_id", "patient_id"],
+            [
+                "document_storage.id",
+                "document_storage.tenant_id",
+                "document_storage.patient_id",
+            ],
+            name="fk_extraction_candidates_authoritative_document_graph",
+            ondelete="CASCADE",
         ),
         Index(
             "ix_extraction_candidates_authorization_binding",
@@ -581,9 +630,42 @@ class ExtractionDecisionRecord(Base, UUIDPrimaryKeyMixin):
             "auto_commit_feature_enabled = false",
             name="ck_extraction_decisions_auto_commit_disabled",
         ),
+        CheckConstraint(
+            "organization_id = tenant_id",
+            name="ck_extraction_decisions_organization_tenant",
+        ),
         Index("ix_extraction_decisions_tenant_patient", "tenant_id", "patient_id"),
         Index("ix_extraction_decisions_job_lane", "job_id", "lane"),
         Index("ix_extraction_decisions_evidence", "evidence_id"),
+        UniqueConstraint(
+            "id",
+            "job_id",
+            "tenant_id",
+            "patient_id",
+            "source_document_id",
+            name="uq_extraction_decisions_authoritative_graph",
+        ),
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id", "patient_id", "source_document_id"],
+            [
+                "extraction_jobs.id",
+                "extraction_jobs.tenant_id",
+                "extraction_jobs.patient_id",
+                "extraction_jobs.document_id",
+            ],
+            name="fk_extraction_decisions_authoritative_job_graph",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "tenant_id", "patient_id"],
+            [
+                "document_storage.id",
+                "document_storage.tenant_id",
+                "document_storage.patient_id",
+            ],
+            name="fk_extraction_decisions_authoritative_document_graph",
+            ondelete="RESTRICT",
+        ),
     )
 
 
@@ -650,6 +732,45 @@ class ExtractionRoutingRecord(Base, UUIDPrimaryKeyMixin):
         ),
         UniqueConstraint("decision_id", name="uq_extraction_routing_decision"),
         UniqueConstraint("idempotency_key", name="uq_extraction_routing_idempotency"),
+        ForeignKeyConstraint(
+            [
+                "decision_id",
+                "job_id",
+                "tenant_id",
+                "patient_id",
+                "source_document_id",
+            ],
+            [
+                "extraction_decisions.id",
+                "extraction_decisions.job_id",
+                "extraction_decisions.tenant_id",
+                "extraction_decisions.patient_id",
+                "extraction_decisions.source_document_id",
+            ],
+            name="fk_extraction_routing_authoritative_decision_graph",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id", "patient_id", "source_document_id"],
+            [
+                "extraction_jobs.id",
+                "extraction_jobs.tenant_id",
+                "extraction_jobs.patient_id",
+                "extraction_jobs.document_id",
+            ],
+            name="fk_extraction_routing_authoritative_job_graph",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "tenant_id", "patient_id"],
+            [
+                "document_storage.id",
+                "document_storage.tenant_id",
+                "document_storage.patient_id",
+            ],
+            name="fk_extraction_routing_authoritative_document_graph",
+            ondelete="RESTRICT",
+        ),
         Index("ix_extraction_routing_tenant_patient", "tenant_id", "patient_id"),
         Index("ix_extraction_routing_job_lane", "job_id", "lane"),
         Index(
