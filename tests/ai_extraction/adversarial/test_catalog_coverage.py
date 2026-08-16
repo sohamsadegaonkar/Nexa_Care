@@ -77,6 +77,7 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
         7,
         8,
         9,
+        10,
         11,
         12,
         13,
@@ -84,13 +85,20 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
         16,
         17,
         18,
+        19,
         20,
         21,
         22,
         23,
         24,
     ]
-    assert len(runtime_scenarios) < len(SCENARIOS)
+    assert len(runtime_scenarios) == 22
+    assert [
+        scenario.scenario_id for scenario in SCENARIOS if not scenario.runtime_tested
+    ] == [
+        6,
+        15,
+    ]
     for scenario in runtime_scenarios:
         assert scenario.test_reference
         test_file, separator, test_name = scenario.test_reference.partition("::")

@@ -145,6 +145,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.LIFECYCLE, EvidenceGroup.IDENTITY},
         "The same patient document is uploaded or extracted more than once.",
         "Use patient-and-tenant-bound idempotency to prevent duplicate clinical records while retaining safe provenance for the repeated attempt.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_scenarios_10_19_postgres.py::test_scenario_10_same_source_two_cases_reuse_one_clinical_fact",
     ),
     _scenario(
         11,
@@ -231,6 +233,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.IDENTITY, EvidenceGroup.LIFECYCLE},
         "Concurrent jobs risk sharing encounter, patient, or tenant bindings.",
         "Keep every mutation and object bound to its authenticated patient and tenant; any ambiguous or crossed binding must fail closed.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_scenarios_10_19_postgres.py::test_scenario_19_pipeline_graphs_remain_isolated",
     ),
     _scenario(
         20,
