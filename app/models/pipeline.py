@@ -378,6 +378,97 @@ class ExtractionAttemptEventRecord(Base):
     )
 
 
+class ExtractionFailureQuarantineRecord(Base, UUIDPrimaryKeyMixin):
+    """Operational lifecycle for a retry-exhausted job with no extraction result.
+
+    This intentionally stores no provider payload, OCR, or clinical evidence.  It
+    is a lifecycle child of the authoritative job graph, not an extraction
+    decision or routing projection.
+    """
+
+    __tablename__ = "extraction_failure_quarantines"
+
+    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    reason_code: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    review_deadline: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    escalated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disposition: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    disposed_by_provider_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    disposition_idempotency_key: Mapped[str | None] = mapped_column(
+        String(192), nullable=True
+    )
+    disposition_request_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("job_id", name="uq_extraction_failure_quarantines_job"),
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id", "patient_id", "source_document_id"],
+            [
+                "extraction_jobs.id",
+                "extraction_jobs.tenant_id",
+                "extraction_jobs.patient_id",
+                "extraction_jobs.document_id",
+            ],
+            name="fk_failure_quarantines_authoritative_job_graph",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint(
+            "reason_code = 'PROVIDER_RETRY_EXHAUSTED'",
+            name="ck_failure_quarantines_reason_code",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'ESCALATED', 'DISPOSED')",
+            name="ck_failure_quarantines_status",
+        ),
+        CheckConstraint("version >= 1", name="ck_failure_quarantines_version"),
+        CheckConstraint(
+            "(status = 'PENDING' AND escalated_at IS NULL AND disposition IS NULL "
+            "AND disposed_at IS NULL AND disposed_by_provider_id IS NULL) OR "
+            "(status = 'ESCALATED' AND escalated_at IS NOT NULL AND disposition IS NULL "
+            "AND disposed_at IS NULL AND disposed_by_provider_id IS NULL) OR "
+            "(status = 'DISPOSED' AND escalated_at IS NOT NULL AND disposition IN "
+            "('RETAIN_SOURCE_NO_CLINICAL_COMMIT', 'REJECT_PROCESSING_RETAIN_AUDIT') "
+            "AND disposed_at IS NOT NULL AND disposed_by_provider_id IS NOT NULL)",
+            name="ck_failure_quarantines_lifecycle",
+        ),
+        CheckConstraint(
+            "(disposition_idempotency_key IS NULL AND disposition_request_hash IS NULL) "
+            "OR (disposition_idempotency_key IS NOT NULL AND disposition_request_hash IS NOT NULL)",
+            name="ck_failure_quarantines_idempotency_pair",
+        ),
+        Index(
+            "ix_failure_quarantines_processor",
+            "status",
+            "review_deadline",
+            "id",
+        ),
+    )
+
+
 class ExtractionConflictRecord(Base, UUIDPrimaryKeyMixin):
     """Append-only, non-authoritative set of incompatible candidate facts."""
 

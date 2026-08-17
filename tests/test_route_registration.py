@@ -150,6 +150,8 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/pipeline/fields/{field_id}/reject"),
     ("POST", "/api/v2/pipeline/fields/{field_id}/edit"),
     ("POST", "/api/v2/pipeline/jobs/{job_id}/commit"),
+    # Scenario 15 D1: authorized failure-quarantine manual disposition
+    ("POST", "/api/v2/pipeline/failure-quarantines/{case_id}/disposition"),
     ("POST", "/api/v2/pipeline/routing/{routing_id}/adjudication-cases"),
     ("POST", "/api/v2/pipeline/jobs/{job_id}/document-adjudication-cases"),
     ("GET", "/api/v2/pipeline/adjudication-cases"),

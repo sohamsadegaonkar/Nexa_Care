@@ -96,6 +96,9 @@ from app.services.audit_outbox_processor import (
     get_outbox_health,
     run_outbox_processor_forever,
 )
+from app.services.failure_quarantine_processor import (
+    run_failure_quarantine_processor_forever,
+)
 
 # Deprecated test-patch seam; runtime code uses get_async_redis_client.
 get_redis_client = get_async_redis_client
@@ -228,9 +231,19 @@ async def lifespan(application: FastAPI):
         )
     )
     application.state.audit_outbox_task = outbox_task
+    failure_quarantine_shutdown_event = asyncio.Event()
+    failure_quarantine_task = asyncio.create_task(
+        run_failure_quarantine_processor_forever(
+            get_session_factory(), shutdown_event=failure_quarantine_shutdown_event
+        )
+    )
+    application.state.failure_quarantine_task = failure_quarantine_task
     try:
         yield
     finally:
+        failure_quarantine_shutdown_event.set()
+        await failure_quarantine_task
+        application.state.failure_quarantine_task = None
         outbox_shutdown_event.set()
         await outbox_task
         application.state.audit_outbox_task = None

@@ -89,9 +89,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 
 def test_migration_script_requires_exact_single_repository_head() -> None:
-    assert run_pilot_migrations.repository_heads() == (
-        "20260815_clinical_commit_guard",
-    )
+    assert run_pilot_migrations.repository_heads() == ("20260817_failure_quarantine",)
 
 
 def test_migration_script_scopes_url_and_redacts_command_output(
@@ -112,9 +110,7 @@ def test_migration_script_scopes_url_and_redacts_command_output(
         assert environment["DATABASE_URL"] == sensitive_url
         assert "MIGRATION_DATABASE_URL" not in environment
         stdout = (
-            "20260815_clinical_commit_guard (head)\n"
-            if arguments == ["current"]
-            else ""
+            "20260817_failure_quarantine (head)\n" if arguments == ["current"] else ""
         )
         return subprocess.CompletedProcess(arguments, 0, stdout=stdout, stderr="")
 

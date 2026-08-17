@@ -255,6 +255,16 @@ silently truncates a multi-page file.
 
 ### Provider lifecycle boundary
 
+An exhausted retryable provider failure is not extraction evidence.  It creates
+one value-free operational `extraction_failure_quarantines` lifecycle child for
+the authoritative job graph (`PROVIDER_RETRY_EXHAUSTED`), without candidates,
+decisions, routing, source access, or clinical records.  Its immediate review
+deadline is an operational manual-review deadline, never a retention or source
+deletion deadline.  A PostgreSQL `SKIP LOCKED` processor may only escalate the
+case; a current `clinical_reviewer`, live document-processing authorization,
+and erasure-clear state are required for either terminal non-clinical
+disposition.  Runtime auto-commit remains disabled.
+
 The extraction lifecycle distinguishes three bounded concepts: a **job
 attempt** (a recovery attempt for one persisted job), a **provider
 subattempt** (one call inside the configured provider retry budget), and a

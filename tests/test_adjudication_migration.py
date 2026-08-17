@@ -11,7 +11,7 @@ MIGRATION = ROOT / "alembic/versions/20260731_adjudication_harden.py"
 def test_adjudication_remains_on_the_single_head_chain_with_expected_parent():
     config = Config(str(ROOT / "alembic.ini"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260815_clinical_commit_guard"]
+    assert script.get_heads() == ["20260817_failure_quarantine"]
     assert (
         script.get_revision("20260801_textract_candidates").down_revision
         == "20260731_adjudication_harden"

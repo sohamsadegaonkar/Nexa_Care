@@ -75,6 +75,7 @@ from app.services.extraction_attempt_history import (
     ExtractionAttemptEventCollision,
     persist_provider_attempt_events,
 )
+from app.services.failure_quarantine import create_retry_exhausted_quarantine
 
 logger = logging.getLogger("nexa_logger")
 
@@ -1124,6 +1125,10 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         )
         job.error_code = exc.error_code
         job.retryable = exc.retryable and not exhausted
+        if exhausted:
+            await create_retry_exhausted_quarantine(
+                db, job=job, occurred_at=datetime.now(timezone.utc)
+            )
     except DocumentStorageError:
         job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "extraction_failed_terminal"

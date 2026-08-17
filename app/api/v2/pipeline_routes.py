@@ -63,6 +63,7 @@ from app.models.pipeline import (
     DocumentStorage,
     AdjudicationCaseRecord,
     ExtractionCandidateRecord,
+    ExtractionFailureQuarantineRecord,
     ExtractionConflictRecord,
     ExtractedFieldRecord,
     ExtractionJob,
@@ -95,6 +96,10 @@ from app.services.adjudication import (
     rotate_review_session as rotate_adjudication_review_session,
     read_source_document,
     submit_case as submit_adjudication_case,
+)
+from app.services.failure_quarantine import (
+    FailureQuarantineError,
+    apply_failure_quarantine_disposition,
 )
 
 logger = logging.getLogger("nexa_logger")
@@ -192,6 +197,16 @@ class ExtractionJobStatusResponse(BaseModel):
     clinician_adjudication_required: Literal[True] = True
     extracted_fields: list[ExtractedField] = Field(default_factory=list)
     created_at: str
+
+
+class FailureQuarantineDispositionRequest(BaseModel):
+    """Minimal terminal mutation; reviewer identity remains server-derived."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    disposition: str
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=192)
 
 
 def _parse_uuid(id_str: str) -> uuid.UUID:
@@ -1249,6 +1264,85 @@ def _adjudication_failure(exc: AdjudicationError) -> HTTPException:
         else 409,
         detail={"error_code": exc.code},
     )
+
+
+def _failure_quarantine_failure(exc: FailureQuarantineError) -> HTTPException:
+    not_found = {"FAILURE_QUARANTINE_NOT_FOUND"}
+    denied = {
+        "FAILURE_QUARANTINE_ACCESS_DENIED",
+        "FAILURE_QUARANTINE_CLINICAL_REVIEWER_REQUIRED",
+        "FAILURE_QUARANTINE_CONSENT_INACTIVE",
+        "FAILURE_QUARANTINE_ERASURE_ACCESS_BLOCKED",
+    }
+    unavailable = {
+        "FAILURE_QUARANTINE_CONSENT_UNAVAILABLE",
+        "FAILURE_QUARANTINE_ERASURE_REGISTRY_UNAVAILABLE",
+    }
+    malformed = {
+        "FAILURE_QUARANTINE_DISPOSITION_INVALID",
+        "FAILURE_QUARANTINE_IDEMPOTENCY_KEY_INVALID",
+    }
+    return HTTPException(
+        status_code=404
+        if exc.code in not_found
+        else 403
+        if exc.code in denied
+        else 503
+        if exc.code in unavailable
+        else 422
+        if exc.code in malformed
+        else 409,
+        detail={"error_code": exc.code},
+    )
+
+
+def _failure_quarantine_response(
+    case: ExtractionFailureQuarantineRecord,
+) -> dict[str, Any]:
+    """Return lifecycle metadata only; failure/provider/source detail is absent."""
+    return {
+        "case_id": str(case.id),
+        "job_id": str(case.job_id),
+        "status": case.status,
+        "reason_code": case.reason_code,
+        "review_deadline": case.review_deadline,
+        "escalated_at": case.escalated_at,
+        "disposed_at": case.disposed_at,
+        "disposition": case.disposition,
+        "version": case.version,
+        "available_dispositions": (
+            ["RETAIN_SOURCE_NO_CLINICAL_COMMIT", "REJECT_PROCESSING_RETAIN_AUDIT"]
+            if case.status == "ESCALATED"
+            else []
+        ),
+    }
+
+
+@router.post("/failure-quarantines/{case_id}/disposition")
+async def apply_failure_quarantine_terminal_disposition(
+    case_id: str,
+    payload: FailureQuarantineDispositionRequest,
+    provider: ProviderContext = Depends(get_current_provider),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Apply a human-only terminal operational disposition, never a clinical commit."""
+    try:
+        case = await apply_failure_quarantine_disposition(
+            db,
+            case_id=_parse_uuid(case_id),
+            provider=provider,
+            disposition=payload.disposition,
+            expected_version=payload.expected_version,
+            idempotency_key=payload.idempotency_key,
+        )
+        await db.commit()
+        return _failure_quarantine_response(case)
+    except FailureQuarantineError as exc:
+        await db.rollback()
+        raise _failure_quarantine_failure(exc) from exc
+    except Exception:
+        await db.rollback()
+        raise
 
 
 async def _finish_adjudication_failure(
