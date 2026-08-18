@@ -82,6 +82,7 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
         12,
         13,
         14,
+        15,
         16,
         17,
         18,
@@ -92,12 +93,11 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
         23,
         24,
     ]
-    assert len(runtime_scenarios) == 22
+    assert len(runtime_scenarios) == 23
     assert [
         scenario.scenario_id for scenario in SCENARIOS if not scenario.runtime_tested
     ] == [
         6,
-        15,
     ]
     for scenario in runtime_scenarios:
         assert scenario.test_reference
@@ -108,6 +108,10 @@ def test_runtime_coverage_is_explicit_and_references_existing_local_tests():
     assert SCENARIOS_BY_ID[17].test_reference == (
         "tests/ai_extraction/adversarial/test_lifecycle.py::"
         "test_scenario_17_outbox_failure_rolls_back_clinical_commit_and_retry_is_safe"
+    )
+    assert SCENARIOS_BY_ID[15].test_reference == (
+        "tests/integration/test_scenario_15_failure_quarantine_postgres.py::"
+        "test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_without_clinical_commit"
     )
 
 

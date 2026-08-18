@@ -195,6 +195,11 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.LIFECYCLE, EvidenceGroup.POLICY_EVIDENCE},
         "A quarantined job reaches expiry after repeated processing failures.",
         "Escalate for approved manual disposition and retain the failure history; expiry must never cause automatic clinical commitment.",
+        runtime_tested=True,
+        test_reference=(
+            "tests/integration/test_scenario_15_failure_quarantine_postgres.py::"
+            "test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_without_clinical_commit"
+        ),
     ),
     _scenario(
         16,
