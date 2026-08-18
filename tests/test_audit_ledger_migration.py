@@ -30,7 +30,7 @@ def test_audit_migration_precedes_current_single_head():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260817_failure_quarantine"]
+    assert script.get_heads() == ["20260818_async_provider_jobs"]
     revision = script.get_revision("20260716_audit_ledger_chain")
     assert revision.down_revision == "20260715_patient_auth_identity"
 

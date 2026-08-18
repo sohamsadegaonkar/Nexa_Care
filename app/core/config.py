@@ -75,6 +75,11 @@ class DocumentExtractionConfig:
     timeout_seconds: float = 30.0
     provider_max_attempts: int = 3
     job_max_attempts: int = 3
+    async_multipage_enabled: bool = False
+    reconciliation_max_attempts: int = 3
+    reconciliation_window_seconds: int = 900
+    reconciliation_batch_size: int = 25
+    reconciliation_interval_seconds: int = 2
 
 
 @dataclass(frozen=True)
@@ -192,12 +197,63 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
         raise ConfigError(
             "DOCUMENT_EXTRACTION_PROVIDER must be 'remote', 'demo', or 'aws_textract'"
         )
+
+    async_raw = (
+        os.getenv("DOCUMENT_AI_ASYNC_MULTIPAGE_ENABLED", "false").strip().lower()
+    )
+    if async_raw in {"1", "true", "yes", "on"}:
+        async_multipage_enabled = True
+    elif async_raw in {"0", "false", "no", "off"}:
+        async_multipage_enabled = False
+    else:
+        raise ConfigError("DOCUMENT_AI_ASYNC_MULTIPAGE_ENABLED must be a boolean")
+    try:
+        reconciliation_max_attempts = int(
+            os.getenv("DOCUMENT_AI_RECONCILIATION_MAX_ATTEMPTS", "3")
+        )
+        reconciliation_window_seconds = int(
+            os.getenv("DOCUMENT_AI_RECONCILIATION_WINDOW_SECONDS", "900")
+        )
+        reconciliation_batch_size = int(
+            os.getenv("DOCUMENT_AI_RECONCILIATION_BATCH_SIZE", "25")
+        )
+        reconciliation_interval_seconds = int(
+            os.getenv("DOCUMENT_AI_RECONCILIATION_INTERVAL_SECONDS", "2")
+        )
+    except ValueError as exc:
+        raise ConfigError(
+            "Document AI reconciliation configuration is invalid"
+        ) from exc
+    if not 1 <= reconciliation_max_attempts <= 5:
+        raise ConfigError(
+            "DOCUMENT_AI_RECONCILIATION_MAX_ATTEMPTS must be between 1 and 5"
+        )
+    if not 60 <= reconciliation_window_seconds <= 86400:
+        raise ConfigError(
+            "DOCUMENT_AI_RECONCILIATION_WINDOW_SECONDS must be between 60 and 86400"
+        )
+    if not 1 <= reconciliation_batch_size <= 100:
+        raise ConfigError(
+            "DOCUMENT_AI_RECONCILIATION_BATCH_SIZE must be between 1 and 100"
+        )
+    if not 1 <= reconciliation_interval_seconds <= 60:
+        raise ConfigError(
+            "DOCUMENT_AI_RECONCILIATION_INTERVAL_SECONDS must be between 1 and 60"
+        )
     if provider == "demo":
         if environment not in _SAFE_DEMO_ENVIRONMENTS:
             raise ConfigError(
                 f"Demo document extraction is forbidden in environment '{environment}'"
             )
-        return DocumentExtractionConfig(provider=provider, environment=environment)
+        return DocumentExtractionConfig(
+            provider=provider,
+            environment=environment,
+            async_multipage_enabled=async_multipage_enabled,
+            reconciliation_max_attempts=reconciliation_max_attempts,
+            reconciliation_window_seconds=reconciliation_window_seconds,
+            reconciliation_batch_size=reconciliation_batch_size,
+            reconciliation_interval_seconds=reconciliation_interval_seconds,
+        )
 
     try:
         timeout_seconds = float(os.getenv("DOCUMENT_AI_TIMEOUT_SECONDS", "30"))
@@ -236,6 +292,11 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
             timeout_seconds=timeout_seconds,
             provider_max_attempts=provider_max_attempts,
             job_max_attempts=job_max_attempts,
+            async_multipage_enabled=async_multipage_enabled,
+            reconciliation_max_attempts=reconciliation_max_attempts,
+            reconciliation_window_seconds=reconciliation_window_seconds,
+            reconciliation_batch_size=reconciliation_batch_size,
+            reconciliation_interval_seconds=reconciliation_interval_seconds,
         )
 
     api_url = _require_env("DOCUMENT_AI_API_URL").strip()
@@ -254,6 +315,11 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
         timeout_seconds=timeout_seconds,
         provider_max_attempts=provider_max_attempts,
         job_max_attempts=job_max_attempts,
+        async_multipage_enabled=async_multipage_enabled,
+        reconciliation_max_attempts=reconciliation_max_attempts,
+        reconciliation_window_seconds=reconciliation_window_seconds,
+        reconciliation_batch_size=reconciliation_batch_size,
+        reconciliation_interval_seconds=reconciliation_interval_seconds,
     )
 
 

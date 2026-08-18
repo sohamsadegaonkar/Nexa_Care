@@ -24,6 +24,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
@@ -465,6 +467,253 @@ class ExtractionFailureQuarantineRecord(Base, UUIDPrimaryKeyMixin):
             "status",
             "review_deadline",
             "id",
+        ),
+    )
+
+
+class ExtractionProviderJobRecord(Base, UUIDPrimaryKeyMixin):
+    """Durable, value-free lifecycle for one asynchronous provider attempt.
+
+    The UUID primary key is the immutable Nexa ``provider_attempt_id``.  This
+    operational record intentionally stores provider correlation and lifecycle
+    metadata only; provider payloads, OCR, source text, and clinical values are
+    persisted nowhere in this table.
+    """
+
+    __tablename__ = "extraction_provider_jobs"
+
+    job_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    patient_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
+    source_document_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False
+    )
+    job_attempt_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    provider_adapter: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_model_version: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    provider_job_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    client_request_token_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    provider_request_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="CREATED", server_default="CREATED"
+    )
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
+    response_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    result_retrieval_complete: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    expected_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    observed_page_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    reconciliation_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    reconciliation_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_reconcile_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_job_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    result_retrieval_deadline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    provider_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    supersedes_provider_attempt_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    superseded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    supersession_reason_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    supersession_idempotency_key: Mapped[str | None] = mapped_column(
+        String(192), nullable=True
+    )
+    supersession_request_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["job_id", "tenant_id", "patient_id", "source_document_id"],
+            [
+                "extraction_jobs.id",
+                "extraction_jobs.tenant_id",
+                "extraction_jobs.patient_id",
+                "extraction_jobs.document_id",
+            ],
+            name="fk_extraction_provider_jobs_authoritative_job_graph",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            ["source_document_id", "tenant_id", "patient_id"],
+            [
+                "document_storage.id",
+                "document_storage.tenant_id",
+                "document_storage.patient_id",
+            ],
+            name="fk_extraction_provider_jobs_authoritative_document_graph",
+            ondelete="RESTRICT",
+        ),
+        ForeignKeyConstraint(
+            [
+                "supersedes_provider_attempt_id",
+                "job_id",
+                "tenant_id",
+                "patient_id",
+                "source_document_id",
+            ],
+            [
+                "extraction_provider_jobs.id",
+                "extraction_provider_jobs.job_id",
+                "extraction_provider_jobs.tenant_id",
+                "extraction_provider_jobs.patient_id",
+                "extraction_provider_jobs.source_document_id",
+            ],
+            name="fk_extraction_provider_jobs_supersedes_same_graph",
+            ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "id",
+            "job_id",
+            "tenant_id",
+            "patient_id",
+            "source_document_id",
+            name="uq_extraction_provider_jobs_authoritative_graph",
+        ),
+        UniqueConstraint(
+            "job_id",
+            "job_attempt_number",
+            name="uq_extraction_provider_jobs_logical_attempt",
+        ),
+        UniqueConstraint(
+            "provider_adapter",
+            "client_request_token_digest",
+            name="uq_extraction_provider_jobs_adapter_token_digest",
+        ),
+        CheckConstraint(
+            "status IN ('CREATED', 'SUBMITTING', 'SUBMITTED', 'IN_PROGRESS', "
+            "'LOCAL_WAIT_EXPIRED', 'RECONCILING', 'SUCCEEDED', 'FETCHING_RESULTS', "
+            "'VALIDATING_COMPLETE_RESULT', 'COMPLETE', 'FAILED_RETRYABLE', "
+            "'FAILED_TERMINAL', 'PROVIDER_UNREACHABLE_MANUAL_REVIEW', 'SUPERSEDED')",
+            name="ck_extraction_provider_jobs_status",
+        ),
+        CheckConstraint("version >= 1", name="ck_extraction_provider_jobs_version"),
+        CheckConstraint(
+            "job_attempt_number >= 1",
+            name="ck_extraction_provider_jobs_attempt_positive",
+        ),
+        CheckConstraint(
+            "reconciliation_attempt_count >= 0",
+            name="ck_extraction_provider_jobs_reconciliation_attempts_nonnegative",
+        ),
+        CheckConstraint(
+            "(expected_page_count IS NULL OR expected_page_count > 0) AND "
+            "(observed_page_count IS NULL OR observed_page_count > 0)",
+            name="ck_extraction_provider_jobs_page_counts_positive",
+        ),
+        CheckConstraint(
+            "status NOT IN ('SUBMITTED', 'IN_PROGRESS', 'SUCCEEDED', "
+            "'FETCHING_RESULTS', 'VALIDATING_COMPLETE_RESULT', 'COMPLETE') OR "
+            "provider_job_id IS NOT NULL",
+            name="ck_extraction_provider_jobs_known_provider_id",
+        ),
+        CheckConstraint(
+            "status <> 'COMPLETE' OR (response_complete = true AND "
+            "result_retrieval_complete = true AND expected_page_count IS NOT NULL "
+            "AND observed_page_count IS NOT NULL AND expected_page_count > 0 "
+            "AND observed_page_count > 0 AND expected_page_count = observed_page_count "
+            "AND provider_job_id IS NOT NULL)",
+            name="ck_extraction_provider_jobs_complete_safety",
+        ),
+        CheckConstraint(
+            "status <> 'SUPERSEDED' OR (superseded_at IS NOT NULL AND "
+            "supersession_reason_code IS NOT NULL)",
+            name="ck_extraction_provider_jobs_superseded_safety",
+        ),
+        CheckConstraint(
+            "supersedes_provider_attempt_id IS NULL OR "
+            "(supersession_reason_code IS NOT NULL AND "
+            "supersession_idempotency_key IS NOT NULL AND "
+            "supersession_request_hash IS NOT NULL)",
+            name="ck_extraction_provider_jobs_replacement_metadata",
+        ),
+        CheckConstraint(
+            "supersedes_provider_attempt_id IS NULL OR "
+            "supersedes_provider_attempt_id <> id",
+            name="ck_extraction_provider_jobs_no_self_supersession",
+        ),
+        CheckConstraint(
+            "status <> 'PROVIDER_UNREACHABLE_MANUAL_REVIEW' OR "
+            "(response_complete = false AND result_retrieval_complete = false)",
+            name="ck_extraction_provider_jobs_manual_review_incomplete",
+        ),
+        CheckConstraint(
+            "status NOT IN ('FAILED_RETRYABLE', 'FAILED_TERMINAL', "
+            "'PROVIDER_UNREACHABLE_MANUAL_REVIEW', 'SUPERSEDED') OR "
+            "(response_complete = false AND result_retrieval_complete = false)",
+            name="ck_extraction_provider_jobs_failed_incomplete",
+        ),
+        Index(
+            "uq_extraction_provider_jobs_provider_job_id",
+            "provider_adapter",
+            "provider_job_id",
+            unique=True,
+            postgresql_where=text("provider_job_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_extraction_provider_jobs_supersession_key",
+            "job_id",
+            "supersession_idempotency_key",
+            unique=True,
+            postgresql_where=text("supersession_idempotency_key IS NOT NULL"),
+        ),
+        Index(
+            "ix_extraction_provider_jobs_reconciliation_claim",
+            "status",
+            "next_reconcile_at",
+            "id",
+            postgresql_where=text("status IN ('LOCAL_WAIT_EXPIRED', 'RECONCILING')"),
+        ),
+        Index(
+            "ix_extraction_provider_jobs_job_status",
+            "job_id",
+            "status",
+        ),
+        Index(
+            "ix_extraction_provider_jobs_tenant_patient_job",
+            "tenant_id",
+            "patient_id",
+            "job_id",
         ),
     )
 

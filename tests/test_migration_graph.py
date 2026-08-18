@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260817_failure_quarantine"
+EXPECTED_HEAD = "20260818_async_provider_jobs"
 
 
 def _scripts() -> ScriptDirectory:
@@ -38,8 +38,14 @@ def test_conflict_supersession_descends_from_dek_store_runtime() -> None:
     assert revision.down_revision == "20260812_dek_store_runtime"
 
 
-def test_provider_attempt_history_descends_from_conflict_supersession() -> None:
+def test_async_provider_jobs_descends_from_failure_quarantine() -> None:
     revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260817_failure_quarantine"
+
+
+def test_failure_quarantine_remains_descendant_of_clinical_commit_guard() -> None:
+    revision = _scripts().get_revision("20260817_failure_quarantine")
     assert revision is not None
     assert revision.down_revision == "20260815_clinical_commit_guard"
 

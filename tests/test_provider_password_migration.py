@@ -26,7 +26,7 @@ def test_provider_password_follows_audit_revision_and_precedes_current_head():
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     revision = script.get_revision("20260717_provider_pwd_canonical")
     assert revision.down_revision == "20260716_audit_ledger_chain"
-    assert script.get_current_head() == "20260817_failure_quarantine"
+    assert script.get_current_head() == "20260818_async_provider_jobs"
     assert len(revision.revision) <= 32
 
 
