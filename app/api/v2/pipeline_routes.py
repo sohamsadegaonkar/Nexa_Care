@@ -21,6 +21,7 @@ from __future__ import annotations
 from app.security.audit_context import AuditDomain, current_audit_context
 
 import logging
+import json
 import os
 import uuid
 from datetime import datetime, timezone
@@ -1533,7 +1534,13 @@ async def create_adjudication_submission(
 ):
     try:
         try:
-            payload = AdjudicationSubmissionRequest.model_validate(raw_payload)
+            # Validate through Pydantic's JSON boundary so strict typed fields
+            # retain their contract while RFC3339 datetimes from HTTP JSON are
+            # parsed correctly.  ``model_validate(dict)`` rejects those valid
+            # wire-format timestamps under the strict datetime contract.
+            payload = AdjudicationSubmissionRequest.model_validate_json(
+                json.dumps(raw_payload)
+            )
         except ValidationError as exc:
             raise AdjudicationError("ADJUDICATION_PAYLOAD_INVALID") from exc
         row = await submit_adjudication_case(
