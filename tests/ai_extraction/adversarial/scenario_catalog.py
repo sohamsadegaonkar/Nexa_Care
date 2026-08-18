@@ -107,6 +107,8 @@ SCENARIOS: tuple[AdversarialScenario, ...] = (
         {EvidenceGroup.LIFECYCLE, EvidenceGroup.MODEL_EVIDENCE},
         "Extraction times out after only a subset of pages has been processed.",
         "Keep partial output out of clinical truth, record a safe incomplete failure state, and permit only bounded idempotent recovery.",
+        runtime_tested=True,
+        test_reference="tests/integration/test_scenario_6_async_runtime_postgres.py::test_scenario_6_timeout_recovery_preserves_attempt_and_blocks_partial_handoff",
     ),
     _scenario(
         7,

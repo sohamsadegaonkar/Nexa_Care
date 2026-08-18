@@ -489,14 +489,20 @@ class AwsTextractExtractionProvider(ExtractionProvider):
         return self._client
 
     @staticmethod
-    def _parse_response(response: Any) -> ExtractedMedicalDocument:
+    def _parse_response(
+        response: Any, *, require_single_page: bool = True
+    ) -> ExtractedMedicalDocument:
         if not isinstance(response, dict):
             raise ProviderResponseError("Extraction response failed schema validation")
         blocks = response.get("Blocks")
         metadata = response.get("DocumentMetadata")
         if not isinstance(blocks, list) or not isinstance(metadata, dict):
             raise ProviderResponseError("Extraction response failed schema validation")
-        if metadata.get("Pages") != 1:
+        if (
+            not isinstance(metadata.get("Pages"), int)
+            or metadata.get("Pages") <= 0
+            or (require_single_page and metadata.get("Pages") != 1)
+        ):
             raise InvalidDocumentError("Document must contain exactly one page")
 
         extracted_at = datetime.now(timezone.utc)

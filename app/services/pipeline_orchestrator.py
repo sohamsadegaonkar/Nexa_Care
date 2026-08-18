@@ -35,7 +35,7 @@ from app.ai.candidate_eligibility import (
     CandidateEligibility,
     classify_semantic_candidate,
 )
-from app.core.config import get_document_extraction_config
+from app.core.config import get_document_extraction_config, get_document_storage_config
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.pipeline import (
@@ -76,6 +76,17 @@ from app.services.extraction_attempt_history import (
     persist_provider_attempt_events,
 )
 from app.services.failure_quarantine import create_retry_exhausted_quarantine
+from app.services.textract_async_runtime import (
+    async_multipage_eligible,
+    prepare_and_create_provider_attempt,
+    start_async_provider_attempt,
+)
+from app.services.textract_source_staging import (
+    TextractSourceStager,
+    TextractSourceStagingError,
+    TextractStagingConfig,
+)
+from app.ai.async_textract import AsyncTextractProvider
 
 logger = logging.getLogger("nexa_logger")
 
@@ -700,6 +711,76 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             tenant_id=str(job.tenant_id),
             patient_id=str(job.patient_id),
         )
+        if async_multipage_eligible(
+            provider=config.provider,
+            enabled=getattr(config, "async_multipage_enabled", False),
+            content_type=document.content_type,
+            storage_ref=document.storage_ref,
+        ):
+            consent_active = False
+            if all(
+                (job.consent_request_id, job.authorization_provider_id, job.tenant_id)
+            ):
+                try:
+                    consent_active = (
+                        await validate_live_document_processing_request(
+                            request_id=str(job.consent_request_id),
+                            patient_id=str(job.patient_id),
+                            provider_id=str(job.authorization_provider_id),
+                            hospital_id=str(job.tenant_id),
+                        )
+                        is not None
+                    )
+                except ApprovedAccessStoreUnavailable:
+                    consent_active = False
+            if consent_active:
+                storage_config = get_document_storage_config()
+                if storage_config.provider != "s3":
+                    raise TextractSourceStagingError(
+                        "ASYNC_PROVIDER_STORAGE_PROVIDER_UNSUPPORTED"
+                    )
+                stager = TextractSourceStager(
+                    config=TextractStagingConfig(
+                        bucket=storage_config.s3_bucket or "",
+                        region=storage_config.s3_region
+                        or getattr(config, "aws_region", "ap-south-1"),
+                        kms_key_id=storage_config.s3_kms_key_id or "",
+                    ),
+                    storage=storage,
+                    s3_client=getattr(storage, "client", None),
+                    io_timeout_seconds=getattr(config, "timeout_seconds", 30.0),
+                )
+                if stager.s3 is None:
+                    raise TextractSourceStagingError(
+                        "ASYNC_PROVIDER_STAGING_CONFIG_INVALID"
+                    )
+                attempt, _prepared = await prepare_and_create_provider_attempt(
+                    db,
+                    stager=stager,
+                    job_id=job.id,
+                    tenant_id=job.tenant_id,
+                    patient_id=job.patient_id,
+                    source_document_id=job.document_id,
+                    job_attempt_number=job.attempt_count,
+                )
+                start_result = await start_async_provider_attempt(
+                    db,
+                    provider_attempt_id=attempt.id,
+                    stager=stager,
+                    provider=AsyncTextractProvider(
+                        region=getattr(config, "aws_region", "ap-south-1"),
+                        timeout_seconds=getattr(config, "timeout_seconds", 30.0),
+                    ),
+                )
+                del document_bytes
+                return {
+                    "job_id": str(job.id),
+                    "status": "extracting",
+                    "async_provider_attempt_id": str(start_result.provider_attempt_id),
+                    "provider_status": start_result.status,
+                    "provider_job_id": start_result.provider_job_id,
+                    "expected_page_count": start_result.expected_page_count,
+                }
         extractor = get_medical_document_extractor(config)
         provider_result = await extractor.extract_bytes(
             document_bytes,
@@ -1133,6 +1214,11 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "extraction_failed_terminal"
         job.error_code = "DOCUMENT_STORAGE_UNAVAILABLE"
+        job.retryable = False
+    except TextractSourceStagingError as exc:
+        job = await _rollback_and_reload_job(db, job_uuid)
+        job.status = "extraction_failed_terminal"
+        job.error_code = exc.code
         job.retryable = False
     except ExtractionEvidenceInstanceCollision:
         job = await _rollback_and_reload_job(db, job_uuid)

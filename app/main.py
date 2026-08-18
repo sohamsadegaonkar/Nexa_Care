@@ -99,6 +99,16 @@ from app.services.audit_outbox_processor import (
 from app.services.failure_quarantine_processor import (
     run_failure_quarantine_processor_forever,
 )
+from app.ai.async_textract import AsyncTextractProvider
+from app.services.provider_job_reconciliation_processor import (
+    run_provider_job_reconciliation_processor_forever,
+)
+from app.services.textract_async_runtime import make_textract_reconciliation_callback
+from app.services.textract_source_staging import (
+    TextractSourceStager,
+    TextractStagingConfig,
+)
+from app.services.document_storage import get_document_storage
 
 # Deprecated test-patch seam; runtime code uses get_async_redis_client.
 get_redis_client = get_async_redis_client
@@ -238,9 +248,51 @@ async def lifespan(application: FastAPI):
         )
     )
     application.state.failure_quarantine_task = failure_quarantine_task
+    provider_reconciliation_shutdown_event = None
+    provider_reconciliation_task = None
+    extraction_config = get_document_extraction_config()
+    storage_config = get_document_storage_config()
+    if extraction_config.async_multipage_enabled and storage_config.provider == "s3":
+        storage = get_document_storage()
+        stager = TextractSourceStager(
+            config=TextractStagingConfig(
+                bucket=storage_config.s3_bucket or "",
+                region=storage_config.s3_region or extraction_config.aws_region,
+                kms_key_id=storage_config.s3_kms_key_id or "",
+            ),
+            storage=storage,
+            s3_client=getattr(storage, "client", None),
+            io_timeout_seconds=extraction_config.timeout_seconds,
+        )
+        provider = AsyncTextractProvider(
+            region=extraction_config.aws_region,
+            timeout_seconds=extraction_config.timeout_seconds,
+        )
+        provider_reconciliation_shutdown_event = asyncio.Event()
+        provider_reconciliation_task = asyncio.create_task(
+            run_provider_job_reconciliation_processor_forever(
+                get_session_factory(),
+                reconcile_callback=make_textract_reconciliation_callback(
+                    session_factory=get_session_factory(),
+                    provider=provider,
+                    stager=stager,
+                ),
+                max_attempts=extraction_config.reconciliation_max_attempts,
+                window_seconds=extraction_config.reconciliation_window_seconds,
+                poll_interval_seconds=extraction_config.reconciliation_interval_seconds,
+                batch_size=extraction_config.reconciliation_batch_size,
+                shutdown_event=provider_reconciliation_shutdown_event,
+            )
+        )
+    application.state.provider_reconciliation_task = provider_reconciliation_task
     try:
         yield
     finally:
+        if provider_reconciliation_shutdown_event is not None:
+            provider_reconciliation_shutdown_event.set()
+        if provider_reconciliation_task is not None:
+            await provider_reconciliation_task
+        application.state.provider_reconciliation_task = None
         failure_quarantine_shutdown_event.set()
         await failure_quarantine_task
         application.state.failure_quarantine_task = None

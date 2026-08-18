@@ -185,6 +185,7 @@ _IMMUTABLE_CREATE_FIELDS = (
     "provider_model_version",
     "client_request_token_digest",
     "provider_request_fingerprint",
+    "expected_page_count",
 )
 
 
@@ -258,6 +259,7 @@ def _same_create_metadata(
 async def create_provider_attempt(
     db: AsyncSession,
     *,
+    provider_attempt_id: uuid.UUID | None = None,
     job_id: uuid.UUID,
     tenant_id: uuid.UUID,
     patient_id: uuid.UUID,
@@ -268,6 +270,7 @@ async def create_provider_attempt(
     provider_model_version: str | None,
     client_request_token_digest: str,
     provider_request_fingerprint: str,
+    expected_page_count: int | None = None,
     occurred_at: datetime | None = None,
 ) -> ExtractionProviderJobRecord:
     """Create one durable attempt, or replay an exact logical create."""
@@ -280,6 +283,10 @@ async def create_provider_attempt(
     )
     if job_attempt_number < 1:
         raise ProviderJobLifecycleError("ASYNC_PROVIDER_ATTEMPT_NUMBER_INVALID")
+    if expected_page_count is not None and (
+        not isinstance(expected_page_count, int) or expected_page_count <= 0
+    ):
+        raise ProviderJobLifecycleError("ASYNC_PROVIDER_PAGE_COUNT_INVALID")
     required_text = (
         provider_adapter,
         provider_contract_version,
@@ -315,6 +322,7 @@ async def create_provider_attempt(
         "provider_model_version": provider_model_version,
         "client_request_token_digest": client_request_token_digest,
         "provider_request_fingerprint": provider_request_fingerprint,
+        "expected_page_count": expected_page_count,
     }
     existing = (
         await db.execute(
@@ -333,7 +341,7 @@ async def create_provider_attempt(
 
     now = _utc(occurred_at)
     row = ExtractionProviderJobRecord(
-        id=uuid.uuid4(),
+        id=provider_attempt_id or uuid.uuid4(),
         **expected,
         status=_S.CREATED.value,
         version=1,
@@ -537,8 +545,12 @@ async def begin_provider_submission(
     *,
     provider_attempt_id: uuid.UUID,
     expected_version: int,
+    expected_page_count: int | None | object = _UNSET,
     occurred_at: datetime | None = None,
 ) -> ExtractionProviderJobRecord:
+    kwargs: dict[str, Any] = {}
+    if expected_page_count is not _UNSET:
+        kwargs["expected_page_count"] = expected_page_count
     return await transition_provider_attempt(
         db,
         provider_attempt_id=provider_attempt_id,
@@ -546,6 +558,7 @@ async def begin_provider_submission(
         target_status=_S.SUBMITTING,
         provider_started_at=_utc(occurred_at),
         occurred_at=occurred_at,
+        **kwargs,
     )
 
 
