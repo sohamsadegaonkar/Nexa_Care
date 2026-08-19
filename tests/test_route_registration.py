@@ -60,6 +60,8 @@ from app.main import app
 EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/otp/send"),
     ("POST", "/api/v2/auth/otp/verify"),
+    ("POST", "/api/v2/auth/register/otp/send"),
+    ("POST", "/api/v2/auth/register/otp/verify"),
     ("POST", "/api/v1/handshake"),
     ("POST", "/api/v1/enroll-biometric"),
     ("GET", "/api/v1/record"),

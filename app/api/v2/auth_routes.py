@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
-
 import inspect
 import hashlib
 import hmac
@@ -23,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from starlette.concurrency import run_in_threadpool
 
+from app.observability.audit_ledger import append_audit_log
+from app.security.audit_context import AuditDomain, current_audit_context
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider
 from app.core.rate_limiter import (
@@ -37,7 +37,6 @@ from app.models.provider import ProviderCredential
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.provider_context import ProviderContext
-from app.observability.audit_ledger import append_audit_log
 from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
@@ -61,6 +60,18 @@ from app.services.patient_auth_service import (
     issue_device_enrollment_token,
     issue_patient_access_token,
     normalize_indian_phone,
+)
+from app.services.patient_registration_service import (
+    PatientRegistrationError,
+    finalize_patient_registration,
+    recover_patient_registration_for_attempt,
+)
+from app.services.patient_registration_attempt_service import (
+    RegistrationAttemptError,
+    claim_registration_attempt,
+    finalize_registration_attempt,
+    issue_registration_attempt,
+    release_registration_attempt_claim,
 )
 
 logger = logging.getLogger("nexa_logger")
@@ -108,6 +119,15 @@ class PatientOtpVerifyResponse(BaseModel):
     expires_at: datetime
     patient_id: str
     device_enrollment_token: str
+
+
+class PatientRegistrationOtpSendResponse(BaseModel):
+    message: str
+    registration_attempt_token: str
+
+
+class PatientRegistrationOtpVerifyRequest(PatientOtpVerifyRequest):
+    registration_attempt_token: str = Field(..., min_length=1, max_length=512)
 
 
 def _normalized_phone_or_422(phone: str) -> str:
@@ -237,6 +257,227 @@ async def patient_otp_verify(
         access_token=access_token,
         expires_at=expires_at,
         patient_id=patient_id,
+        device_enrollment_token=enrollment_token,
+    )
+
+
+@router.post("/register/otp/send", response_model=PatientRegistrationOtpSendResponse)
+async def patient_registration_otp_send(
+    payload: PatientOtpSendRequest, request: Request
+) -> PatientRegistrationOtpSendResponse:
+    """Send an OTP through the explicit provider-account creation path."""
+    phone = _normalized_phone_or_422(payload.phone)
+    await _enforce_otp_limits(request, phone)
+    try:
+        await run_in_threadpool(
+            get_supabase_client().auth.sign_in_with_otp,
+            {"phone": phone, "options": {"should_create_user": True}},
+        )
+    except Exception:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "REGISTRATION_SMS_UNAVAILABLE", "retryable": True},
+        ) from None
+    try:
+        attempt_token = await issue_registration_attempt(phone)
+    except RegistrationAttemptError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": exc.code, "retryable": True},
+        ) from None
+    return PatientRegistrationOtpSendResponse(
+        message="If eligible, an OTP will be sent.",
+        registration_attempt_token=attempt_token,
+    )
+
+
+def _registration_provider_identity(result, submitted_phone: str) -> tuple[str, str]:
+    """Validate only the provider assertions needed to bind a new account."""
+    user = getattr(result, "user", None)
+    session = getattr(result, "session", None)
+    provider_phone = getattr(user, "phone", None)
+    provider_subject = getattr(user, "id", None)
+    provider_access_token = getattr(session, "access_token", None)
+    if not provider_phone or not provider_subject or not provider_access_token:
+        raise PatientRegistrationError("REGISTRATION_PROVIDER_RESPONSE_INVALID")
+    try:
+        authoritative_phone = normalize_indian_phone(str(provider_phone))
+    except ValueError:
+        raise PatientRegistrationError(
+            "REGISTRATION_PROVIDER_RESPONSE_INVALID"
+        ) from None
+    if authoritative_phone != submitted_phone:
+        raise PatientRegistrationError("REGISTRATION_PHONE_MISMATCH")
+    return str(provider_subject), str(provider_access_token)
+
+
+@router.post("/register/otp/verify", response_model=PatientOtpVerifyResponse)
+async def patient_registration_otp_verify(
+    payload: PatientRegistrationOtpVerifyRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> PatientOtpVerifyResponse:
+    """Verify a registration OTP and atomically establish the account graph."""
+    phone = _normalized_phone_or_422(payload.phone)
+    await _enforce_otp_limits(request, phone)
+    try:
+        attempt = await claim_registration_attempt(
+            payload.registration_attempt_token, phone
+        )
+    except RegistrationAttemptError as exc:
+        status_code = 409 if exc.code == "REGISTRATION_ATTEMPT_IN_PROGRESS" else 401
+        if exc.code == "REGISTRATION_ATTEMPT_UNAVAILABLE":
+            status_code = 503
+        detail = {"error_code": exc.code}
+        if status_code == 503:
+            detail["retryable"] = True
+        raise HTTPException(status_code=status_code, detail=detail) from None
+
+    # A finalized capability is the only allowed no-OTP replay path.  Its
+    # patient id is server-side and bound to the same short-lived attempt.
+    account = None
+    if attempt.finalized:
+        try:
+            account = await recover_patient_registration_for_attempt(
+                db,
+                attempt_id=attempt.attempt_id,
+                patient_id=attempt.finalized_patient_id,
+            )
+        except PatientRegistrationError:
+            raise HTTPException(
+                status_code=403,
+                detail={"error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"},
+            ) from None
+        if account is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"},
+            )
+    else:
+        try:
+            account = await recover_patient_registration_for_attempt(
+                db, attempt_id=attempt.attempt_id
+            )
+        except PatientRegistrationError:
+            await release_registration_attempt_claim(
+                payload.registration_attempt_token, phone, attempt
+            )
+            raise HTTPException(
+                status_code=403,
+                detail={"error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"},
+            ) from None
+        if account is not None:
+            try:
+                await finalize_registration_attempt(
+                    payload.registration_attempt_token,
+                    phone,
+                    attempt,
+                    account.patient_id,
+                )
+            except RegistrationAttemptError as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error_code": exc.code, "retryable": True},
+                ) from None
+        else:
+            # The durable-attempt probe is read-only.  End its implicit
+            # SQLAlchemy transaction before opening the finalizer's atomic
+            # graph-plus-outbox transaction on this request session.
+            await db.rollback()
+            try:
+                result = await run_in_threadpool(
+                    get_supabase_client().auth.verify_otp,
+                    {"phone": phone, "token": payload.otp, "type": "sms"},
+                )
+            except Exception as exc:
+                code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+                await release_registration_attempt_claim(
+                    payload.registration_attempt_token, phone, attempt
+                )
+                if code in {400, 401, 403}:
+                    raise HTTPException(
+                        status_code=401,
+                        detail={"error_code": "REGISTRATION_OTP_INVALID"},
+                    ) from None
+                raise HTTPException(
+                    status_code=503,
+                    detail={
+                        "error_code": "REGISTRATION_SMS_UNAVAILABLE",
+                        "retryable": True,
+                    },
+                ) from None
+
+            try:
+                provider_subject, _provider_access_token = (
+                    _registration_provider_identity(result, phone)
+                )
+                account = await finalize_patient_registration(
+                    db, provider_subject=provider_subject, attempt_id=attempt.attempt_id
+                )
+            except PatientRegistrationError as exc:
+                status_code = (
+                    401
+                    if exc.code
+                    in {
+                        "REGISTRATION_PROVIDER_RESPONSE_INVALID",
+                        "REGISTRATION_PHONE_MISMATCH",
+                    }
+                    else 403
+                    if exc.code
+                    in {
+                        "REGISTRATION_IDENTITY_UNAVAILABLE",
+                        "ACCOUNT_ALREADY_REGISTERED",
+                    }
+                    else 503
+                )
+                detail = {"error_code": exc.code}
+                if status_code == 503:
+                    detail["retryable"] = True
+                await release_registration_attempt_claim(
+                    payload.registration_attempt_token, phone, attempt
+                )
+                raise HTTPException(status_code=status_code, detail=detail) from None
+
+            try:
+                await finalize_registration_attempt(
+                    payload.registration_attempt_token,
+                    phone,
+                    attempt,
+                    account.patient_id,
+                )
+            except RegistrationAttemptError as exc:
+                # The graph and outbox are already committed.  The pending capability
+                # remains bounded; after its short claim lease the same attempt can be
+                # proven by the durable attempt-specific outbox idempotency key.
+                raise HTTPException(
+                    status_code=503,
+                    detail={"error_code": exc.code, "retryable": True},
+                ) from None
+
+    access_token, expires_at = issue_patient_access_token(
+        account.patient_id, account.provider_subject
+    )
+    auth_session_id = hashlib.sha256(
+        f"registration:{attempt.attempt_id}".encode("utf-8")
+    ).hexdigest()
+    try:
+        enrollment_token = await issue_device_enrollment_token(
+            account.patient_id, auth_session_id
+        )
+    except Exception:
+        # The account is already safely committed.  A verified retry resumes
+        # from that durable state and attempts the transient capability again.
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "REGISTRATION_ENROLLMENT_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from None
+    return PatientOtpVerifyResponse(
+        access_token=access_token,
+        expires_at=expires_at,
+        patient_id=account.patient_id,
         device_enrollment_token=enrollment_token,
     )
 
