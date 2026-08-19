@@ -17,13 +17,13 @@ from app.services.crypto_kms import (
     EncryptedField,
 )
 from app.services.sharding import decrypt_vault_field
-from app.models.dek_store import PatientDEKStore
 
 
 @pytest.fixture
 def mock_db():
     db = AsyncMock(spec=AsyncSession)
     mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = None
     db.execute.return_value = mock_res
     return db
 
@@ -48,14 +48,9 @@ async def test_encrypt_decrypt_roundtrip(env_setup, mock_db):
     # 1. Generate DEK
     await provider.generate_dek(patient_id, mock_db)
 
-    # Mock DB row for _get_plaintext_dek and encrypt_field
-    mock_row = MagicMock(spec=PatientDEKStore)
-    mock_row.dek_version = 1
-    mock_row.is_active = True
-    mock_row.destroyed_at = None
-    mock_row.status = "active"
+    # The cache is reusable only when the authoritative row identity matches.
+    mock_row = mock_db.add.call_args.args[0]
 
-    mock_db.scalar.return_value = 1
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
 
     # 2. Encrypt
@@ -80,12 +75,18 @@ async def test_version_mismatch_handling(env_setup, mock_db):
 
     # Generate v1
     await provider.generate_dek(patient_id, mock_db)
-    v1_dek = provider._get_cached_dek(patient_id, 1)
+    v1_row = mock_db.add.call_args.args[0]
+    v1_dek = provider._get_cached_dek(patient_id, 1, provider._cache_identity(v1_row))
 
-    # Mock rotate to v2
-    mock_db.execute.return_value.scalar.return_value = 1
+    # Mock destroyed-marker lookup, latest-version lookup, then deactivation.
+    no_destroyed = MagicMock()
+    no_destroyed.scalar_one_or_none.return_value = None
+    latest = MagicMock()
+    latest.scalar_one_or_none.return_value = 1
+    mock_db.execute.side_effect = [no_destroyed, latest, MagicMock()]
     await provider.rotate_dek(patient_id, mock_db)
-    v2_dek = provider._get_cached_dek(patient_id, 2)
+    v2_row = mock_db.add.call_args.args[0]
+    v2_dek = provider._get_cached_dek(patient_id, 2, provider._cache_identity(v2_row))
 
     assert v1_dek != v2_dek
 
@@ -96,6 +97,8 @@ async def test_version_mismatch_handling(env_setup, mock_db):
     ciphertext = AESGCM(v1_dek).encrypt(iv, b"v1 data", None)
     encrypted_v1 = EncryptedField(ciphertext, iv, "f", 1, "AES-256-GCM")
 
+    mock_db.execute.side_effect = None
+    mock_db.execute.return_value.scalar_one_or_none.return_value = v1_row
     decrypted = await provider.decrypt_field(patient_id, "f", encrypted_v1, mock_db)
     assert decrypted == "v1 data"
 
@@ -124,12 +127,8 @@ async def test_destroy_dek_fails_decrypt(env_setup, mock_db):
     await provider.generate_dek(patient_id, mock_db)
 
     # Mock row for encrypt_field
-    mock_row = MagicMock(spec=PatientDEKStore)
-    mock_row.dek_version = 1
-    mock_row.is_active = True
-    mock_row.destroyed_at = None
+    mock_row = mock_db.add.call_args.args[0]
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
-    mock_db.scalar.return_value = 1
 
     encrypted = await provider.encrypt_field(patient_id, "f", "data", mock_db)
 
@@ -142,7 +141,7 @@ async def test_destroy_dek_fails_decrypt(env_setup, mock_db):
     await provider.destroy_dek(patient_id, mock_db)
 
     # Cache should be cleared
-    assert provider._get_cached_dek(patient_id, 1) is None
+    assert f"{patient_id}:1" not in provider._cache
 
     # DB lookup should return None (mock it)
     mock_db.execute.return_value.scalar_one_or_none.return_value = None
@@ -158,11 +157,8 @@ async def test_concurrent_encryptions(env_setup, mock_db):
     await provider.generate_dek(patient_id, mock_db)
 
     # Mock active DEK fetch
-    mock_row = MagicMock(spec=PatientDEKStore)
-    mock_row.dek_version = 1
-    mock_row.destroyed_at = None
+    mock_row = mock_db.add.call_args.args[0]
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
-    mock_db.scalar.return_value = 1
 
     tasks = [
         provider.encrypt_field(patient_id, f"field_{i}", "data", mock_db)

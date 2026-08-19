@@ -23,6 +23,7 @@ from app.services.crypto_kms import (
     LocalEnvelopeProvider,
     PatientDataErased,
 )
+from app.models.dek_store import PatientDEKStore
 
 # Captured at collection time, before conftest.py's autouse override_deps
 # fixture replaces this with a no-op AsyncMock for the rest of the suite.
@@ -41,14 +42,36 @@ class _FakeRegistryDB:
     """A DB double that actually understands the tombstone-status query,
     unlike the blanket mocks the rest of the crypto test suite uses."""
 
-    def __init__(self, status: str | None = None, raise_error: bool = False):
+    def __init__(
+        self,
+        status: str | None = None,
+        raise_error: bool = False,
+        dek_row: PatientDEKStore | None = None,
+    ):
         self.status = status
         self.raise_error = raise_error
+        self.dek_row = dek_row
 
-    async def execute(self, *_args, **_kwargs):
+    async def execute(self, statement, *_args, **_kwargs):
         if self.raise_error:
             raise ConnectionError("db unreachable")
+        if "patient_dek_store" in str(statement):
+            return _ScalarResult(self.dek_row)
         return _ScalarResult(self.status)
+
+
+def _cache_row(patient_id: str) -> PatientDEKStore:
+    return PatientDEKStore(
+        patient_id=uuid.UUID(patient_id),
+        wrapped_dek=b"wrapped-cache-test-key",
+        dek_iv=b"cache-test-iv",
+        dek_version=1,
+        algorithm="AES-256-GCM",
+        wrapping_backend="local-aes-gcm",
+        is_active=True,
+        wrapping_key_type="patient",
+        patient_wrapping_key_id="cache-test-epoch",
+    )
 
 
 @pytest.mark.asyncio
@@ -112,7 +135,8 @@ async def test_cached_dek_still_goes_through_the_gate():
     ):
         provider = LocalEnvelopeProvider()
         patient_id = str(uuid.uuid4())
-        provider._set_cached_dek(patient_id, 1, b"0" * 32)  # prime the cache directly
+        row = _cache_row(patient_id)
+        provider._set_cached_dek(patient_id, 1, b"0" * 32, row)
 
         db = _FakeRegistryDB(status="access_blocked")
         with patch.object(
@@ -134,9 +158,10 @@ async def test_cached_dek_returned_when_registry_confirms_no_tombstone():
     ):
         provider = LocalEnvelopeProvider()
         patient_id = str(uuid.uuid4())
-        provider._set_cached_dek(patient_id, 1, b"1" * 32)
+        row = _cache_row(patient_id)
+        provider._set_cached_dek(patient_id, 1, b"1" * 32, row)
 
-        db = _FakeRegistryDB(status=None)
+        db = _FakeRegistryDB(status=None, dek_row=row)
         with patch.object(
             EncryptionProvider,
             "_check_erasure_registry",
@@ -156,7 +181,7 @@ async def test_registry_unavailable_propagates_from_get_plaintext_dek():
     ):
         provider = LocalEnvelopeProvider()
         patient_id = str(uuid.uuid4())
-        provider._set_cached_dek(patient_id, 1, b"2" * 32)
+        provider._set_cached_dek(patient_id, 1, b"2" * 32, _cache_row(patient_id))
 
         db = _FakeRegistryDB(raise_error=True)
         with patch.object(

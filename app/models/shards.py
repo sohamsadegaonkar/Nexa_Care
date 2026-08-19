@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Index, String
+from sqlalchemy import Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -18,16 +18,22 @@ from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
 class NexaVault(Base, UUIDPrimaryKeyMixin, TimestampMixin):
-    """PII vault shard keyed by a masked internal patient identifier."""
+    """PII vault shard keyed by a masked internal patient identifier.
+
+    Application write paths MUST store serialized envelope ciphertext in the
+    ``patient_name``, ``phone``, and ``aadhaar_abha_id`` columns (for example,
+    ``base64(IV + ciphertext):version``). Plaintext PII is forbidden by Nexa
+    security policy; the PostgreSQL ``TEXT`` type does not validate that format.
+    """
 
     __tablename__ = "nexa_vault"
 
     masked_internal_id: Mapped[str] = mapped_column(
         String(64), nullable=False, unique=True
     )
-    patient_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    aadhaar_abha_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    patient_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone: Mapped[str | None] = mapped_column(Text, nullable=True)
+    aadhaar_abha_id: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (Index("ix_nexa_vault_masked_internal_id", "masked_internal_id"),)
 

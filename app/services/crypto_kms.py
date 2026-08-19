@@ -10,6 +10,8 @@ from app.security.audit_context import AuditDomain, current_audit_context
 
 import base64
 import asyncio
+import hashlib
+import inspect
 import os
 import uuid
 from abc import ABC, abstractmethod
@@ -20,15 +22,61 @@ from typing import Optional, Dict, List
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from sqlalchemy import select, update, delete, and_
+from sqlalchemy import and_, delete, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_kms_config, ConfigError, get_runtime_environment
 from app.models.dek_store import PatientDEKStore
 
 
+def _dek_lifecycle_lock_key(patient_id: str) -> int:
+    """Return a stable signed 64-bit PostgreSQL lifecycle-lock key."""
+    digest = hashlib.sha256(f"dek-lifecycle:{patient_id}".encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], byteorder="big", signed=True)
+
+
+def _is_postgresql_session(db: AsyncSession) -> bool:
+    getter = getattr(db, "get_bind", None)
+    if getter is None or not callable(getter):
+        return False
+    try:
+        bind = getter()
+        dialect = getattr(bind, "dialect", None)
+        return getattr(dialect, "name", None) == "postgresql"
+    except Exception:
+        return False
+
+
 def _is_dek_destroyed(row) -> bool:
     return getattr(row, "destroyed_at", None) is not None
+
+
+async def _acquire_dek_lifecycle_lock(db: AsyncSession, patient_id: str) -> None:
+    """Serialize all DEK lifecycle mutations for one patient on PostgreSQL."""
+    if not _is_postgresql_session(db):
+        return
+    lock_result = db.execute(
+        text("SELECT pg_advisory_xact_lock(:lock_key)"),
+        {"lock_key": _dek_lifecycle_lock_key(patient_id)},
+    )
+    if inspect.isawaitable(lock_result):
+        await lock_result
+
+
+async def _raise_if_destroyed_dek(
+    patient_id: str, patient_uuid: uuid.UUID, db: AsyncSession
+) -> None:
+    """Deny lifecycle mutation for any durable destroyed-key marker."""
+    result = await db.execute(
+        select(PatientDEKStore).where(
+            and_(
+                PatientDEKStore.patient_id == patient_uuid,
+                PatientDEKStore.destroyed_at.is_not(None),
+            )
+        )
+    )
+    if result.scalar_one_or_none() is not None:
+        raise PatientDataErased(patient_id)
 
 
 @dataclass(frozen=True)
@@ -124,6 +172,15 @@ class EncryptionProvider(ABC):
         """Generate a new Data Encryption Key for a patient."""
 
     @abstractmethod
+    async def ensure_active_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        """Ensure an active Data Encryption Key exists for patient in caller's transaction.
+
+        Stages and flushes any newly generated DEK row on ``db`` WITHOUT committing.
+        Raises PatientDataErased if the patient is erased.
+        Fails closed on erasure registry error.
+        """
+
+    @abstractmethod
     async def encrypt_field(
         self, patient_id: str, field_name: str, plaintext: str, db: AsyncSession
     ) -> EncryptedField:
@@ -160,8 +217,8 @@ class LocalEnvelopeProvider(EncryptionProvider):
     def __init__(self):
         self._kek: Optional[bytes] = None
         self._cache: Dict[
-            str, tuple[bytes, datetime]
-        ] = {}  # (patient_id, version) -> (plaintext_dek, cached_at)
+            str, tuple[bytes, str, datetime]
+        ] = {}  # (patient_id, version) -> (plaintext_dek, durable_row_fingerprint, cached_at)
         self._cache_max_size = 100
         self._cache_ttl_seconds = 300  # 5 minutes
 
@@ -221,32 +278,64 @@ class LocalEnvelopeProvider(EncryptionProvider):
             return self._derive_patient_kek(str(row.patient_id), epoch)
         return self._get_kek()
 
-    def _get_cached_dek(self, patient_id: str, version: int) -> Optional[bytes]:
+    @staticmethod
+    def _cache_identity(row: "PatientDEKStore") -> str:
+        """Fingerprint durable, non-plaintext DEK metadata for cache binding.
+
+        The fingerprint is internal cache bookkeeping only.  It is never
+        logged, persisted, or exposed outside this provider.
+        """
+        digest = hashlib.sha256()
+        parts = (
+            str(row.patient_id).encode("utf-8"),
+            str(row.dek_version).encode("ascii"),
+            bytes(row.wrapped_dek),
+            bytes(row.dek_iv),
+            str(row.wrapping_backend).encode("utf-8"),
+            str(row.wrapping_key_type).encode("utf-8"),
+            (
+                str(row.patient_wrapping_key_id).encode("utf-8")
+                if row.patient_wrapping_key_id is not None
+                else b""
+            ),
+        )
+        for part in parts:
+            digest.update(len(part).to_bytes(8, byteorder="big"))
+            digest.update(part)
+        return digest.hexdigest()
+
+    def _get_cached_dek(
+        self, patient_id: str, version: int, cache_identity: str
+    ) -> Optional[bytes]:
         cache_key = f"{patient_id}:{version}"
         if cache_key in self._cache:
-            dek, cached_at = self._cache[cache_key]
+            dek, cached_identity, cached_at = self._cache[cache_key]
             if (
                 datetime.now(timezone.utc) - cached_at
             ).total_seconds() < self._cache_ttl_seconds:
-                return dek
+                if cached_identity == cache_identity:
+                    return dek
+                del self._cache[cache_key]
             else:
                 del self._cache[cache_key]
         return None
 
-    def _set_cached_dek(self, patient_id: str, version: int, dek: bytes):
+    def _set_cached_dek(
+        self, patient_id: str, version: int, dek: bytes, row: "PatientDEKStore"
+    ) -> None:
         if len(self._cache) >= self._cache_max_size:
             self._cache.clear()
         cache_key = f"{patient_id}:{version}"
-        self._cache[cache_key] = (dek, datetime.now(timezone.utc))
+        self._cache[cache_key] = (
+            dek,
+            self._cache_identity(row),
+            datetime.now(timezone.utc),
+        )
 
     async def _get_plaintext_dek(
         self, patient_id: str, version: int, db: AsyncSession
     ) -> bytes:
         await self._check_erasure_registry(patient_id, db)
-
-        cached = self._get_cached_dek(patient_id, version)
-        if cached:
-            return cached
 
         stmt = select(PatientDEKStore).where(
             and_(
@@ -274,23 +363,53 @@ class LocalEnvelopeProvider(EncryptionProvider):
         if _is_dek_destroyed(row):
             raise PatientDataErased(patient_id)
 
+        cached = self._get_cached_dek(patient_id, version, self._cache_identity(row))
+        if cached:
+            return cached
+
         aesgcm = AESGCM(self._resolve_wrapping_key(row))
         try:
             plaintext_dek = aesgcm.decrypt(row.dek_iv, row.wrapped_dek, None)
         except Exception as exc:
             raise EncryptionError("Failed to unwrap DEK") from exc
 
-        self._set_cached_dek(patient_id, version, plaintext_dek)
+        self._set_cached_dek(patient_id, version, plaintext_dek, row)
         return plaintext_dek
 
-    async def generate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+    async def ensure_active_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        await self._check_erasure_registry(patient_id, db)
+        try:
+            pid = uuid.UUID(patient_id)
+        except (ValueError, TypeError) as exc:
+            raise EncryptionError(
+                f"Invalid patient_id for DEK provisioning: {patient_id}"
+            ) from exc
+
+        await _acquire_dek_lifecycle_lock(db, patient_id)
+
+        stmt = select(PatientDEKStore).where(
+            and_(
+                PatientDEKStore.patient_id == pid,
+                PatientDEKStore.is_active,
+            )
+        )
+        result = await db.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is not None:
+            if _is_dek_destroyed(row):
+                raise PatientDataErased(patient_id)
+            return DEKBundle(
+                patient_id=patient_id,
+                wrapped_dek=row.wrapped_dek,
+                dek_version=row.dek_version,
+                algorithm=row.algorithm,
+                created_at=row.created_at,
+            )
+
+        await _raise_if_destroyed_dek(patient_id, pid, db)
+
         plaintext_dek = os.urandom(32)
         dek_iv = os.urandom(12)
-        # DEFECT 7: new patients get a patient-specific wrapping key rather
-        # than the single global shared KEK. The epoch is random and stored
-        # only on this row -- deleting the row (destroy_dek) makes this
-        # exact key permanently unrederivable, which is what makes
-        # PATIENT_KEY_DESTROYED assurance truthful.
         patient_key_epoch = os.urandom(16).hex()
         wrapping_kek = self._derive_patient_kek(patient_id, patient_key_epoch)
         aesgcm = AESGCM(wrapping_kek)
@@ -298,7 +417,58 @@ class LocalEnvelopeProvider(EncryptionProvider):
 
         now = datetime.now(timezone.utc)
         row = PatientDEKStore(
-            patient_id=uuid.UUID(patient_id),
+            patient_id=pid,
+            wrapped_dek=wrapped_dek,
+            dek_iv=dek_iv,
+            dek_version=1,
+            algorithm="AES-256-GCM",
+            wrapping_backend="local-aes-gcm",
+            is_active=True,
+            created_at=now,
+            wrapping_key_type="patient",
+            patient_wrapping_key_id=patient_key_epoch,
+        )
+        db.add(row)
+        flush_fn = getattr(db, "flush", None)
+        if flush_fn is not None:
+            flush_res = flush_fn()
+            if inspect.isawaitable(flush_res):
+                await flush_res
+
+        # The staged row is authoritative in this transaction.  The cache is
+        # bound to its durable-row fingerprint and cannot be reused if a later
+        # transaction creates a different row with the same patient/version.
+        self._set_cached_dek(patient_id, 1, plaintext_dek, row)
+
+        return DEKBundle(
+            patient_id=patient_id,
+            wrapped_dek=wrapped_dek,
+            dek_version=1,
+            algorithm="AES-256-GCM",
+            created_at=now,
+        )
+
+    async def generate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        await self._check_erasure_registry(patient_id, db)
+        try:
+            pid = uuid.UUID(patient_id)
+        except (ValueError, TypeError) as exc:
+            raise EncryptionError(
+                f"Invalid patient_id for DEK provisioning: {patient_id}"
+            ) from exc
+
+        await _acquire_dek_lifecycle_lock(db, patient_id)
+        await _raise_if_destroyed_dek(patient_id, pid, db)
+
+        plaintext_dek = os.urandom(32)
+        dek_iv = os.urandom(12)
+        patient_key_epoch = os.urandom(16).hex()
+        wrapped_dek = AESGCM(
+            self._derive_patient_kek(patient_id, patient_key_epoch)
+        ).encrypt(dek_iv, plaintext_dek, None)
+        now = datetime.now(timezone.utc)
+        row = PatientDEKStore(
+            patient_id=pid,
             wrapped_dek=wrapped_dek,
             dek_iv=dek_iv,
             dek_version=1,
@@ -311,9 +481,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
         )
         db.add(row)
         await db.commit()
-
-        self._set_cached_dek(patient_id, 1, plaintext_dek)
-
+        self._set_cached_dek(patient_id, 1, plaintext_dek, row)
         return DEKBundle(
             patient_id=patient_id,
             wrapped_dek=wrapped_dek,
@@ -371,21 +539,21 @@ class LocalEnvelopeProvider(EncryptionProvider):
             raise EncryptionError(f"Failed to decrypt field {field_name}") from exc
 
     async def rotate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        await self._check_erasure_registry(patient_id, db)
         pid = uuid.UUID(patient_id)
-        # 1. Deactivate current active DEK
-        stmt = (
+        await _acquire_dek_lifecycle_lock(db, patient_id)
+        await _raise_if_destroyed_dek(patient_id, pid, db)
+        latest_result = await db.execute(
+            select(func.max(PatientDEKStore.dek_version)).where(
+                PatientDEKStore.patient_id == pid
+            )
+        )
+        new_version = (latest_result.scalar_one_or_none() or 0) + 1
+        await db.execute(
             update(PatientDEKStore)
             .where(and_(PatientDEKStore.patient_id == pid, PatientDEKStore.is_active))
             .values(is_active=False)
-            .returning(PatientDEKStore.dek_version)
         )
-        result = await db.execute(stmt)
-        old_version = result.scalar()
-        if old_version is None:
-            old_version = 0
-
-        # 2. Generate new DEK
-        new_version = old_version + 1
         plaintext_dek = os.urandom(32)
         dek_iv = os.urandom(12)
         patient_key_epoch = os.urandom(16).hex()
@@ -408,7 +576,7 @@ class LocalEnvelopeProvider(EncryptionProvider):
         db.add(new_row)
         await db.commit()
 
-        self._set_cached_dek(patient_id, new_version, plaintext_dek)
+        self._set_cached_dek(patient_id, new_version, plaintext_dek, new_row)
 
         return DEKBundle(
             patient_id=patient_id,
@@ -626,9 +794,6 @@ class AWSKMSProvider(LocalEnvelopeProvider):
     ) -> bytes:
         await self._check_erasure_registry(patient_id, db)
 
-        cached = self._get_cached_dek(patient_id, version)
-        if cached:
-            return cached
         result = await db.execute(
             select(PatientDEKStore).where(
                 and_(
@@ -649,6 +814,9 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             return await super()._get_plaintext_dek(patient_id, version, db)
         if backend != "aws-kms":
             raise EncryptionError("Unknown DEK wrapping backend")
+        cached = self._get_cached_dek(patient_id, version, self._cache_identity(row))
+        if cached:
+            return cached
         try:
             response = await asyncio.to_thread(
                 self._kms.decrypt,
@@ -663,7 +831,7 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             plaintext = bytes(response["Plaintext"])
         except Exception as exc:
             raise EncryptionError("KMS DEK unwrap failed") from exc
-        self._set_cached_dek(patient_id, version, plaintext)
+        self._set_cached_dek(patient_id, version, plaintext, row)
         return plaintext
 
     async def _persist_generated_dek(
@@ -699,13 +867,71 @@ class AWSKMSProvider(LocalEnvelopeProvider):
             created_at=now,
         )
 
+    async def ensure_active_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        await self._check_erasure_registry(patient_id, db)
+        try:
+            pid = uuid.UUID(patient_id)
+        except (ValueError, TypeError) as exc:
+            raise EncryptionError(
+                f"Invalid patient_id for DEK provisioning: {patient_id}"
+            ) from exc
+
+        await _acquire_dek_lifecycle_lock(db, patient_id)
+
+        stmt = select(PatientDEKStore).where(
+            and_(
+                PatientDEKStore.patient_id == pid,
+                PatientDEKStore.is_active,
+            )
+        )
+        result = await db.execute(stmt)
+        row = result.scalar_one_or_none()
+        if row is not None:
+            if _is_dek_destroyed(row):
+                raise PatientDataErased(patient_id)
+            return DEKBundle(
+                patient_id=patient_id,
+                wrapped_dek=row.wrapped_dek,
+                dek_version=row.dek_version,
+                algorithm=row.algorithm,
+                created_at=row.created_at,
+            )
+
+        await _raise_if_destroyed_dek(patient_id, pid, db)
+        if self._patient_specific_keys_enabled():
+            raise TransactionalPatientSpecificKMSProvisioningUnsupported()
+
+        bundle = await self._persist_generated_dek(patient_id, 1, db)
+        flush_fn = getattr(db, "flush", None)
+        if flush_fn is not None:
+            flush_res = flush_fn()
+            if inspect.isawaitable(flush_res):
+                await flush_res
+        return bundle
+
     async def generate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        await self._check_erasure_registry(patient_id, db)
+        try:
+            pid = uuid.UUID(patient_id)
+        except (ValueError, TypeError) as exc:
+            raise EncryptionError(
+                f"Invalid patient_id for DEK provisioning: {patient_id}"
+            ) from exc
+
+        await _acquire_dek_lifecycle_lock(db, patient_id)
+        await _raise_if_destroyed_dek(patient_id, pid, db)
+        # Preserve legacy behavior: this path may create a patient-specific
+        # KMS key and commits immediately.  The transactional ensure path is
+        # deliberately stricter because a database rollback cannot undo AWS.
         bundle = await self._persist_generated_dek(patient_id, 1, db)
         await db.commit()
         return bundle
 
     async def rotate_dek(self, patient_id: str, db: AsyncSession) -> DEKBundle:
+        await self._check_erasure_registry(patient_id, db)
         pid = uuid.UUID(patient_id)
+        await _acquire_dek_lifecycle_lock(db, patient_id)
+        await _raise_if_destroyed_dek(patient_id, pid, db)
         result = await db.execute(
             select(PatientDEKStore.dek_version)
             .where(PatientDEKStore.patient_id == pid)
@@ -899,6 +1125,13 @@ class AWSKMSProvider(LocalEnvelopeProvider):
 
 class EncryptionError(RuntimeError):
     """Raised when encryption/decryption fails."""
+
+
+class TransactionalPatientSpecificKMSProvisioningUnsupported(EncryptionError):
+    """Raised before an uncommitted transaction could orphan a patient CMK."""
+
+    def __init__(self) -> None:
+        super().__init__("TRANSACTIONAL_PATIENT_SPECIFIC_KMS_PROVISIONING_UNSUPPORTED")
 
 
 class PatientDataErased(EncryptionError):

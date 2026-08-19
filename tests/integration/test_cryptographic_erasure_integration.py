@@ -91,6 +91,9 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
     db.rollback = AsyncMock()
     db.added_rows = []
     db.add = MagicMock(side_effect=lambda obj: db.added_rows.append(obj))
+    no_destroyed = MagicMock()
+    no_destroyed.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=no_destroyed)
 
     await kms.generate_dek(patient_id, db)
     dek_row = db.added_rows[0]
@@ -234,7 +237,9 @@ async def test_clinical_data_persists_after_pii_erasure(monkeypatch):
     db = MagicMock()
     db.commit = AsyncMock()
     db.flush = AsyncMock()
-    db.execute = AsyncMock()
+    no_destroyed = MagicMock()
+    no_destroyed.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=no_destroyed)
 
     kms = LocalEnvelopeProvider()
     await kms.generate_dek(patient_id, db)

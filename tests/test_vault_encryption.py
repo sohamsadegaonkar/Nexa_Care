@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.sharding import encrypt_vault_payload, decrypt_vault_field
 from app.services.crypto_kms import LocalEnvelopeProvider
-from app.models.dek_store import PatientDEKStore
 from app.models.shards import NexaVault
 
 
@@ -19,6 +18,7 @@ from app.models.shards import NexaVault
 def mock_db():
     db = AsyncMock(spec=AsyncSession)
     mock_res = MagicMock()
+    mock_res.scalar_one_or_none.return_value = None
     db.execute.return_value = mock_res
     return db
 
@@ -43,10 +43,8 @@ async def test_vault_encrypt_decrypt_roundtrip(env_setup, mock_db):
     # Generate DEK
     await kms.generate_dek(patient_id, mock_db)
 
-    # Mock active DEK lookup
-    mock_row = MagicMock(spec=PatientDEKStore)
-    mock_row.dek_version = 1
-    mock_row.destroyed_at = None
+    # The new authoritative lookup must return the actual staged DEK row.
+    mock_row = mock_db.add.call_args.args[0]
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
     mock_db.scalar = AsyncMock(return_value=1)
 
@@ -80,10 +78,8 @@ async def test_auto_migration_on_read(env_setup, mock_db):
     # Legacy Fernet token (starts with gAAAAA)
     legacy_token = "gAAAAABm..."
 
-    # Mock existing DEK lookup for re-encryption
-    mock_row = MagicMock(spec=PatientDEKStore)
-    mock_row.dek_version = 1
-    mock_row.destroyed_at = None
+    # The new authoritative lookup must return the actual staged DEK row.
+    mock_row = mock_db.add.call_args.args[0]
     mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
     mock_db.scalar = AsyncMock(return_value=1)
 
@@ -153,3 +149,66 @@ async def test_batch_migration_idempotent(env_setup, mock_db):
     )
     await migrate_row(row_migrated, mock_db, kms)
     assert not mock_db.execute.called  # No update should be triggered
+
+
+def test_nexa_vault_orm_columns_are_text():
+    from sqlalchemy import Text
+
+    columns = NexaVault.__table__.columns
+    assert isinstance(columns["patient_name"].type, Text)
+    assert isinstance(columns["phone"].type, Text)
+    assert isinstance(columns["aadhaar_abha_id"].type, Text)
+
+
+@pytest.mark.asyncio
+async def test_vault_ciphertext_lengths_exceed_historical_varchar(env_setup, mock_db):
+    kms = LocalEnvelopeProvider()
+    patient_id = str(uuid.uuid4())
+
+    await kms.generate_dek(patient_id, mock_db)
+
+    mock_row = mock_db.add.call_args.args[0]
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_row
+
+    # Test representative inputs
+    indian_phone = "+919876543210"  # 13 chars
+    abha_address = "patient.name12345678@abdm"  # 25 chars
+    long_name = (
+        "Dr. Venkatanarasimharajuvaripeta Krishnamurthy Ramasubramanian"  # 62 chars
+    )
+
+    payload = {
+        "patient_name": long_name,
+        "phone": indian_phone,
+        "aadhaar_abha_id": abha_address,
+    }
+
+    encrypted = await encrypt_vault_payload(payload, patient_id, mock_db, kms)
+
+    # 1. Indian phone serialized ciphertext length: ~58 chars (exceeds historical VARCHAR(32))
+    phone_ct = encrypted["phone"]
+    assert len(phone_ct) > 32
+    assert len(phone_ct) == 58
+
+    # 2. ABHA address serialized ciphertext length: ~74 chars (exceeds historical VARCHAR(64))
+    abha_ct = encrypted["aadhaar_abha_id"]
+    assert len(abha_ct) > 64
+    assert len(abha_ct) == 74
+
+    # 3. Long name serialized ciphertext length: ~122 chars
+    name_ct = encrypted["patient_name"]
+    assert len(name_ct) == 122
+
+    # 4. Decrypt roundtrip
+    dec_phone = await decrypt_vault_field(patient_id, "phone", phone_ct, mock_db, kms)
+    assert dec_phone == indian_phone
+
+    dec_abha = await decrypt_vault_field(
+        patient_id, "aadhaar_abha_id", abha_ct, mock_db, kms
+    )
+    assert dec_abha == abha_address
+
+    dec_name = await decrypt_vault_field(
+        patient_id, "patient_name", name_ct, mock_db, kms
+    )
+    assert dec_name == long_name

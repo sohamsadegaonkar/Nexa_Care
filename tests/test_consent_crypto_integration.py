@@ -412,7 +412,10 @@ async def test_dek_rotation(mock_db, mock_redis, kms_provider):
     # Mocking rotate_dek behavior
     async def db_exec_rotate(stmt):
         res = MagicMock()
-        res.scalar.return_value = 1  # old version
+        if "destroyed_at IS NOT NULL" in str(stmt):
+            res.scalar_one_or_none.return_value = None
+        elif "max(" in str(stmt):
+            res.scalar_one_or_none.return_value = 1  # old version
         return res
 
     mock_db.execute.side_effect = db_exec_rotate
