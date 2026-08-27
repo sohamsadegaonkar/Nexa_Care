@@ -19,15 +19,15 @@ Represents an active or resolved request from a healthcare provider to access a 
 | Field Name | Type | Nullable | Description | Read Ownership | Write Ownership |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `request_id` | UUID | No | Unique identifier for the consent request challenge | Squad 1 (Auth), Squad 2 (Consent) | Squad 2 (Consent Engine) |
-| `patient_id` | UUID | No | Target patient identifier | Squad 2, Squad 3 (Mobile App) | Squad 2 (Consent Engine) |
-| `provider_id` | UUID | No | Requesting physician or steward ID | Squad 1, Squad 2 | Squad 2 (Consent Engine) |
+| `patient_id` | UUID | No | Server-derived target identifier; never caller-selected for routine creation | Squad 2, Squad 3 (Mobile App) | Squad 2 (Consent Engine) |
+| `provider_id` | UUID | No | Server-derived authenticated provider identifier | Squad 1, Squad 2 | Squad 2 (Consent Engine) |
 | `hospital_id` | UUID | No | Healthcare facility ID where request originated | Squad 1, Squad 2 | Squad 2 (Consent Engine) |
-| `purpose` | String | No | Clinical justification (`routine_checkup`, `specialist_consult`, `emergency`, `ai_ingestion`) | Squad 2, Squad 9 (Audit) | Squad 2 (Consent Engine) |
-| `scope` | String | No | Requested data scope (`clinical` or `full`) | Squad 2, Squad 6 (Sharding) | Squad 2 (Consent Engine) |
+| `purpose` | String | No | Requested purpose; document processing has its own required pairing | Squad 2, Squad 9 (Audit) | Squad 2 (Consent Engine) |
+| `scope` | String | No | One scope string: `clinical`, `full`, or `documents` (documents only for document processing) | Squad 2, Squad 6 (Sharding) | Squad 2 (Consent Engine) |
 | `challenge_nonce`| String | No | 32-byte hex high-entropy cryptographic challenge | Squad 2, Squad 3 | Squad 2 (Consent Engine) |
-| `status` | String | No | State: `pending`, `approved`, `denied`, `timeout` | Squad 2, Squad 3 | Squad 2 (Consent Engine) |
+| `status` | String | No | State includes audit-gated `pending_audit`, then `pending`, `approved`, `denied`, or expiry | Squad 2, Squad 3 | Squad 2 (Consent Engine) |
 | `created_at` | DateTime | No | Timestamp of request initiation | All Squads | Squad 2 (Consent Engine) |
-| `expires_at` | DateTime | No | Expiration timestamp (default +90 seconds) | Squad 2, Squad 3 | Squad 2 (Consent Engine) |
+| `expires_at` | DateTime | No | Challenge expiration timestamp (120 seconds) | Squad 2, Squad 3 | Squad 2 (Consent Engine) |
 
 ---
 
@@ -43,7 +43,7 @@ Represents the cryptographic proof submitted by the patient's mobile device to a
 | `device_id` | UUID | No | Enrolled device hardware identifier | Squad 2, Squad 3 | Squad 3 (Mobile App / Client) |
 | `decision` | String | No | Patient resolution (`approved` or `denied`) | Squad 2, Squad 9 | Squad 3 (Mobile App) |
 | `signature` | String | No | Base64 DER-encoded ECDSA P-256 signature | Squad 2 (Verifier), Squad 9 | Squad 3 (Mobile App) |
-| `signed_payload_hash` | String | No | SHA-256 hash of exact canonical pipe-delimited bytes: `<request_id>\|<patient_id>|<provider_id>|<challenge_nonce>|<decision>|<requested_scope>|<access_duration_seconds>|<expires_at>` | Squad 2, Squad 9 | Squad 2 (Consent Engine) |
+| `signed_payload_hash` | String | No | SHA-256 hash of canonical UTF-8 JSON (`sort_keys=true`, compact separators, `ensure_ascii=false`) covering access duration, nonce, decision, device, issued/expiry time, patient/provider, purpose, request, scope, and `nexa-consent-v2` | Squad 2, Squad 9 | Squad 2 (Consent Engine) |
 | `verified` | Boolean | No | Verification result against registered device public key | Squad 2, Squad 9 | Squad 2 (Biometric Verifier) |
 | `responded_at` | DateTime | No | Timestamp of signature reception | Squad 2, Squad 9 | Squad 2 (Consent Engine) |
 
@@ -51,7 +51,7 @@ Represents the cryptographic proof submitted by the patient's mobile device to a
 
 ## 3. DeviceKey
 
-Represents a patient's enrolled hardware cryptographic public key bound to their mobile device.
+Represents a patient's enrolled ECDSA P-256 public key bound to their mobile device.
 
 | Field Name | Type | Nullable | Description | Read Ownership | Write Ownership |
 | :--- | :--- | :--- | :--- | :--- | :--- |

@@ -60,8 +60,8 @@ yarn native     # Expo dev server
 > references below are historical and are not runnable instructions.
 
 - **Provider login** → `POST /api/v2/auth/login`. If MFA is enabled, the response includes an `mfa_token`; complete login with `POST /api/v2/auth/mfa/verify`.
-- **NFC scan** → `POST /api/v2/nfc/resolve` returns a masked patient ID.
-- **Routine consent** → `POST /api/v2/consent/request` accepts an expiring opaque `discovery_handle` and creates a patient approval challenge. Direct routine issuers are retired.
+- **NFC scan** → `POST /api/v2/nfc/resolve` returns only an opaque `discovery_handle` and `expires_at`; it never returns a patient identifier, redirect result, or clinical data.
+- **Routine consent** → `POST /api/v2/consent/request` accepts the expiring, memory-only `discovery_handle` and creates a 120-second patient approval challenge. After approval, the provider calls `POST /api/v2/consent/{request_id}/claim-access` once to receive the patient ID and scoped capability. Direct routine issuers are retired.
 - **Patient record** → `GET /api/v2/patient/{patient_id}/record` with `X-Consent-Token` and `X-Consent-Purpose` returns a scoped record.
 - **Emergency break-glass** → `POST /api/v2/consent/break-glass/issue` issues a short-lived, audited emergency token.
 - **Patient self-consent** (v1) → `POST /request-consent` and `GET /view-record/*` now also run through `ConsentEngine` with a synthetic `patient:self` actor.

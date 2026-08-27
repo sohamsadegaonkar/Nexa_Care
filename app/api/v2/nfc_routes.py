@@ -1,8 +1,9 @@
 """NFC card resolution routes for Nexa Care V2.
 
-Resolves a physical card UID to a masked patient identifier for the
-provider-facing scanner flow. No clinical data is returned here; the
-caller still needs a separate consent grant to read the patient record.
+Resolves a physical card UID to an opaque, short-lived discovery capability
+for the provider-facing scanner flow. No patient identifier, redirect detail,
+or clinical data is returned; the caller still needs patient approval and a
+separate one-time access claim before reading a patient record.
 """
 
 from __future__ import annotations
@@ -69,8 +70,9 @@ async def resolve_nfc_card(
     provider: ProviderContext = Depends(require_role("clinician")),
     db: AsyncSession = Depends(get_db_session),
 ) -> NFCResolveResponse:
-    """Resolve a card UID to the masked patient ID it is bound to.
+    """Resolve a card UID to an opaque discovery capability.
 
+    The handle is disclosed only after the terminal audit event succeeds.
     Fail-closed: unknown, lost, or revoked cards raise 403, and any
     unexpected resolution error raises 503.
     """

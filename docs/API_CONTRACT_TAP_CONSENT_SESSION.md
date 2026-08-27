@@ -1,147 +1,95 @@
-# Nexa Care v1.0 — Tap → Consent → Session API Contract
+# Nexa Care — Tap, Consent, and Access-Claim Contract
 
-## Overview
-This document defines the API flow from NFC card tap to clinical session creation.
+This document is the canonical routine provider-access contract. It supersedes
+older automatic-token, push/respond, and biometric/verify descriptions.
 
----
+## 1. NFC discovery
 
-## 1. NFC Card Tap (Layer 1 – Card Authentication)
+`POST /api/v2/nfc/resolve`
 
-**Endpoint**: `POST /api/v2/nfc/resolve`
-
-**Request**:
 ```json
-{
-  "card_uid": "string"
-}
+{ "card_uid": "..." }
 ```
 
-**Success Response** (200):
+Success returns only:
+
 ```json
-{
-  "discovery_handle": "opaque string",
-  "expires_at": "datetime"
-}
+{ "discovery_handle": "...", "expires_at": "..." }
 ```
 
-The response contains no patient UUID or record data. Keep the handle in
-memory only and pass it to the consent request flow.
+The 256-bit CSPRNG discovery capability has a 120-second TTL, is bound to the
+authenticated provider, hospital, and session, and is single-use. It is staged
+inert until the terminal audit event succeeds. It does not disclose a patient
+UUID, public ID, masked ID, redirect chain, or clinical data.
 
----
+## 2. Create an approval challenge
 
-## 2. Consent Assurance Evaluation (Layer 2)
-
-> Current contract: discovery creates a patient approval challenge. There is no
-> standard auto-approval or provider-side token issuance; the patient must
-> approve in the patient application before the provider can claim access.
-
-After successful card authentication, the system evaluates the patient’s `consent_assurance_policy`.
-
-### 2.1 Standard Flow
-- Automatically proceeds if policy is `STANDARD`
-- Issues 30-minute consent token
-
-### 2.2 Push Approval Flow
-- Sends real-time notification to patient app
-- Endpoint for patient response:
-  `POST /api/v2/consent/push/respond`
-
-### 2.3 Biometric Confirmation
-- Requires mobile app confirmation
-- Endpoint: `POST /api/v2/consent/biometric/verify`
-
----
-
-## 3. Request Consent
-
-**Endpoint**: `POST /api/v2/consent/request`
-
-**Request**:
-```json
-{
-  "discovery_handle": "opaque string",
-  "scope": ["record:read"],
-  "purpose": "ROUTINE_CHECKUP"
-}
-```
-
-**Response** (201):
-```json
-{
-  "request_id": "string",
-  "status": "pending"
-}
-```
-
----
-
-## 4. Break-Glass Emergency Access
-
-**Endpoint**: `POST /api/v2/consent/break-glass/issue`
-
-**Request**:
-```json
-{
-  "patient_uuid": "uuid",
-  "hospital_id": "string",
-  "clinician_id": "string",
-  "reason": "UNCONSCIOUS",
-  "justification": "Patient is unconscious and requires immediate care"
-}
-```
-
-**Response**:
-```json
-{
-  "consent_token": "string",
-  "consent_assurance": "bypassed_emergency",
-  "expires_at": "2026-07-04T09:45:00Z"
-}
-```
-
----
-
-## 5. Fetch Patient Record (with Consent)
-
-**Endpoint**: `GET /api/v2/patient/{patient_uuid}/record`
-
-**Headers**:
-```
-X-Consent-Token: <token>
-X-Consent-Purpose: ROUTINE_CHECKUP
-```
-
-**Response**:
-```json
-{
-  "demographics": { ... },
-  "clinical": { ... }
-}
-```
-
----
-
-## 6. Session Revalidation (Background)
-
-Every 2–5 minutes the terminal should call:
-
-`POST /api/v2/session/validate`
+`POST /api/v2/consent/request`
 
 ```json
 {
-  "consent_token": "string"
+  "discovery_handle": "...",
+  "purpose": "routine_checkup",
+  "scope": "clinical",
+  "access_duration_seconds": 900
 }
 ```
 
----
+`scope` is one string: `clinical`, `full`, or `documents`. Patient and
+provider identities are server-derived; callers do not select them in this
+request. The challenge has a 120-second TTL, begins in Redis as
+`pending_audit`, emits `CONSENT_REQUEST_CREATED`, and is atomically
+promoted to `pending` only after that audit succeeds. Notification is
+attempted only after promotion.
 
-## Error Codes
-- `CONSENT_ASSURANCE_FAILED`
-- `PUSH_TIMEOUT`
-- `CARD_REVOKED`
-- `EMERGENCY_BYPASS_DENIED`
-- `SESSION_EXPIRED`
+## 3. Patient signed approval
 
----
+`POST /api/v2/consent/approve-signed` receives
+`request_id`, `patient_id`, `decision`, `challenge_nonce`,
+`signature`, and `device_id`. The patient ID is checked against the
+authenticated patient and challenge; it is not provider-selected authority.
 
-**Status**: Ready for implementation in FastAPI.
+The signed bytes are UTF-8 canonical JSON produced with
+`sort_keys=true`, `separators=(",", ":")`, and `ensure_ascii=false`.
+The fields are `access_duration`, `challenge_nonce`, `decision`,
+`device_id`, `expires_at`, `issued_at`, `patient_id`,
+`protocol_version`, `provider_id`, `purpose`, `request_id`, and
+`scope`; `protocol_version` is `nexa-consent-v2`.
+
+The backend verifies ECDSA P-256 over SHA-256 of these bytes using the active,
+non-revoked `PatientDeviceKey` selected by `device_id`. A patient DEK is
+not involved. The current client private key is protected by platform
+SecureStore; hardware-non-exportability is not yet proven.
+
+## 4. Provider status, claim, and record use
+
+The provider polls `GET /api/v2/consent/status/{request_id}`. Approval does
+not return a provider token. The provider instead calls:
+
+`POST /api/v2/consent/{request_id}/claim-access`
+
+The single successful claim returns `patient_id`, `consent_token`,
+`purpose`, `scope`, and `expires_at`. A request is claimable at most once.
+The provider learns and uses the patient ID only at this post-approval
+boundary, then supplies the scoped capability to the relevant record endpoint.
+
+## 5. Retired and emergency paths
+
+`POST /api/v2/consent/grant` and
+`POST /api/v2/consent/routine/issue` return
+`410 ROUTINE_DIRECT_ISSUANCE_RETIRED`; neither is a recovery or reissue path.
+
+Break-glass is a separate emergency path. It requires recent provider MFA, a
+controlled reason code, and a justification; the server approves a
+minimum-necessary scope for 15 minutes, audits the event, and attempts patient
+notification. It does not follow discovery and does not imply full access.
+
+## 6. Operational invariants
+
+- Discovery capabilities and consent challenges are inert before audit.
+- Cleanup failure can leave bytes, never authority.
+- UUID possession alone cannot authorize routine access.
+- One discovery handle creates at most one challenge; one approved request has
+  at most one claim.
+- Production cutover additionally requires legacy routine-capability purge or
+  expiry before this invariant is declared operationally live.

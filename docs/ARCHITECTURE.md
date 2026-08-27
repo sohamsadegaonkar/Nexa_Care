@@ -12,7 +12,7 @@ The system follows a privacy-first, zero-trust retrieval architecture. Vertical 
 ```mermaid
 graph TD
     subgraph Clients["Frontend Clients (Tamagui / Solito Monorepo)"]
-        PatApp["Patient Mobile App (Expo / React Native)<br/>Secure Enclave Signing"]
+        PatApp["Patient Mobile App (Expo / React Native)<br/>SecureStore-protected P-256 signing"]
         DocWeb["Provider Web Dashboard (Next.js)<br/>Scoped Clinical & PII Views"]
     end
 
