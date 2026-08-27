@@ -167,6 +167,7 @@ async def test_real_redis_consent_pending_audit_is_inert_after_downstream_failur
     provider.hospital.display_name = "Test hospital"
     discovery = PatientDiscoveryService(db=None, redis=redis)
     keys: list[str] = []
+    consent_keys_before = set(await redis.keys("consent_request:*"))
 
     async def resolve_patient_id(_self, patient_id):
         assert patient_id == patient.patient_uuid
@@ -225,11 +226,12 @@ async def test_real_redis_consent_pending_audit_is_inert_after_downstream_failur
             )
         assert audit_failure.value.status_code == 503
         assert not background_tasks.tasks
-        consent_keys = await redis.keys("consent_request:*")
+        consent_keys = set(await redis.keys("consent_request:*")) - consent_keys_before
         assert len(consent_keys) == 1
-        keys.extend(consent_keys)
-        request_id = consent_keys[0].removeprefix("consent_request:")
-        stored = json.loads(await redis.get(consent_keys[0]))
+        request_key = consent_keys.pop()
+        keys.append(request_key)
+        request_id = request_key.removeprefix("consent_request:")
+        stored = json.loads(await redis.get(request_key))
         assert stored["status"] == "pending_audit"
 
         monkeypatch.setattr(consent_routes, "get_redis_client", lambda: redis)
@@ -287,7 +289,9 @@ async def test_real_redis_consent_pending_audit_is_inert_after_downstream_failur
             )
         assert promotion_failure.value.status_code == 503
         assert not promotion_tasks.tasks
-        promotion_keys = await redis.keys("consent_request:*")
+        promotion_keys = (
+            set(await redis.keys("consent_request:*")) - consent_keys_before
+        )
         keys.extend(key for key in promotion_keys if key not in keys)
         promotion_states = [
             json.loads(await redis.get(key))["status"] for key in promotion_keys
@@ -313,6 +317,7 @@ async def test_real_redis_one_discovery_handle_creates_one_challenge(
     provider.provider.display_name = "Test clinician"
     provider.hospital.display_name = "Test hospital"
     discovery = PatientDiscoveryService(db=None, redis=redis)
+    consent_keys_before = set(await redis.keys("consent_request:*"))
 
     async def resolve_patient_id(_self, patient_id):
         assert patient_id == patient.patient_uuid
@@ -371,9 +376,12 @@ async def test_real_redis_one_discovery_handle_creates_one_challenge(
         assert len(successes) == 1
         assert len(failures) == 3
         assert all(failure.status_code == 403 for failure in failures)
-        assert len(await redis.keys("consent_request:*")) == 1
+        created_keys = set(await redis.keys("consent_request:*")) - consent_keys_before
+        assert len(created_keys) == 1
     finally:
-        cleanup_keys = await redis.keys("consent_request:*")
+        cleanup_keys = list(
+            set(await redis.keys("consent_request:*")) - consent_keys_before
+        )
         if cleanup_keys:
             await redis.delete(*cleanup_keys)
         await redis.delete(_handle_key(handle.value))
@@ -384,7 +392,7 @@ async def test_real_redis_one_discovery_handle_creates_one_challenge(
 async def test_real_redis_approved_access_claim_is_exactly_once(monkeypatch) -> None:
     redis = Redis.from_url(_redis_url(), decode_responses=True)
     request = {
-        "request_id": "gate-a-claim-request",
+        "request_id": f"gate-a-claim-request-{uuid4()}",
         "provider_id": "provider-a",
         "hospital_id": "hospital-a",
         "patient_id": "patient-a",
@@ -435,7 +443,8 @@ async def test_real_redis_approved_access_claim_is_exactly_once(monkeypatch) -> 
             is None
         )
     finally:
-        cleanup_keys = await redis.keys("consent_access:*")
+        cleanup_keys = await redis.keys(f"consent_access:claim:{request['request_id']}")
+        cleanup_keys.extend(await redis.keys("consent_access:capability:*"))
         cleanup_keys.append(request_key)
         await redis.delete(*cleanup_keys)
         await redis.close(close_connection_pool=True)

@@ -171,6 +171,35 @@ class FakeRedis:
 
         keys = list(args[:numkeys])
         argv = list(args[numkeys:])
+        if numkeys == 1 and "PENDING_AUDIT" in script and "ACTIVE" in script:
+            key = keys[0]
+            raw = self.data.get(key)
+            if not raw:
+                return 0
+            payload = json.loads(raw)
+            if payload.get("state") != "PENDING_AUDIT" or await self.ttl(key) <= 0:
+                return 0
+            payload["state"] = "ACTIVE"
+            self.data[key] = json.dumps(payload)
+            return 1
+        if numkeys == 1 and "data.state ~= 'ACTIVE'" in script:
+            key = keys[0]
+            raw = self.data.get(key)
+            if not raw or json.loads(raw).get("state") != "ACTIVE":
+                return None
+            await self.delete(key)
+            return raw
+        if numkeys == 1 and "pending_audit" in script and "pending" in script:
+            key = keys[0]
+            raw = self.data.get(key)
+            if not raw:
+                return 0
+            payload = json.loads(raw)
+            if payload.get("status") != "pending_audit":
+                return 0
+            payload["status"] = "pending"
+            self.data[key] = json.dumps(payload)
+            return 1
         if numkeys == 1 and "DEL" in script:  # compare-and-delete lock release
             key = keys[0]
             if self.data.get(key) == argv[0]:
@@ -280,6 +309,17 @@ class FakeSyncRedis:
 
         keys = list(args[:numkeys])
         argv = list(args[numkeys:])
+        if numkeys == 1 and "pending_audit" in script and "pending" in script:
+            key = keys[0]
+            raw = self._a.data.get(key)
+            if not raw:
+                return 0
+            payload = json.loads(raw)
+            if payload.get("status") != "pending_audit":
+                return 0
+            payload["status"] = "pending"
+            self._a.data[key] = json.dumps(payload)
+            return 1
         if numkeys == 1:
             key = keys[0]
             count = int(self._a.data.get(key, 0)) + 1

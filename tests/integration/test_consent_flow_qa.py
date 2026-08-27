@@ -27,7 +27,11 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from app.services.signed_approval_verifier import canonical_signed_approval_payload
 
-from app.core.dependencies import get_current_provider, get_scoped_session
+from app.core.dependencies import (
+    get_current_provider,
+    get_provider_context,
+    get_scoped_session,
+)
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -36,6 +40,7 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.models.provider import AffiliationType
+from app.services.patient_discovery_service import PatientDiscoveryService
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
 
@@ -260,17 +265,27 @@ def _apply_overrides(overrides, provider, patient_id):
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    overrides[get_provider_context] = _provider_dep
+    app.dependency_overrides[get_provider_context] = _provider_dep
     overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
 
-def _patch_stack(fake_redis, fake_sync_redis):
+def _patch_stack(fake_redis, fake_sync_redis, patient_id):
     """Return an ExitStack with all Redis/Supabase/audit patches applied."""
     stack = ExitStack()
     stack.enter_context(
         patch(
             "app.api.v2.device_routes.claim_device_enrollment_token",
             new=AsyncMock(return_value="claim-1"),
+        )
+    )
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    stack.enter_context(
+        patch.object(
+            PatientDiscoveryService,
+            "resolve_patient_id",
+            new=AsyncMock(return_value=(patient, False)),
         )
     )
     stack.enter_context(
@@ -287,6 +302,11 @@ def _patch_stack(fake_redis, fake_sync_redis):
     stack.enter_context(
         patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis
         )
     )
     stack.enter_context(
@@ -362,6 +382,24 @@ def _patch_stack(fake_redis, fake_sync_redis):
     return stack
 
 
+def _active_discovery_handle(fake_redis, provider, patient_id):
+    """Create the production-shaped, one-time discovery input for a request."""
+
+    service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    handle = asyncio.run(
+        service.issue_handle(
+            patient=patient,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+            identifier_type="TEST_DISCOVERY",
+        )
+    )
+    assert asyncio.run(service.activate_handle(raw_handle=handle.value))
+    return handle.value
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FULL CONSENT FLOW INTEGRATION TESTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -394,7 +432,10 @@ class TestConsentFlowIntegration:
 
         _apply_overrides(overrides, provider, patient_id)
 
-        with _patch_stack(fake_redis, fake_sync_redis):
+        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+            discovery_handle = _active_discovery_handle(
+                fake_redis, provider, patient_id
+            )
             # ── Step 1: Enroll device ────────────────────────────────────
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
@@ -428,7 +469,7 @@ class TestConsentFlowIntegration:
             request_resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 900,
@@ -440,13 +481,12 @@ class TestConsentFlowIntegration:
             request_data = request_resp.json()
             assert request_data["status"] == "pending"
             request_id = request_data["request_id"]
-            challenge_nonce = request_data["challenge_nonce"]
-            assert challenge_nonce is not None
 
             # ── Step 3: Build signing input and sign with REAL P-256 key ─
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
             assert challenge_raw is not None, "Challenge not stored in Redis"
             challenge_data = json.loads(challenge_raw)
+            challenge_nonce = challenge_data["challenge_nonce"]
             expires_at = challenge_data["expires_at"]
             access_duration = challenge_data["access_duration"]
 
@@ -535,7 +575,10 @@ class TestConsentFlowIntegration:
 
         _apply_overrides(overrides, provider, patient_id)
 
-        with _patch_stack(fake_redis, fake_sync_redis):
+        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+            discovery_handle = _active_discovery_handle(
+                fake_redis, provider, patient_id
+            )
             # Enroll
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
@@ -566,7 +609,7 @@ class TestConsentFlowIntegration:
             request_resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 900,
@@ -574,7 +617,9 @@ class TestConsentFlowIntegration:
             )
             assert request_resp.status_code == 201
             request_id = request_resp.json()["request_id"]
-            challenge_nonce = request_resp.json()["challenge_nonce"]
+            challenge_nonce = json.loads(
+                fake_sync_redis.get(f"consent_request:{request_id}")
+            )["challenge_nonce"]
 
             # Sign with "denied" decision
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
@@ -637,7 +682,10 @@ class TestConsentFlowIntegration:
 
         _apply_overrides(overrides, provider, patient_id)
 
-        with _patch_stack(fake_redis, fake_sync_redis):
+        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+            discovery_handle = _active_discovery_handle(
+                fake_redis, provider, patient_id
+            )
             # Enroll with key A
             device_row = _mock_device_row(device_id, patient_id, enrolled_der_bytes)
             _reset_mock_db(mock_db)
@@ -668,7 +716,7 @@ class TestConsentFlowIntegration:
             request_resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 900,
@@ -676,7 +724,9 @@ class TestConsentFlowIntegration:
             )
             assert request_resp.status_code == 201
             request_id = request_resp.json()["request_id"]
-            challenge_nonce = request_resp.json()["challenge_nonce"]
+            challenge_nonce = json.loads(
+                fake_sync_redis.get(f"consent_request:{request_id}")
+            )["challenge_nonce"]
 
             # Sign with WRONG key (key B)
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
@@ -732,7 +782,10 @@ class TestConsentFlowIntegration:
 
         _apply_overrides(overrides, provider, patient_id)
 
-        with _patch_stack(fake_redis, fake_sync_redis):
+        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+            discovery_handle = _active_discovery_handle(
+                fake_redis, provider, patient_id
+            )
             # Enroll
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
@@ -762,14 +815,16 @@ class TestConsentFlowIntegration:
             request_resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 900,
                 },
             )
             request_id = request_resp.json()["request_id"]
-            challenge_nonce = request_resp.json()["challenge_nonce"]
+            challenge_nonce = json.loads(
+                fake_sync_redis.get(f"consent_request:{request_id}")
+            )["challenge_nonce"]
 
             # Poll — should be pending
             status_resp = client.get(f"/api/v2/consent/status/{request_id}")
@@ -831,7 +886,10 @@ class TestConsentFlowIntegration:
 
         _apply_overrides(overrides, provider, patient_id)
 
-        with _patch_stack(fake_redis, fake_sync_redis):
+        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+            discovery_handle = _active_discovery_handle(
+                fake_redis, provider, patient_id
+            )
             # Enroll
             device_row = _mock_device_row(device_id, patient_id, der_bytes)
             _reset_mock_db(mock_db)
@@ -861,14 +919,16 @@ class TestConsentFlowIntegration:
             request_resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 900,
                 },
             )
             request_id = request_resp.json()["request_id"]
-            challenge_nonce = request_resp.json()["challenge_nonce"]
+            challenge_nonce = json.loads(
+                fake_sync_redis.get(f"consent_request:{request_id}")
+            )["challenge_nonce"]
 
             # Approve
             challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
