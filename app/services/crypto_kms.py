@@ -1163,5 +1163,12 @@ def get_encryption_provider() -> EncryptionProvider:
             )
         return LocalEnvelopeProvider()
     elif config.encryption_backend == "kms":
-        return AWSKMSProvider()
+        try:
+            from botocore.exceptions import BotoCoreError
+
+            return AWSKMSProvider()
+        except ImportError as exc:
+            raise EncryptionError("Encryption provider initialization failed") from exc
+        except BotoCoreError as exc:
+            raise EncryptionError("Encryption provider initialization failed") from exc
     raise ConfigError(f"Unknown encryption backend: {config.encryption_backend}")

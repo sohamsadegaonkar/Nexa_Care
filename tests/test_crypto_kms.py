@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+from botocore.exceptions import EndpointConnectionError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.crypto_kms import (
@@ -19,6 +20,7 @@ from app.services.crypto_kms import (
     EncryptionError,
     PatientDataErased,
     TransactionalPatientSpecificKMSProvisioningUnsupported,
+    get_encryption_provider,
 )
 from app.models.dek_store import PatientDEKStore
 
@@ -373,6 +375,21 @@ def _aws_provider(monkeypatch):
     kms_client = MagicMock()
     with patch("boto3.client", return_value=kms_client):
         return AWSKMSProvider(), kms_client
+
+
+def test_kms_provider_factory_normalizes_botocore_initialization_failure(monkeypatch):
+    monkeypatch.setenv("ENCRYPTION_BACKEND", "kms")
+    monkeypatch.setenv("KMS_KEY_ID", "alias/synthetic-kms")
+    monkeypatch.setenv("AWS_REGION", "ap-south-1")
+
+    with patch(
+        "boto3.client",
+        side_effect=EndpointConnectionError(endpoint_url="https://kms.invalid"),
+    ):
+        with pytest.raises(
+            EncryptionError, match="Encryption provider initialization failed"
+        ):
+            get_encryption_provider()
 
 
 @pytest.mark.asyncio

@@ -61,6 +61,12 @@ Engineering mapping must cover clear standalone notice, security safeguards, per
 
 DPDP processing consent, clinical treatment/workflow consent, ABDM health-information exchange consent, and a Nexa Care access capability are related but not interchangeable. Each record must name the authorization type, legal/product purpose, data, actors, scope, duration, revocation semantics, and evidence. Account creation is not blanket clinical-data consent.
 
+### Patient onboarding profile and legal evidence
+
+The patient onboarding profile and a legal-document acceptance are distinct engineering records, not evidence that DPDP consent, clinical consent, ABDM consent, or another legal authorization has been obtained. The service derives identity from authenticated server state; stores profile name/date of birth under patient-envelope encryption; and keeps server-owned document version, digest, timestamp, and transactionally staged audit evidence separate from profile PII. Current onboarding is derived from presently configured documents, so changed or unavailable requirements must not be represented as durable completion.
+
+The applicable notice, legal basis, acceptance wording, retention period, erasure interaction, evidence use, and whether any record can be relied upon for a regulated purpose require qualified counsel and an approved decision record. This baseline records technical controls and makes no compliance or counsel-approval claim.
+
 ### REG-004 — ABDM Health Data Management Policy
 
 When Nexa Care participates in ABDM, implement consent-based exchange, purpose limitation, minimum necessary scope, user control and revocation, HIP/HIU responsibilities, consent artefact expectations, security/audit, federated exchange, ABHA linkage rules, and grievance handling. The local architecture must not assume that ABDM participation or every policy provision already applies; record the integration and contract that creates applicability.

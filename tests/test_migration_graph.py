@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260819_widen_vault_pii_columns"
+EXPECTED_HEAD = "20260819_patient_profile_legal"
 
 
 def _scripts() -> ScriptDirectory:
@@ -26,8 +26,14 @@ def test_migration_chain_has_expected_single_head() -> None:
     assert _scripts().get_heads() == [EXPECTED_HEAD]
 
 
-def test_widen_vault_pii_columns_descends_from_async_provider_jobs() -> None:
+def test_patient_profile_legal_descends_from_widen_vault_pii_columns() -> None:
     revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260819_widen_vault_pii_columns"
+
+
+def test_widen_vault_pii_columns_descends_from_async_provider_jobs() -> None:
+    revision = _scripts().get_revision("20260819_widen_vault_pii_columns")
     assert revision is not None
     assert revision.down_revision == "20260818_async_provider_jobs"
 

@@ -23,10 +23,14 @@ from app.security.audit_context import (
     bind_trusted_audit_hospital,
     bind_trusted_audit_tenant,
     current_audit_context,
+    reset_trusted_audit_scope,
 )
 
+import hashlib
 import json
 import logging
+from collections.abc import AsyncGenerator
+from typing import NamedTuple
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -36,12 +40,14 @@ from fastapi.security import (
     HTTPBasicCredentials,
     HTTPBearer,
 )
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.security import hash_client_ip
 from app.core.client_ip import resolve_client_ip
-import hashlib
+from app.models.patient import Patient
+from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.services.auth_service import validate_session_context
@@ -57,6 +63,90 @@ from app.services.provider_auth_service import (
 )
 
 logger = logging.getLogger("nexa_logger")
+
+
+# ---------------------------------------------------------------------------
+# Strict patient-self JWT-only auth dependency
+# ---------------------------------------------------------------------------
+
+
+class AuthenticatedPatient(NamedTuple):
+    """Authoritative patient identity resolved from a patient-self JWT."""
+
+    patient_id: str
+    patient: Patient
+
+
+async def get_current_patient(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db_session),
+) -> AsyncGenerator[AuthenticatedPatient, None]:
+    """Strict patient-self JWT dependency for ``/api/v2/patient/me/*`` routes.
+
+    Accepts ONLY a patient phone-OTP JWT.  No biometric/session fallback.
+    Validates the full identity chain:
+    1. Valid JWT with actor_type=patient, auth_method=phone_otp, sub==patient_id.
+    2. Patient row exists in DB and is not soft-deleted.
+    3. Active PatientAuthIdentity links JWT's supabase_user_id to the patient.
+
+    Binds audit tenant ONLY after authoritative DB validation.
+    No body/path/query/header patient ID may override this identity.
+    """
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+
+    scheme, separator, credential = authorization.partition(" ")
+    if (
+        scheme.lower() != "bearer"
+        or separator != " "
+        or not credential
+        or credential != credential.strip()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid authorization scheme")
+
+    claims = decode_patient_access_token(credential)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Invalid or expired patient token")
+
+    patient_id = claims.get("patient_id")
+    supabase_user_id = claims.get("supabase_user_id")
+
+    # Validate patient_id is a valid UUID
+    try:
+        pid = UUID(str(patient_id))
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=401, detail="Invalid patient identity")
+
+    # Load patient — reject if missing or soft-deleted
+    patient_row = (
+        await db.execute(select(Patient).where(Patient.patient_uuid == pid))
+    ).scalar_one_or_none()
+    if patient_row is None or patient_row.is_deleted:
+        raise HTTPException(status_code=401, detail="Patient account unavailable")
+
+    # Validate PatientAuthIdentity linkage
+    identity = (
+        await db.execute(
+            select(PatientAuthIdentity).where(
+                and_(
+                    PatientAuthIdentity.patient_id == pid,
+                    PatientAuthIdentity.provider == "supabase",
+                    PatientAuthIdentity.provider_subject == str(supabase_user_id),
+                    PatientAuthIdentity.revoked_at.is_(None),
+                )
+            )
+        )
+    ).scalar_one_or_none()
+    if identity is None:
+        raise HTTPException(status_code=401, detail="Patient identity not verified")
+
+    # Bind audit tenant AFTER authoritative validation and restore the exact
+    # prior ContextVar state when FastAPI completes the request dependency.
+    audit_scope_token = bind_trusted_audit_tenant(str(pid))
+    try:
+        yield AuthenticatedPatient(patient_id=str(pid), patient=patient_row)
+    finally:
+        reset_trusted_audit_scope(audit_scope_token)
 
 
 async def get_scoped_session(authorization: str | None = Header(default=None)) -> str:

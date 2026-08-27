@@ -9,11 +9,14 @@ Note: This module only *loads* config; it does not open DB/Redis connections yet
 
 from __future__ import annotations
 
-import os
+import ipaddress
 import logging
+import os
+import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -463,4 +466,109 @@ def get_database_config() -> DatabaseConfig:
     return DatabaseConfig(
         url=_require_env("DATABASE_URL"),
         echo_sql=echo_raw in {"1", "true", "yes", "on"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Patient legal document configuration
+# ---------------------------------------------------------------------------
+
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+_DNS_LABEL_RE = re.compile(r"^[A-Za-z0-9-]{1,63}$")
+
+
+def _is_valid_legal_url(value: str) -> bool:
+    """Validate a configured legal-document URL without network access."""
+    if any(char.isspace() or ord(char) < 32 or ord(char) == 127 for char in value):
+        return False
+    try:
+        parsed = urlparse(value)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+            return False
+        if parsed.username is not None or parsed.password is not None:
+            return False
+        # Accessing ``port`` rejects malformed and out-of-range numeric ports.
+        port = parsed.port
+    except ValueError:
+        return False
+    if port is not None and not 1 <= port <= 65535:
+        return False
+
+    host_port = parsed.netloc.rsplit("@", 1)[-1]
+    if host_port.endswith(":"):
+        return False
+
+    hostname = parsed.hostname
+    try:
+        ipaddress.ip_address(hostname)
+        return True
+    except ValueError:
+        pass
+
+    if len(hostname) > 253 or hostname.endswith("."):
+        return False
+    labels = hostname.split(".")
+    return bool(labels) and all(
+        _DNS_LABEL_RE.fullmatch(label)
+        and not label.startswith("-")
+        and not label.endswith("-")
+        for label in labels
+    )
+
+
+@dataclass(frozen=True)
+class PatientLegalDocumentConfig:
+    """Server-owned legal document version/digest/URL configuration.
+
+    Validated at call time by ``get_patient_legal_config()`` so that
+    invalid legal configuration fails closed for legal endpoints only
+    without crashing unrelated Nexa backend startup.
+    """
+
+    terms_version: str
+    terms_sha256: str
+    terms_url: str
+    privacy_version: str
+    privacy_sha256: str
+    privacy_url: str
+
+
+def get_patient_legal_config() -> PatientLegalDocumentConfig:
+    """Load and validate patient legal document configuration.
+
+    Required environment variables:
+    - PATIENT_TERMS_VERSION, PATIENT_TERMS_SHA256, PATIENT_TERMS_URL
+    - PATIENT_PRIVACY_VERSION, PATIENT_PRIVACY_SHA256, PATIENT_PRIVACY_URL
+
+    Raises ``ConfigError`` if any value is missing or malformed.
+    """
+    terms_version = _require_env("PATIENT_TERMS_VERSION")
+    terms_sha256 = _require_env("PATIENT_TERMS_SHA256")
+    terms_url = _require_env("PATIENT_TERMS_URL")
+    privacy_version = _require_env("PATIENT_PRIVACY_VERSION")
+    privacy_sha256 = _require_env("PATIENT_PRIVACY_SHA256")
+    privacy_url = _require_env("PATIENT_PRIVACY_URL")
+
+    if not _SHA256_HEX_RE.match(terms_sha256):
+        raise ConfigError(
+            "PATIENT_TERMS_SHA256 must be exactly 64 lowercase hex characters."
+        )
+    if not _SHA256_HEX_RE.match(privacy_sha256):
+        raise ConfigError(
+            "PATIENT_PRIVACY_SHA256 must be exactly 64 lowercase hex characters."
+        )
+    for label, url_val in [
+        ("PATIENT_TERMS_URL", terms_url),
+        ("PATIENT_PRIVACY_URL", privacy_url),
+    ]:
+        if not _is_valid_legal_url(url_val):
+            raise ConfigError(f"{label} must be an HTTP or HTTPS URL.")
+
+    return PatientLegalDocumentConfig(
+        terms_version=terms_version,
+        terms_sha256=terms_sha256,
+        terms_url=terms_url,
+        privacy_version=privacy_version,
+        privacy_sha256=privacy_sha256,
+        privacy_url=privacy_url,
     )

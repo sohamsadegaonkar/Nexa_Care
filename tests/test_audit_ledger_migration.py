@@ -30,7 +30,7 @@ def test_audit_migration_precedes_current_single_head():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     script = ScriptDirectory.from_config(config)
-    assert script.get_heads() == ["20260819_widen_vault_pii_columns"]
+    assert script.get_heads() == ["20260819_patient_profile_legal"]
     revision = script.get_revision("20260716_audit_ledger_chain")
     assert revision.down_revision == "20260715_patient_auth_identity"
 
