@@ -160,8 +160,7 @@ describe('shared API transport', () => {
 
     await NexaApiClient.requestConsent(
       {
-        patient_id: 'patient-1',
-        provider_id: 'provider-1',
+        discovery_handle: 'opaque-discovery-handle-12345678901234567890',
         purpose: 'treatment',
         scope: 'clinical',
         access_duration_seconds: 900,

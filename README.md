@@ -53,9 +53,15 @@ yarn native     # Expo dev server
 
 ## Key flows
 
+> Current security contract: direct routine consent issuers are retired and
+> return `410 ROUTINE_DIRECT_ISSUANCE_RETIRED`. Use NFC/patient discovery to
+> obtain an expiring opaque `discovery_handle`, then call
+> `POST /api/v2/consent/request` for patient approval. The legacy endpoint
+> references below are historical and are not runnable instructions.
+
 - **Provider login** → `POST /api/v2/auth/login`. If MFA is enabled, the response includes an `mfa_token`; complete login with `POST /api/v2/auth/mfa/verify`.
 - **NFC scan** → `POST /api/v2/nfc/resolve` returns a masked patient ID.
-- **Routine consent** → `POST /api/v2/consent/routine/issue` returns a time-bound consent token.
+- **Routine consent** → `POST /api/v2/consent/request` accepts an expiring opaque `discovery_handle` and creates a patient approval challenge. Direct routine issuers are retired.
 - **Patient record** → `GET /api/v2/patient/{patient_id}/record` with `X-Consent-Token` and `X-Consent-Purpose` returns a scoped record.
 - **Emergency break-glass** → `POST /api/v2/consent/break-glass/issue` issues a short-lived, audited emergency token.
 - **Patient self-consent** (v1) → `POST /request-consent` and `GET /view-record/*` now also run through `ConsentEngine` with a synthetic `patient:self` actor.

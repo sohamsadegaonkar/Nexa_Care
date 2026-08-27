@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
+from app.services.patient_discovery_service import generate_public_patient_id
 from app.models.patient_records import PatientRecord
 from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.audit_outbox import enqueue_audit_event
@@ -187,7 +188,9 @@ async def finalize_patient_registration(
             # constraint collision be recovered without leaving even an
             # orphan Patient row in the outer transaction.
             async with db.begin_nested():
-                patient = Patient(is_deleted=False)
+                patient = Patient(
+                    is_deleted=False, public_patient_id=generate_public_patient_id()
+                )
                 db.add(patient)
                 await db.flush()
                 identity = PatientAuthIdentity(

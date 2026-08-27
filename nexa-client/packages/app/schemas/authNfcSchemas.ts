@@ -143,14 +143,12 @@ export const ConsentCancelResponseSchema = z.object({
  * POST /api/v2/nfc/resolve — card resolution response.
  *
  * Backend model: NFCResolveResponse in nfc_routes.py
- *   patient_id: str
- *   canonical_patient_id: str | None = None
- *   is_redirected: bool = False
+ *   discovery_handle: str
+ *   expires_at: str
  */
 export const NfcResolveResponseSchema = z.object({
-  patient_id: z.string().min(1, 'patient_id must be a non-empty string'),
-  canonical_patient_id: z.string().nullable().default(null),
-  is_redirected: z.boolean().default(false),
+  discovery_handle: z.string().min(32),
+  expires_at: z.string().min(1),
 })
 
 // ── Discriminated union: login response ──────────────────────────────────────

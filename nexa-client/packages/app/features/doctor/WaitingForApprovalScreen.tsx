@@ -22,10 +22,10 @@
  * Cancel button calls POST /api/v2/consent/request/{request_id}/cancel
  * (real server-side cancellation, not just navigation).
  *
- * Retry navigates to request-consent with preserved patient_id context
+ * Retry returns to patient discovery; no pre-approval patient target is retained.
  * (creates a brand new request — never reuses expired request_id).
  *
- * Route: /doctor/waiting?request_id=...&patient_id=...
+ * Route: /doctor/waiting?request_id=...
  */
 
 'use client'
@@ -62,7 +62,6 @@ export function WaitingForApprovalScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const requestId = searchParams.get('request_id') ?? ''
-  const patientId = searchParams.get('patient_id') ?? ''
   const documentUploadIntent = searchParams.get('intent') === 'document_upload'
   const { isAuthenticated, session, setAccessGrant } = useProviderAuth()
   const hospitalId = session?.hospital.hospital_id ?? ''
@@ -335,12 +334,9 @@ export function WaitingForApprovalScreen() {
 
   const handleRetry = () => {
     stopAllTimers()
-    // Navigate to request-consent with preserved patient_id context.
+    // Discovery handles are single-use; retry requires a fresh discovery.
     // This creates a BRAND NEW request — never reuses the expired request_id.
-    const target = patientId
-      ? `/doctor/request-consent?patient_id=${encodeURIComponent(patientId)}${documentUploadIntent ? '&intent=document_upload' : ''}`
-      : '/doctor/dashboard'
-    router.push(target)
+    router.push(`/doctor/patient-search${documentUploadIntent ? '?intent=document_upload' : ''}`)
   }
 
   if (!isAuthenticated) {

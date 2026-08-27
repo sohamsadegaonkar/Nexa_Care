@@ -7,13 +7,18 @@ Matches the ``patients`` table defined in
 from __future__ import annotations
 
 import uuid
+import secrets
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Text, func
+from sqlalchemy import Boolean, DateTime, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
+
+
+def _default_public_patient_id() -> str:
+    return "NC-" + secrets.token_hex(12).upper()
 
 
 class Patient(Base):
@@ -26,6 +31,16 @@ class Patient(Base):
         primary_key=True,
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
+    )
+    # Public discovery identifier.  It is intentionally opaque and is never
+    # an authorization credential or a replacement for patient_uuid.
+    public_patient_id: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=_default_public_patient_id,
+        server_default=text("'NC-' || upper(encode(gen_random_bytes(12), 'hex'))"),
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

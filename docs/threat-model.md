@@ -28,7 +28,7 @@ alpha milestone. Each threat maps to a concrete test in `tests/security/`.
 | | |
 |---|---|
 | **T-ID** | T-01 |
-| **Attack Surface** | `POST /api/v2/consent/routine/issue` with `assurance_level=push_biometric` |
+| **Attack Surface** | Retired direct routine issuance (`POST /api/v2/consent/routine/issue`); requests must use discovery-bound consent |
 | **Attacker Capability** | A compromised doctor session submits a fabricated ECDSA P-256 signature on the consent approval challenge. The signature does not correspond to any enrolled patient device key. |
 | **Expected Defense** | `SignedApprovalVerifier.verify_signed_approval()` checks the signature against **all** enrolled public keys for the patient. A non-matching signature returns `verified=False`. The fixed-duration timing guarantee prevents leaking whether the patient has keys enrolled. |
 | **Verification Test** | `tests/security/test_forged_signature.py::test_forged_ecdsa_rejected` |
@@ -50,7 +50,7 @@ alpha milestone. Each threat maps to a concrete test in `tests/security/`.
 | | |
 |---|---|
 | **T-ID** | T-02 |
-| **Attack Surface** | `POST /api/v2/consent/routine/issue` with `assurance_level=push_biometric` and fabricated `assurance_evidence` |
+| **Attack Surface** | Historical direct-issuance threat; the endpoint now returns `410 ROUTINE_DIRECT_ISSUANCE_RETIRED` and accepts no issuance input |
 | **Attacker Capability** | A doctor claims `push_biometric` assurance level without a real push notification having been sent. They fabricate a `request_id` in the evidence dict. |
 | **Expected Defense** | `RedisAssuranceVerifier.verify()` checks the Redis key `nexa:push:{request_id}` for a real pending/approved push state. A fabricated request_id that doesn't exist in Redis returns `verified=False`. |
 | **Verification Test** | `tests/security/test_forged_assurance.py::test_forged_push_biometric_evidence` |

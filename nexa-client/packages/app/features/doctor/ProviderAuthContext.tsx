@@ -45,6 +45,12 @@ export interface ProviderAccessGrant {
   scope: 'clinical' | 'full'
   expiresAt: string
 }
+export interface PatientDiscoverySelection {
+  discoveryHandle: string
+  expiresAt: string
+  displayIdentifier: string
+  source: 'public_id' | 'nfc'
+}
 export type ProviderAuthStatus = 'hydrating' | 'unauthenticated' | 'mfa_required' | 'authenticated'
 export type LoginResult = { type: 'authenticated' } | { type: 'mfa_required' }
 export interface ProviderAuthState {
@@ -61,6 +67,7 @@ export interface ProviderAuthState {
   loginError: string | null
   loggingIn: boolean
   accessGrant: ProviderAccessGrant | null
+  discoverySelection: PatientDiscoverySelection | null
 }
 export interface ProviderAuthActions {
   login: (email: string, password: string) => Promise<LoginResult>
@@ -69,6 +76,8 @@ export interface ProviderAuthActions {
   logout: () => void
   setAccessGrant: (grant: ProviderAccessGrant) => void
   clearAccessGrant: () => void
+  setDiscoverySelection: (selection: PatientDiscoverySelection) => void
+  clearDiscoverySelection: () => void
 }
 export type ProviderAuthContextType = ProviderAuthState & ProviderAuthActions
 
@@ -91,6 +100,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   const [loginError, setLoginError] = useState<string | null>(null)
   const [loggingIn, setLoggingIn] = useState(false)
   const [accessGrant, setAccessGrantState] = useState<ProviderAccessGrant | null>(null)
+  const [discoverySelection, setDiscoverySelectionState] = useState<PatientDiscoverySelection | null>(null)
   const operationRef = useRef<Promise<unknown> | null>(null)
 
   const hydrate = useCallback(async (): Promise<boolean> => {
@@ -204,6 +214,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     void NexaApiClient.providerWebLogout().finally(() => {
       setSession(null)
       setAccessGrantState(null)
+      setDiscoverySelectionState(null)
       setMfaDetail(null)
       setLoginError(null)
       setStatus('unauthenticated')
@@ -211,6 +222,8 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   }, [])
   const setAccessGrant = useCallback((grant: ProviderAccessGrant) => setAccessGrantState(grant), [])
   const clearAccessGrant = useCallback(() => setAccessGrantState(null), [])
+  const setDiscoverySelection = useCallback((selection: PatientDiscoverySelection) => setDiscoverySelectionState(selection), [])
+  const clearDiscoverySelection = useCallback(() => setDiscoverySelectionState(null), [])
   const state: ProviderAuthState = {
     status,
     hydrated: status !== 'hydrating',
@@ -225,10 +238,11 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     loginError,
     loggingIn,
     accessGrant,
+    discoverySelection,
   }
   return (
     <ProviderAuthContext.Provider
-      value={{ ...state, login, verifyMfa, cancelMfa, logout, setAccessGrant, clearAccessGrant }}
+      value={{ ...state, login, verifyMfa, cancelMfa, logout, setAccessGrant, clearAccessGrant, setDiscoverySelection, clearDiscoverySelection }}
     >
       {children}
     </ProviderAuthContext.Provider>

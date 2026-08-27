@@ -7,14 +7,6 @@ export type ConsentAssurance =
   | 'bypassed_emergency'
   | 'standard_fallback_from_push'
 
-export interface RoutineConsentRequest {
-  patient_id: string
-  purpose: 'TREATMENT' | 'PAYMENT' | 'OPERATIONS' | 'RESEARCH'
-  scope: string[]
-  assurance_level?: 'standard'
-  assurance_evidence?: Record<string, unknown>
-}
-
 export interface BreakGlassRequest {
   patient_uuid: string
   hospital_id: string
@@ -43,35 +35,6 @@ export class ConsentError extends Error {
     this.name = 'ConsentError'
     this.code = code
     this.status = status
-  }
-}
-
-/**
- * Issue routine consent (v1.0 architecture)
- */
-export async function issueRoutineConsentV1(
-  payload: RoutineConsentRequest
-): Promise<ConsentResponse> {
-  try {
-    const response = await apiClient.post<
-      ConsentResponse,
-      ApiResponse<ConsentResponse>,
-      RoutineConsentRequest
-    >('/api/v2/consent/routine/issue', {
-      ...payload,
-      assurance_level: payload.assurance_level || 'standard',
-    })
-    return response.data
-  } catch (error: unknown) {
-    if (error instanceof ApiError) {
-      const status = error.status
-      throw new ConsentError(
-        error.message || 'Failed to issue consent',
-        error.code === 'PATIENT_APPROVAL_REQUIRED' ? 'CONSENT_UNAUTHORIZED' : 'CONSENT_FAILED',
-        status
-      )
-    }
-    throw new ConsentError('Consent request failed', 'CONSENT_FAILED')
   }
 }
 

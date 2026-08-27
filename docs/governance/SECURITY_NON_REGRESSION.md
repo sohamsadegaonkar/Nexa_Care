@@ -146,6 +146,24 @@ benchmark.
 
 ## 4. Prohibited patterns and safe alternatives
 
+### Phase 1B.2 patient discovery invariants
+
+The public Nexa patient identifier is an opaque, non-secret identifier and is
+not an authorization credential. Provider discovery accepts only an exact
+public identifier, requires an authenticated clinician and trusted hospital
+context, and returns no patient UUID or PII. Discovery produces only a
+short-lived, single-use Redis capability bound to provider, hospital, session,
+and canonical patient. Routine consent requests must consume that capability;
+clients cannot select a patient UUID. Phone, name, QR, MRN, external-identifier,
+fuzzy, and broad-directory discovery are not authorized in Phase 1B.2.
+The legacy direct routine issuers (`/api/v2/consent/grant` and
+`/api/v2/consent/routine/issue`) are permanently retired and must return a
+stable retirement response without issuing a capability. Discovery success is
+audited before its staged handle is disclosed; audit failure revokes the staged
+handle. The public-ID migration is forward-only once applied: issued aliases
+and the migration revision must remain intact, with corrective changes made by
+a later forward migration.
+
 ```python
 # PROHIBITED: secret in URL
 consent_token = request.query_params["consent_token"]

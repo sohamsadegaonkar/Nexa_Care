@@ -91,8 +91,7 @@ export interface EnrolledDevicesListResponse {
 }
 
 export interface ConsentChallengeRequest {
-  patient_id: string
-  provider_id: string
+  discovery_handle: string
   purpose:
     | 'treatment'
     | 'emergency_care'
@@ -788,6 +787,10 @@ export const NexaApiClient = {
     )
   },
 
+  discoverPatient(payload: { identifier_type: 'NEXA_PUBLIC_ID'; value: string }, hospitalId: string): Promise<{ discovery_handle: string; expires_at: string }> {
+    return request('/api/v2/patient-discovery', { method: 'POST', body: JSON.stringify(payload) }, { 'X-Hospital-Id': hospitalId })
+  },
+
   fetchConsentChallenge(requestId: string): Promise<FullConsentChallenge> {
     return request<FullConsentChallenge>(`/api/v2/consent/challenge/${requestId}`, {
       method: 'GET',
@@ -843,7 +846,13 @@ export const NexaApiClient = {
       true,
       DEFAULT_TIMEOUT_MS,
       true
-    ).then((data) => validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login'))
+    ).then(
+      (data) =>
+        validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login') as {
+          status: 'authenticated' | 'mfa_required'
+          expires_at?: string
+        }
+    )
   },
 
   providerWebMfaVerify(totpCode: string): Promise<{ status: 'authenticated'; expires_at: string }> {
@@ -857,7 +866,13 @@ export const NexaApiClient = {
       true,
       DEFAULT_TIMEOUT_MS,
       true
-    ).then((data) => validateOrThrow(ProviderWebAuthenticatedStateSchema, data, 'provider web MFA'))
+    ).then(
+      (data) =>
+        validateOrThrow(ProviderWebAuthenticatedStateSchema, data, 'provider web MFA') as {
+          status: 'authenticated'
+          expires_at: string
+        }
+    )
   },
 
   providerWebSession(): Promise<{
@@ -876,7 +891,18 @@ export const NexaApiClient = {
       false,
       DEFAULT_TIMEOUT_MS,
       true
-    ).then((data) => validateOrThrow(ProviderWebSessionSchema, data, 'provider web session'))
+    ).then(
+      (data) =>
+        validateOrThrow(ProviderWebSessionSchema, data, 'provider web session') as {
+          authenticated: boolean
+          expires_at: string
+          provider_uid: string
+          hospital_id: string
+          display_name: string
+          hospital_name: string
+          roles: string[]
+        }
+    )
   },
 
   providerWebLogout(): Promise<void> {

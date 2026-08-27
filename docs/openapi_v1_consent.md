@@ -7,31 +7,18 @@
 
 ## Endpoints
 
-### 1. Issue Routine Consent
-**POST** `/api/v2/consent/routine/issue`
+### 1. Patient Discovery and Consent Request
+The retired direct routine issuers (`/api/v2/consent/routine/issue` and
+`/api/v2/consent/grant`) are not callable APIs and return `410
+ROUTINE_DIRECT_ISSUANCE_RETIRED`.
 
-**Request Body**:
-```json
-{
-  "patient_uuid": "string (uuid)",
-  "hospital_id": "string",
-  "clinician_id": "string",
-  "purpose": "string",
-  "consent_assurance": "standard | push_approved | biometric_confirmed"
-}
-```
+Use the consent-first flow instead:
 
-**Response** (201):
-```json
-{
-  "consent_token": "string",
-  "patient_uuid": "uuid",
-  "purpose": "string",
-  "consent_assurance": "string",
-  "granted_at": "datetime",
-  "expires_at": "datetime"
-}
-```
+1. `POST /api/v2/nfc/resolve` (or the authenticated patient-discovery endpoint)
+   returns only an expiring opaque `discovery_handle`.
+2. `POST /api/v2/consent/request` submits that handle and the requested scope.
+3. The patient approves the challenge; the provider claims the resulting
+   capability before accessing a record.
 
 ---
 
@@ -75,7 +62,7 @@
 
 ---
 
-### 4. NFC Card Resolution (with Tombstone Redirect)
+### 4. NFC Card Resolution (opaque discovery)
 **POST** `/api/v2/nfc/resolve`
 
 **Request**:
@@ -83,16 +70,16 @@
 { "card_uid": "string" }
 ```
 
-**Enhanced Response** (when using `CardRedirectService`):
+**Response** (200):
 ```json
 {
-  "canonical_patient_uuid": "uuid",
-  "redirect_chain": [
-    { "from": "uuid", "to": "uuid", "merged_at": "datetime" }
-  ],
-  "is_redirected": true
+  "discovery_handle": "opaque string",
+  "expires_at": "datetime"
 }
 ```
+
+Patient UUIDs, redirect chains, and record data are never returned by this
+pre-consent endpoint. The handle is passed to `/api/v2/consent/request`.
 
 ---
 

@@ -1,4 +1,5 @@
 import { ScannerScreen } from 'app/features/scanner/screen'
+import { ProviderAuthProvider } from 'app/features/doctor/ProviderAuthContext'
 import { Stack } from 'expo-router'
 
 export default function Screen() {
@@ -13,7 +14,9 @@ export default function Screen() {
           gestureDirection: 'horizontal',
         }}
       />
-      <ScannerScreen />
+      <ProviderAuthProvider>
+        <ScannerScreen />
+      </ProviderAuthProvider>
     </>
   )
 }

@@ -49,7 +49,7 @@ export function RoleNavigator({
       case 'home':
         return <HomeScreen onNavigate={setCurrentScreen} />
       case 'scanner':
-        return <ScannerScreen onPatientResolved={setActivePatientUuid} />
+        return <ScannerScreen />
       case 'dashboard':
         return role !== 'receptionist' ? (
           <DashboardScreen />

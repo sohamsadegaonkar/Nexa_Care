@@ -2,7 +2,7 @@
  * Request consent screen — provider initiates a consent request.
  *
  * Uses the session's real provider_id from ProviderAuthContext.
- * Patient ID comes from route params (selected from search).
+ * Patient selection comes from the authenticated provider's memory-only discovery state.
  * Calls POST /api/v2/consent/request to create the challenge.
  *
  * SECURITY: This screen NEVER calls any approval/respond endpoint.
@@ -12,10 +12,9 @@
  * - Purpose is a controlled code (not free-text) — backend validates.
  * - Scope is a controlled category (not free-text) — backend validates.
  * - Duration is a preset selection — backend clamps to [300, 3600].
- * - provider_id is sent in body for API compatibility, but the server
- *   derives it from the authenticated session and rejects mismatches.
+ * - patient UUIDs and discovery handles never enter URLs.
  *
- * Route: /doctor/request-consent?patient_id=...
+ * Route: /doctor/request-consent
  */
 
 'use client'
@@ -67,9 +66,8 @@ const DURATION_PRESETS = [
 export function RequestConsentScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const patientId = searchParams.get('patient_id') ?? ''
   const documentUploadIntent = searchParams.get('intent') === 'document_upload'
-  const { providerId, hospitalName, isAuthenticated, session } = useProviderAuth()
+  const { providerId, hospitalName, isAuthenticated, session, discoverySelection, clearDiscoverySelection } = useProviderAuth()
 
   // ── Session guard ─────────────────────────────────────────────────────
   if (!isAuthenticated) {
@@ -120,8 +118,8 @@ export function RequestConsentScreen() {
   const submissionInFlight = useRef(false)
 
   const handleSubmit = async () => {
-    if (!patientId) {
-      setError('No patient selected.')
+    if (!discoverySelection || Date.parse(discoverySelection.expiresAt) <= Date.now()) {
+      setError('Patient selection expired. Find the patient again.')
       return
     }
     const hospitalId = session?.hospital.hospital_id
@@ -136,18 +134,15 @@ export function RequestConsentScreen() {
     try {
       const data = await NexaApiClient.requestConsent(
         {
-          patient_id: patientId,
-          provider_id: providerId ?? '',
+          discovery_handle: discoverySelection.discoveryHandle,
           purpose: documentUploadIntent ? 'document_processing' : purpose,
           scope: documentUploadIntent ? 'documents' : requestedScope,
           access_duration_seconds: accessDuration,
-          ...(purposeNote.trim() ? { purpose_note: purposeNote.trim() } : {}),
         },
         hospitalId
       )
-      router.push(
-        `/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}&patient_id=${encodeURIComponent(patientId)}${documentUploadIntent ? '&intent=document_upload' : ''}`
-      )
+      clearDiscoverySelection()
+      router.push(`/doctor/waiting?request_id=${encodeURIComponent(data.request_id)}${documentUploadIntent ? '&intent=document_upload' : ''}`)
     } catch (caught: unknown) {
       setError(
         caught instanceof ApiError
@@ -213,7 +208,7 @@ export function RequestConsentScreen() {
             fontSize={18}
             fontWeight="700"
           >
-            {patientId || 'No patient selected'}
+            {discoverySelection?.displayIdentifier ?? 'Patient selection expired'}
           </Text>
         </Card>
 
@@ -278,7 +273,7 @@ export function RequestConsentScreen() {
               label="Purpose"
               value={purpose}
               options={PURPOSE_OPTIONS}
-              onValueChange={setPurpose}
+              onValueChange={(value) => setPurpose(value as AccessPurpose)}
               disabled={submitting}
             />
             <Paragraph
@@ -337,7 +332,7 @@ export function RequestConsentScreen() {
               label="Requested Scope"
               value={requestedScope}
               options={SCOPE_OPTIONS}
-              onValueChange={setRequestedScope}
+              onValueChange={(value) => setRequestedScope(value as ConsentScope)}
               disabled={submitting}
             />
             <Paragraph
@@ -356,7 +351,7 @@ export function RequestConsentScreen() {
             label="Access Duration"
             value={accessDuration}
             options={DURATION_PRESETS}
-            onValueChange={setAccessDuration}
+            onValueChange={(value) => setAccessDuration(Number(value))}
             disabled={submitting}
           />
           <Paragraph
@@ -381,7 +376,7 @@ export function RequestConsentScreen() {
           <Button
             theme="blue"
             size="$4"
-            disabled={submitting || !patientId}
+            disabled={submitting || !discoverySelection}
             onPress={handleSubmit}
           >
             {submitting ? (

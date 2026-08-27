@@ -19,15 +19,21 @@ This document defines the API flow from NFC card tap to clinical session creatio
 **Success Response** (200):
 ```json
 {
-  "patient_uuid": "uuid",
-  "authentication_grant": "string",
-  "expires_in": 30
+  "discovery_handle": "opaque string",
+  "expires_at": "datetime"
 }
 ```
+
+The response contains no patient UUID or record data. Keep the handle in
+memory only and pass it to the consent request flow.
 
 ---
 
 ## 2. Consent Assurance Evaluation (Layer 2)
+
+> Current contract: discovery creates a patient approval challenge. There is no
+> standard auto-approval or provider-side token issuance; the patient must
+> approve in the patient application before the provider can claim access.
 
 After successful card authentication, the system evaluates the patient’s `consent_assurance_policy`.
 
@@ -46,16 +52,15 @@ After successful card authentication, the system evaluates the patient’s `cons
 
 ---
 
-## 3. Issue Consent Token
+## 3. Request Consent
 
-**Endpoint**: `POST /api/v2/consent/routine/issue`
+**Endpoint**: `POST /api/v2/consent/request`
 
 **Request**:
 ```json
 {
-  "patient_uuid": "uuid",
-  "hospital_id": "string",
-  "clinician_id": "string",
+  "discovery_handle": "opaque string",
+  "scope": ["record:read"],
   "purpose": "ROUTINE_CHECKUP"
 }
 ```
@@ -63,9 +68,8 @@ After successful card authentication, the system evaluates the patient’s `cons
 **Response** (201):
 ```json
 {
-  "consent_token": "string",
-  "expires_at": "2026-07-04T10:30:00Z",
-  "consent_assurance": "standard"
+  "request_id": "string",
+  "status": "pending"
 }
 ```
 

@@ -9,7 +9,7 @@ const back = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, back }),
-  useSearchParams: () => ({ get: (key: string) => (key === 'patient_id' ? 'patient-1' : null) }),
+  useSearchParams: () => ({ get: () => null }),
 }))
 
 vi.mock('./ProviderAuthContext', () => ({
@@ -18,6 +18,13 @@ vi.mock('./ProviderAuthContext', () => ({
     hospitalName: 'Nexa Alpha Hospital',
     isAuthenticated: true,
     session: { hospital: { hospital_id: 'hospital-1' } },
+    discoverySelection: {
+      discoveryHandle: 'opaque-discovery-handle-12345678901234567890',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      displayIdentifier: 'NC-TEST-DISPLAY',
+      source: 'manual',
+    },
+    clearDiscoverySelection: vi.fn(),
   }),
 }))
 
@@ -82,8 +89,7 @@ describe('RequestConsentScreen web consent flow', () => {
     expect(requestConsent).toHaveBeenCalledOnce()
     expect(requestConsent).toHaveBeenCalledWith(
       {
-        patient_id: 'patient-1',
-        provider_id: 'provider-1',
+        discovery_handle: 'opaque-discovery-handle-12345678901234567890',
         purpose: 'follow_up',
         scope: 'clinical',
         access_duration_seconds: 3600,
@@ -92,7 +98,7 @@ describe('RequestConsentScreen web consent flow', () => {
     )
     resolveRequest({ request_id: 'request-1' })
     await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/doctor/waiting?request_id=request-1&patient_id=patient-1')
+      expect(push).toHaveBeenCalledWith('/doctor/waiting?request_id=request-1')
     )
   })
 

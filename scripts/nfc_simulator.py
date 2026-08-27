@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Interactive NFC hardware emulator for Nexa Care V2 live API testing.
 
-The simulator exercises two provider-gated flows against a deployed backend:
-1. Emergency NFC break-glass snapshot retrieval.
-2. Routine consent grant followed by FHIR R4 export.
+The simulator exercises the provider-gated emergency NFC break-glass snapshot
+flow. Direct routine consent issuance is retired; routine access must use the
+discovery-bound patient approval flow in the application.
 
 No secrets are persisted. The provider API key is read from CLINIC_API_KEY or
 prompted with hidden input at startup.
@@ -51,21 +51,21 @@ class NexaSimulator:
         print(f"{CYAN}Connected target:{RESET} {self.base_url}")
         while True:
             self._print_menu()
-            choice = input(f"{CYAN}Select option [1-3]: {RESET}").strip()
+            choice = input(f"{CYAN}Select option [1-2]: {RESET}").strip()
             if choice == "1":
                 self.simulate_emergency_tap()
             elif choice == "2":
-                self.simulate_routine_checkup()
-            elif choice == "3":
                 print(f"{GREEN}Exiting simulator.{RESET}")
                 return
             else:
-                print_error("Invalid option. Choose 1, 2, or 3.")
+                print_error("Invalid option. Choose 1 or 2.")
 
     def simulate_emergency_tap(self) -> None:
         """POST a scanned NFC UID to the emergency read-card endpoint."""
 
-        card_uid = input(f"{CYAN}Enter scanned NFC UID (e.g., 04:A2:B4...): {RESET}").strip()
+        card_uid = input(
+            f"{CYAN}Enter scanned NFC UID (e.g., 04:A2:B4...): {RESET}"
+        ).strip()
         if not card_uid:
             print_error("NFC UID is required.")
             return
@@ -80,39 +80,6 @@ class NexaSimulator:
 
         print_success("Emergency Snapshot")
         print_json(response)
-
-    def simulate_routine_checkup(self) -> None:
-        """Grant routine consent, then export the patient's FHIR Bundle."""
-
-        patient_id = input(f"{CYAN}Enter Patient ID (UUID): {RESET}").strip()
-        if not patient_id:
-            print_error("Patient ID is required.")
-            return
-
-        consent_response = self._request(
-            "POST",
-            "/api/v2/consent/grant",
-            json={"patient_id": patient_id},
-        )
-        if consent_response is None:
-            return
-
-        consent_token = extract_consent_token(consent_response)
-        if not consent_token:
-            print_error("Consent grant succeeded but no consent token was returned.")
-            return
-
-        print_success("Routine consent granted. Fetching FHIR Bundle...")
-        fhir_response = self._request(
-            "GET",
-            f"/api/v2/fhir/export/{patient_id}",
-            headers={"X-Consent-Token": consent_token},
-        )
-        if fhir_response is None:
-            return
-
-        print_success("FHIR R4 Bundle")
-        print_json(fhir_response)
 
     def _request(
         self,
@@ -134,7 +101,9 @@ class NexaSimulator:
                 timeout=REQUEST_TIMEOUT_SECONDS,
             )
         except requests.Timeout:
-            print_error(f"Request timed out after {REQUEST_TIMEOUT_SECONDS}s: {method} {path}")
+            print_error(
+                f"Request timed out after {REQUEST_TIMEOUT_SECONDS}s: {method} {path}"
+            )
             return None
         except requests.RequestException as exc:
             print_error(f"Network error while calling {method} {path}: {exc}")
@@ -163,8 +132,7 @@ class NexaSimulator:
         print()
         print(f"{BOLD}{CYAN}Nexa Care NFC Simulator{RESET}")
         print(f"{CYAN}1.{RESET} Simulate Emergency NFC Tap (Break-Glass)")
-        print(f"{CYAN}2.{RESET} Simulate Routine Checkup (Consent + FHIR)")
-        print(f"{CYAN}3.{RESET} Exit")
+        print(f"{CYAN}2.{RESET} Exit")
 
 
 def configured_base_url() -> str:
@@ -189,16 +157,6 @@ def read_api_key() -> str:
         print_error("CLINIC_API_KEY is required.")
         raise SystemExit(1)
     return api_key
-
-
-def extract_consent_token(payload: dict[str, Any]) -> str | None:
-    """Extract routine consent token from known response shapes."""
-
-    for key in ("consent_token", "X-Consent-Token", "x_consent_token", "token"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
 
 
 def print_json(payload: Any) -> None:

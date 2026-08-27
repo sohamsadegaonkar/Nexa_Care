@@ -18,16 +18,20 @@ This document provides quick-fix patterns for the Nexa Care consent path during 
   # Python one-liner
   import redis; r = redis.from_url("..."); r.expire("nexa:consent:<TOKEN>", 3600)
   ```
-* **Re-issue Token (Last Resort):** Use the `/api/v2/consent/routine/issue` endpoint with appropriate assurance evidence.
+* **Re-issue Token (Last Resort):** Direct routine issuance is retired. Start a
+  new discovery-bound request with `POST /api/v2/consent/request` and require a
+  fresh patient approval.
 
 ---
 
 ## 2. Assurance verification fails for push_biometric
 
-**Symptoms:** `POST /routine/issue` returns 403 with "Assurance verification failed".
+**Symptoms:** A consent request cannot be approved because assurance
+verification failed.
 
 ### Diagnostic Steps
-1. Locate the `request_id` from the frontend logs or `assurance_evidence` body.
+1. Locate the consent `request_id` from the frontend status view. Do not log or
+   copy patient identifiers or assurance evidence into tickets.
 2. Check Redis directly:
    ```bash
    redis-cli GET "push_request:<REQUEST_ID>"
