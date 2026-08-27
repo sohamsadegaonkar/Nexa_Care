@@ -101,6 +101,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/break-glass/issue"),
     ("POST", "/api/v2/consent/break-glass/revoke"),
     ("POST", "/api/v2/nfc/resolve"),
+    ("POST", "/api/v2/patient-discovery"),
     ("GET", "/api/v2/fhir/export/{patient_id}"),
     ("GET", "/api/v2/patient/{patient_id}/record"),
     ("GET", "/api/v2/patient/{patient_id}/emergency-summary"),

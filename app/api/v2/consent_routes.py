@@ -1,8 +1,8 @@
 """Consent routes for Nexa Care V2.
 
-Exposes both the generic /grant endpoint and the frontend-facing
-/routine/issue and /break-glass/issue endpoints. All paths delegate to
-ConsentEngine so the v2 consent surface has a single authority.
+Exposes consent challenge and break-glass endpoints. The legacy generic
+`/grant` and `/routine/issue` endpoints are retained only as retired routes;
+they cannot parse a patient identity or issue a routine capability.
 """
 
 from __future__ import annotations
@@ -61,7 +61,6 @@ import app.services.consent_engine as consent_engine
 from app.services.consent_engine import (
     ConsentEngineUnavailable,
     ConsentPurpose,
-    issue_routine,
     issue_break_glass,
 )
 from app.services.provider_auth_service import resolve_provider_session_context
@@ -73,7 +72,6 @@ from app.services.break_glass_policy import (
     validate_justification,
 )
 from app.security.clinical_categories import UnsupportedClinicalCategoryError
-from app.services.policy_service import PolicyService
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import (
     AuditDomain,
@@ -186,84 +184,26 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(clean.encode("utf-8")).hexdigest()
 
 
-@router.post("/grant", response_model=RoutineConsentGrantResponse)
+@router.post("/grant")
 async def grant_consent_route(
-    request: RoutineConsentGrantRequest,
-    db: AsyncSession = Depends(get_db_session),
     provider: ProviderContext = Depends(get_provider_context),
 ):
-    try:
-        token = await consent_engine.issue(
-            db=db,
-            patient_id=request.patient_id,
-            clinician_id=provider.actor_uid,
-            purpose=request.purpose,
-            scope=request.scope,
-            assurance_level=request.assurance_level,
-            assurance_evidence=request.assurance_evidence,
-            hospital_id=str(provider.hospital_id),
-        )
-        return RoutineConsentGrantResponse(
-            consent_token=token,
-            expires_at=_expires_at(ROUTINE_CONSENT_TTL_SECONDS),
-        )
-    except ValueError as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error_code": "CONSENT_REQUEST_INVALID"},
-        ) from err
-    except ConsentEngineUnavailable as err:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error_code": "CONSENT_SERVICE_UNAVAILABLE"},
-        ) from err
+    """Retired: provider UUID input cannot authorize routine access."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={"error_code": "ROUTINE_DIRECT_ISSUANCE_RETIRED"},
+    )
 
 
-@router.post("/routine/issue", response_model=ConsentIssueResponse)
+@router.post("/routine/issue")
 async def issue_routine_consent_route(
-    request: RoutineConsentIssueRequest,
-    db: AsyncSession = Depends(get_db_session),
     provider: ProviderContext = Depends(get_provider_context),
 ):
-    """Issue a routine consent token for a verified patient identity."""
-    try:
-        policy = (
-            (await PolicyService(db).get_policy(uuid.UUID(request.patient_id)))
-            .strip()
-            .lower()
-        )
-        if policy not in {"standard", "standard_access"}:
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail={"error_code": "PATIENT_APPROVAL_REQUIRED"},
-            )
-        token = await issue_routine(
-            db=db,
-            patient_id=request.patient_id,
-            clinician_id=provider.actor_uid,
-            purpose=request.purpose,
-            scope=request.scope,
-            assurance_level=request.assurance_level,
-            assurance_evidence=request.assurance_evidence,
-            ttl_seconds=ROUTINE_CONSENT_TTL_SECONDS,
-            hospital_id=str(provider.hospital_id),
-        )
-        return ConsentIssueResponse(
-            consent_token=token,
-            expires_at=_expires_at(ROUTINE_CONSENT_TTL_SECONDS),
-        )
-    except HTTPException:
-        raise
-    except (ValueError, TypeError) as err:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error_code": "CONSENT_REQUEST_INVALID"},
-        ) from err
-    except ConsentEngineUnavailable as err:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error_code": "CONSENT_SERVICE_UNAVAILABLE"},
-        ) from err
+    """Retired: routine consent follows a discovery-bound signed approval."""
+    raise HTTPException(
+        status_code=status.HTTP_410_GONE,
+        detail={"error_code": "ROUTINE_DIRECT_ISSUANCE_RETIRED"},
+    )
 
 
 @router.post("/break-glass/issue", response_model=BreakGlassConsentIssueResponse)
@@ -526,10 +466,8 @@ async def validate_consent(
 
 
 class ConsentChallengeRequestPayload(BaseModel):
-    patient_id: str
-    provider_id: str | None = (
-        None  # DEPRECATED — server derives from session; rejects mismatch
-    )
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    discovery_handle: str = Field(min_length=32, max_length=256)
     purpose: str = "routine_checkup"
     scope: str = "clinical"
     access_duration_seconds: int = 900
@@ -587,13 +525,6 @@ async def _deliver_consent_notification(
     expo_push_token: str,
 ) -> None:
     """Send the Expo notification and persist delivery outcome in Redis."""
-    result = await push_notification_service.send_approval_request(
-        patient_id=patient_id,
-        request_id=request_id,
-        provider_name=provider_name,
-        purpose=purpose,
-        expo_push_token=expo_push_token,
-    )
     redis = get_redis_client()
     key = f"consent_request:{request_id}"
     raw = await _redis_call(redis.get, key)
@@ -601,7 +532,23 @@ async def _deliver_consent_notification(
         return
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
+    if json.loads(raw).get("status") != "pending":
+        return
+    result = await push_notification_service.send_approval_request(
+        patient_id=patient_id,
+        request_id=request_id,
+        provider_name=provider_name,
+        purpose=purpose,
+        expo_push_token=expo_push_token,
+    )
+    raw = await _redis_call(redis.get, key)
+    if not raw:
+        return
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8")
     data = json.loads(raw)
+    if data.get("status") != "pending":
+        return
 
     data["delivery_status"] = "sent" if result.success else "failed"
     data["delivery_error"] = None if result.success else "PUSH_DELIVERY_FAILED"
@@ -642,6 +589,19 @@ return 1
 """
 
 
+_PROMOTE_CONSENT_REQUEST_LUA = """
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local data = cjson.decode(raw)
+if data.status ~= 'pending_audit' then return 0 end
+local ttl = redis.call('PTTL', KEYS[1])
+if ttl <= 0 then return 0 end
+data.status = 'pending'
+redis.call('SET', KEYS[1], cjson.encode(data), 'PX', ttl)
+return 1
+"""
+
+
 async def _resolve_signed_approval_atomic(
     redis, request_id: str, nonce: str, data: dict, ttl: int
 ) -> bool:
@@ -658,6 +618,17 @@ async def _resolve_signed_approval_atomic(
     return int(result) == 1
 
 
+async def _promote_consent_request_atomic(redis, request_id: str) -> bool:
+    """Activate an audited challenge without extending its capability lifetime."""
+    result = await _redis_call(
+        redis.eval,
+        _PROMOTE_CONSENT_REQUEST_LUA,
+        1,
+        f"consent_request:{request_id}",
+    )
+    return int(result) == 1
+
+
 @router.post(
     "/request",
     status_code=status.HTTP_201_CREATED,
@@ -666,33 +637,16 @@ async def _resolve_signed_approval_atomic(
 async def create_consent_request(
     payload: ConsentChallengeRequestPayload,
     background_tasks: BackgroundTasks,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(require_role("clinician")),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Initiate a push-based consent request generating a cryptographic challenge.
 
-    SECURITY: provider_id is derived from the authenticated session (provider.actor_uid).
-    If a caller supplies provider_id in the body, it must match the session identity
-    or the request is rejected as an IDOR probe.  The server never trusts client-
-    supplied identity — the Bearer token is the single source of truth.
+    SECURITY: provider and patient identity are derived from the authenticated
+    session and the one-time discovery handle. Client identity fields are not
+    accepted as authorization anchors.
     """
     # ── IDOR guard: reject if caller supplied provider_id that doesn't match session ──
-    if payload.provider_id is not None and str(payload.provider_id) != str(
-        provider.actor_uid
-    ):
-        await append_audit_log_or_503(
-            audit_context=current_audit_context(AuditDomain.CONSENT),
-            actor_uid=provider.actor_uid,
-            event_type="CONSENT_REQUEST_IDOR_REJECTED",
-            target_id=payload.patient_id,
-            status="REJECTED",
-            metadata={"supplied_provider_id": payload.provider_id},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="provider_id in request body does not match authenticated session",
-        )
-
     # ── Duration bounds ───────────────────────────────────────────────────────
     MIN_DURATION = 300  # 5 minutes
     MAX_DURATION = 3600  # 60 minutes
@@ -700,13 +654,32 @@ async def create_consent_request(
         MIN_DURATION, min(MAX_DURATION, payload.access_duration_seconds)
     )
 
+    from app.services.patient_discovery_service import (
+        DiscoveryHandleInvalid,
+        DiscoveryUnavailable,
+        PatientDiscoveryService,
+    )
+
     try:
-        pid_uuid = uuid.UUID(payload.patient_id)
-    except ValueError as exc:
+        patient = await PatientDiscoveryService(
+            db, get_async_redis_client()
+        ).consume_handle(
+            raw_handle=payload.discovery_handle,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+        )
+    except DiscoveryHandleInvalid as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"error_code": "INVALID_PATIENT_ID"},
+            status_code=403,
+            detail={"error_code": "DISCOVERY_HANDLE_INVALID_OR_EXPIRED"},
         ) from exc
+    except DiscoveryUnavailable as exc:
+        raise HTTPException(
+            status_code=503, detail={"error_code": "DISCOVERY_UNAVAILABLE"}
+        ) from exc
+    pid_uuid = patient.patient_uuid
+    patient_id = str(pid_uuid)
 
     stmt = (
         select(PatientDeviceKey)
@@ -733,7 +706,7 @@ async def create_consent_request(
 
     challenge_payload = {
         "request_id": request_id,
-        "patient_id": payload.patient_id,
+        "patient_id": patient_id,
         "provider_id": provider.actor_uid,  # Server-derived — NEVER from request body
         "hospital_id": str(provider.hospital_id),
         "provider_name": provider.provider.display_name,
@@ -744,7 +717,9 @@ async def create_consent_request(
         "challenge_nonce": challenge_nonce,
         "created_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
-        "status": "pending",
+        # This record is deliberately inert until the mandatory creation audit
+        # has succeeded and the atomic promotion below has won.
+        "status": "pending_audit",
     }
 
     token_result = await db.execute(
@@ -783,20 +758,52 @@ async def create_consent_request(
             },
         ) from exc
 
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.CONSENT),
-        actor_uid=provider.actor_uid,
-        event_type="CONSENT_REQUEST_CREATED",
-        target_id=request_id,
-        status="SUCCESS",
-        metadata={"patient_id": payload.patient_id, "purpose": payload.purpose},
-    )
+    try:
+        await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT),
+            actor_uid=provider.actor_uid,
+            event_type="CONSENT_REQUEST_CREATED",
+            target_id=request_id,
+            status="SUCCESS",
+            metadata={"purpose": payload.purpose},
+        )
+    except Exception as exc:
+        try:
+            await _redis_call(redis.delete, f"consent_request:{request_id}")
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "CONSENT_SECURITY_AUDIT_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+
+    try:
+        promoted = await _promote_consent_request_atomic(redis, request_id)
+    except Exception:
+        promoted = False
+    if not promoted:
+        # Deletion is hygiene only. A failed deletion leaves pending_audit,
+        # which every reader treats as unavailable and non-actionable.
+        try:
+            await _redis_call(redis.delete, f"consent_request:{request_id}")
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "CONSENT_SECURITY_STORE_UNAVAILABLE",
+                "retryable": True,
+            },
+        )
 
     if push_token:
         background_tasks.add_task(
             _deliver_consent_notification,
             request_id=request_id,
-            patient_id=payload.patient_id,
+            patient_id=patient_id,
             provider_name=provider.provider.display_name,
             purpose=payload.purpose,
             expo_push_token=push_token.expo_push_token,
@@ -1081,6 +1088,22 @@ async def get_consent_request_status(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Consent request belongs to a different hospital context",
+        )
+    live_statuses = {
+        "pending",
+        "approved",
+        "denied",
+        "expired",
+        "timeout",
+        "cancelled",
+        "revoked",
+    }
+    if data.get("status") not in live_statuses:
+        # Never expose an unaudited or unknown lifecycle state as a
+        # provider-visible consent request.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Consent request not found",
         )
 
     return ConsentStatusResponsePayload(
@@ -1497,6 +1520,13 @@ async def get_challenge_for_patient(
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     data = json.loads(raw)
+
+    if data.get("status") != "pending":
+        # A pre-audit record is deliberately not a patient-approvable object.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Challenge expired or not found",
+        )
 
     if str(data.get("patient_id")) != str(patient_id):
         raise HTTPException(

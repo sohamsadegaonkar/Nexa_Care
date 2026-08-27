@@ -25,6 +25,25 @@ class CardRedirectService:
         tombstone_result = await self.db.execute(tombstone_stmt)
         return list(tombstone_result.scalars().all())
 
+    async def resolve_patient_with_redirect(self, patient_uuid) -> dict:
+        """Resolve any matched patient identity to its canonical identity."""
+        current_uuid = patient_uuid
+        seen = set()
+        for _ in range(10):
+            if current_uuid in seen:
+                raise TombstoneIntegrityError("Tombstone cycle detected")
+            seen.add(current_uuid)
+            tombstones = await self._tombstones_for_old(current_uuid)
+            if len(tombstones) > 1:
+                raise TombstoneIntegrityError("Duplicate tombstones found")
+            if not tombstones:
+                return {
+                    "canonical_patient_uuid": str(current_uuid),
+                    "is_redirected": len(seen) > 1,
+                }
+            current_uuid = tombstones[0].canonical_patient_uuid
+        raise TombstoneIntegrityError("Tombstone redirect chain exceeded maximum depth")
+
     async def resolve_card_with_redirect(self, card_id: str) -> dict:
         """
         Resolve NFC card, following tombstone chain if patient was merged.

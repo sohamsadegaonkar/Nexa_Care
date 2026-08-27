@@ -114,7 +114,7 @@ def _make_mock_db():
 
 
 @pytest.mark.asyncio
-async def test_routine_lifecycle(client):
+async def test_routine_issue_route_is_retired(client):
     test_client, redis = client
     p_id = str(uuid4())
     db = _make_mock_db()
@@ -125,33 +125,8 @@ async def test_routine_lifecycle(client):
         json={"patient_id": p_id, "purpose": "TREATMENT"},
         headers={"Authorization": "Bearer session"},
     )
-    assert resp.status_code == 200
-    token = resp.json()["consent_token"]
-
-    res = MagicMock()
-    # Use real values instead of Mocks for clinical fields to pass Pydantic validation
-    res.scalars().first.return_value = MagicMock(
-        patient_name="YWJjZGVmZ2hpamtsbW5vcA==:1",
-        phone="YWJjZGVmZ2hpamtsbW5vcA==:1",
-        aadhaar_abha_id="YWJjZGVmZ2hpamtsbW5vcA==:1",
-        diagnoses="YWJjZGVmZ2hpamtsbW5vcA==:1",
-        lab_results="YWJjZGVmZ2hpamtsbW5vcA==:1",
-        prescriptions="YWJjZGVmZ2hpamtsbW5vcA==:1",
-    )
-    row = MagicMock()
-    row.consumed_at = None
-    res.scalar_one_or_none.return_value = row
-    db.execute.return_value = res
-
-    headers = {
-        "X-Consent-Token": token,
-        "X-Consent-Purpose": "TREATMENT",
-        "Authorization": "Bearer session",
-    }
-    first = test_client.get(f"/api/v2/patient/{p_id}/record", headers=headers)
-    assert first.status_code == 200, first.text
-    second = test_client.get(f"/api/v2/patient/{p_id}/record", headers=headers)
-    assert second.status_code == 403, second.text
+    assert resp.status_code == 410
+    assert resp.json()["detail"]["error_code"] == "ROUTINE_DIRECT_ISSUANCE_RETIRED"
 
 
 @pytest.mark.asyncio

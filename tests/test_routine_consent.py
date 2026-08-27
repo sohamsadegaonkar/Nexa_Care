@@ -5,14 +5,12 @@ from __future__ import annotations
 import asyncio
 import unittest
 import uuid
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from app.api.v2.consent_routes import RoutineConsentGrantResponse
 from app.core.database import get_db_session
 from app.core.dependencies import get_provider_context, require_active_consent
 from app.main import app
@@ -161,7 +159,9 @@ class TestRoutineConsentRoute(unittest.TestCase):
         app.dependency_overrides[get_db_session] = override_db
 
     @patch("app.api.v2.consent_routes.consent_engine.issue", new_callable=AsyncMock)
-    def test_grant_route_returns_token(self, mock_issue) -> None:
+    def test_grant_route_is_retired_for_an_authenticated_provider(
+        self, mock_issue
+    ) -> None:
         self.setUp_db_override()
         patient_id = uuid.uuid4()
         mock_issue.return_value = "test-token"
@@ -174,19 +174,11 @@ class TestRoutineConsentRoute(unittest.TestCase):
         finally:
             app.dependency_overrides.pop(get_db_session, None)
 
-        self.assertEqual(response.status_code, 200, response.text)
-        body = RoutineConsentGrantResponse.model_validate_json(response.text)
-        self.assertEqual(body.consent_token, "test-token")
-        self.assertIsInstance(body.expires_at, datetime)
-        issue_kwargs = mock_issue.await_args.kwargs
-        self.assertEqual(issue_kwargs["patient_id"], str(patient_id))
-        self.assertEqual(issue_kwargs["clinician_id"], self.provider.actor_uid)
-        self.assertEqual(issue_kwargs["purpose"], "routine_access")
-        self.assertEqual(issue_kwargs["scope"], ["clinical.diagnoses"])
-        from app.models.assurance import AssuranceLevel
-
-        self.assertEqual(issue_kwargs["assurance_level"], AssuranceLevel.STANDARD)
-        self.assertEqual(issue_kwargs["assurance_evidence"], {})
+        self.assertEqual(response.status_code, 410, response.text)
+        self.assertEqual(
+            response.json()["detail"]["error_code"], "ROUTINE_DIRECT_ISSUANCE_RETIRED"
+        )
+        mock_issue.assert_not_awaited()
 
     def test_grant_route_rejects_missing_scope(self) -> None:
         response = self.client.post(
@@ -194,10 +186,13 @@ class TestRoutineConsentRoute(unittest.TestCase):
             json={"patient_id": str(uuid.uuid4())},
         )
 
-        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(
+            response.json()["detail"]["error_code"], "ROUTINE_DIRECT_ISSUANCE_RETIRED"
+        )
 
     @patch("app.api.v2.consent_routes.consent_engine.issue", new_callable=AsyncMock)
-    def test_grant_route_returns_503_when_store_unavailable(self, mock_issue) -> None:
+    def test_grant_route_never_calls_store_when_retired(self, mock_issue) -> None:
         self.setUp_db_override()
         mock_issue.side_effect = consent_engine.ConsentEngineUnavailable("redis down")
 
@@ -209,7 +204,8 @@ class TestRoutineConsentRoute(unittest.TestCase):
         finally:
             app.dependency_overrides.pop(get_db_session, None)
 
-        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.status_code, 410)
+        mock_issue.assert_not_awaited()
 
 
 if __name__ == "__main__":

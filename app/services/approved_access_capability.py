@@ -20,7 +20,14 @@ from app.security.document_processing_policy import (
 
 CAPABILITY_PREFIX = "consent_access:capability:"
 CLAIM_PREFIX = "consent_access:claim:"
-CLAIM_LOCK_PREFIX = "consent_access:claim-lock:"
+
+
+_CLAIM_ONCE_LUA = """
+if redis.call('EXISTS', KEYS[1]) == 1 then return 0 end
+redis.call('SET', KEYS[2], ARGV[1], 'EX', ARGV[3])
+redis.call('SET', KEYS[1], ARGV[2], 'EX', ARGV[3])
+return 1
+"""
 
 
 class ApprovedAccessStoreUnavailable(RuntimeError):
@@ -83,7 +90,7 @@ def _scope_allows(scope: str, requested_category: str) -> bool:
 async def issue_from_approved_request(
     *, request_data: dict
 ) -> tuple[str, ApprovedAccessCapability]:
-    """Rotate the request's capability so retries leave only one active grant."""
+    """Atomically claim an approved request exactly once."""
     now = datetime.now(timezone.utc)
     expires_at = datetime.fromisoformat(str(request_data["access_expires_at"]))
     if expires_at.tzinfo is None:
@@ -113,26 +120,18 @@ async def issue_from_approved_request(
 
     try:
         redis = get_async_redis_client()
-        lock_key = f"{CLAIM_LOCK_PREFIX}{payload['request_id']}"
-        lock_value = secrets.token_hex(16)
-        if not await redis.set(lock_key, lock_value, nx=True, ex=5):
+        claimed = await redis.eval(
+            _CLAIM_ONCE_LUA,
+            2,
+            _claim_key(payload["request_id"]),
+            _capability_key(digest),
+            json.dumps(payload),
+            digest,
+            ttl,
+        )
+        if int(claimed) != 1:
             raise ApprovedAccessClaimInProgress(
-                "An access claim is already in progress"
-            )
-        try:
-            prior_digest = await redis.get(_claim_key(payload["request_id"]))
-            if isinstance(prior_digest, bytes):
-                prior_digest = prior_digest.decode("utf-8")
-            await redis.set(_capability_key(digest), json.dumps(payload), ex=ttl)
-            await redis.set(_claim_key(payload["request_id"]), digest, ex=ttl)
-            if isinstance(prior_digest, str) and prior_digest != digest:
-                await redis.delete(_capability_key(prior_digest))
-        finally:
-            await redis.eval(
-                "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",
-                1,
-                lock_key,
-                lock_value,
+                "The approved request has already been claimed"
             )
     except ApprovedAccessClaimInProgress:
         raise

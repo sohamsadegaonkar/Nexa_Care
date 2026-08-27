@@ -57,6 +57,7 @@ class ProfileUpdateRequest(BaseModel):
 class ProfileResponse(BaseModel):
     full_name: str
     date_of_birth: str
+    public_patient_id: str
 
 
 class LegalRequirementResponse(BaseModel):
@@ -141,7 +142,11 @@ async def read_profile(
     if data is None:
         raise HTTPException(status_code=404, detail="PROFILE_NOT_FOUND")
 
-    return {"full_name": data.full_name, "date_of_birth": data.date_of_birth}
+    return {
+        "full_name": data.full_name,
+        "date_of_birth": data.date_of_birth,
+        "public_patient_id": auth.patient.public_patient_id,
+    }
 
 
 @router.put("/profile", response_model=ProfileResponse)
@@ -176,7 +181,11 @@ async def update_profile(
             status_code=503, detail="ENCRYPTION_SERVICE_UNAVAILABLE"
         ) from None
 
-    return {"full_name": data.full_name, "date_of_birth": data.date_of_birth}
+    return {
+        "full_name": data.full_name,
+        "date_of_birth": data.date_of_birth,
+        "public_patient_id": auth.patient.public_patient_id,
+    }
 
 
 @router.get("/legal-requirements", response_model=list[LegalRequirementResponse])

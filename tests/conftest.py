@@ -184,6 +184,16 @@ class FakeRedis:
             if key not in self.ttls:
                 self.ttls[key] = time.time() + int(argv[0])
             return [count, await self.ttl(key)]
+        if "EXISTS" in script and "ARGV[3]" in script:
+            claim_key, capability_key = keys
+            if claim_key in self.data:
+                return 0
+            self.data[capability_key] = argv[0]
+            self.data[claim_key] = argv[1]
+            expires_at = time.time() + int(argv[2])
+            self.ttls[capability_key] = expires_at
+            self.ttls[claim_key] = expires_at
+            return 1
         request_key, nonce_key = keys
         raw = self.data.get(request_key)
         if not raw or nonce_key in self.data:

@@ -19,6 +19,7 @@ from app.models.provider_context import (
 
 from app.services.approved_access_capability import (
     CAPABILITY_PREFIX,
+    ApprovedAccessClaimInProgress,
     invalidate_request,
     issue_from_approved_request,
     token_hash,
@@ -45,11 +46,21 @@ class MemoryRedis:
         self.data.pop(key, None)
         return 1
 
-    async def eval(self, _script: str, _numkeys: int, key: str, value: str):
-        if self.data.get(key) == value:
-            self.data.pop(key, None)
-            return 1
-        return 0
+    async def eval(
+        self,
+        _script: str,
+        _numkeys: int,
+        claim_key: str,
+        capability_key: str,
+        payload: str,
+        digest: str,
+        _ttl: int,
+    ):
+        if claim_key in self.data:
+            return 0
+        self.data[capability_key] = payload
+        self.data[claim_key] = digest
+        return 1
 
 
 def approved_request(**overrides) -> dict:
@@ -98,7 +109,7 @@ def provider_context(
 
 
 @pytest.mark.asyncio
-async def test_claim_stores_only_hash_and_rotation_invalidates_prior_token():
+async def test_claim_stores_only_hash_and_replay_cannot_rotate_capability():
     redis = MemoryRedis()
     request = approved_request()
     seed_request(redis, request)
@@ -107,13 +118,12 @@ async def test_claim_stores_only_hash_and_rotation_invalidates_prior_token():
         return_value=redis,
     ):
         first, _ = await issue_from_approved_request(request_data=request)
-        second, _ = await issue_from_approved_request(request_data=request)
+        with pytest.raises(ApprovedAccessClaimInProgress):
+            await issue_from_approved_request(request_data=request)
 
-        assert first != second
         assert first not in " ".join(redis.data.keys())
         assert first not in " ".join(redis.data.values())
-        assert f"{CAPABILITY_PREFIX}{token_hash(first)}" not in redis.data
-        assert f"{CAPABILITY_PREFIX}{token_hash(second)}" in redis.data
+        assert f"{CAPABILITY_PREFIX}{token_hash(first)}" in redis.data
         assert (
             await validate(
                 token=first,
@@ -122,7 +132,7 @@ async def test_claim_stores_only_hash_and_rotation_invalidates_prior_token():
                 hospital_id="hospital-1",
                 requested_category="clinical_summary",
             )
-            is None
+            is not None
         )
 
 

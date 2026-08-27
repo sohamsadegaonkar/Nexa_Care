@@ -93,15 +93,15 @@ def issue(client, level=AssuranceLevel.STANDARD, evidence=None):
         },
     ],
 )
-def test_unverified_push_evidence_fails_closed(client, record):
+def test_routine_issue_is_retired_regardless_of_push_evidence(client, record):
     http, redis, audit = client
     if record is not None:
         redis.store["push_request:req"] = json.dumps(record)
     response = issue(http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"})
-    assert response.status_code == 403
+    assert response.status_code == 410
 
 
-def test_verified_push_evidence_is_single_use(client):
+def test_verified_push_evidence_cannot_reenable_retired_route(client):
     http, redis, _ = client
     redis.store["push_request:req"] = json.dumps(
         {
@@ -112,16 +112,16 @@ def test_verified_push_evidence_is_single_use(client):
     )
     assert (
         issue(http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"}).status_code
-        == 200
+        == 410
     )
     assert (
         issue(http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"}).status_code
-        == 403
+        == 410
     )
 
 
-def test_standard_assurance_issues_durable_grant(client):
-    assert issue(client[0]).status_code == 200
+def test_standard_assurance_cannot_issue_from_patient_uuid(client):
+    assert issue(client[0]).status_code == 410
 
 
 def test_break_glass_issues_short_lived_durable_grant(client):
@@ -136,20 +136,20 @@ def test_break_glass_issues_short_lived_durable_grant(client):
     assert response.status_code in {401, 403, 428}
 
 
-def test_redis_failure_during_verification_returns_503(client):
+def test_redis_failure_does_not_bypass_retired_route(client):
     http, redis, _ = client
     with patch.object(redis, "get", side_effect=RuntimeError("unavailable")):
         assert (
             issue(
                 http, AssuranceLevel.PUSH_BIOMETRIC, {"request_id": "req"}
             ).status_code
-            == 503
+            == 410
         )
 
 
-def test_invalid_assurance_level_is_rejected(client):
-    assert issue(client[0], "unknown").status_code == 422
+def test_invalid_assurance_level_cannot_bypass_retired_route(client):
+    assert issue(client[0], "unknown").status_code == 410
 
 
 def test_missing_push_evidence_is_rejected(client):
-    assert issue(client[0], AssuranceLevel.PUSH_BIOMETRIC).status_code == 403
+    assert issue(client[0], AssuranceLevel.PUSH_BIOMETRIC).status_code == 410

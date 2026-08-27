@@ -45,11 +45,21 @@ class MemoryRedis:
         self.data.pop(key, None)
         return 1
 
-    async def eval(self, _script: str, _numkeys: int, key: str, value: str):
-        if self.data.get(key) == value:
-            self.data.pop(key, None)
-            return 1
-        return 0
+    async def eval(
+        self,
+        _script: str,
+        _numkeys: int,
+        claim_key: str,
+        capability_key: str,
+        payload: str,
+        digest: str,
+        _ttl: int,
+    ):
+        if claim_key in self.data:
+            return 0
+        self.data[capability_key] = payload
+        self.data[claim_key] = digest
+        return 1
 
 
 def _provider(provider_id: str, hospital_id: str) -> ProviderContext:

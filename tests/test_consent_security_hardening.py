@@ -72,14 +72,10 @@ class TestConsentRequestIdorGuard:
         ), "Consent request endpoint must have IDOR guard that rejects provider_id mismatches"
 
     def test_idor_guard_rejects_mismatch(self) -> None:
-        """IDOR guard must return 403 when provider_id doesn't match session."""
+        """Retired client identity fields are rejected by the strict payload."""
         code = _read(CONSENT_ROUTES)
-        # Must have 403 status for IDOR rejection
-        assert "403" in code, "IDOR rejection must return 403 status"
-        # Must audit the IDOR attempt
-        assert (
-            "CONSENT_REQUEST_IDOR_REJECTED" in code
-        ), "Must audit IDOR rejection with CONSENT_REQUEST_IDOR_REJECTED event"
+        assert 'extra="forbid"' in code
+        assert "_legacy_provider_id" not in code
 
     def test_idor_guard_uses_session_actor_uid(self) -> None:
         """The challenge_payload must use provider.actor_uid, not payload.provider_id."""
@@ -370,35 +366,27 @@ class TestConsentCancellation:
 
 
 class TestRetryNewRequest:
-    """Retry must navigate to request-consent with patient_id, creating a new request."""
+    """Retry must return to discovery because handles are single-use."""
 
     def test_waiting_screen_passes_patient_id_to_waiting(self) -> None:
-        """RequestConsentScreen must pass patient_id to the waiting screen URL."""
+        """RequestConsentScreen must not pass an internal patient ID in its URL."""
         code = _read_screen("RequestConsentScreen")
-        assert "patient_id" in code, "Must pass patient_id in waiting screen navigation"
-        # The navigation URL should include patient_id as a query parameter
-        code_norm = _normalize_ws(code)
-        assert (
-            "patient_id" in code_norm
-        ), "Waiting screen URL must include patient_id param"
+        assert "patient_id" not in _strip_comments(code)
 
     def test_waiting_screen_reads_patient_id_from_params(self) -> None:
-        """WaitingForApprovalScreen must read patient_id from URL params."""
-        code = _read_screen("WaitingForApprovalScreen")
-        code_norm = _normalize_ws(code)
-        assert "patient_id" in code_norm, "Must read patient_id from search params"
-
-    def test_retry_navigates_to_request_consent_with_patient_id(self) -> None:
-        """Retry must navigate to /doctor/request-consent?patient_id=..."""
+        """WaitingForApprovalScreen must use request_id-only navigation."""
         code = _read_screen("WaitingForApprovalScreen")
         code_no_comments = _strip_comments(code)
-        # handleRetry should navigate to request-consent with patient_id
-        assert (
-            "request-consent" in code_no_comments
-        ), "Retry must navigate to request-consent"
-        assert (
-            "patient_id" in code_no_comments
-        ), "Retry navigation must include patient_id context"
+        assert "searchParams.get('patient_id')" not in code_no_comments
+        assert 'searchParams.get("patient_id")' not in code_no_comments
+
+    def test_retry_navigates_to_request_consent_with_patient_id(self) -> None:
+        """Retry must navigate to patient discovery without carrying identity."""
+        code = _read_screen("WaitingForApprovalScreen")
+        code_no_comments = _strip_comments(code)
+        assert "patient-search" in code_no_comments
+        retry_fn = code_no_comments[code_no_comments.find("handleRetry") :]
+        assert "patient_id" not in retry_fn[:500]
 
     def test_retry_does_not_reuse_request_id(self) -> None:
         """Retry must NOT reuse the old request_id — it creates a new one."""
@@ -816,9 +804,9 @@ class TestCancelEndpointIntegration:
         finally:
             app.dependency_overrides.pop(get_current_provider, None)
 
-    def test_idor_mismatch_rejected(self) -> None:
-        """Creating a consent request with wrong provider_id should return 403."""
-        from app.core.dependencies import get_current_provider
+    def test_patient_id_injection_is_rejected_after_actual_provider_auth(self) -> None:
+        """The actual clinician dependency must reject UUID injection before services run."""
+        from app.core.dependencies import get_provider_context
 
         import uuid
         from app.models.provider_context import (
@@ -844,28 +832,31 @@ class TestCancelEndpointIntegration:
                 roles=["clinician"],
             ),
         )
-        app.dependency_overrides[get_current_provider] = lambda: mock_provider
+        app.dependency_overrides[get_provider_context] = lambda: mock_provider
 
         mock_db = AsyncMock()
         from app.core.database import get_db_session as _get_db
 
         app.dependency_overrides[_get_db] = lambda: mock_db
 
-        try:
-            client = TestClient(app)
-            # Send a different provider_id in the body
-            res = client.post(
-                "/api/v2/consent/request",
-                json={
-                    "patient_id": "123e4567-e89b-12d3-a456-426614174001",
-                    "provider_id": str(uuid.uuid4()),  # Different from session
-                    "purpose": "treatment",
-                    "scope": "clinical",
-                },
-            )
-            assert (
-                res.status_code == 403
-            ), f"IDOR mismatch should return 403: {res.text}"
-        finally:
-            app.dependency_overrides.pop(get_current_provider, None)
-            app.dependency_overrides.pop(_get_db, None)
+        with patch(
+            "app.services.patient_discovery_service.PatientDiscoveryService.consume_handle",
+            new_callable=AsyncMock,
+        ) as consume_handle:
+            try:
+                client = TestClient(app)
+                res = client.post(
+                    "/api/v2/consent/request",
+                    json={
+                        "patient_id": "123e4567-e89b-12d3-a456-426614174001",
+                        "provider_id": str(uuid.uuid4()),
+                        "discovery_handle": "h" * 32,
+                        "purpose": "treatment",
+                        "scope": "clinical",
+                    },
+                )
+                assert res.status_code == 422, res.text
+                consume_handle.assert_not_awaited()
+            finally:
+                app.dependency_overrides.pop(get_provider_context, None)
+                app.dependency_overrides.pop(_get_db, None)
