@@ -1,0 +1,102 @@
+﻿{
+  "schemaVersion": 1,
+
+  "purpose": "Portable Milestone 6 qualification ECS runtime contract",
+
+  "scope": {
+    "environment": "pilot",
+    "productionApplicable": false,
+    "realPatientPhiAllowed": false
+  },
+
+  "qualificationTaskSizing": {
+    "cpu": "512",
+    "memory": "1024",
+    "description": "0.5 vCPU / 1 GiB qualification starting point",
+    "status": "QUALIFICATION_DEFAULT_NOT_PRODUCTION_SIZING"
+  },
+
+  "secretBundles": {
+    "runtime": {
+      "secretId": "<RUNTIME_SECRET_ID>",
+      "requiredJsonKeys": [
+        "DATABASE_URL",
+        "UPSTASH_REDIS_URL",
+        "SUPABASE_URL",
+        "SUPABASE_KEY",
+        "HANDSHAKE_PEPPER_SECRET",
+        "MFA_ENCRYPTION_KEY",
+        "PII_ENCRYPTION_KEY",
+        "PATIENT_JWT_SECRET",
+        "OTP_RATE_LIMIT_HMAC_SECRET"
+      ]
+    },
+
+    "documentStorage": {
+      "secretId": "<DOCUMENT_STORAGE_SECRET_ID>",
+      "requiredJsonKeys": [
+        "DOCUMENT_STORAGE_ENCRYPTION_KEY"
+      ]
+    }
+  },
+
+  "fixedQualificationSettings": {
+    "ENVIRONMENT": "pilot",
+    "PORT": "8000",
+
+    "DOCUMENT_EXTRACTION_PROVIDER": "aws_textract",
+    "DOCUMENT_AI_AWS_REGION": "ap-south-1",
+    "DOCUMENT_AI_TIMEOUT_SECONDS": "30",
+    "DOCUMENT_AI_MAX_ATTEMPTS": "3",
+    "DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS": "3",
+    "DOCUMENT_AI_JOB_MAX_ATTEMPTS": "3",
+    "DOCUMENT_AI_ASYNC_MULTIPAGE_ENABLED": "false",
+
+    "DOCUMENT_STORAGE_PROVIDER": "s3",
+    "DOCUMENT_STORAGE_S3_REGION": "ap-south-1",
+
+    "ENCRYPTION_BACKEND": "kms",
+    "AWS_REGION": "ap-south-1",
+    "AWS_PATIENT_SPECIFIC_KMS_KEYS": "false",
+
+    "PUSH_STATUS_TRANSPORT": "poll",
+    "AUTO_COMMIT": "false",
+    "DATABASE_ECHO_SQL": "false"
+  },
+
+  "deploymentSpecificValues": [
+    "ECS_EXECUTION_ROLE_ARN",
+    "ECS_TASK_ROLE_ARN",
+    "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST",
+    "DOCUMENT_STORAGE_S3_BUCKET",
+    "DOCUMENT_STORAGE_S3_KMS_KEY_ID",
+    "APPLICATION_ENVELOPE_KMS_KEY_ID",
+    "CLOUDWATCH_LOG_GROUP"
+  ],
+
+  "deferredUntilFinalIngress": [
+    "FINAL_API_HOST",
+    "FINAL_DOCTOR_HTTPS_ORIGIN",
+    "FINAL_TRUSTED_PROXY_CIDRS",
+    "FINAL_FORWARDED_PROXY_CIDRS"
+  ],
+
+  "forbiddenInTaskDefinition": [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "plaintext database credentials",
+    "plaintext Redis credentials",
+    "plaintext application secrets"
+  ],
+
+  "materializationRules": {
+    "accountIdentifiersCommittedToRepository": false,
+    "roleArnsCommittedToRepository": false,
+    "secretArnsCommittedToRepository": false,
+    "databaseUrlsCommittedToRepository": false,
+    "redisUrlsCommittedToRepository": false,
+    "renderedTaskDefinitionWrittenInsideRepository": false,
+    "awsDeploymentAllowedByThisContract": false
+  }
+}

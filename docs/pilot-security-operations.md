@@ -79,7 +79,7 @@ python scripts/run_pilot_migrations.py
 ```
 
 The repository and database must both resolve to the single Alembic head
-`20260814_conflict_supersession`. API container startup never runs migrations and
+`20260827_patient_public_id`. API container startup never runs migrations and
 must not be used to stamp or downgrade a database.
 
 `GET /healthz` is the dependency-free liveness probe for the container and load

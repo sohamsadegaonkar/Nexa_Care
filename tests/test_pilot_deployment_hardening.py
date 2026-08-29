@@ -90,7 +90,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 def test_migration_script_requires_exact_single_repository_head() -> None:
     assert run_pilot_migrations.repository_heads() == (
-        "20260819_patient_profile_legal",
+        run_pilot_migrations.EXPECTED_HEAD,
     )
 
 
@@ -112,7 +112,7 @@ def test_migration_script_scopes_url_and_redacts_command_output(
         assert environment["DATABASE_URL"] == sensitive_url
         assert "MIGRATION_DATABASE_URL" not in environment
         stdout = (
-            "20260819_patient_profile_legal (head)\n"
+            f"{run_pilot_migrations.EXPECTED_HEAD} (head)\n"
             if arguments == ["current"]
             else ""
         )
@@ -202,7 +202,7 @@ def test_pilot_operations_document_uses_current_contract() -> None:
 
     assert "CORS_ALLOWED_ORIGINS" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=aws_textract" in content
-    assert "20260814_conflict_supersession" in content
+    assert "20260827_patient_public_id" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=remote" not in content
     assert "DOCUMENT_AI_API_URL` or `DOCUMENT_AI_API_KEY" in content
     assert "desiredCount=1" in content
@@ -216,6 +216,6 @@ def test_governance_contract_names_current_migration_head() -> None:
         encoding="utf-8"
     )
 
-    assert "Current head is `20260814_conflict_supersession`" in constitution
-    assert "current head `20260814_conflict_supersession`" in security
+    assert "Current head is `20260827_patient_public_id`" in constitution
+    assert "current head `20260827_patient_public_id`" in security
     assert "API containers never run migrations during startup" in security

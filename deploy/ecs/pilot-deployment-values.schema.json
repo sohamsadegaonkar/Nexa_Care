@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Milestone 6 external ECS deployment values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "TASK_CPU": {"const": "512"},
+    "TASK_MEMORY": {"const": "1024"},
+    "ECS_EXECUTION_ROLE_ARN": {"type": "string", "minLength": 1},
+    "ECS_TASK_ROLE_ARN": {"type": "string", "minLength": 1},
+    "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST": {"type": "string", "pattern": "@sha256:"},
+    "DOCUMENT_STORAGE_S3_BUCKET": {"type": "string", "minLength": 1},
+    "DOCUMENT_STORAGE_S3_KMS_KEY_ID": {"type": "string", "minLength": 1},
+    "APPLICATION_ENVELOPE_KMS_KEY_ID": {"type": "string", "minLength": 1},
+    "CLOUDWATCH_LOG_GROUP": {"type": "string", "minLength": 1},
+    "DATABASE_URL_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "REDIS_URL_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "SUPABASE_URL_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "SUPABASE_KEY_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "DOCUMENT_STORAGE_ENCRYPTION_KEY_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "HANDSHAKE_PEPPER_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "MFA_ENCRYPTION_KEY_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "PII_ENCRYPTION_KEY_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "PATIENT_JWT_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "OTP_RATE_LIMIT_HMAC_SECRET_REFERENCE": {"type": "string", "minLength": 1},
+    "FINAL_API_HOST": {"type": "string", "minLength": 1},
+    "FINAL_DOCTOR_HTTPS_ORIGIN": {"type": "string", "minLength": 1},
+    "FINAL_TRUSTED_PROXY_CIDRS": {"type": "string", "minLength": 1},
+    "FINAL_FORWARDED_PROXY_CIDRS": {"type": "string", "minLength": 1}
+  },
+  "required": ["TASK_CPU", "TASK_MEMORY"]
+}
