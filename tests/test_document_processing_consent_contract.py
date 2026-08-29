@@ -8,7 +8,7 @@ from app.api.v2.consent_routes import ConsentChallengeRequestPayload
 
 def test_document_processing_requires_documents_scope():
     payload = ConsentChallengeRequestPayload(
-        patient_id="patient-1",
+        discovery_handle="x" * 32,
         purpose="document_processing",
         scope="documents",
     )
@@ -28,7 +28,7 @@ def test_document_processing_requires_documents_scope():
 def test_incompatible_or_unknown_purpose_scope_is_rejected(purpose: str, scope: str):
     with pytest.raises(ValidationError):
         ConsentChallengeRequestPayload(
-            patient_id="patient-1",
+            discovery_handle="x" * 32,
             purpose=purpose,
             scope=scope,
         )

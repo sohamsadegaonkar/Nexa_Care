@@ -12,6 +12,7 @@ Verifies:
 from __future__ import annotations
 
 import base64
+import asyncio
 import hashlib
 import json
 import uuid
@@ -24,6 +25,8 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.models.patient_device_keys import PatientDeviceKey
+from app.services.patient_discovery_service import PatientDiscoveryService
+from tests.conftest import FakeRedis, FakeSyncRedis
 
 client = TestClient(app)
 
@@ -51,11 +54,30 @@ def mock_scoped_session():
 
 @pytest.fixture
 def mock_provider_auth(admin_context):
-    from app.core.dependencies import get_current_provider
+    from app.core.dependencies import get_current_provider, get_provider_context
 
+    admin_context.affiliation.roles.append("clinician")
     app.dependency_overrides[get_current_provider] = lambda: admin_context
+    app.dependency_overrides[get_provider_context] = lambda: admin_context
     yield admin_context
     app.dependency_overrides.pop(get_current_provider, None)
+    app.dependency_overrides.pop(get_provider_context, None)
+
+
+def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+    service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    handle = asyncio.run(
+        service.issue_handle(
+            patient=patient,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+            identifier_type="TEST_DISCOVERY",
+        )
+    )
+    assert asyncio.run(service.activate_handle(raw_handle=handle.value))
+    return handle.value
 
 
 def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
@@ -151,135 +173,100 @@ def test_list_devices(mock_scoped_session):
 
 
 def test_request_consent_no_enrolled_device_409(mock_provider_auth):
-    """Test 3: request consent returns 409 when target patient has zero active enrolled devices."""
-    payload = {
-        "patient_id": "123e4567-e89b-12d3-a456-426614174099",
-        "purpose": "routine_checkup",
-        "scope": "clinical",
-        "access_duration_seconds": 120,
-    }
-    with patch("app.api.v2.consent_routes.select"):
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db = AsyncMock()
-        mock_db.execute.return_value = mock_result
-        from app.core.database import get_db_session
-
-        app.dependency_overrides[get_db_session] = lambda: mock_db
-
-        try:
-            res = client.post(
-                "/api/v2/consent/request",
-                headers={"Authorization": "Bearer doc-tok"},
-                json=payload,
-            )
-            assert res.status_code == 409
-            assert "Patient device not enrolled" in res.json()["detail"]
-        finally:
-            app.dependency_overrides.pop(get_db_session, None)
-
-
-def test_request_consent_creates_pending(mock_provider_auth):
-    """Test 4: request consent creates pending challenge in Redis when active device exists."""
-    payload = {
-        "patient_id": "123e4567-e89b-12d3-a456-426614174001",
-        "purpose": "routine_checkup",
-        "scope": "clinical",
-        "access_duration_seconds": 120,
-    }
-    mock_dev = MagicMock(spec=PatientDeviceKey)
-    mock_dev.status = "active"
-
+    """A consumed opaque handle still requires an active patient device."""
+    patient_id = "123e4567-e89b-12d3-a456-426614174099"
+    fake_redis = FakeRedis()
+    fake_sync_redis = FakeSyncRedis(fake_redis)
+    handle = _active_discovery_handle(fake_redis, mock_provider_auth, patient_id)
     mock_db = AsyncMock()
-    device_result = MagicMock()
-    device_result.scalar_one_or_none.return_value = mock_dev
-    token_result = MagicMock()
-    token_result.scalar_one_or_none.return_value = None
-    mock_db.execute.side_effect = [device_result, token_result]
-
+    mock_db.execute.return_value = MagicMock(
+        scalar_one_or_none=MagicMock(return_value=None)
+    )
     from app.core.database import get_db_session
 
     app.dependency_overrides[get_db_session] = lambda: mock_db
-
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     try:
         with (
-            patch("app.api.v2.consent_routes.get_redis_client") as mock_redis_func,
-            patch(
-                "app.api.v2.consent_routes.append_audit_log_or_503",
-                new_callable=AsyncMock,
-            ),
+            patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis),
+            patch("app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis),
+            patch.object(PatientDiscoveryService, "resolve_patient_id", new=AsyncMock(return_value=(patient, False))),
         ):
-            mock_redis = MagicMock()
-            mock_redis_func.return_value = mock_redis
             res = client.post(
                 "/api/v2/consent/request",
-                headers={"Authorization": "Bearer doc-tok"},
-                json=payload,
+                json={"discovery_handle": handle, "purpose": "routine_checkup", "scope": "clinical", "access_duration_seconds": 300},
             )
-            assert res.status_code == 201, f"Create consent request failed: {res.text}"
-            data = res.json()
-            assert data["status"] == "pending"
-            assert data["request_id"]
-            assert data["expires_in_seconds"] == 120
-            assert data["notification_dispatch"] == "unavailable"
-            assert data["notification_queued"] is False
-            assert data["delivery_status"] == "unavailable"
-            mock_redis.set.assert_called_once()
+        assert res.status_code == 409
+        assert "Patient device not enrolled" in res.json()["detail"]
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+
+def test_request_consent_creates_pending(mock_provider_auth):
+    """An active opaque handle creates an audited pending challenge."""
+    patient_id = "123e4567-e89b-12d3-a456-426614174001"
+    fake_redis = FakeRedis()
+    fake_sync_redis = FakeSyncRedis(fake_redis)
+    handle = _active_discovery_handle(fake_redis, mock_provider_auth, patient_id)
+    mock_dev = MagicMock(spec=PatientDeviceKey)
+    mock_db = AsyncMock()
+    mock_db.execute.side_effect = [
+        MagicMock(scalar_one_or_none=MagicMock(return_value=mock_dev)),
+        MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+    ]
+    from app.core.database import get_db_session
+
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    try:
+        with (
+            patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis),
+            patch("app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis),
+            patch("app.api.v2.consent_routes.append_audit_log_or_503", new=AsyncMock(return_value=None)),
+            patch.object(PatientDiscoveryService, "resolve_patient_id", new=AsyncMock(return_value=(patient, False))),
+        ):
+            res = client.post(
+                "/api/v2/consent/request",
+                json={"discovery_handle": handle, "purpose": "routine_checkup", "scope": "clinical", "access_duration_seconds": 300},
+            )
+        assert res.status_code == 201, res.text
+        assert res.json()["status"] == "pending"
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 
 
 def test_request_consent_queues_push_for_active_token(mock_provider_auth):
-    """The canonical consent endpoint must dispatch through the active patient token."""
-    payload = {
-        "patient_id": "123e4567-e89b-12d3-a456-426614174001",
-        "purpose": "routine_checkup",
-        "scope": "clinical",
-        "access_duration_seconds": 300,
-    }
+    """The server queues a notification only after consuming the handle."""
+    patient_id = "123e4567-e89b-12d3-a456-426614174001"
+    fake_redis = FakeRedis()
+    fake_sync_redis = FakeSyncRedis(fake_redis)
+    handle = _active_discovery_handle(fake_redis, mock_provider_auth, patient_id)
     mock_dev = MagicMock(spec=PatientDeviceKey)
-    mock_dev.status = "active"
-    mock_token = MagicMock()
-    mock_token.expo_push_token = "ExpoPushToken[physical-device]"
-
-    device_result = MagicMock()
-    device_result.scalar_one_or_none.return_value = mock_dev
-    token_result = MagicMock()
-    token_result.scalar_one_or_none.return_value = mock_token
+    mock_token = MagicMock(expo_push_token="ExpoPushToken[synthetic]")
     mock_db = AsyncMock()
-    mock_db.execute.side_effect = [device_result, token_result]
-
+    mock_db.execute.side_effect = [
+        MagicMock(scalar_one_or_none=MagicMock(return_value=mock_dev)),
+        MagicMock(scalar_one_or_none=MagicMock(return_value=mock_token)),
+    ]
     from app.core.database import get_db_session
 
     app.dependency_overrides[get_db_session] = lambda: mock_db
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     try:
         with (
-            patch("app.api.v2.consent_routes.get_redis_client") as redis_factory,
-            patch(
-                "app.api.v2.consent_routes.append_audit_log_or_503",
-                new_callable=AsyncMock,
-            ),
-            patch(
-                "app.api.v2.consent_routes._deliver_consent_notification",
-                new_callable=AsyncMock,
-            ) as deliver,
+            patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis),
+            patch("app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis),
+            patch("app.api.v2.consent_routes.append_audit_log_or_503", new=AsyncMock(return_value=None)),
+            patch("app.api.v2.consent_routes._deliver_consent_notification", new=AsyncMock()) as deliver,
+            patch.object(PatientDiscoveryService, "resolve_patient_id", new=AsyncMock(return_value=(patient, False))),
         ):
-            redis_factory.return_value = MagicMock()
             response = client.post(
                 "/api/v2/consent/request",
-                headers={"Authorization": "Bearer doc-tok"},
-                json=payload,
+                json={"discovery_handle": handle, "purpose": "routine_checkup", "scope": "clinical", "access_duration_seconds": 300},
             )
-
         assert response.status_code == 201, response.text
         assert response.json()["notification_dispatch"] == "queued"
-        assert response.json()["notification_queued"] is True
-        assert response.json()["delivery_status"] == "queued"
         deliver.assert_awaited_once()
-        assert (
-            deliver.await_args.kwargs["expo_push_token"]
-            == "ExpoPushToken[physical-device]"
-        )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 

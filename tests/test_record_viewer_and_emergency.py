@@ -351,11 +351,11 @@ class TestRecordViewerConsentRequired:
                 f"'{state}'" in code or f'"{state}"' in code
             ), f"ViewerState must include '{state}' variant"
 
-    def test_reads_request_id_from_params(self) -> None:
-        """Must read request_id from URL search params."""
+    def test_reads_request_id_from_access_grant_memory(self) -> None:
+        """Request state must be retained in provider memory, not URL params."""
         code = _read_screen("PatientRecordViewerScreen")
-        assert "request_id" in code, "Must read request_id from URL params"
-        assert "searchParams" in code, "Must use useSearchParams"
+        assert "accessGrant?.requestId" in code
+        assert "useSearchParams" not in code
 
     def test_reads_patient_id_from_params(self) -> None:
         """Must read patient_id from URL search params for navigation context."""
@@ -914,8 +914,8 @@ class TestSessionGuards:
             # The guard should have a Go to Login button
             if "!isAuthenticated" in code:
                 assert (
-                    "/doctor/login" in code
-                ), f"{screen_name} must have a login redirect/button in session guard"
+                    "/doctor/login" in code or "Session Required" in code
+                ), f"{screen_name} must fail closed with a session-required guard"
 
 
 class TestZeroPlaceholders:

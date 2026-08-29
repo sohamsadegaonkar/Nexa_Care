@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,7 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.models.provider import AffiliationType
+from app.services.patient_discovery_service import PatientDiscoveryService
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
 
@@ -71,6 +73,22 @@ def _generate_p256_public_key_der() -> bytes:
     return private_key.public_key().public_bytes(
         Encoding.DER, PublicFormat.SubjectPublicKeyInfo
     )
+
+
+def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+    service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    handle = asyncio.run(
+        service.issue_handle(
+            patient=patient,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+            identifier_type="TEST_DISCOVERY",
+        )
+    )
+    assert asyncio.run(service.activate_handle(raw_handle=handle.value))
+    return handle.value
 
 
 @pytest.fixture
@@ -137,7 +155,7 @@ class TestDeviceEnrollmentValidation:
     """Validate device enrollment input and business rules."""
 
     def test_enroll_valid_p256_key_returns_201(
-        self, client, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, overrides
     ):
         """Enrolling a valid P-256 public key returns 201 with device_id."""
         patient_id = str(uuid.uuid4())
@@ -381,7 +399,7 @@ class TestConsentRequestCreation:
     """Validate consent challenge request creation and IDOR guards."""
 
     def test_consent_request_returns_201_with_challenge(
-        self, client, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, overrides
     ):
         """Creating a consent request returns 201 with request_id, challenge_nonce, and status='pending'."""
         provider_id = str(uuid.uuid4())
@@ -397,7 +415,10 @@ class TestConsentRequestCreation:
             return ctx
 
         overrides.set(get_current_provider, _provider)
+        overrides.set(get_provider_context, _provider)
         overrides.apply()
+        discovery_handle = _active_discovery_handle(fake_redis, ctx, patient_id)
+        patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
 
         with (
             patch(
@@ -405,14 +426,23 @@ class TestConsentRequestCreation:
                 return_value=fake_sync_redis,
             ),
             patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            ),
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
+            ),
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
                 return_value=None,
             ),
         ):
             resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 900,
@@ -429,7 +459,7 @@ class TestConsentRequestCreation:
     def test_consent_request_idor_rejected(
         self, client, fake_sync_redis, mock_db, overrides
     ):
-        """Supplying a provider_id that doesn't match the session returns 403."""
+        """Raw patient/provider identifiers are rejected before consent creation."""
         provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
         different_provider = str(uuid.uuid4())
@@ -439,6 +469,7 @@ class TestConsentRequestCreation:
             return ctx
 
         overrides.set(get_current_provider, _provider)
+        overrides.set(get_provider_context, _provider)
         overrides.apply()
 
         with (
@@ -460,14 +491,10 @@ class TestConsentRequestCreation:
                     "scope": "clinical",
                 },
             )
-            assert resp.status_code == 403
-            assert (
-                "provider_id" in resp.json()["detail"].lower()
-                or "session" in resp.json()["detail"].lower()
-            )
+            assert resp.status_code == 422
 
     def test_consent_request_no_device_returns_409(
-        self, client, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, overrides
     ):
         """Consent request for a patient without enrolled devices returns 409."""
         provider_id = str(uuid.uuid4())
@@ -482,7 +509,10 @@ class TestConsentRequestCreation:
             return ctx
 
         overrides.set(get_current_provider, _provider)
+        overrides.set(get_provider_context, _provider)
         overrides.apply()
+        discovery_handle = _active_discovery_handle(fake_redis, ctx, patient_id)
+        patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
 
         with (
             patch(
@@ -490,14 +520,23 @@ class TestConsentRequestCreation:
                 return_value=fake_sync_redis,
             ),
             patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            ),
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
+            ),
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
                 return_value=None,
             ),
         ):
             resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
                     "scope": "clinical",
                 },
@@ -506,7 +545,7 @@ class TestConsentRequestCreation:
             assert "device" in resp.json()["detail"].lower()
 
     def test_consent_request_duration_clamped(
-        self, client, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, overrides
     ):
         """access_duration_seconds is clamped to [300, 3600]."""
         provider_id = str(uuid.uuid4())
@@ -522,7 +561,10 @@ class TestConsentRequestCreation:
             return ctx
 
         overrides.set(get_current_provider, _provider)
+        overrides.set(get_provider_context, _provider)
         overrides.apply()
+        discovery_handle = _active_discovery_handle(fake_redis, ctx, patient_id)
+        patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
 
         with (
             patch(
@@ -530,7 +572,16 @@ class TestConsentRequestCreation:
                 return_value=fake_sync_redis,
             ),
             patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            ),
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
+            ),
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
                 return_value=None,
             ),
         ):
@@ -538,7 +589,7 @@ class TestConsentRequestCreation:
             resp = client.post(
                 "/api/v2/consent/request",
                 json={
-                    "patient_id": patient_id,
+                    "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
                     "scope": "clinical",
                     "access_duration_seconds": 10,

@@ -715,11 +715,11 @@ class TestNfcResolveService:
         assert "resolveNfcCard" in code, "Must export resolveNfcCard function"
 
     def test_calls_nfc_resolve_endpoint(self) -> None:
-        """resolveNfcCard must call POST /api/v2/nfc/resolve."""
+        """resolveNfcCard must delegate to the canonical API client method."""
         code = _read(
             ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
-        assert "/api/v2/nfc/resolve" in code, "Must call POST /api/v2/nfc/resolve"
+        assert "NexaApiClient.resolveNfcCard" in code
 
     def test_sends_card_uid_in_body(self) -> None:
         """Must send { card_uid: string } in the request body."""
@@ -728,16 +728,16 @@ class TestNfcResolveService:
         )
         assert "card_uid" in code, "Must include card_uid in request body"
 
-    def test_returns_patient_id_and_canonical(self) -> None:
-        """Response type must include patient_id, canonical_patient_id, is_redirected."""
+    def test_returns_only_opaque_discovery_output(self) -> None:
+        """NFC output must never carry patient or redirect identifiers."""
         code = _read(
             ROOT / "nexa-client" / "packages" / "app" / "services" / "nfcResolve.ts"
         )
-        assert "patient_id" in code, "Response type must include patient_id"
-        assert (
-            "canonical_patient_id" in code
-        ), "Response type must include canonical_patient_id"
-        assert "is_redirected" in code, "Response type must include is_redirected"
+        assert "discovery_handle" in code
+        assert "expires_at" in code
+        assert "patient_id" not in code
+        assert "canonical_patient_id" not in code
+        assert "is_redirected" not in code
 
     def test_has_nfc_resolve_error_class(self) -> None:
         """Must export NfcResolveError class for typed error handling."""
@@ -823,7 +823,7 @@ class TestPatientSearchNfcResolve:
     def test_handles_nfc_resolve_error(self) -> None:
         """Must handle NfcResolveError from the resolve service."""
         code = _read_screen("PatientSearchScreen")
-        assert "NfcResolveError" in code, "Must handle NfcResolveError"
+        assert "ApiError" in code, "Must handle API failures without exposing IDs"
 
     def test_reads_mode_from_search_params(self) -> None:
         """Must read ?mode=nfc from search params for NFC mode."""
@@ -834,54 +834,38 @@ class TestPatientSearchNfcResolve:
     def test_has_mode_toggle_buttons(self) -> None:
         """Must have buttons to switch between manual and NFC mode."""
         code = _read_screen("PatientSearchScreen")
-        assert "Manual Search" in code, "Must have 'Manual Search' button"
+        assert "Nexa Patient ID" in code, "Must have public-ID search button"
         assert "NFC Scan" in code, "Must have 'NFC Scan' button"
 
 
-class TestMergedPatientRedirect:
-    """PatientSearchScreen must handle merged-patient redirects from NFC resolve."""
+class TestOpaqueNfcDiscovery:
+    """PatientSearchScreen must retain only opaque discovery state."""
 
-    def test_checks_is_redirected_flag(self) -> None:
-        """Must check is_redirected flag from NFC resolve response."""
+    def test_stores_opaque_discovery_selection(self) -> None:
         code = _read_screen("PatientSearchScreen")
-        assert "is_redirected" in code, "Must check is_redirected flag"
+        assert "setDiscoverySelection" in code
+        assert "discoveryHandle" in code
 
-    def test_shows_merged_patient_warning_banner(self) -> None:
-        """Must show a warning banner when patient was merged (is_redirected=true)."""
+    def test_does_not_render_redirect_details(self) -> None:
         code = _read_screen("PatientSearchScreen")
-        # Should show a warning about merged/redirected patient
-        assert (
-            "Merged" in code or "merged" in code
-        ), "Must show merged-patient warning text"
+        assert "is_redirected" not in code
 
-    def test_displays_original_patient_id(self) -> None:
-        """Must display the original patient_id when redirected."""
+    def test_does_not_render_patient_identifier(self) -> None:
         code = _read_screen("PatientSearchScreen")
-        assert "patient_id" in code, "Must display original patient_id"
+        assert "patient_id" not in code
 
-    def test_displays_canonical_patient_id(self) -> None:
-        """Must display canonical_patient_id when redirected."""
+    def test_does_not_render_canonical_identifier(self) -> None:
         code = _read_screen("PatientSearchScreen")
-        assert (
-            "canonical_patient_id" in code
-        ), "Must display canonical_patient_id for merged patients"
+        assert "canonical_patient_id" not in code
 
-    def test_uses_canonical_patient_id_for_navigation(self) -> None:
-        """Must use canonical_patient_id when navigating to request consent."""
+    def test_navigates_to_request_consent_without_identifier_in_url(self) -> None:
         code = _read_screen("PatientSearchScreen")
-        # When is_redirected is true, should use canonical_patient_id for navigation
-        assert (
-            "canonical_patient_id" in code
-        ), "Must use canonical_patient_id for navigation when redirected"
-        # The navigation target should be request-consent
-        assert (
-            "request-consent" in code
-        ), "Must navigate to request-consent with the correct patient ID"
+        assert "request-consent" in code
+        assert "router.push(`/doctor/request-consent" in code
 
-    def test_warning_uses_orange_color(self) -> None:
-        """Merged-patient warning must use orange color scheme."""
+    def test_discovery_handle_stays_in_provider_memory(self) -> None:
         code = _read_screen("PatientSearchScreen")
-        assert "$orange" in code, "Merged-patient warning must use orange color scheme"
+        assert "setDiscoverySelection" in code
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -920,9 +904,10 @@ class TestRequestConsentScreen:
         code = _read_screen("RequestConsentScreen")
         assert "useProviderAuth" in code, "Must use ProviderAuthContext"
 
-    def test_reads_patient_id_from_params(self) -> None:
+    def test_reads_discovery_state_from_provider_context(self) -> None:
         code = _read_screen("RequestConsentScreen")
-        assert "patient_id" in code, "Must read patient_id from route params"
+        assert "discoverySelection" in code
+        assert "discovery_handle" in code
 
     def test_calls_consent_request_api(self) -> None:
         code = _read_screen("RequestConsentScreen")
@@ -981,15 +966,16 @@ class TestRequestConsentScreen:
         assert "Approve" not in code, "Must NOT render Approve button"
         assert "Deny" not in code, "Must NOT render Deny button"
 
-    def test_sends_request_with_patient_id_and_provider(self) -> None:
+    def test_sends_request_with_opaque_discovery_handle(self) -> None:
         """Consent request must include patient_id and provider_id."""
         code = _read_screen("RequestConsentScreen")
-        assert "patient_id" in code, "Must send patient_id in request"
+        assert "discovery_handle" in code
+        assert "patient_id" not in _strip_comments(code)
         assert "provider_id" in code, "Must send provider_id in request body"
 
-    def test_shows_patient_id(self) -> None:
+    def test_does_not_show_patient_id(self) -> None:
         code = _read_screen("RequestConsentScreen")
-        assert "patientId" in code, "Must display the patient ID"
+        assert "patientId" not in _strip_comments(code)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

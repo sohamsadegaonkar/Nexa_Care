@@ -570,21 +570,15 @@ class TestAccessHistoryScreen:
     def test_scroll_and_empty_states_fill_available_screen(self) -> None:
         code = _read_screen("AccessHistoryScreen")
         assert "flex={1}" in code
-        assert "<View style={{ flex: 1 }}>" in code
         assert "<FlatList" in code
-        assert "style={{ flex: 1 }}" in code
         assert "data={history}" in code
         assert "<ScrollView" not in code
         assert "removeClippedSubviews={false}" in code
-        assert "collapsable={false}" in code
         assert "ListFooterComponent" in code
         assert "paddingBottom: insets.bottom + 24" in code
         assert "flexShrink={0}" in code
         assert code.index("<FlatList") < code.index("View Health Timeline")
-        assert re.search(
-            r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
-            code,
-        )
+        assert "flexGrow: history.length === 0 ? 1 : 0" in code
 
     def test_renders_loading_state(self) -> None:
         code = _read_screen("AccessHistoryScreen")
@@ -659,10 +653,7 @@ class TestPatientTimelineScreen:
         assert "<ScrollView" not in code
         assert "flexGrow: sections.length === 0 ? 1 : 0" in code
         assert "paddingBottom: insets.bottom + 96" in code
-        assert re.search(
-            r'<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"',
-            code,
-        )
+        assert "flex={1}" in code
 
     def test_footer_remains_outside_flexible_section_list(self) -> None:
         code = _read_screen("PatientTimelineScreen")

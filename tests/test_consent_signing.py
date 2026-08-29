@@ -429,12 +429,12 @@ class TestConsentRequestScreenIntegration:
 
     def test_has_green_approve_button(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "$green9" in code, "Approve button must use $green9"
+        assert 'theme="green"' in code, "Approve button must use the green theme"
         assert "Approve" in code, "Must have Approve button text"
 
     def test_has_red_deny_button(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "$red9" in code, "Deny button must use $red9"
+        assert 'theme="red"' in code, "Deny button must use the red theme"
         assert "Deny" in code, "Must have Deny button text"
 
     def test_deny_calls_signing_service(self) -> None:
@@ -656,7 +656,7 @@ class TestConsentFlowE2E:
         # Step 1: ConsentRequestScreen shows challenge and has green Approve
         assert "fetchChallenge" in consent_code, "Must fetch challenge"
         assert "Approve" in consent_code, "Must have Approve button"
-        assert "$green9" in consent_code, "Approve must be green"
+        assert 'theme="green"' in consent_code, "Approve must use the green theme"
 
         # Step 2: Approve navigates to biometric screen
         assert (
@@ -690,7 +690,7 @@ class TestConsentFlowE2E:
 
         # Step 1: ConsentRequestScreen has red Deny button
         assert "Deny" in consent_code, "Must have Deny button"
-        assert "$red9" in consent_code, "Deny must be red"
+        assert 'theme="red"' in consent_code, "Deny must use the red theme"
 
         # Step 2: Deny calls denyWithSignature (no biometric gate)
         assert "denyWithSignature" in consent_code, "Deny must call denyWithSignature"

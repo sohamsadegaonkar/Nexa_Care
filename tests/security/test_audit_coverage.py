@@ -17,6 +17,7 @@ Threat model reference: docs/threat-model.md T-07
 from __future__ import annotations
 
 import json
+import asyncio
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.dependencies import get_current_provider
+from app.core.dependencies import get_current_provider, get_provider_context
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -34,6 +35,8 @@ from app.models.provider_context import (
 )
 from app.models.provider import AffiliationType
 from app.services.consent_engine import ConsentCapability
+from app.services.patient_discovery_service import PatientDiscoveryService
+from app.services.signed_approval_verifier import canonical_signed_approval_payload
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
 
@@ -112,6 +115,22 @@ def _reset_mock_db(mock_db):
     )
 
 
+def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+    service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    handle = asyncio.run(
+        service.issue_handle(
+            patient=patient,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+            identifier_type="TEST_DISCOVERY",
+        )
+    )
+    assert asyncio.run(service.activate_handle(raw_handle=handle.value))
+    return handle.value
+
+
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 
@@ -162,6 +181,8 @@ def test_consent_access_produces_audit(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    overrides[get_provider_context] = _provider_dep
+    app.dependency_overrides[get_provider_context] = _provider_dep
 
     with ExitStack() as stack:
         stack.enter_context(
@@ -362,6 +383,8 @@ def test_consent_action_audited_on_approve(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    overrides[get_provider_context] = _provider_dep
+    app.dependency_overrides[get_provider_context] = _provider_dep
     overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
@@ -381,6 +404,22 @@ def test_consent_action_audited_on_approve(
             patch(
                 "app.api.v2.consent_routes.get_redis_client",
                 return_value=fake_sync_redis,
+            )
+        )
+        stack.enter_context(
+            patch(
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            )
+        )
+        patient = MagicMock(
+            patient_uuid=uuid.UUID(patient_id_val), is_deleted=False
+        )
+        stack.enter_context(
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
             )
         )
         stack.enter_context(
@@ -459,6 +498,9 @@ def test_consent_action_audited_on_approve(
         )
 
         # Request consent
+        discovery_handle = _active_discovery_handle(
+            fake_redis, provider, patient_id_val
+        )
         _reset_mock_db(mock_db)
         mock_db.execute.side_effect = _side_effect_with_fallback(
             [
@@ -468,7 +510,7 @@ def test_consent_action_audited_on_approve(
         req_resp = client.post(
             "/api/v2/consent/request",
             json={
-                "patient_id": patient_id_val,
+                "discovery_handle": discovery_handle,
                 "purpose": "checkup",
                 "scope": "clinical",
                 "access_duration_seconds": 900,
@@ -481,12 +523,21 @@ def test_consent_action_audited_on_approve(
         # Sign
         challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
         challenge_data = json.loads(challenge_raw)
-        signing_input = (
-            f"{request_id}|{patient_id_val}|{provider_id}|{challenge_nonce}|approved|"
-            f"clinical|checkup|{challenge_data['access_duration']}|{challenge_data['expires_at']}"
+        signing_input = canonical_signed_approval_payload(
+            request_id=request_id,
+            patient_id=patient_id_val,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
+            expires_at=challenge_data["expires_at"],
+            device_id=device_id,
         )
         raw_sig = private_key.sign(
-            signing_input.encode("utf-8"),
+            signing_input,
             ec.ECDSA(
                 __import__(
                     "cryptography.hazmat.primitives.hashes", fromlist=["SHA256"]
@@ -503,7 +554,7 @@ def test_consent_action_audited_on_approve(
                 _db_result(scalars_all=[device_row]),
             ]
         )
-        client.post(
+        approve_resp = client.post(
             "/api/v2/consent/approve-signed",
             json={
                 "request_id": request_id,
@@ -514,6 +565,7 @@ def test_consent_action_audited_on_approve(
                 "device_id": device_id,
             },
         )
+        assert approve_resp.status_code == 200
 
         # Verify audit was called during the consent flow
         assert audit_mock.called, "Consent approval must produce audit event(s)"

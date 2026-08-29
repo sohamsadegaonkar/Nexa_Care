@@ -39,3 +39,32 @@ Emergency access does not use the discovery flow. It requires recent provider
 MFA, a controlled reason code, and justification. The server selects a
 minimum-necessary emergency scope for 15 minutes, audits access, and attempts
 patient notification. The client must not present it as full-record access.
+
+## Qualification status
+
+This flow is **ALPHA**. Integration validation pending while deployed HTTPS
+and physical-device qualification remain unfinished. Known gaps are
+qualification and deployment gaps, not authorization bypasses.
+
+Provider roles come from authenticated server/provider context. Client UI,
+navigation, and role state are never authorization; every request is evaluated
+by the server against the authenticated provider and the relevant capability.
+`nexa-client` is the canonical production frontend and applies Zod runtime
+validation to backend responses.
+
+The current screen map is `DoctorLoginScreen` → `DoctorDashboardScreen` →
+`PatientSearchScreen` → `RequestConsentScreen` →
+`WaitingForApprovalScreen` → `PatientRecordViewerScreen`; emergency access is
+handled by `EmergencyAccessScreen`. `ProviderAuthContext` carries the
+authenticated provider session. The client does not treat `provider_id` as a
+request authority; the server derives it from that authenticated context.
+
+Discovery handles and access capabilities are memory-scoped and must not be
+persisted across reloads. Logout invokes the server logout path; server-side
+session invalidation remains a server responsibility.
+
+The waiting view uses adaptive polling with backoff. The provider can cancel a
+pending consent request. Routine consent creation uses controlled purpose and
+scope values, and server-derived identity rejects mismatches (an IDOR guard).
+The remaining qualification milestone is a deployed end-to-end live flow with
+HTTPS and a physical device; it does not alter these authorization controls.

@@ -14,6 +14,7 @@ Threat model reference: docs/threat-model.md T-01
 from __future__ import annotations
 
 import base64
+import asyncio
 import json
 import uuid
 from contextlib import ExitStack
@@ -24,7 +25,11 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from app.core.dependencies import get_current_provider, get_scoped_session
+from app.core.dependencies import (
+    get_current_provider,
+    get_provider_context,
+    get_scoped_session,
+)
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -33,6 +38,8 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.models.provider import AffiliationType
+from app.services.patient_discovery_service import PatientDiscoveryService
+from app.services.signed_approval_verifier import canonical_signed_approval_payload
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
 
@@ -55,11 +62,7 @@ def _sign(private_key, message: str) -> str:
 
 
 def _build_signing_input(**kw) -> str:
-    return (
-        f"{kw['request_id']}|{kw['patient_id']}|{kw['provider_id']}|"
-        f"{kw['challenge_nonce']}|{kw['decision']}|{kw['scope']}|"
-        f"{kw['purpose']}|{kw['access_duration']}|{kw['expires_at']}"
-    )
+    return canonical_signed_approval_payload(**kw).decode("utf-8")
 
 
 def _db_result(*, scalar_one_or_none=None, scalars_all=None, scalar=None):
@@ -138,7 +141,7 @@ def _make_provider_context() -> ProviderContext:
     )
 
 
-def _patch_stack(fake_redis, fake_sync_redis):
+def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
     stack = ExitStack()
     stack.enter_context(
         patch(
@@ -158,6 +161,20 @@ def _patch_stack(fake_redis, fake_sync_redis):
     stack.enter_context(
         patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
+        )
+    )
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    stack.enter_context(
+        patch.object(
+            PatientDiscoveryService,
+            "resolve_patient_id",
+            new=AsyncMock(return_value=(patient, False)),
+        )
+    )
+    stack.enter_context(
+        patch(
+            "app.api.v2.consent_routes.get_async_redis_client",
+            return_value=fake_redis,
         )
     )
     stack.enter_context(
@@ -210,6 +227,22 @@ def _patch_stack(fake_redis, fake_sync_redis):
         )
     )
     return stack
+
+
+def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+    service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    handle = asyncio.run(
+        service.issue_handle(
+            patient=patient,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+            identifier_type="TEST_DISCOVERY",
+        )
+    )
+    assert asyncio.run(service.activate_handle(raw_handle=handle.value))
+    return handle.value
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -278,10 +311,13 @@ def test_forged_signature_wrong_keypair(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    overrides[get_provider_context] = _provider_dep
+    app.dependency_overrides[get_provider_context] = _provider_dep
     overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
-    with _patch_stack(fake_redis, fake_sync_redis):
+    with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+        discovery_handle = _active_discovery_handle(fake_redis, provider, patient_id)
         # Enroll with key A
         device_row = _mock_device_row(device_id, patient_id, enrolled_der)
         _reset_mock_db(mock_db)
@@ -312,7 +348,7 @@ def test_forged_signature_wrong_keypair(
         req_resp = client.post(
             "/api/v2/consent/request",
             json={
-                "patient_id": patient_id,
+                "discovery_handle": discovery_handle,
                 "purpose": "checkup",
                 "scope": "clinical",
                 "access_duration_seconds": 900,
@@ -334,7 +370,9 @@ def test_forged_signature_wrong_keypair(
             scope="clinical",
             purpose="checkup",
             access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
             expires_at=challenge_data["expires_at"],
+            device_id=device_id,
         )
         forged_sig = _sign(attacker_private, signing_input)
 
@@ -391,10 +429,13 @@ def test_forged_signature_revoked_device(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    overrides[get_provider_context] = _provider_dep
+    app.dependency_overrides[get_provider_context] = _provider_dep
     overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
-    with _patch_stack(fake_redis, fake_sync_redis):
+    with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+        discovery_handle = _active_discovery_handle(fake_redis, provider, patient_id)
         # Mock a REVOKED device row
         revoked_row = _mock_device_row(
             device_id,
@@ -418,7 +459,7 @@ def test_forged_signature_revoked_device(
         req_resp = client.post(
             "/api/v2/consent/request",
             json={
-                "patient_id": patient_id,
+                "discovery_handle": discovery_handle,
                 "purpose": "checkup",
                 "scope": "clinical",
                 "access_duration_seconds": 900,
@@ -440,7 +481,9 @@ def test_forged_signature_revoked_device(
             scope="clinical",
             purpose="checkup",
             access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
             expires_at=challenge_data["expires_at"],
+            device_id=device_id,
         )
         real_sig = _sign(private_key, signing_input)
 
@@ -510,10 +553,13 @@ def test_forged_signature_unenrolled_key_direct(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    overrides[get_provider_context] = _provider_dep
+    app.dependency_overrides[get_provider_context] = _provider_dep
     overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
-    with _patch_stack(fake_redis, fake_sync_redis):
+    with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+        discovery_handle = _active_discovery_handle(fake_redis, provider, patient_id)
         # Enroll with a DIFFERENT key
         enrolled_private, enrolled_der, enrolled_b64 = _generate_keypair()
         enrolled_row = _mock_device_row(str(uuid.uuid4()), patient_id, enrolled_der)
@@ -546,7 +592,7 @@ def test_forged_signature_unenrolled_key_direct(
         req_resp = client.post(
             "/api/v2/consent/request",
             json={
-                "patient_id": patient_id,
+                "discovery_handle": discovery_handle,
                 "purpose": "checkup",
                 "scope": "clinical",
                 "access_duration_seconds": 900,
@@ -568,7 +614,9 @@ def test_forged_signature_unenrolled_key_direct(
             scope="clinical",
             purpose="checkup",
             access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
             expires_at=challenge_data["expires_at"],
+            device_id=device_id,
         )
         forged_sig = _sign(attacker_private, signing_input)
 

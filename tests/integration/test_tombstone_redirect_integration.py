@@ -1,8 +1,8 @@
 """Integration tests for Squad D: Tombstone Redirects.
 
 Contract:
-- Resolve merged card to canonical ID.
-- Flag is_redirected for UI warning.
+- Resolve merged cards through the server-side canonical patient record.
+- Return only an opaque discovery capability to the client.
 - Block inactive cards.
 
 DEFECT 5: exercises the real POST /api/v2/nfc/resolve route, backed by
@@ -28,6 +28,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
+from tests.conftest import FakeRedis
 
 
 def _provider() -> ProviderContext:
@@ -74,6 +75,11 @@ class FakeDB:
     def __init__(self, cards: list[FakeCard], tombstones: list[FakeTombstone]):
         self.cards = cards
         self.tombstones = tombstones
+        self.patient_get_ids = []
+
+    async def get(self, _model, patient_id):
+        self.patient_get_ids.append(patient_id)
+        return MagicMock(patient_uuid=patient_id, is_deleted=False)
 
     async def execute(self, stmt):
         sql = _compiled_sql(stmt)
@@ -106,15 +112,17 @@ def _clear_overrides():
 
 @pytest.fixture(autouse=True)
 def _bypass_rate_limit():
-    fake_redis = AsyncMock()
-    fake_redis.eval = AsyncMock(return_value=[1, 60])
+    fake_redis = FakeRedis()
 
     with (
         patch("app.api.v2.nfc_routes.get_async_redis_client", return_value=fake_redis),
         patch(
             "app.api.v2.nfc_routes.atomic_fixed_window", AsyncMock(return_value=(1, 60))
         ),
-        patch("app.api.v2.nfc_routes.append_audit_log", AsyncMock(return_value=True)),
+        patch(
+            "app.api.v2.nfc_routes.append_audit_log_or_503",
+            AsyncMock(return_value=None),
+        ),
         patch(
             "app.services.card_resolution_service.append_audit_log_or_503",
             AsyncMock(return_value=None),
@@ -124,8 +132,7 @@ def _bypass_rate_limit():
 
 
 def test_merged_card_redirect():
-    """Scanning a merged patient's old card resolves to the canonical
-    patient id and flags is_redirected."""
+    """A merged card resolves server-side without disclosing identity data."""
     old_patient = uuid.uuid4()
     canonical_patient = uuid.uuid4()
     db = FakeDB(
@@ -138,10 +145,12 @@ def test_merged_card_redirect():
 
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["is_redirected"] is True
-    assert data["canonical_patient_id"] == str(canonical_patient)
-    # No stale PII in the response -- only IDs and the redirect flag.
-    assert set(data.keys()) == {"patient_id", "canonical_patient_id", "is_redirected"}
+    assert set(data) == {"discovery_handle", "expires_at"}
+    assert data["discovery_handle"]
+    assert data["expires_at"]
+    for field in ("patient_id", "canonical_patient_id", "is_redirected"):
+        assert field not in data
+    assert db.patient_get_ids == [canonical_patient]
 
 
 def test_inactive_card_rejected():
@@ -160,8 +169,7 @@ def test_inactive_card_rejected():
 
 
 def test_non_redirected_card_resolves_normally():
-    """An active card for a patient who was never merged resolves with
-    is_redirected=False and no canonical_patient_id."""
+    """An active non-merged card also returns only opaque discovery output."""
     patient_id = uuid.uuid4()
     db = FakeDB(cards=[FakeCard("NORMAL-CARD-UID", patient_id)], tombstones=[])
     client = _client_with_overrides(db)
@@ -169,14 +177,12 @@ def test_non_redirected_card_resolves_normally():
     resp = client.post("/api/v2/nfc/resolve", json={"card_uid": "NORMAL-CARD-UID"})
     assert resp.status_code == 200, resp.text
     data = resp.json()
-    assert data["is_redirected"] is False
-    assert data["canonical_patient_id"] is None
-    assert data["patient_id"] == str(patient_id)
+    assert set(data) == {"discovery_handle", "expires_at"}
+    assert data["discovery_handle"]
 
 
 def test_bounded_multi_hop_redirect_chain():
-    """A -> B -> C merge chain resolves all the way to the final canonical
-    patient, not just the first hop."""
+    """A bounded merge chain resolves server-side and remains opaque externally."""
     patient_a, patient_b, patient_c = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     db = FakeDB(
         cards=[FakeCard("CHAIN-CARD-UID", patient_a)],
@@ -189,10 +195,11 @@ def test_bounded_multi_hop_redirect_chain():
 
     resp = client.post("/api/v2/nfc/resolve", json={"card_uid": "CHAIN-CARD-UID"})
     assert resp.status_code == 200, resp.text
-    assert resp.json()["canonical_patient_id"] == str(patient_c)
+    assert set(resp.json()) == {"discovery_handle", "expires_at"}
+    assert db.patient_get_ids == [patient_c]
 
 
-def test_cycle_detected_returns_409():
+def test_cycle_detected_fails_closed_with_security_unavailable():
     """A -> B -> A is a data-integrity violation, not an infinite redirect
     -- must be detected and rejected, never looped forever."""
     patient_a, patient_b = uuid.uuid4(), uuid.uuid4()
@@ -206,11 +213,11 @@ def test_cycle_detected_returns_409():
     client = _client_with_overrides(db)
 
     resp = client.post("/api/v2/nfc/resolve", json={"card_uid": "CYCLE-CARD-UID"})
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error_code"] == "TOMBSTONE_INTEGRITY_VIOLATION"
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error_code"] == "NFC_SECURITY_CONTROL_UNAVAILABLE"
 
 
-def test_duplicate_tombstones_returns_409():
+def test_duplicate_tombstones_fail_closed_with_security_unavailable():
     """Two tombstones both claiming the same old_patient_uuid is an
     ambiguous, invalid state -- must fail closed, not pick one silently."""
     old_patient = uuid.uuid4()
@@ -224,8 +231,8 @@ def test_duplicate_tombstones_returns_409():
     client = _client_with_overrides(db)
 
     resp = client.post("/api/v2/nfc/resolve", json={"card_uid": "DUP-CARD-UID"})
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error_code"] == "TOMBSTONE_INTEGRITY_VIOLATION"
+    assert resp.status_code == 503
+    assert resp.json()["detail"]["error_code"] == "NFC_SECURITY_CONTROL_UNAVAILABLE"
 
 
 def test_unknown_card_rejected():

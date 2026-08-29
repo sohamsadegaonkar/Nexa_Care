@@ -1050,7 +1050,7 @@ class TestVisibleTextractConsentFlow:
     def test_patient_search_preserves_document_upload_intent(self) -> None:
         search = _read(DOCTOR_DIR / "PatientSearchScreen.tsx")
         assert "documentUploadIntent" in search
-        assert "&intent=document_upload" in search
+        assert "?intent=document_upload" in search
 
     def test_document_consent_purpose_and_scope_are_locked(self) -> None:
         request = _read(DOCTOR_DIR / "RequestConsentScreen.tsx")

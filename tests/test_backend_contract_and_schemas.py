@@ -196,27 +196,46 @@ class TestMfaRequiredContract:
 class TestNfcResolveContract:
     """Zod schema must match the backend NFCResolveResponse."""
 
-    def test_schema_has_patient_id(self) -> None:
-        code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "patient_id" in code, "NFC schema must validate patient_id"
+    @staticmethod
+    def _nfc_schema(code: str) -> str:
+        match = re.search(
+            r"export const NfcResolveResponseSchema = z\.object\((\{.*?\})\)",
+            code,
+            re.DOTALL,
+        )
+        assert match, "NFC response schema must be declared"
+        return match.group(1)
 
-    def test_schema_has_canonical_patient_id(self) -> None:
-        code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert (
-            "canonical_patient_id" in code
-        ), "NFC schema must validate canonical_patient_id"
+    @staticmethod
+    def _nfc_response_model(code: str) -> str:
+        match = re.search(
+            r"class NFCResolveResponse\(BaseModel\):(.*?)(?:\n\n@router\.post)",
+            code,
+            re.DOTALL,
+        )
+        assert match, "NFCResolveResponse model must be declared"
+        return match.group(1)
 
-    def test_schema_has_is_redirected(self) -> None:
+    def test_schema_has_opaque_discovery_fields(self) -> None:
         code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
-        assert "is_redirected" in code, "NFC schema must validate is_redirected"
+        schema = self._nfc_schema(code)
+        assert "discovery_handle" in schema
+        assert "expires_at" in schema
+
+    def test_schema_does_not_disclose_patient_identifiers(self) -> None:
+        code = _read(SCHEMAS_DIR / "authNfcSchemas.ts")
+        schema = self._nfc_schema(code)
+        for field in ("patient_id", "canonical_patient_id", "is_redirected"):
+            assert field not in schema
 
     def test_backend_nfc_response_fields_match(self) -> None:
-        """Backend NFCResolveResponse must have patient_id, canonical_patient_id, is_redirected."""
+        """Backend NFCResolveResponse exposes only opaque discovery fields."""
         backend = _read(NFC_ROUTES)
-        for field in ["patient_id", "canonical_patient_id", "is_redirected"]:
-            assert (
-                field in backend
-            ), f"Backend NFCResolveResponse must have {field} field"
+        model = self._nfc_response_model(backend)
+        assert "discovery_handle" in model
+        assert "expires_at" in model
+        for field in ("patient_id", "canonical_patient_id", "is_redirected"):
+            assert field not in model
 
     def test_backend_nfc_rate_limits(self) -> None:
         """Backend must enforce rate limiting on NFC resolve."""
@@ -229,9 +248,7 @@ class TestNfcResolveContract:
     def test_backend_nfc_audits(self) -> None:
         """Backend must audit NFC resolution attempts."""
         backend = _read(NFC_ROUTES)
-        assert (
-            "audit" in backend.lower() or "append_audit_log" in backend
-        ), "Backend must audit NFC resolution attempts"
+        assert "append_audit_log_or_503" in backend
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -372,18 +389,12 @@ class TestDoctorFlowDocHonesty:
             or "alpha" in code_lower
         ), "Must document known gaps and ALPHA limitations"
 
-    def test_doc_documents_role_limitation(self) -> None:
-        """Must document that role is not from a signed claim."""
+    def test_doc_documents_server_authorized_roles(self) -> None:
+        """Roles must be server-derived; client state cannot authorize access."""
         code = _read(ROOT / "docs" / "doctor-app-flow.md")
-        assert "role" in code.lower(), "Must mention role"
-        # Must acknowledge the limitation
         code_lower = code.lower()
-        assert (
-            "signed" in code_lower
-            or "default" in code_lower
-            or "not from" in code_lower
-            or "hardcoded" in code_lower
-        ), "Must document that role is not from a signed backend claim"
+        assert "authenticated server/provider context" in code_lower
+        assert "never authorization" in code_lower
 
     def test_doc_documents_token_persistence_gap(self) -> None:
         """Must document that tokens do not survive page reload."""
