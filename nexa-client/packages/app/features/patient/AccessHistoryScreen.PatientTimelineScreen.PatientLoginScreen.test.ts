@@ -29,7 +29,7 @@ describe('patient screen viewport contracts', () => {
     expect(source).toContain('flexShrink={0}')
     expect(source).toContain('No provider has accessed your records yet.')
     expect(source).toContain('paddingBottom: insets.bottom + 24')
-    expect(source).toMatch(/<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"/)
+    expect(source).toMatch(/<YStack\s+flex=\{1\}\s+alignItems="center"\s+justifyContent="center"/)
   })
 
   it('uses a native SectionList with an unobstructed stable action', () => {
@@ -40,7 +40,7 @@ describe('patient screen viewport contracts', () => {
     expect(source).toContain('flexGrow: sections.length === 0 ? 1 : 0')
     expect(source).toContain('paddingBottom: insets.bottom + 96')
     expect(source).toContain('RefreshControl')
-    expect(source).toMatch(/<YStack\s+f=\{1\}\s+ai="center"\s+jc="center"/)
+    expect(source).toMatch(/<YStack\s+flex=\{1\}\s+alignItems="center"\s+justifyContent="center"/)
     expect(source.indexOf('<SectionList')).toBeLessThan(source.indexOf('Access History'))
   })
 

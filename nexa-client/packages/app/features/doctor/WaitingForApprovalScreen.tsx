@@ -292,7 +292,7 @@ export function WaitingForApprovalScreen() {
           scope: claim.scope,
           expiresAt: claim.expires_at,
         })
-        router.push(`/doctor/patient-record?patient_id=${encodeURIComponent(claim.patient_id)}`)
+        router.push('/doctor/patient-record')
       })
       .catch((claimError: unknown) => {
         if (!active) return

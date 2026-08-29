@@ -1,1 +1,1 @@
-export { RootNavigator, type RootStackParamList } from './RootNavigator'
+export { RootNavigator } from './RootNavigator'

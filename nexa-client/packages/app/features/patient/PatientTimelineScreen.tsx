@@ -154,27 +154,27 @@ export default function PatientTimelineScreen({
 
     return (
       <YStack
-        bg="$backgroundHover"
-        br="$4"
-        p="$3"
+        backgroundColor="$backgroundHover"
+        borderRadius="$4"
+        padding="$3"
         gap="$2"
       >
         <XStack
-          ai="center"
+          alignItems="center"
           gap="$2"
-          fw="wrap"
+          flexWrap="wrap"
         >
           <Text fontSize={18}>{icon}</Text>
-          <YStack f={1}>
+          <YStack flex={1}>
             <Text
-              col="$color"
+              color="$color"
               fontWeight="600"
-              size="$4"
+              fontSize="$4"
             >
               {event.title}
             </Text>
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
             >
               {label}
@@ -182,14 +182,14 @@ export default function PatientTimelineScreen({
           </YStack>
           {isAbnormal ? (
             <YStack
-              bg="$red5"
-              br="$2"
-              px="$2"
-              py="$1"
+              backgroundColor="$red5"
+              borderRadius="$2"
+              paddingHorizontal="$2"
+              paddingVertical="$1"
             >
               <Text
-                col="$red10"
-                size="$2"
+                color="$red10"
+                fontSize="$2"
                 fontWeight="600"
               >
                 ABNORMAL
@@ -200,27 +200,27 @@ export default function PatientTimelineScreen({
         </XStack>
 
         <Text
-          col="$color"
-          size="$4"
+          color="$color"
+          fontSize="$4"
         >
           {event.summary}
         </Text>
 
         <XStack
-          ai="center"
+          alignItems="center"
           gap="$2"
         >
           <SourceBadge
-            source={event.source}
+            source={event.source === 'manual' ? 'manual' : 'ai_extracted'}
             confidence={event.confidence != null ? Math.round(event.confidence * 100) : undefined}
           />
         </XStack>
 
         {typeof event.source_display === 'string' && event.source_display.length > 0 ? (
           <Paragraph
-            col="$colorSubdued"
+            color="$color10"
             size="$2"
-            o={0.5}
+            opacity={0.5}
           >
             {event.source_display}
           </Paragraph>
@@ -231,22 +231,22 @@ export default function PatientTimelineScreen({
 
   return (
     <YStack
-      f={1}
-      bg="$background"
+      flex={1}
+      backgroundColor="$background"
     >
       <YStack
-        px="$4"
-        pt="$4"
-        pb="$2"
+        paddingHorizontal="$4"
+        paddingTop="$4"
+        paddingBottom="$2"
       >
         <H2
-          col="$color"
+          color="$color"
           size="$7"
         >
           Health Timeline
         </H2>
         <Paragraph
-          col="$colorSubdued"
+          color="$color10"
           size="$3"
         >
           Your clinical events, consent-gated and de-identified.
@@ -262,21 +262,21 @@ export default function PatientTimelineScreen({
         renderItem={renderTimelineItem}
         renderSectionHeader={({ section }) => (
           <XStack
-            ai="center"
+            alignItems="center"
             gap="$3"
-            py="$2"
+            paddingVertical="$2"
           >
-            <Separator f={1} />
+            <Separator flex={1} />
             <Text
-              col="$colorSubdued"
-              size="$2"
+              color="$color10"
+              fontSize="$2"
               fontWeight="600"
               textTransform="uppercase"
               letterSpacing={1}
             >
               {section.title}
             </Text>
-            <Separator f={1} />
+            <Separator flex={1} />
           </XStack>
         )}
         refreshControl={
@@ -295,14 +295,14 @@ export default function PatientTimelineScreen({
         ListHeaderComponent={
           error !== null && timeline.length > 0 ? (
             <XStack
-              ai="center"
+              alignItems="center"
               gap="$2"
-              pb="$2"
+              paddingBottom="$2"
             >
               <Text>⚠️</Text>
               <Paragraph
-                f={1}
-                col="$red10"
+                flex={1}
+                color="$red10"
                 size="$2"
               >
                 {error}
@@ -319,10 +319,10 @@ export default function PatientTimelineScreen({
         }
         ListEmptyComponent={
           <YStack
-            f={1}
-            ai="center"
-            jc="center"
-            py="$8"
+            flex={1}
+            alignItems="center"
+            justifyContent="center"
+            paddingVertical="$8"
             gap="$2"
           >
             {initialLoading ? (
@@ -332,7 +332,7 @@ export default function PatientTimelineScreen({
                   color="$blue10"
                 />
                 <Paragraph
-                  col="$colorSubdued"
+                  color="$color10"
                   size="$4"
                 >
                   Loading timeline…
@@ -342,9 +342,9 @@ export default function PatientTimelineScreen({
               <>
                 <Text fontSize={36}>⚠️</Text>
                 <Paragraph
-                  col="$red10"
+                  color="$red10"
                   size="$4"
-                  ta="center"
+                  textAlign="center"
                 >
                   {error}
                 </Paragraph>
@@ -360,17 +360,17 @@ export default function PatientTimelineScreen({
               <>
                 <Text fontSize={48}>📊</Text>
                 <Paragraph
-                  col="$colorSubdued"
+                  color="$color10"
                   size="$4"
-                  ta="center"
+                  textAlign="center"
                 >
                   No clinical events yet.
                 </Paragraph>
                 <Paragraph
-                  col="$colorSubdued"
+                  color="$color10"
                   size="$3"
-                  ta="center"
-                  o={0.6}
+                  textAlign="center"
+                  opacity={0.6}
                 >
                   When your provider adds clinical information, it will appear here.
                 </Paragraph>
@@ -381,12 +381,12 @@ export default function PatientTimelineScreen({
       />
 
       <YStack
-        px="$4"
-        pt="$2"
-        pb={insets.bottom + 12}
+        paddingHorizontal="$4"
+        paddingTop="$2"
+        paddingBottom={insets.bottom + 12}
         borderTopWidth={1}
         borderTopColor="$borderColor"
-        bg="$background"
+        backgroundColor="$background"
       >
         <Button
           chromeless

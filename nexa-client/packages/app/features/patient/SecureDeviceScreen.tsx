@@ -79,38 +79,38 @@ export default function SecureDeviceScreen({ onEnrolled }: SecureDeviceScreenPro
 
   return (
     <YStack
-      f={1}
-      bg="$background"
-      p="$4"
+      flex={1}
+      backgroundColor="$background"
+      padding="$4"
       gap="$4"
-      jc="center"
-      ai="center"
+      justifyContent="center"
+      alignItems="center"
     >
       <YStack
         gap="$2"
-        ai="center"
+        alignItems="center"
       >
         <Text fontSize={48}>🔐</Text>
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           Secure This Device
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
-          mw={340}
+          maxWidth={340}
         >
           To protect your health data, we&apos;ll link this device to your account using a
           cryptographic key stored in your phone&apos;s secure hardware.
         </Paragraph>
         <Paragraph
-          col="$orange10"
-          ta="center"
+          color="$orange10"
+          textAlign="center"
           size="$2"
-          mw={320}
+          maxWidth={320}
         >
           ALPHA: P-256 keypair generated client-side and private key stored in platform secure
           storage. Not yet: hardware-backed non-exportable signing key with biometric-gated key
@@ -120,52 +120,52 @@ export default function SecureDeviceScreen({ onEnrolled }: SecureDeviceScreenPro
 
       <YStack
         gap="$3"
-        mt="$4"
-        w="100%"
+        marginTop="$4"
+        width="100%"
       >
         <AnimatePresence>
           {step === 'ready' && (
             <YStack
               gap="$3"
-              animation="quick"
-              enterStyle={{ o: 0, y: 10 }}
+              transition="quick"
+              enterStyle={{ opacity: 0, y: 10 }}
             >
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$3"
               >
                 What happens next:
               </Paragraph>
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$3"
-                o={0.8}
+                opacity={0.8}
               >
                 1. We generate a unique P-256 key on your device
               </Paragraph>
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$3"
-                o={0.8}
+                opacity={0.8}
               >
                 2. The private key stays in your phone&apos;s secure storage
               </Paragraph>
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$3"
-                o={0.8}
+                opacity={0.8}
               >
                 3. Only the public key is shared with Nexa Care
               </Paragraph>
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$3"
-                o={0.8}
+                opacity={0.8}
               >
                 4. You&apos;ll use biometrics to approve data access
               </Paragraph>
@@ -183,17 +183,17 @@ export default function SecureDeviceScreen({ onEnrolled }: SecureDeviceScreenPro
           {step === 'generating' && (
             <YStack
               gap="$2"
-              ai="center"
-              animation="quick"
-              enterStyle={{ o: 0, y: 10 }}
+              alignItems="center"
+              transition="quick"
+              enterStyle={{ opacity: 0, y: 10 }}
             >
               <Spinner
                 size="large"
                 color="$blue10"
               />
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$4"
               >
                 Generating P-256 keypair in secure storage...
@@ -204,17 +204,17 @@ export default function SecureDeviceScreen({ onEnrolled }: SecureDeviceScreenPro
           {step === 'enrolling' && (
             <YStack
               gap="$2"
-              ai="center"
-              animation="quick"
-              enterStyle={{ o: 0, y: 10 }}
+              alignItems="center"
+              transition="quick"
+              enterStyle={{ opacity: 0, y: 10 }}
             >
               <Spinner
                 size="large"
                 color="$blue10"
               />
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$4"
               >
                 Registering public key with Nexa Care...
@@ -226,9 +226,9 @@ export default function SecureDeviceScreen({ onEnrolled }: SecureDeviceScreenPro
 
       {error !== null ? (
         <Text
-          col="$red10"
-          ta="center"
-          size="$3"
+          color="$red10"
+          textAlign="center"
+          fontSize="$3"
         >
           {error}
         </Text>

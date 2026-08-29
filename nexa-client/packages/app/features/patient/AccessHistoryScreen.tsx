@@ -217,7 +217,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             <Text
               color="$color"
               fontWeight="700"
-              size="$4"
+              fontSize="$4"
             >
               {accessLabel}
             </Text>
@@ -230,15 +230,15 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
               <Text
                 color={item.is_break_glass ? '$red11' : '$blue11'}
                 fontWeight="700"
-                size="$1"
+                fontSize="$1"
               >
                 {item.is_break_glass ? 'EMERGENCY ACCESS' : 'ROUTINE'}
               </Text>
             </YStack>
             <Text
-              color="$colorSubdued"
+              color="$color10"
               marginLeft="auto"
-              size="$2"
+              fontSize="$2"
             >
               {relativeTimestamp}
             </Text>
@@ -248,12 +248,12 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             <Text
               color="$color"
               fontWeight="600"
-              size="$4"
+              fontSize="$4"
             >
               {doctorName}
             </Text>
             <Paragraph
-              color="$colorSubdued"
+              color="$color10"
               size="$3"
             >
               {hospitalName}
@@ -262,15 +262,15 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
 
           <YStack gap="$1">
             <Text
-              color="$colorSubdued"
+              color="$color10"
               fontWeight="600"
-              size="$2"
+              fontSize="$2"
             >
               Purpose
             </Text>
             <Text
               color="$color"
-              size="$3"
+              fontSize="$3"
             >
               {purpose}
             </Text>
@@ -290,8 +290,8 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                   paddingVertical="$1"
                 >
                   <Text
-                    color="$colorSubdued"
-                    size="$2"
+                    color="$color10"
+                    fontSize="$2"
                   >
                     {humanizeValue(category)}
                   </Text>
@@ -306,8 +306,8 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
           >
             <Text fontSize={14}>🕒</Text>
             <Text
-              color="$colorSubdued"
-              size="$2"
+              color="$color10"
+              fontSize="$2"
             >
               {exactTimestamp}
             </Text>
@@ -323,18 +323,18 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
       backgroundColor="$background"
     >
       <YStack
-        px="$4"
-        pt="$4"
-        pb="$2"
+        paddingHorizontal="$4"
+        paddingTop="$4"
+        paddingBottom="$2"
       >
         <H2
-          col="$color"
+          color="$color"
           size="$7"
         >
           Access History
         </H2>
         <Paragraph
-          col="$colorSubdued"
+          color="$color10"
           size="$3"
         >
           Every time a provider accesses your data, it's recorded here.
@@ -364,15 +364,15 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
           ListHeaderComponent={
             error !== null && history.length > 0 ? (
               <XStack
-                ai="center"
+                alignItems="center"
                 gap="$2"
-                px="$4"
-                pb="$2"
+                paddingHorizontal="$4"
+                paddingBottom="$2"
               >
                 <Text>⚠️</Text>
                 <Paragraph
-                  f={1}
-                  col="$red10"
+                  flex={1}
+                  color="$red10"
                   size="$2"
                 >
                   {error}
@@ -389,11 +389,11 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
           }
           ListEmptyComponent={
             <YStack
-              f={1}
-              ai="center"
-              jc="center"
-              py="$8"
-              px="$4"
+              flex={1}
+              alignItems="center"
+              justifyContent="center"
+              paddingVertical="$8"
+              paddingHorizontal="$4"
               gap="$3"
             >
               {initialLoading ? (
@@ -403,7 +403,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                     color="$blue10"
                   />
                   <Paragraph
-                    col="$colorSubdued"
+                    color="$color10"
                     size="$4"
                   >
                     Loading access history…
@@ -413,9 +413,9 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                 <>
                   <Text fontSize={36}>⚠️</Text>
                   <Paragraph
-                    col="$red10"
+                    color="$red10"
                     size="$4"
-                    ta="center"
+                    textAlign="center"
                   >
                     {error}
                   </Paragraph>
@@ -431,17 +431,17 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                 <>
                   <Text fontSize={48}>📭</Text>
                   <Paragraph
-                    col="$colorSubdued"
+                    color="$color10"
                     size="$4"
-                    ta="center"
+                    textAlign="center"
                   >
                     No provider has accessed your records yet.
                   </Paragraph>
                   <Paragraph
-                    col="$colorSubdued"
+                    color="$color10"
                     size="$3"
-                    ta="center"
-                    o={0.6}
+                    textAlign="center"
+                    opacity={0.6}
                   >
                     When a provider accesses your data, it will appear here.
                   </Paragraph>
@@ -453,8 +453,8 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             !initialLoading && error === null && nextCursor ? (
               <YStack
                 gap="$3"
-                px="$4"
-                pt="$3"
+                paddingHorizontal="$4"
+                paddingTop="$3"
               >
                 <Button
                   size="$3"
@@ -471,9 +471,9 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
       </View>
       <YStack
         flexShrink={0}
-        px="$4"
-        pt="$2"
-        pb={insets.bottom + 12}
+        paddingHorizontal="$4"
+        paddingTop="$2"
+        paddingBottom={insets.bottom + 12}
       >
         <Button
           theme="blue"

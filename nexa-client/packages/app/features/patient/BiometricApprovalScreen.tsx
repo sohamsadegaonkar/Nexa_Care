@@ -181,19 +181,19 @@ export default function BiometricApprovalScreen({
   if (status === 'loading') {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        jc="center"
-        ai="center"
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
       >
         <Spinner
           size="large"
           color="$blue10"
         />
         <Paragraph
-          col="$colorSubdued"
+          color="$color10"
           size="$4"
-          mt="$3"
+          marginTop="$3"
         >
           Loading request...
         </Paragraph>
@@ -205,23 +205,23 @@ export default function BiometricApprovalScreen({
   if (status === 'expired') {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        p="$4"
+        flex={1}
+        backgroundColor="$background"
+        padding="$4"
         gap="$4"
-        jc="center"
-        ai="center"
+        justifyContent="center"
+        alignItems="center"
       >
         <Text fontSize={56}>⏰</Text>
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           Request Expired
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
         >
           {error ?? 'This consent request has expired. No action is needed.'}
@@ -240,10 +240,10 @@ export default function BiometricApprovalScreen({
   if (status === 'checking') {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        jc="center"
-        ai="center"
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
         gap="$3"
       >
         <Spinner
@@ -251,14 +251,14 @@ export default function BiometricApprovalScreen({
           color="$blue10"
         />
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           Checking approval status
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
         >
           Confirming whether the signed approval reached Nexa Care…
         </Paragraph>
@@ -269,23 +269,23 @@ export default function BiometricApprovalScreen({
   if (status === 'setup-required') {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        p="$4"
+        flex={1}
+        backgroundColor="$background"
+        padding="$4"
         gap="$4"
-        jc="center"
-        ai="center"
+        justifyContent="center"
+        alignItems="center"
       >
         <Text fontSize={56}>🔐</Text>
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           Secure This Device
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
         >
           {error ?? 'Secure this device to approve consent requests.'}
@@ -314,33 +314,33 @@ export default function BiometricApprovalScreen({
   if (status === 'prompt') {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        p="$4"
+        flex={1}
+        backgroundColor="$background"
+        padding="$4"
         gap="$4"
-        jc="center"
-        ai="center"
+        justifyContent="center"
+        alignItems="center"
       >
         <Text fontSize={56}>👆</Text>
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           Verify Your Approval
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
-          mw={320}
+          maxWidth={320}
         >
           Use Face ID or your fingerprint to confirm that you approve this data access request.
         </Paragraph>
         <Paragraph
-          col="$orange10"
-          ta="center"
+          color="$orange10"
+          textAlign="center"
           size="$2"
-          mw={320}
+          maxWidth={320}
         >
           ALPHA: P-256 keypair generated client-side and private key stored in platform secure
           storage. Not yet: hardware-backed non-exportable signing key with biometric-gated key
@@ -348,17 +348,17 @@ export default function BiometricApprovalScreen({
         </Paragraph>
         {error !== null ? (
           <Text
-            col="$red10"
-            ta="center"
-            size="$3"
+            color="$red10"
+            textAlign="center"
+            fontSize="$3"
           >
             {error}
           </Text>
         ) : null}
         <YStack
           gap="$3"
-          w="100%"
-          mt="$4"
+          width="100%"
+          marginTop="$4"
         >
           <Button
             theme="blue"
@@ -381,7 +381,7 @@ export default function BiometricApprovalScreen({
 
   // ── Render: Authenticating / Signing / Submitting ────────────────────
   if (status === 'authenticating' || status === 'signing' || status === 'submitting') {
-    const labels: Record<string, { title: string; subtitle: string }> = {
+    const labels = {
       authenticating: {
         title: 'Verifying identity...',
         subtitle: 'Hold still for Face ID verification',
@@ -395,30 +395,35 @@ export default function BiometricApprovalScreen({
         subtitle: 'Sending signed approval to Nexa Care',
       },
     }
-    const label = labels[status]
+    const label =
+      status === 'authenticating'
+        ? labels.authenticating
+        : status === 'signing'
+          ? labels.signing
+          : labels.submitting
 
     return (
       <YStack
-        f={1}
-        bg="$background"
-        p="$4"
+        flex={1}
+        backgroundColor="$background"
+        padding="$4"
         gap="$3"
-        jc="center"
-        ai="center"
+        justifyContent="center"
+        alignItems="center"
       >
         <Spinner
           size="large"
           color="$blue10"
         />
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           {label.title}
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$3"
         >
           {label.subtitle}
@@ -430,23 +435,23 @@ export default function BiometricApprovalScreen({
   // ── Render: Error ────────────────────────────────────────────────────
   return (
     <YStack
-      f={1}
-      bg="$background"
-      p="$4"
+      flex={1}
+      backgroundColor="$background"
+      padding="$4"
       gap="$3"
-      jc="center"
-      ai="center"
+      justifyContent="center"
+      alignItems="center"
     >
       <Text fontSize={56}>❌</Text>
       <H2
-        col="$color"
-        ta="center"
+        color="$color"
+        textAlign="center"
       >
         Approval Failed
       </H2>
       <Paragraph
-        col="$colorSubdued"
-        ta="center"
+        color="$color10"
+        textAlign="center"
         size="$4"
       >
         {error ?? 'Something went wrong. Please try again.'}

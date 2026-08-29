@@ -84,7 +84,8 @@ describe('WaitingForApprovalScreen polling', () => {
         consentToken: 'secret-capability',
       })
     )
-    expect(push).toHaveBeenCalledWith('/doctor/patient-record?patient_id=patient-verified')
+    expect(push).toHaveBeenCalledWith('/doctor/patient-record')
+    expect(push.mock.calls.flat().join(' ')).not.toContain('patient-verified')
     expect(push.mock.calls.flat().join(' ')).not.toContain('secret-capability')
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000)

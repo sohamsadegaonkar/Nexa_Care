@@ -10,7 +10,6 @@ let accessGrant: any = null
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push }),
-  useSearchParams: () => ({ get: (key: string) => (key === 'patient_id' ? 'patient-1' : null) }),
 }))
 
 vi.mock('@tamagui/lucide-icons', () => {
@@ -56,7 +55,7 @@ describe('PatientRecordViewerScreen capability handoff', () => {
     expect(summary).not.toHaveBeenCalled()
   })
 
-  it('uses the claimed patient, capability, and hospital only in headers', async () => {
+  it('uses the claimed patient, capability, and hospital from memory-only access state', async () => {
     accessGrant = {
       requestId: 'request-1',
       patientId: 'patient-1',

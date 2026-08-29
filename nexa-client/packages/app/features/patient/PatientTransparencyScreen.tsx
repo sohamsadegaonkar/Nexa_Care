@@ -74,14 +74,14 @@ export function PatientTransparencyScreen({ patientUuid }: Props) {
                   fontWeight="800"
                   color="$color12"
                 >
-                  {log.clinician} • {log.hospital}
+                  {log.clinician_id} • {log.hospital_id}
                 </Text>
                 <Text color="$blue11">{log.purpose}</Text>
                 <Text
                   fontSize={13}
                   color="$green10"
                 >
-                  Assurance: {log.assurance}
+                  Assurance: {log.consent_assurance}
                 </Text>
               </YStack>
             </Card>

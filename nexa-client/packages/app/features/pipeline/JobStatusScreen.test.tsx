@@ -28,7 +28,7 @@ vi.mock('../../services/capabilityStore', () => ({
   }),
 }))
 
-type TransitionalArray = 'missing' | null | unknown[]
+type TransitionalArray = 'missing' | null | readonly unknown[]
 
 function statusResponse(
   routingReasons: TransitionalArray,

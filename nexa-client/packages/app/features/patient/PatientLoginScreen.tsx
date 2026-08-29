@@ -91,23 +91,23 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
         showsVerticalScrollIndicator={false}
       >
         <YStack
-          f={1}
+          flex={1}
           minHeight="100%"
-          bg="$background"
-          p="$4"
+          backgroundColor="$background"
+          padding="$4"
           gap="$4"
-          jc="center"
-          ai="center"
+          justifyContent="center"
+          alignItems="center"
         >
           <H2
-            col="$color"
-            ta="center"
+            color="$color"
+            textAlign="center"
           >
             Welcome to Nexa Care
           </H2>
           <Paragraph
-            col="$colorSubdued"
-            ta="center"
+            color="$color10"
+            textAlign="center"
             size="$5"
           >
             Your health data, under your control.
@@ -115,9 +115,9 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
 
           {step === 'phone' ? (
             <YStack
-              w="100%"
+              width="100%"
               gap="$3"
-              mt="$4"
+              marginTop="$4"
             >
               <Input
                 placeholder="Phone number"
@@ -145,13 +145,13 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
             </YStack>
           ) : (
             <YStack
-              w="100%"
+              width="100%"
               gap="$3"
-              mt="$4"
+              marginTop="$4"
             >
               <Paragraph
-                col="$colorSubdued"
-                ta="center"
+                color="$color10"
+                textAlign="center"
                 size="$3"
               >
                 Enter the 6-digit code sent to {phone}
@@ -191,9 +191,9 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
 
           {error !== null ? (
             <Text
-              col="$red10"
-              ta="center"
-              size="$3"
+              color="$red10"
+              textAlign="center"
+              fontSize="$3"
             >
               {error}
             </Text>

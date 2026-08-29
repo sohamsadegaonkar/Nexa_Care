@@ -48,8 +48,9 @@ const TERMINAL_STATUSES = [
  * Display labels for job status lifecycle.
  */
 type StatusColor = '$blue10' | '$orange10' | '$green10' | '$red10'
+type StatusDisplay = { label: string; icon: string; color: StatusColor }
 
-const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: StatusColor }> = {
+const STATUS_DISPLAY = {
   queued: { label: 'Queued', icon: '⏳', color: '$blue10' },
   extraction_pending: { label: 'Upload stored; extraction pending', icon: '⏳', color: '$blue10' },
   processing: { label: 'Extracting', icon: '⚙️', color: '$orange10' },
@@ -70,7 +71,7 @@ const STATUS_DISPLAY: Record<string, { label: string; icon: string; color: Statu
   committed: { label: 'Committed', icon: '📋', color: '$green10' },
   source_only: { label: 'Source review required', icon: '📄', color: '$orange10' },
   quarantined: { label: 'Quarantined', icon: '⛔', color: '$red10' },
-}
+} satisfies Record<string, StatusDisplay>
 
 /** Progress mapping: estimated completion percentage per status. */
 const STATUS_PROGRESS: Record<string, number> = {
@@ -301,7 +302,10 @@ export function JobStatusScreen() {
     )
   }
 
-  const statusInfo = STATUS_DISPLAY[job?.status ?? ''] ?? STATUS_DISPLAY.queued
+  const statusKey = job?.status ?? ''
+  const statusInfo = Object.hasOwn(STATUS_DISPLAY, statusKey)
+    ? STATUS_DISPLAY[statusKey as keyof typeof STATUS_DISPLAY]
+    : STATUS_DISPLAY.queued
   const progressPct = STATUS_PROGRESS[job?.status ?? 'queued'] ?? 0
   const routingReasons = Array.isArray(job?.routing_reasons) ? job.routing_reasons : []
   const extractedFields = Array.isArray(job?.extracted_fields) ? job.extracted_fields : []
@@ -445,8 +449,9 @@ export function JobStatusScreen() {
           marginTop="$1"
         >
           {['Queued', 'Extracting', 'Scored', 'Review'].map((step, idx) => {
-            const thresholds = [10, 40, 80, 90]
-            const active = progressPct >= thresholds[idx]
+            const thresholds = [10, 40, 80, 90] as const
+            const threshold = thresholds[idx]
+            const active = threshold !== undefined && progressPct >= threshold
             return (
               <Text
                 key={step}

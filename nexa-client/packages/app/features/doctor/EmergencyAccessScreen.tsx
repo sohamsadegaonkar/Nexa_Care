@@ -100,7 +100,7 @@ export function EmergencyAccessScreen() {
       setAuthorizationRef(result.authorization_ref)
       setJustification('')
       setMfaCode('')
-      router.push(`/doctor/patient-record?patient_id=${encodeURIComponent(cleanPatientId)}`)
+      router.push('/doctor/patient-record')
     } catch (caught: unknown) {
       if (caught instanceof ApiError && caught.status === 428) {
         setNeedsStepUp(true)

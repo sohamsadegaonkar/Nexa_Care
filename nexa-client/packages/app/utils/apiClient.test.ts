@@ -9,6 +9,14 @@ async function loadClient(apiUrl = 'https://native.example.test') {
   return import('./apiClient')
 }
 
+function requiredMockCall<TCall>(calls: readonly TCall[], index = 0): TCall {
+  const call = calls[index]
+  if (call === undefined) {
+    throw new Error(`Expected fetch mock call ${index}.`)
+  }
+  return call
+}
+
 describe('shared API transport', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
@@ -31,7 +39,7 @@ describe('shared API transport', () => {
 
     expect(API_BASE_URL).toBe('https://native.example.test')
     expect(fetchMock).toHaveBeenCalledOnce()
-    const [url, init] = fetchMock.mock.calls[0]
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
     expect(url).toBe('https://native.example.test/api/v2/auth/otp/send')
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body)).toEqual({ phone: '+919876543210' })
@@ -46,6 +54,32 @@ describe('shared API transport', () => {
     const { API_BASE_URL } = await import('./apiClient')
 
     expect(API_BASE_URL).toBe('https://web.example.test')
+  })
+
+  it('uses doctor-origin cookies and double-submit CSRF for provider session transport', async () => {
+    vi.resetModules()
+    vi.stubGlobal('navigator', { product: 'Gecko' })
+    vi.stubEnv('NEXT_PUBLIC_API_URL', 'https://doctor.example.test')
+    vi.spyOn(document, 'cookie', 'get').mockReturnValue('nexa_csrf=synthetic-csrf-token')
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient } = await import('./apiClient')
+
+    await NexaApiClient.providerWebLogout()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://doctor.example.test/api/v2/auth/web/logout',
+      expect.objectContaining({
+        method: 'POST',
+        credentials: 'include',
+        headers: expect.objectContaining({ 'X-CSRF-Token': 'synthetic-csrf-token' }),
+      })
+    )
   })
 
   it('fails before fetch when no API URL is configured', async () => {
@@ -168,7 +202,7 @@ describe('shared API transport', () => {
       'hospital-1'
     )
 
-    const [url, init] = fetchMock.mock.calls[0]
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
     expect(url).toBe('https://native.example.test/api/v2/consent/request')
     expect(init.headers.Authorization).toBe('Bearer provider-session-token')
     expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
@@ -191,7 +225,7 @@ describe('shared API transport', () => {
 
     await NexaApiClient.getConsentStatus('request-1', 'hospital-1')
 
-    const [url, init] = fetchMock.mock.calls[0]
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
     expect(url).toBe('https://native.example.test/api/v2/consent/status/request-1')
     expect(init.headers.Authorization).toBe('Bearer provider-session-token')
     expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
@@ -325,8 +359,10 @@ describe('shared API transport', () => {
     token = 'current-session'
     await apiClient.get('/api/v2/patient/devices')
 
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBe('Bearer first-session')
-    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBe('Bearer current-session')
+    expect(requiredMockCall(fetchMock.mock.calls)[1].headers.Authorization).toBe('Bearer first-session')
+    expect(requiredMockCall(fetchMock.mock.calls, 1)[1].headers.Authorization).toBe(
+      'Bearer current-session'
+    )
   })
 
   it('sends provider password and MFA requests through the typed unauthenticated endpoints', async () => {
@@ -359,10 +395,12 @@ describe('shared API transport', () => {
       totp_code: '123456',
     })
 
-    expect(fetchMock.mock.calls[0][0]).toBe('https://native.example.test/api/v2/auth/login')
-    expect(fetchMock.mock.calls[1][0]).toBe('https://native.example.test/api/v2/auth/mfa/verify')
-    expect(fetchMock.mock.calls[0][1].headers.Authorization).toBeUndefined()
-    expect(fetchMock.mock.calls[1][1].headers.Authorization).toBeUndefined()
+    expect(requiredMockCall(fetchMock.mock.calls)[0]).toBe('https://native.example.test/api/v2/auth/login')
+    expect(requiredMockCall(fetchMock.mock.calls, 1)[0]).toBe(
+      'https://native.example.test/api/v2/auth/mfa/verify'
+    )
+    expect(requiredMockCall(fetchMock.mock.calls)[1].headers.Authorization).toBeUndefined()
+    expect(requiredMockCall(fetchMock.mock.calls, 1)[1].headers.Authorization).toBeUndefined()
   })
 })
 
@@ -487,10 +525,10 @@ describe('adjudication API contract', () => {
     await NexaApiClient.listAdjudicationCases()
     await NexaApiClient.getAdjudicationSource('case-1', 'review-session-secret')
 
-    expect(fetchMock.mock.calls[0][0]).toBe(
+    expect(requiredMockCall(fetchMock.mock.calls)[0]).toBe(
       'https://native.example.test/api/v2/pipeline/adjudication-cases'
     )
-    const [sourceUrl, sourceInit] = fetchMock.mock.calls[1]
+    const [sourceUrl, sourceInit] = requiredMockCall(fetchMock.mock.calls, 1)
     expect(sourceUrl).toBe(
       'https://native.example.test/api/v2/pipeline/adjudication-cases/case-1/source'
     )
@@ -517,7 +555,7 @@ describe('adjudication API contract', () => {
 
     await NexaApiClient.commitAdjudicationSubmission('submission-1', 'review-session-secret')
 
-    const [url, init] = fetchMock.mock.calls[0]
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
     expect(url).toContain('/api/v2/pipeline/adjudication-submissions/submission-1/commit')
     expect(url).not.toContain('/jobs/')
     expect(init.headers['X-Review-Session-ID']).toBe('review-session-secret')
@@ -540,7 +578,7 @@ describe('adjudication API contract', () => {
 
     await NexaApiClient.recoverAdjudicationSession('case-1', 'review-session-new')
 
-    const [url, init] = fetchMock.mock.calls[0]
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
     expect(url).toBe(
       'https://native.example.test/api/v2/pipeline/adjudication-cases/case-1/recover-session'
     )

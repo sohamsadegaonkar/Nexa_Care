@@ -16,6 +16,7 @@ vi.mock('../../services/consentSigning', () => ({
 }))
 
 const challenge = {
+  protocol_version: 'nexa-consent-v2' as const,
   request_id: 'req-123',
   patient_id: 'pat-1',
   provider_id: 'doc-1',
@@ -25,6 +26,7 @@ const challenge = {
   scope: 'clinical',
   access_duration: 900,
   challenge_nonce: 'nonce',
+  issued_at: '2098-12-31T23:45:00Z',
   expires_at: '2099-01-01T00:00:00Z',
   status: 'pending',
 }

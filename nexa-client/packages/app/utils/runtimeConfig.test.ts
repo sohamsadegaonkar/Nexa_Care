@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { type RuntimeConfigError, resolveApiUrl } from './runtimeConfig'
+import {
+  type RuntimeConfigError,
+  resolveApiUrl,
+  resolveNextBrowserApiUrl,
+} from './runtimeConfig'
 
 describe('runtime API URL policy', () => {
   it('rejects a missing Expo API URL', () => {
@@ -61,5 +65,23 @@ describe('runtime API URL policy', () => {
     ).toThrowError(
       expect.objectContaining<Partial<RuntimeConfigError>>({ code: 'INSECURE_API_URL' })
     )
+  })
+
+  it('requires the production doctor browser API origin to match the current doctor origin', () => {
+    expect(
+      resolveNextBrowserApiUrl(
+        'https://doctor.example.test',
+        'production',
+        'https://doctor.example.test'
+      )
+    ).toBe('https://doctor.example.test')
+
+    expect(() =>
+      resolveNextBrowserApiUrl(
+        'https://api.example.test',
+        'production',
+        'https://doctor.example.test'
+      )
+    ).toThrowError(expect.objectContaining<Partial<RuntimeConfigError>>({ code: 'INSECURE_API_URL' }))
   })
 })

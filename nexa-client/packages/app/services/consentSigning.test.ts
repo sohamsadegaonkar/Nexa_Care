@@ -35,6 +35,7 @@ import { ApiError } from '../utils/apiClient'
 import { approveWithBiometric, classifyConsentError } from './consentSigning'
 
 const challenge = {
+  protocol_version: 'nexa-consent-v2' as const,
   request_id: 'request-1',
   patient_id: 'patient-1',
   provider_id: 'provider-1',
@@ -44,6 +45,7 @@ const challenge = {
   scope: 'clinical',
   access_duration: 900,
   challenge_nonce: 'nonce-1',
+  issued_at: '2098-12-31T23:45:00Z',
   expires_at: '2099-01-01T00:00:00Z',
   status: 'pending',
 }

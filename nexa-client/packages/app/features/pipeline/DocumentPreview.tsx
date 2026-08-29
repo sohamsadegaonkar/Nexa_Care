@@ -56,9 +56,17 @@ export interface DocumentPreviewProps {
 
 // ── Risk level → overlay colour ────────────────────────────────────────
 
-const RISK_OVERLAY: Record<string, { fill: string; stroke: string; label: string }> = {
+type RiskOverlay = { fill: string; stroke: string; label: string }
+
+const DEFAULT_RISK_OVERLAY: RiskOverlay = {
+  fill: 'rgba(249,115,22,0.15)',
+  stroke: '#f97316',
+  label: '⚠',
+}
+
+const RISK_OVERLAY: Record<string, RiskOverlay> = {
   LOW_RISK: { fill: 'rgba(34,197,94,0.15)', stroke: '#22c55e', label: '✓' },
-  MEDIUM_RISK: { fill: 'rgba(249,115,22,0.15)', stroke: '#f97316', label: '⚠' },
+  MEDIUM_RISK: DEFAULT_RISK_OVERLAY,
   HIGH_RISK: { fill: 'rgba(239,68,68,0.15)', stroke: '#ef4444', label: '⛔' },
   CRITICAL_RISK: { fill: 'rgba(239,68,68,0.25)', stroke: '#dc2626', label: '🚨' },
 }
@@ -85,7 +93,7 @@ function BBoxOverlay({
   if (!field.source_bbox) return null
 
   const [x, y, w, h] = field.source_bbox
-  const risk = RISK_OVERLAY[field.risk_level] ?? RISK_OVERLAY.MEDIUM_RISK
+  const risk = RISK_OVERLAY[field.risk_level] ?? DEFAULT_RISK_OVERLAY
   const statusBorder = STATUS_BORDER[field.status] ?? '#94a3b8'
 
   return (

@@ -82,6 +82,39 @@ export function resolveApiUrl(rawValue: string | undefined, policy: ApiUrlPolicy
   return `${parsed.origin}${path === '/' ? '' : path}`
 }
 
+/**
+ * Provider browser traffic must stay on the doctor origin so Next.js can
+ * proxy `/api` requests server-side with first-party cookies. The public URL
+ * remains required to fail closed when production configuration is missing,
+ * but it must never point browser code directly at the backend.
+ */
+export function resolveNextBrowserApiUrl(
+  rawValue: string | undefined,
+  environment: AppEnvironment,
+  browserOrigin?: string
+): string {
+  const resolved = resolveApiUrl(rawValue, {
+    environment,
+    allowHttp: environment !== 'production',
+    source: 'next',
+  })
+  if (environment !== 'production' || !browserOrigin) return resolved
+
+  let normalizedBrowserOrigin: string
+  try {
+    normalizedBrowserOrigin = new URL(browserOrigin).origin
+  } catch {
+    throw new RuntimeConfigError('Doctor browser origin is invalid.', 'INVALID_API_BASE_URL')
+  }
+  if (resolved !== normalizedBrowserOrigin) {
+    throw new RuntimeConfigError(
+      'Production doctor browser API URL must equal the current doctor origin.',
+      'INSECURE_API_URL'
+    )
+  }
+  return resolved
+}
+
 function expoEnvironment(): AppEnvironment {
   const value = process.env.EXPO_PUBLIC_APP_ENV
   if (value === 'development' || value === 'preview' || value === 'production') return value
@@ -111,9 +144,10 @@ export function resolveConfiguredApiUrl(): string {
     return resolved
   }
 
-  return resolveApiUrl(process.env.NEXT_PUBLIC_API_URL, {
-    environment: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-    allowHttp: process.env.NODE_ENV !== 'production',
-    source: 'next',
-  })
+  const environment = process.env.NODE_ENV === 'production' ? 'production' : 'development'
+  return resolveNextBrowserApiUrl(
+    process.env.NEXT_PUBLIC_API_URL,
+    environment,
+    typeof window === 'undefined' ? undefined : window.location.origin
+  )
 }

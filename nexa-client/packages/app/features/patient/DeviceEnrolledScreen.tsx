@@ -97,116 +97,116 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
 
   return (
     <YStack
-      f={1}
-      bg="$background"
-      p="$4"
+      flex={1}
+      backgroundColor="$background"
+      padding="$4"
       gap="$4"
-      jc="center"
-      ai="center"
+      justifyContent="center"
+      alignItems="center"
     >
       <Text fontSize={56}>✅</Text>
 
       <H2
-        col="$color"
-        ta="center"
+        color="$color"
+        textAlign="center"
       >
         Device Secured!
       </H2>
 
       <Paragraph
-        col="$colorSubdued"
-        ta="center"
+        color="$color10"
+        textAlign="center"
         size="$5"
-        mw={320}
+        maxWidth={320}
       >
         Your device is now linked to your Nexa Care account. Only this device can approve data
         access requests.
       </Paragraph>
 
       <YStack
-        bg="$backgroundHover"
-        br="$4"
-        p="$4"
+        backgroundColor="$backgroundHover"
+        borderRadius="$4"
+        padding="$4"
         gap="$2"
-        w="100%"
-        mw={360}
+        width="100%"
+        maxWidth={360}
       >
         <YStack
-          fd="row"
-          jc="space-between"
+          flexDirection="row"
+          justifyContent="space-between"
         >
           <Paragraph
-            col="$colorSubdued"
+            color="$color10"
             size="$3"
           >
             Device
           </Paragraph>
           <Text
-            col="$color"
-            size="$3"
+            color="$color"
+            fontSize="$3"
             fontWeight="600"
           >
             {deviceLabel}
           </Text>
         </YStack>
         <YStack
-          fd="row"
-          jc="space-between"
+          flexDirection="row"
+          justifyContent="space-between"
         >
           <Paragraph
-            col="$colorSubdued"
+            color="$color10"
             size="$3"
           >
             Device ID
           </Paragraph>
           <Text
-            col="$color"
-            fontFamily="$mono"
-            size="$3"
+            color="$color"
+            style={{ fontFamily: 'monospace' }}
+            fontSize="$3"
           >
             {fingerprint}
           </Text>
         </YStack>
         <YStack
-          fd="row"
-          jc="space-between"
+          flexDirection="row"
+          justifyContent="space-between"
         >
           <Paragraph
-            col="$colorSubdued"
+            color="$color10"
             size="$3"
           >
             Platform
           </Paragraph>
           <Text
-            col="$color"
-            size="$3"
+            color="$color"
+            fontSize="$3"
           >
             {platformLabel}
           </Text>
         </YStack>
         <YStack
-          fd="row"
-          jc="space-between"
+          flexDirection="row"
+          justifyContent="space-between"
         >
           <Paragraph
-            col="$colorSubdued"
+            color="$color10"
             size="$3"
           >
             Enrolled
           </Paragraph>
           <Text
-            col="$color"
-            size="$3"
+            color="$color"
+            fontSize="$3"
           >
             {enrolledDate}
           </Text>
         </YStack>
         <YStack
-          fd="row"
-          jc="space-between"
+          flexDirection="row"
+          justifyContent="space-between"
         >
           <Paragraph
-            col="$colorSubdued"
+            color="$color10"
             size="$3"
           >
             Status
@@ -218,15 +218,15 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
             />
           ) : statusError ? (
             <Text
-              col="$orange10"
-              size="$3"
+              color="$orange10"
+              fontSize="$3"
             >
               {statusError}
             </Text>
           ) : (
             <Text
-              col={isTrusted ? '$green10' : '$red10'}
-              size="$3"
+              color={isTrusted ? '$green10' : '$red10'}
+              fontSize="$3"
               fontWeight="700"
             >
               {isTrusted ? 'Trusted & Active' : deviceStatus}
@@ -236,10 +236,10 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
       </YStack>
 
       <Paragraph
-        col="$orange10"
-        ta="center"
+        color="$orange10"
+        textAlign="center"
         size="$2"
-        mw={320}
+        maxWidth={320}
       >
         ALPHA: P-256 keypair generated client-side and private key stored in platform secure
         storage. Not yet: hardware-backed non-exportable signing key with biometric-gated key usage.
@@ -248,7 +248,7 @@ export default function DeviceEnrolledScreen(_props?: DeviceEnrolledScreenProps)
       <Button
         theme="blue"
         size="$4"
-        mt="$2"
+        marginTop="$2"
         onPress={() => router.replace('/patient/access-history')}
       >
         Continue to Dashboard ({countdown})

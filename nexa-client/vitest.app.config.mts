@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config'
 import { fileURLToPath } from 'node:url'
 
-const setupFile = fileURLToPath(new URL('./test/setup.ts', import.meta.url))
+const setupFile = fileURLToPath(new URL('./test/setup.ts', import.meta.url).href)
 
 export default defineConfig({
   resolve: {

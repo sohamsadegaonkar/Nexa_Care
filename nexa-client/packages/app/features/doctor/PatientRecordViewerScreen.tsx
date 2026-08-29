@@ -14,7 +14,7 @@
  * ALPHA: Per-section scope-gated endpoints not yet deployed on the backend.
  * When available, each tab should call its own scope-gated endpoint.
  *
- * Route: /doctor/patient-record?request_id=...&patient_id=...
+ * Route: /doctor/patient-record
  */
 
 'use client'
@@ -42,7 +42,7 @@ import {
   Activity,
 } from '@tamagui/lucide-icons'
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useRouter, useSearchParams } from 'next/navigation'
+import { useRouter } from 'next/navigation'
 import { ApiError, NexaApiClient, type EmergencySummaryResponse } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
 
@@ -318,10 +318,8 @@ function maskToken(token: string): string {
 
 export function PatientRecordViewerScreen() {
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const patientId = searchParams.get('patient_id') ?? ''
-
   const { providerId, isAuthenticated, session, accessGrant, clearAccessGrant } = useProviderAuth()
+  const patientId = accessGrant?.patientId ?? ''
   const hospitalId = session?.hospital.hospital_id ?? ''
   const requestId = accessGrant?.requestId ?? ''
 

@@ -9,7 +9,7 @@ const yarnPath = path.join(repoRoot, '.yarn', 'releases', 'yarn-4.5.0.cjs')
 
 const buildEnvironment = {
   ...process.env,
-  NEXT_PUBLIC_API_URL: 'https://api.example.test',
+  NEXT_PUBLIC_API_URL: 'https://doctor.example.test',
   NEXT_PUBLIC_DEMO_MODE: 'false',
 }
 

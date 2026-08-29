@@ -134,7 +134,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
           <YStack gap="$4">
             <Text
               color="$color11"
-              text="center"
+              style={{ textAlign: 'center' }}
               fontSize={15}
             >
               Enter your 6-digit MFA code
@@ -146,7 +146,7 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
               keyboardType="numeric"
               maxLength={6}
               size="$5"
-              text="center"
+              style={{ textAlign: 'center' }}
             />
             {error && (
               <Text

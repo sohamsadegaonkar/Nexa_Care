@@ -18,16 +18,16 @@ export default function SourceBadge({ source, confidence }: SourceBadgeProps) {
   if (source === 'manual') {
     return (
       <XStack
-        bg="$green4"
-        br="$2"
-        px="$2"
-        py="$1"
-        ai="center"
+        backgroundColor="$green4"
+        borderRadius="$2"
+        paddingHorizontal="$2"
+        paddingVertical="$1"
+        alignItems="center"
         gap="$1"
       >
         <Text
-          col="$green10"
-          size="$1"
+          color="$green10"
+          fontSize="$1"
           fontWeight="600"
         >
           Manual entry
@@ -42,16 +42,16 @@ export default function SourceBadge({ source, confidence }: SourceBadgeProps) {
 
   return (
     <XStack
-      bg="$blue4"
-      br="$2"
-      px="$2"
-      py="$1"
-      ai="center"
+      backgroundColor="$blue4"
+      borderRadius="$2"
+      paddingHorizontal="$2"
+      paddingVertical="$1"
+      alignItems="center"
       gap="$1"
     >
       <Text
-        col="$blue10"
-        size="$1"
+        color="$blue10"
+        fontSize="$1"
         fontWeight="600"
       >
         {label}

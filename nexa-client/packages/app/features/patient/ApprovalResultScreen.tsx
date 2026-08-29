@@ -81,32 +81,32 @@ export default function ApprovalResultScreen() {
   if (isExpired) {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        p="$4"
+        flex={1}
+        backgroundColor="$background"
+        padding="$4"
         gap="$4"
-        jc="center"
-        ai="center"
+        justifyContent="center"
+        alignItems="center"
       >
         <Text fontSize={64}>⏰</Text>
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           Request Expired
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
-          mw={320}
+          maxWidth={320}
         >
           This request has expired. No action was taken and no data was shared.
         </Paragraph>
         <Button
           theme="blue"
           size="$4"
-          mt="$2"
+          marginTop="$2"
           onPress={resetToAccessHistory}
         >
           Go to Access History
@@ -119,43 +119,43 @@ export default function ApprovalResultScreen() {
   if (isApproved) {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        p="$4"
+        flex={1}
+        backgroundColor="$background"
+        padding="$4"
         gap="$4"
-        jc="center"
-        ai="center"
+        justifyContent="center"
+        alignItems="center"
       >
         <Text fontSize={64}>✅</Text>
 
         <H2
-          col="$green10"
-          ta="center"
+          color="$green10"
+          textAlign="center"
         >
           Access Granted
         </H2>
 
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
-          mw={320}
+          maxWidth={320}
         >
           Access granted to {providerName}. The doctor can now view the approved data until access
           expires.
         </Paragraph>
 
         <YStack
-          bg="$backgroundHover"
-          br="$4"
-          p="$4"
+          backgroundColor="$backgroundHover"
+          borderRadius="$4"
+          padding="$4"
           gap="$3"
-          w="100%"
-          mw={360}
+          width="100%"
+          maxWidth={360}
         >
           <YStack>
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -163,8 +163,8 @@ export default function ApprovalResultScreen() {
               Provider
             </Paragraph>
             <Text
-              col="$color"
-              size="$4"
+              color="$color"
+              fontSize="$4"
               fontWeight="600"
             >
               {providerName}
@@ -176,7 +176,7 @@ export default function ApprovalResultScreen() {
               <Separator />
               <YStack>
                 <Paragraph
-                  col="$colorSubdued"
+                  color="$color10"
                   size="$2"
                   textTransform="uppercase"
                   letterSpacing={1}
@@ -185,23 +185,23 @@ export default function ApprovalResultScreen() {
                 </Paragraph>
                 <YStack
                   gap="$1"
-                  mt="$1"
+                  marginTop="$1"
                 >
                   {scope.map((item) => (
                     <XStack
                       key={item}
                       gap="$2"
-                      ai="center"
+                      alignItems="center"
                     >
                       <Text
-                        col="$green10"
-                        size="$3"
+                        color="$green10"
+                        fontSize="$3"
                       >
                         ✓
                       </Text>
                       <Text
-                        col="$color"
-                        size="$3"
+                        color="$color"
+                        fontSize="$3"
                       >
                         {item}
                       </Text>
@@ -215,11 +215,11 @@ export default function ApprovalResultScreen() {
           <Separator />
 
           <XStack
-            jc="space-between"
-            ai="center"
+            justifyContent="space-between"
+            alignItems="center"
           >
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -227,10 +227,10 @@ export default function ApprovalResultScreen() {
               Expires In
             </Paragraph>
             <Text
-              col="$orange10"
-              size="$5"
+              color="$orange10"
+              fontSize="$5"
               fontWeight="700"
-              fontFamily="$mono"
+              style={{ fontFamily: 'monospace' }}
             >
               {remaining || '—'}
             </Text>
@@ -239,8 +239,8 @@ export default function ApprovalResultScreen() {
 
         <YStack
           gap="$3"
-          w="100%"
-          mt="$2"
+          width="100%"
+          marginTop="$2"
         >
           <Button
             theme="blue"
@@ -253,7 +253,7 @@ export default function ApprovalResultScreen() {
           <Button
             size="$4"
             chromeless
-            color="$red10"
+            theme="red"
             disabled={revoking}
             onPress={handleRevoke}
           >
@@ -261,8 +261,8 @@ export default function ApprovalResultScreen() {
           </Button>
           {revokeError ? (
             <Paragraph
-              col="$red10"
-              ta="center"
+              color="$red10"
+              textAlign="center"
               size="$3"
             >
               {revokeError}
@@ -276,27 +276,27 @@ export default function ApprovalResultScreen() {
   // ── Render: Denied ───────────────────────────────────────────────────
   return (
     <YStack
-      f={1}
-      bg="$background"
-      p="$4"
+      flex={1}
+      backgroundColor="$background"
+      padding="$4"
       gap="$4"
-      jc="center"
-      ai="center"
+      justifyContent="center"
+      alignItems="center"
     >
       <Text fontSize={64}>❌</Text>
 
       <H2
-        col="$red10"
-        ta="center"
+        color="$red10"
+        textAlign="center"
       >
         Access Denied
       </H2>
 
       <Paragraph
-        col="$colorSubdued"
-        ta="center"
+        color="$color10"
+        textAlign="center"
         size="$4"
-        mw={320}
+        maxWidth={320}
       >
         Access denied. The doctor has been notified. No data was shared.
       </Paragraph>
@@ -304,7 +304,7 @@ export default function ApprovalResultScreen() {
       <Button
         theme="blue"
         size="$4"
-        mt="$2"
+        marginTop="$2"
         onPress={resetToAccessHistory}
       >
         Go to Access History

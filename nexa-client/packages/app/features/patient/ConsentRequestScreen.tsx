@@ -145,19 +145,19 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
   if (loading && !challenge) {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        jc="center"
-        ai="center"
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
       >
         <Spinner
           size="large"
           color="$blue10"
         />
         <Paragraph
-          col="$colorSubdued"
+          color="$color10"
           size="$4"
-          mt="$3"
+          marginTop="$3"
         >
           Loading consent request...
         </Paragraph>
@@ -169,23 +169,23 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
   if (!challenge || expired) {
     return (
       <YStack
-        f={1}
-        bg="$background"
-        jc="center"
-        ai="center"
+        flex={1}
+        backgroundColor="$background"
+        justifyContent="center"
+        alignItems="center"
         gap="$3"
-        p="$4"
+        padding="$4"
       >
         <Text fontSize={44}>⏰</Text>
         <H2
-          col="$color"
-          ta="center"
+          color="$color"
+          textAlign="center"
         >
           {expired ? 'Request Expired' : 'Request Unavailable'}
         </H2>
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$4"
         >
           {error ?? 'This consent request has expired. No action is needed.'}
@@ -215,11 +215,11 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
   // ── Render: Active challenge ─────────────────────────────────────────
   return (
     <YStack
-      f={1}
-      bg="$background"
+      flex={1}
+      backgroundColor="$background"
     >
       <ScrollView
-        f={1}
+        flex={1}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
         contentContainerStyle={{
@@ -230,27 +230,27 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
       >
         <YStack
           gap="$2"
-          ai="center"
-          mt="$2"
+          alignItems="center"
+          marginTop="$2"
         >
           <Text fontSize={44}>📋</Text>
           <H2
-            col="$color"
-            ta="center"
+            color="$color"
+            textAlign="center"
           >
             Access Request
           </H2>
         </YStack>
 
         <YStack
-          bg="$backgroundHover"
-          br="$4"
-          p="$4"
+          backgroundColor="$backgroundHover"
+          borderRadius="$4"
+          padding="$4"
           gap="$3"
         >
           <YStack>
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -258,15 +258,15 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
               Requesting Provider
             </Paragraph>
             <Text
-              col="$color"
-              size="$5"
+              color="$color"
+              fontSize="$5"
               fontWeight="600"
             >
               {challenge.provider_name}
             </Text>
             <Text
-              col="$colorSubdued"
-              size="$3"
+              color="$color10"
+              fontSize="$3"
             >
               {challenge.hospital_name}
             </Text>
@@ -276,7 +276,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
           <YStack>
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -284,8 +284,8 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
               Purpose
             </Paragraph>
             <Text
-              col="$color"
-              size="$4"
+              color="$color"
+              fontSize="$4"
             >
               {challenge.purpose}
             </Text>
@@ -295,7 +295,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
           <YStack>
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -304,18 +304,18 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
             </Paragraph>
             <YStack
               gap="$1"
-              mt="$1"
+              marginTop="$1"
             >
               {scopeItems.map((item) => (
                 <XStack
                   key={item}
                   gap="$2"
-                  ai="center"
+                  alignItems="center"
                 >
-                  <Text size="$3">•</Text>
+                  <Text fontSize="$3">•</Text>
                   <Text
-                    col="$color"
-                    size="$3"
+                    color="$color"
+                    fontSize="$3"
                   >
                     {item}
                   </Text>
@@ -327,11 +327,11 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
           <Separator />
 
           <XStack
-            jc="space-between"
-            ai="center"
+            justifyContent="space-between"
+            alignItems="center"
           >
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -339,8 +339,8 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
               Access Duration
             </Paragraph>
             <Text
-              col="$orange10"
-              size="$4"
+              color="$orange10"
+              fontSize="$4"
               fontWeight="600"
             >
               {accessMinutes} minute{accessMinutes !== 1 ? 's' : ''}
@@ -350,11 +350,11 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
           <Separator />
 
           <XStack
-            jc="space-between"
-            ai="center"
+            justifyContent="space-between"
+            alignItems="center"
           >
             <Paragraph
-              col="$colorSubdued"
+              color="$color10"
               size="$2"
               textTransform="uppercase"
               letterSpacing={1}
@@ -362,10 +362,10 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
               Request Expires In
             </Paragraph>
             <Text
-              col="$red10"
-              size="$5"
+              color="$red10"
+              fontSize="$5"
               fontWeight="700"
-              fontFamily="$mono"
+              style={{ fontFamily: 'monospace' }}
             >
               {countdown}
             </Text>
@@ -373,11 +373,11 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
         </YStack>
 
         <Paragraph
-          col="$colorSubdued"
-          ta="center"
+          color="$color10"
+          textAlign="center"
           size="$3"
-          mw={340}
-          mx="auto"
+          maxWidth={340}
+          marginHorizontal="auto"
         >
           {challenge.provider_name} from {challenge.hospital_name} is requesting access to your
           medical record for {challenge.purpose}. Access duration: {accessMinutes} minute
@@ -387,9 +387,9 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
         {error !== null ? (
           <Text
-            col="$red10"
-            ta="center"
-            size="$3"
+            color="$red10"
+            textAlign="center"
+            fontSize="$3"
           >
             {error}
           </Text>
@@ -397,9 +397,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
 
         <Button
           size="$4"
-          bg="$green9"
-          color="white"
-          fontWeight="700"
+          theme="green"
           disabled={expired || denying}
           onPress={handleApprove}
         >
@@ -407,9 +405,7 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
         </Button>
         <Button
           size="$4"
-          bg="$red9"
-          color="white"
-          fontWeight="700"
+          theme="red"
           disabled={expired || denying}
           onPress={handleDeny}
         >
