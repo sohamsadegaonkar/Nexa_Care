@@ -186,15 +186,14 @@ async def test_repeated_token_missing_page_and_in_progress_fail_closed():
 async def test_timeout_after_first_chunk_discards_transient_accumulator():
     client = Mock()
 
-    def timeout_response(**kwargs):
-        _ = kwargs
+    def paginated_response(**kwargs):
+        if "NextToken" not in kwargs:
+            return _result(page=1, token="next")
+        assert kwargs["NextToken"] == "next"
         time.sleep(0.2)
         return _result(page=2)
 
-    client.get_document_analysis.side_effect = [
-        _result(page=1, token="next"),
-        timeout_response,
-    ]
+    client.get_document_analysis.side_effect = paginated_response
     with pytest.raises(ProviderTimeoutError):
         await _provider(client, timeout_seconds=0.01).retrieve_complete_result(
             provider_job_id="job-123", expected_page_count=3
