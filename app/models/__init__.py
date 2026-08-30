@@ -46,10 +46,16 @@ from app.models.pipeline import (
 )
 from app.models.provider import (
     AffiliationType,
+    AffiliationTrustStatus,
+    FacilityVerification,
+    FacilityVerificationStatus,
     HospitalRegistry,
+    ProfessionalVerification,
+    ProfessionalVerificationStatus,
     ProviderCredential,
     ProviderHospitalAffiliation,
     ProviderIdentity,
+    VerificationSourceFailureReason,
 )
 from app.models.provider_context import (
     AffiliationContext,
@@ -90,10 +96,16 @@ __all__ = [
     "TimelineEvent",
     "PatientTombstone",
     "AffiliationType",
+    "AffiliationTrustStatus",
+    "FacilityVerification",
+    "FacilityVerificationStatus",
     "HospitalRegistry",
+    "ProfessionalVerification",
+    "ProfessionalVerificationStatus",
     "ProviderCredential",
     "ProviderHospitalAffiliation",
     "ProviderIdentity",
+    "VerificationSourceFailureReason",
     "AffiliationContext",
     "HospitalContext",
     "ProviderContext",

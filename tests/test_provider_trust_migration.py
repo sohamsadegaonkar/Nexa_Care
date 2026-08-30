@@ -1,0 +1,56 @@
+from pathlib import Path
+
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REVISION = "20260830_provider_trust"
+
+
+def _source() -> str:
+    return (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_provider_trust_migration_is_current_single_head() -> None:
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("script_location", str(ROOT / "alembic"))
+    scripts = ScriptDirectory.from_config(config)
+    assert scripts.get_heads() == [REVISION]
+    assert scripts.get_revision(REVISION).down_revision == "20260827_patient_public_id"
+
+
+def test_migration_backfills_trust_state_fail_closed_and_is_forward_only() -> None:
+    source = _source()
+    assert "'NOT_SUBMITTED'" in source
+    assert "'DRAFT'" in source
+    assert "'PENDING_ACTIVATION'" in source
+    assert "medical_registration_number" not in source
+    assert "raise RuntimeError" in source
+    assert "op.drop_table" not in source
+
+
+def test_migration_defines_modelled_tables_constraints_and_documentation() -> None:
+    source = _source()
+    for required in (
+        "professional_verification",
+        "facility_verification",
+        "email_verified_at",
+        "phone_verified_at",
+        "facility_type",
+        "trust_status",
+        "uq_professional_verification_authority_registration",
+        "ck_professional_verification_status",
+        "ck_facility_verification_status",
+        "ck_provider_hospital_affiliation_trust_status",
+        "Purpose:",
+        "Preconditions:",
+        "Existing-data behavior:",
+        "Locking risk:",
+        "Rollback position:",
+        "Validation query:",
+        "Forward-fix strategy:",
+    ):
+        assert required in source

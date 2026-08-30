@@ -107,11 +107,51 @@ Every read request directed at patient health records (`GET /api/v2/patient/*`) 
 
 ---
 
-## 4. Alpha Milestone Integration & Branching Setup
+## 4. Provider Clinical-Trust Primitives (Slice 1)
+
+Provider authentication and patient authorization are separate from clinical
+trust. The server-owned eligibility layer evaluates the following independent
+facts before a future clinical route can rely on it:
+
+```text
+active provider account + active credential
++ explicit contact-assurance policy
++ current professional verification
++ verified facility
++ current ACTIVE affiliation
++ fixed server-owned capability
++ mode-specific session and MFA assurance
+```
+
+Legacy provider role JSON can map only to a fixed capability vocabulary and
+never establishes professional or facility trust. `medical_registration_number`
+remains a legacy claim, not verification evidence. The explicit affiliation
+`trust_status` is authoritative for clinical eligibility; legacy `is_active`
+remains compatibility state and cannot grant clinical authority.
+
+Interactive eligibility requires a bound provider session and current MFA;
+Basic authentication is insufficient. `emergency.attempt` additionally uses
+the existing break-glass recent-MFA limit. Delegated workflows retain no
+password, token, cookie, OTP, or MFA secret. They preserve only non-secret T0
+assurance provenance, re-evaluate current trust at each protected checkpoint,
+and may use an allow result for one operation for no more than 60 seconds.
+Logout alone does not invalidate valid T0 initiation, but a current trust-state
+revocation does.
+
+This slice provides only models, evaluator, migration, audit-event registry,
+and tests. Existing NFC, consent, record, document-processing, and emergency
+routes are intentionally unchanged. Consent remains a separate patient
+authorization which cannot override failed current clinical trust. Contact
+assurance, grace duration, retention, and external registry integrations remain
+explicit policy decisions; undefined contact policy fails closed.
+
+---
+
+## 5. Alpha Milestone Integration & Branching Setup
 
 With 10 squads working concurrently in a monorepo (`nexa-client/` + `app/`), integration chaos is the primary project risk. All teams must follow the locked Git workflow below.
 
-### 4.1 Branching Strategy
+### 5.1 Branching Strategy
 - **Target Integration Branch:** `alpha-integration` (Protected Branch).
 - **Production Branch:** `main` (Only updated via signed release PRs from `alpha-integration`).
 - **Feature Branch Naming Convention:** `squad-{N}/{feature-name}` (e.g., `squad-2/biometric-verifier`, `squad-4/pytorch-pipeline`).
@@ -147,7 +187,7 @@ gitGraph
     merge squad-4/pytorch-pipeline id: "Day 1 Merge: Squad 4"
 ```
 
-### 4.2 CI/CD Gate Rules (Mandatory Pre-Merge Requirements)
+### 5.2 CI/CD Gate Rules (Mandatory Pre-Merge Requirements)
 
 Before any pull request can be merged into `alpha-integration`, the GitHub Actions automated pipeline must pass 100% of the following checks:
 

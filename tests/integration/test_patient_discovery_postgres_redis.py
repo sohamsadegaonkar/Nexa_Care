@@ -37,7 +37,7 @@ from app.core.rate_limiter import atomic_fixed_window
 pytestmark = [pytest.mark.postgres, pytest.mark.redis]
 
 PREVIOUS_HEAD = "20260819_patient_profile_legal"
-CURRENT_HEAD = "20260827_patient_public_id"
+CURRENT_HEAD = "20260830_provider_trust"
 
 
 def _database_url() -> str:

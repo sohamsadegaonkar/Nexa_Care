@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260827_patient_public_id"
+EXPECTED_HEAD = "20260830_provider_trust"
 
 
 def _scripts() -> ScriptDirectory:
@@ -33,9 +33,15 @@ def test_patient_profile_legal_descends_from_widen_vault_pii_columns() -> None:
 
 
 def test_patient_public_id_descends_from_patient_profile_legal() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision("20260827_patient_public_id")
     assert revision is not None
     assert revision.down_revision == "20260819_patient_profile_legal"
+
+
+def test_provider_trust_descends_from_patient_public_id() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260827_patient_public_id"
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:
