@@ -31,7 +31,9 @@ from app.core.dependencies import (
     get_current_provider,
     get_provider_context,
     get_scoped_session,
+    require_clinical_capability,
 )
+from app.security.provider_capabilities import ClinicalCapability
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -269,6 +271,10 @@ def _apply_overrides(overrides, provider, patient_id):
     app.dependency_overrides[get_provider_context] = _provider_dep
     overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
+    for capability in ClinicalCapability:
+        gate = require_clinical_capability(capability)
+        overrides[gate] = _provider_dep
+        app.dependency_overrides[gate] = _provider_dep
 
 
 def _patch_stack(fake_redis, fake_sync_redis, patient_id):

@@ -3,6 +3,7 @@ import uuid
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.api.v2.pipeline_routes import (
     CommitJobRequest,
@@ -98,6 +99,7 @@ async def test_malformed_job_id_is_not_uuid5_coerced():
 async def test_commit_rejects_client_supplied_fields_before_any_database_write():
     with pytest.raises(HTTPException) as exc:
         await commit_extraction_job(
+            Request({"type": "http", "method": "POST", "path": "/"}),
             str(uuid.uuid4()),
             CommitJobRequest(
                 patient_id=str(uuid.uuid4()), fields=[{"field_name": "lab_result"}]

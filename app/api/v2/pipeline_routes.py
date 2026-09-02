@@ -36,6 +36,7 @@ from fastapi import (
     Form,
     Header,
     HTTPException,
+    Request,
     Response,
     UploadFile,
     status,
@@ -50,7 +51,11 @@ from app.core.document_processing_gate import (
 )
 from app.core.config import get_document_extraction_config
 from app.core.database import get_db_session, get_session_factory
-from app.core.dependencies import get_current_provider
+from app.core.dependencies import (
+    capture_clinical_initiation_assurance,
+    enforce_current_clinical_capability,
+    require_clinical_capability,
+)
 from app.models.extracted_field import ExtractedField
 from app.models.adjudication import (
     IDEMPOTENCY_KEY_PATTERN,
@@ -79,6 +84,12 @@ from app.services.clinical_evidence_integrity import (
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.document_processing_policy import DocumentProcessingOperation
+from app.security.erasure_registry import (
+    ErasureRegistryUnavailable,
+    _PatientErasedSignal,
+    check_erasure_registry,
+)
+from app.security.provider_capabilities import ClinicalCapability
 from app.ai.extractor import TEXTRACT_MAX_SYNC_BYTES
 from app.services.pipeline_orchestrator import process_extraction_job
 from app.services.record_ingestion import ingest_extracted_fields
@@ -310,6 +321,7 @@ async def _run_extraction_job(job_id: str) -> None:
 
 @router.post("/documents/upload", status_code=status.HTTP_202_ACCEPTED)
 async def upload_pipeline_document(
+    request: Request,
     background_tasks: BackgroundTasks,
     patient_id: uuid.UUID = Form(...),
     file: UploadFile = File(...),
@@ -318,7 +330,9 @@ async def upload_pipeline_document(
     source_relation_type: Literal["SUPERSEDES", "ADDENDUM_TO"] | None = Form(
         default=None
     ),
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_UPLOAD)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_db_session),
@@ -329,6 +343,9 @@ async def upload_pipeline_document(
         patient_id=str(patient_id),
         provider=provider,
         operation=DocumentProcessingOperation.UPLOAD_DOCUMENT,
+    )
+    initiation_assurance = await capture_clinical_initiation_assurance(
+        request, provider, db
     )
     configured_max = int(os.getenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024)))
     extraction_config = get_document_extraction_config()
@@ -424,6 +441,14 @@ async def upload_pipeline_document(
         uploader_id=provider.actor_uid,
         authorization_provider_id=provider.actor_uid,
         consent_request_id=str(getattr(capability, "request_id", "")),
+        authorization_initiated_at=initiation_assurance.initiated_at,
+        authorization_authentication_method=(
+            initiation_assurance.authentication_method.value
+        ),
+        authorization_mfa_verified_at=initiation_assurance.mfa_verified_at,
+        authorization_assurance_policy_version=(
+            initiation_assurance.assurance_policy_version
+        ),
         document_id=doc_uuid,
         document_type=mime_type,
         status="extraction_pending",
@@ -505,7 +530,9 @@ async def upload_pipeline_document(
 @router.get("/jobs/{job_id}", response_model=ExtractionJobStatusResponse)
 async def get_extraction_job(
     job_id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -706,7 +733,9 @@ async def get_extraction_job(
 @router.get("/jobs/{job_id}/document", status_code=status.HTTP_200_OK)
 async def get_extraction_job_document(
     job_id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -779,7 +808,9 @@ async def get_extraction_job_document(
 @router.get("/review-queue", status_code=status.HTTP_200_OK)
 async def get_review_queue(
     patient_id: str | None = None,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -841,7 +872,9 @@ async def get_review_queue(
 async def review_extracted_field(
     field_id: str,
     payload: FieldReviewRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -909,12 +942,6 @@ async def review_extracted_field(
 
     new_st = status_map[payload.action]
 
-    if not set(provider.affiliation.roles or []).intersection(
-        {"clinician", "clinical_reviewer", "admin"}
-    ):
-        raise HTTPException(
-            status_code=403, detail={"error_code": "REVIEW_ROLE_REQUIRED"}
-        )
     if field.status != "needs_review":
         raise HTTPException(
             status_code=409, detail={"error_code": "STALE_REVIEW_DECISION"}
@@ -989,7 +1016,9 @@ async def review_extracted_field(
 @router.post("/fields/{field_id}/approve", status_code=status.HTTP_200_OK)
 async def approve_extracted_field(
     field_id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1002,7 +1031,9 @@ async def approve_extracted_field(
 async def reject_extracted_field(
     field_id: str,
     payload: RejectFieldRequest | None = None,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1021,7 +1052,9 @@ async def reject_extracted_field(
 async def edit_extracted_field(
     field_id: str,
     payload: EditFieldRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1044,9 +1077,12 @@ async def edit_extracted_field(
 
 @router.post("/jobs/{job_id}/commit", status_code=status.HTTP_201_CREATED)
 async def commit_extraction_job(
+    request: Request,
     job_id: str,
     payload: CommitJobRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_COMMIT)
+    ),
     x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -1189,6 +1225,44 @@ async def commit_extraction_job(
     try:
         # The route owns the only commit: clinical rows, timelines, job state,
         # commit marker, and every required audit event succeed or roll back together.
+        async def _revalidate_clinical_commit_authority() -> None:
+            nonlocal provider
+            current_provider = await enforce_current_clinical_capability(
+                request=request,
+                provider=provider,
+                db=db,
+                capability=ClinicalCapability.DOCUMENTS_COMMIT,
+            )
+            current_capability = await authorize_document_processing(
+                token=x_consent_token,
+                patient_id=server_pid,
+                provider=current_provider,
+                operation=DocumentProcessingOperation.COMMIT_VERIFIED_FIELDS,
+                consent_request_id=job.consent_request_id,
+            )
+            assert_job_authorization_binding(
+                job=job,
+                capability=current_capability,
+                provider=current_provider,
+            )
+            try:
+                await check_erasure_registry(server_pid, db)
+            except _PatientErasedSignal as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_410_GONE,
+                    detail={"error_code": "PATIENT_ACCESS_ERASED"},
+                ) from exc
+            except ErasureRegistryUnavailable as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail={"error_code": "ERASURE_REGISTRY_UNAVAILABLE"},
+                ) from exc
+            provider = current_provider
+
+        # Establish a current decision before entering ingestion.  Ingestion
+        # repeats this callback after its idempotency/preflight reads and at its
+        # actual first clinical mutation boundary.
+        await _revalidate_clinical_commit_authority()
         if approved_models:
             await ingest_extracted_fields(
                 patient_id=server_pid,
@@ -1197,6 +1271,7 @@ async def commit_extraction_job(
                 db=db,
                 committed_by=provider.actor_uid,
                 audit_context=audit_context,
+                before_clinical_mutation=_revalidate_clinical_commit_authority,
                 audit_metadata=audit_metadata,
             )
 
@@ -1212,6 +1287,9 @@ async def commit_extraction_job(
             patient_id=server_pid,
             metadata={"fields_committed": cnt, **audit_metadata},
         )
+        # Minimize the transactional revocation window once more immediately
+        # before the durable commit.  Any denial rolls back facts and outbox.
+        await _revalidate_clinical_commit_authority()
         await db.commit()
     except Exception as exc:
         await db.rollback()
@@ -1323,7 +1401,9 @@ def _failure_quarantine_response(
 async def apply_failure_quarantine_terminal_disposition(
     case_id: str,
     payload: FailureQuarantineDispositionRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Apply a human-only terminal operational disposition, never a clinical commit."""
@@ -1402,7 +1482,9 @@ async def _case_response_with_conflicts(
 async def create_routing_adjudication_case(
     routing_id: str,
     payload: CreateAdjudicationCaseRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
@@ -1427,7 +1509,9 @@ async def create_routing_adjudication_case(
 async def create_document_adjudication_case(
     job_id: str,
     payload: CreateAdjudicationCaseRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
@@ -1450,13 +1534,11 @@ async def create_document_adjudication_case(
 
 @router.get("/adjudication-cases")
 async def list_adjudication_cases(
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
-    if not {"clinician", "clinical_reviewer", "admin"}.intersection(
-        provider.affiliation.roles
-    ):
-        raise HTTPException(403, detail={"error_code": "ADJUDICATION_ROLE_REQUIRED"})
     rows = (
         await db.execute(
             select(AdjudicationCaseRecord).where(
@@ -1471,7 +1553,9 @@ async def list_adjudication_cases(
 @router.get("/adjudication-cases/{case_id}")
 async def get_adjudication_case(
     case_id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     row = (
@@ -1492,7 +1576,9 @@ async def get_adjudication_case(
 async def recover_adjudication_session(
     case_id: str,
     payload: RecoverAdjudicationSessionRequest,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
@@ -1529,7 +1615,9 @@ async def recover_adjudication_session(
 async def create_adjudication_submission(
     case_id: str,
     raw_payload: dict[str, Any] = Body(...),
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
@@ -1579,17 +1667,30 @@ async def create_adjudication_submission(
 
 @router.post("/adjudication-submissions/{submission_id}/commit")
 async def commit_human_adjudication(
+    request: Request,
     submission_id: str,
     x_review_session_id: str = Header(alias="X-Review-Session-ID"),
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_COMMIT)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
+
+        async def _final_commit_check() -> ProviderContext:
+            return await enforce_current_clinical_capability(
+                request=request,
+                provider=provider,
+                db=db,
+                capability=ClinicalCapability.DOCUMENTS_COMMIT,
+            )
+
         case = await commit_adjudication_submission(
             db,
             submission_id=_parse_uuid(submission_id),
             provider=provider,
             review_session_id=x_review_session_id,
+            before_clinical_mutation=_final_commit_check,
         )
         await db.commit()
         return {
@@ -1611,7 +1712,9 @@ async def commit_human_adjudication(
 async def get_adjudication_source(
     case_id: str,
     x_review_session_id: str = Header(alias="X-Review-Session-ID"),
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.DOCUMENTS_REVIEW)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:

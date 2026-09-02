@@ -17,6 +17,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.datastructures import Headers
+from starlette.requests import Request
 
 from app.api.v2.pipeline_routes import upload_pipeline_document
 from app.ai.extractor import (
@@ -431,7 +432,14 @@ async def test_scenario_9_production_orchestrator_persists_exact_conflict() -> N
             await db.commit()
 
         async with factory() as db:
+            # Scenario 9 qualifies conflict persistence; delegated authority is
+            # covered by the dedicated real-provenance PostgreSQL suite.
             with (
+                patch(
+                    "app.services.pipeline_orchestrator."
+                    "recheck_delegated_document_processing_trust",
+                    AsyncMock(return_value=None),
+                ),
                 patch(
                     "app.services.pipeline_orchestrator.get_document_storage",
                     return_value=storage,
@@ -624,7 +632,13 @@ async def test_scenario_11_local_invalid_document_creates_no_clinical_graph() ->
             await db.commit()
 
         async with factory() as db:
+            # Scenario 11 qualifies invalid-document terminal behavior only.
             with (
+                patch(
+                    "app.services.pipeline_orchestrator."
+                    "recheck_delegated_document_processing_trust",
+                    AsyncMock(return_value=None),
+                ),
                 patch(
                     "app.services.pipeline_orchestrator.get_document_storage",
                     return_value=SimpleNamespace(
@@ -1581,6 +1595,7 @@ async def test_scenario_9_current_submission_must_resolve_conflict() -> None:
                     submission_id=superseded.id,
                     provider=provider,
                     review_session_id=session_id,
+                    before_clinical_mutation=AsyncMock(return_value=provider),
                 )
                 assert committed.clinical_committed_at is not None
                 assert (
@@ -1663,6 +1678,7 @@ async def test_concurrent_commit_and_supersession_use_one_case_lock_order() -> N
                             submission_id=accepted_id,
                             provider=provider,
                             review_session_id=session_id,
+                            before_clinical_mutation=AsyncMock(return_value=provider),
                         )
                         await db.commit()
                         return ("PASS", row.id)
@@ -1731,6 +1747,7 @@ async def test_scenario_23_production_upload_revalidates_related_source() -> Non
 
     async def upload(db, *, related: uuid.UUID, suffix: bytes):
         return await upload_pipeline_document(
+            request=Request({"type": "http", "method": "POST", "path": "/"}),
             background_tasks=BackgroundTasks(),
             patient_id=patient,
             file=UploadFile(
@@ -1805,6 +1822,22 @@ async def test_scenario_23_production_upload_revalidates_related_source() -> Non
             patch(
                 "app.api.v2.pipeline_routes.current_audit_context",
                 return_value=SimpleNamespace(),
+            ),
+            # This Scenario 23 test qualifies related-source binding. The real
+            # initiation-assurance capture is covered by the clinical auth and
+            # delegated gate suites.
+            patch(
+                "app.api.v2.pipeline_routes.capture_clinical_initiation_assurance",
+                AsyncMock(
+                    return_value=SimpleNamespace(
+                        initiated_at=datetime.now(timezone.utc),
+                        authentication_method=SimpleNamespace(value="PROVIDER_SESSION"),
+                        mfa_verified_at=datetime.now(timezone.utc),
+                        assurance_policy_version=(
+                            "clinical-contact-email-and-phone/v1"
+                        ),
+                    )
+                ),
             ),
             patch(
                 "app.services.clinical_evidence_integrity."

@@ -54,16 +54,55 @@ def _job_for(
     )
 
 
-@pytest.fixture(autouse=True)
-def auth_override(admin_context):
+@pytest.fixture
+def record_writer(clinician_context):
+    """Explicit downstream precondition for record validation/write tests."""
     from app.core.dependencies import get_current_provider
 
-    app.dependency_overrides[get_current_provider] = lambda: admin_context
-    yield
-    app.dependency_overrides.pop(get_current_provider, None)
+    app.dependency_overrides[get_current_provider] = lambda: clinician_context
+    try:
+        yield clinician_context
+    finally:
+        app.dependency_overrides.pop(get_current_provider, None)
 
 
-def test_ai_extracted_vitals_without_confidence_fails(admin_headers):
+@pytest.fixture
+def record_reader(clinician_context):
+    """Explicit RECORD_READ prerequisite for consent-gate tests only."""
+    from app.core.dependencies import (
+        get_current_provider,
+        get_provider_context,
+        require_clinical_capability,
+    )
+    from app.security.provider_capabilities import ClinicalCapability
+
+    gate = require_clinical_capability(ClinicalCapability.RECORD_READ)
+    app.dependency_overrides[gate] = lambda: clinician_context
+    app.dependency_overrides[get_current_provider] = lambda: clinician_context
+    app.dependency_overrides[get_provider_context] = lambda: clinician_context
+    try:
+        yield clinician_context
+    finally:
+        app.dependency_overrides.pop(gate, None)
+        app.dependency_overrides.pop(get_current_provider, None)
+        app.dependency_overrides.pop(get_provider_context, None)
+
+
+@pytest.fixture
+def document_committer(clinician_context):
+    """Explicit DOCUMENTS_COMMIT prerequisite for commit payload validation."""
+    from app.core.dependencies import require_clinical_capability
+    from app.security.provider_capabilities import ClinicalCapability
+
+    gate = require_clinical_capability(ClinicalCapability.DOCUMENTS_COMMIT)
+    app.dependency_overrides[gate] = lambda: clinician_context
+    try:
+        yield clinician_context
+    finally:
+        app.dependency_overrides.pop(gate, None)
+
+
+def test_ai_extracted_vitals_without_confidence_fails(admin_headers, record_writer):
     """Test 1: AI-extracted vitals without numeric confidence returns 400 Bad Request."""
     mock_cap = ConsentCapability(
         patient_id="11111111-1111-4111-8111-111111111111",
@@ -99,7 +138,9 @@ def test_ai_extracted_vitals_without_confidence_fails(admin_headers):
         assert "AI-extracted field must have numeric confidence" in res.json()["detail"]
 
 
-def test_ai_extracted_medication_without_source_document_id_fails(admin_headers):
+def test_ai_extracted_medication_without_source_document_id_fails(
+    admin_headers, record_writer
+):
     """Test 2: AI-extracted medication without source_document_id returns 400 Bad Request."""
     mock_cap = ConsentCapability(
         patient_id="11111111-1111-4111-8111-111111111111",
@@ -135,7 +176,7 @@ def test_ai_extracted_medication_without_source_document_id_fails(admin_headers)
         )
 
 
-def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
+def test_allergy_defaults_to_and_enforces_high_risk(admin_headers, record_writer):
     """Test 3: Allergy model defaults to and strictly requires HIGH_RISK risk_level per WS5 rules."""
     # Check model default
     alg = Allergy(patient_id=uuid.uuid4(), allergen="Peanuts", severity="Anaphylaxis")
@@ -169,7 +210,7 @@ def test_allergy_defaults_to_and_enforces_high_risk(admin_headers):
         assert "HIGH_RISK" in res.json()["detail"]
 
 
-def test_timeline_event_created_when_lab_result_committed(admin_headers):
+def test_timeline_event_created_when_lab_result_committed(admin_headers, record_writer):
     """Test 4: Committing a lab result creates a TimelineEvent row linking to the lab."""
     mock_cap = ConsentCapability(
         patient_id="11111111-1111-4111-8111-111111111111",
@@ -214,7 +255,7 @@ def test_timeline_event_created_when_lab_result_committed(admin_headers):
         assert tl.event_type == "LAB_RESULT"
 
 
-def test_patient_record_read_requires_valid_consent(admin_headers):
+def test_patient_record_read_requires_valid_consent(admin_headers, record_reader):
     """Test 5: Doctor attempting patient record read without valid X-Consent-Token gets 403 Forbidden."""
     with patch("app.core.consent_gate.validate_consent_capability", return_value=None):
         res = client.get(
@@ -225,7 +266,9 @@ def test_patient_record_read_requires_valid_consent(admin_headers):
         assert "Active consent token required" in res.json()["detail"]
 
 
-def test_break_glass_capability_rejected_at_summary_endpoint(admin_headers):
+def test_break_glass_capability_rejected_at_summary_endpoint(
+    admin_headers, record_reader
+):
     """DEFECT 1/2/3: a break-glass capability must never satisfy the general
     /summary route -- only the dedicated /emergency-summary endpoint."""
     break_glass_capability = ConsentCapability(
@@ -273,7 +316,7 @@ def test_patient_self_view_does_not_require_doctor_consent_token():
 
 
 def test_pipeline_commit_rejects_client_supplied_extracted_fields(
-    admin_headers, mock_db
+    admin_headers, mock_db, document_committer
 ):
     mock_cap = ConsentCapability(
         patient_id="11111111-1111-4111-8111-111111111111",

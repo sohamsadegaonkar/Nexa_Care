@@ -16,7 +16,7 @@ from fastapi.testclient import TestClient
 import app.api.v2.consent_routes as consent_routes
 
 from app.core.database import get_db_session
-from app.core.dependencies import get_provider_context
+from app.core.dependencies import get_provider_context, require_clinical_capability
 from app.main import app
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
@@ -25,6 +25,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
+from app.security.provider_capabilities import ClinicalCapability
 from app.services.patient_discovery_service import (
     DiscoveryHandle,
     DiscoveryHandleInvalid,
@@ -93,7 +94,14 @@ def provider() -> ProviderContext:
 
 @pytest.fixture
 def client(provider):
-    app.dependency_overrides[get_provider_context] = lambda: provider
+    def provider_factory():
+        return provider
+
+    discover = require_clinical_capability(ClinicalCapability.PATIENT_DISCOVER)
+    consent_request = require_clinical_capability(ClinicalCapability.CONSENT_REQUEST)
+    app.dependency_overrides[discover] = provider_factory
+    app.dependency_overrides[consent_request] = provider_factory
+    app.dependency_overrides[get_provider_context] = provider_factory
     app.dependency_overrides[get_db_session] = lambda: AsyncMock()
     try:
         yield TestClient(app)

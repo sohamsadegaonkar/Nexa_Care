@@ -14,6 +14,7 @@ Covers:
 from __future__ import annotations
 
 import base64
+import hashlib
 import asyncio
 import json
 import uuid
@@ -24,7 +25,6 @@ import pytest
 
 from app.core.dependencies import (
     get_current_provider,
-    get_provider_context,
     get_scoped_session,
 )
 from app.main import app
@@ -75,15 +75,17 @@ def _generate_p256_public_key_der() -> bytes:
     )
 
 
-def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+def _active_discovery_handle(fake_redis, clinical_session, patient_id: str) -> str:
     service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
     patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     handle = asyncio.run(
         service.issue_handle(
             patient=patient,
-            provider_id=provider.actor_uid,
-            hospital_id=str(provider.hospital_id),
-            session_binding=provider.session_binding,
+            provider_id=str(clinical_session.provider.id),
+            hospital_id=str(clinical_session.hospital.id),
+            session_binding=hashlib.sha256(
+                clinical_session.token.encode("utf-8")
+            ).hexdigest(),
             identifier_type="TEST_DISCOVERY",
         )
     )
@@ -399,25 +401,19 @@ class TestConsentRequestCreation:
     """Validate consent challenge request creation and IDOR guards."""
 
     def test_consent_request_returns_201_with_challenge(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
         """Creating a consent request returns 201 with request_id, challenge_nonce, and status='pending'."""
-        provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
 
         mock_device = MagicMock()
         mock_db.execute.return_value = MagicMock(
             scalar_one_or_none=MagicMock(return_value=mock_device)
         )
 
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.set(get_provider_context, _provider)
-        overrides.apply()
-        discovery_handle = _active_discovery_handle(fake_redis, ctx, patient_id)
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
         patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
 
         with (
@@ -441,6 +437,7 @@ class TestConsentRequestCreation:
         ):
             resp = client.post(
                 "/api/v2/consent/request",
+                headers=real_clinical_session.headers,
                 json={
                     "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
@@ -457,20 +454,11 @@ class TestConsentRequestCreation:
             assert data["expires_in_seconds"] > 0
 
     def test_consent_request_idor_rejected(
-        self, client, fake_sync_redis, mock_db, overrides
+        self, client, fake_sync_redis, mock_db, real_clinical_session
     ):
         """Raw patient/provider identifiers are rejected before consent creation."""
-        provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
         different_provider = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
-
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.set(get_provider_context, _provider)
-        overrides.apply()
 
         with (
             patch(
@@ -484,6 +472,7 @@ class TestConsentRequestCreation:
         ):
             resp = client.post(
                 "/api/v2/consent/request",
+                headers=real_clinical_session.headers,
                 json={
                     "patient_id": patient_id,
                     "provider_id": different_provider,  # IDOR probe
@@ -494,24 +483,18 @@ class TestConsentRequestCreation:
             assert resp.status_code == 422
 
     def test_consent_request_no_device_returns_409(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
         """Consent request for a patient without enrolled devices returns 409."""
-        provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
 
         mock_db.execute.return_value = MagicMock(
             scalar_one_or_none=MagicMock(return_value=None)
         )
 
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.set(get_provider_context, _provider)
-        overrides.apply()
-        discovery_handle = _active_discovery_handle(fake_redis, ctx, patient_id)
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
         patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
 
         with (
@@ -535,6 +518,7 @@ class TestConsentRequestCreation:
         ):
             resp = client.post(
                 "/api/v2/consent/request",
+                headers=real_clinical_session.headers,
                 json={
                     "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
@@ -545,25 +529,19 @@ class TestConsentRequestCreation:
             assert "device" in resp.json()["detail"].lower()
 
     def test_consent_request_duration_clamped(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
         """access_duration_seconds is clamped to [300, 3600]."""
-        provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
 
         mock_device = MagicMock()
         mock_db.execute.return_value = MagicMock(
             scalar_one_or_none=MagicMock(return_value=mock_device)
         )
 
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.set(get_provider_context, _provider)
-        overrides.apply()
-        discovery_handle = _active_discovery_handle(fake_redis, ctx, patient_id)
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
         patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
 
         with (
@@ -588,6 +566,7 @@ class TestConsentRequestCreation:
             # Request duration below minimum (10s → clamped to 300s)
             resp = client.post(
                 "/api/v2/consent/request",
+                headers=real_clinical_session.headers,
                 json={
                     "discovery_handle": discovery_handle,
                     "purpose": "routine_checkup",
@@ -612,69 +591,59 @@ class TestConsentRequestCreation:
 class TestConsentStatusPolling:
     """Validate consent status polling endpoint."""
 
-    def test_status_pending(self, client, fake_sync_redis, overrides):
+    def test_status_pending(self, client, fake_sync_redis, real_clinical_session):
         """Polling a pending request returns status='pending'."""
-        provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
 
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
-            "provider_id": provider_id,
-            "hospital_id": str(ctx.hospital_id),
+            "provider_id": str(real_clinical_session.provider.id),
+            "hospital_id": str(real_clinical_session.hospital.id),
             "status": "pending",
         }
         fake_sync_redis.set(
             f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
         )
 
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.apply()
-
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
-            resp = client.get(f"/api/v2/consent/status/{request_id}")
+            resp = client.get(
+                f"/api/v2/consent/status/{request_id}",
+                headers=real_clinical_session.headers,
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "pending"
             assert data["request_id"] == request_id
 
-    def test_status_expired_when_not_found(self, client, fake_sync_redis, overrides):
+    def test_status_expired_when_not_found(
+        self, client, fake_sync_redis, real_clinical_session
+    ):
         """Polling a non-existent request returns status='expired'."""
-        provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
-
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.apply()
 
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
-            resp = client.get(f"/api/v2/consent/status/{request_id}")
+            resp = client.get(
+                f"/api/v2/consent/status/{request_id}",
+                headers=real_clinical_session.headers,
+            )
             assert resp.status_code == 200
             assert resp.json()["status"] == "expired"
 
-    def test_status_approved(self, client, fake_sync_redis, overrides):
+    def test_status_approved(self, client, fake_sync_redis, real_clinical_session):
         """Polling an approved request returns status='approved' with responded_at."""
-        provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
-        ctx = _make_provider_context(provider_id)
 
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
-            "provider_id": provider_id,
-            "hospital_id": str(ctx.hospital_id),
+            "provider_id": str(real_clinical_session.provider.id),
+            "hospital_id": str(real_clinical_session.hospital.id),
             "status": "approved",
             "responded_at": now_iso,
         }
@@ -682,29 +651,24 @@ class TestConsentStatusPolling:
             f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
         )
 
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.apply()
-
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
-            resp = client.get(f"/api/v2/consent/status/{request_id}")
+            resp = client.get(
+                f"/api/v2/consent/status/{request_id}",
+                headers=real_clinical_session.headers,
+            )
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "approved"
             assert data["responded_at"] is not None
 
     def test_status_wrong_provider_returns_403(
-        self, client, fake_sync_redis, overrides
+        self, client, fake_sync_redis, real_clinical_session
     ):
         """Polling another provider's request returns 403."""
-        provider_id = str(uuid.uuid4())
         other_provider = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
 
         challenge_data = {
             "request_id": request_id,
@@ -716,16 +680,13 @@ class TestConsentStatusPolling:
             f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
         )
 
-        async def _provider():
-            return ctx
-
-        overrides.set(get_current_provider, _provider)
-        overrides.apply()
-
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
-            resp = client.get(f"/api/v2/consent/status/{request_id}")
+            resp = client.get(
+                f"/api/v2/consent/status/{request_id}",
+                headers=real_clinical_session.headers,
+            )
             assert resp.status_code == 403
 
 
@@ -968,18 +929,10 @@ class TestBreakGlassConsent:
     """Validate break-glass consent issuance and constraints."""
 
     def test_break_glass_requires_reason_code(
-        self, client, fake_redis, fake_sync_redis, mock_db, overrides
+        self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
         """Break-glass without a reason_code should fail validation."""
-        provider_id = str(uuid.uuid4())
         patient_id = str(uuid.uuid4())
-        ctx = _make_provider_context(provider_id)
-
-        async def _provider():
-            return ctx
-
-        overrides.set(get_provider_context, _provider)
-        overrides.apply()
 
         with (
             patch(
@@ -994,6 +947,7 @@ class TestBreakGlassConsent:
         ):
             resp = client.post(
                 "/api/v2/consent/break-glass/issue",
+                headers=real_clinical_session.headers,
                 json={
                     "patient_id": patient_id,
                     "reason_code": "",

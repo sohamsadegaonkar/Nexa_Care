@@ -305,7 +305,9 @@ class ClinicalEligibilityService:
             authorization.authentication_method
             is not ClinicalAuthenticationMethod.PROVIDER_SESSION
             or mfa_verified_at is None
-            or not authorization.assurance_policy_version
+            or self._contact_assurance_policy is None
+            or authorization.assurance_policy_version
+            != self._contact_assurance_policy.version
             or initiated_at > checked_at
             or mfa_verified_at > initiated_at
         ):

@@ -202,7 +202,7 @@ def test_pilot_operations_document_uses_current_contract() -> None:
 
     assert "CORS_ALLOWED_ORIGINS" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=aws_textract" in content
-    assert "20260830_provider_trust" in content
+    assert "20260830_delegated_assurance" in content
     assert "DOCUMENT_EXTRACTION_PROVIDER=remote" not in content
     assert "DOCUMENT_AI_API_URL` or `DOCUMENT_AI_API_KEY" in content
     assert "desiredCount=1" in content
@@ -216,6 +216,6 @@ def test_governance_contract_names_current_migration_head() -> None:
         encoding="utf-8"
     )
 
-    assert "Current head is `20260830_provider_trust`" in constitution
-    assert "current head `20260830_provider_trust`" in security
+    assert "Current head is `20260830_delegated_assurance`" in constitution
+    assert "current head `20260830_delegated_assurance`" in security
     assert "API containers never run migrations during startup" in security

@@ -293,6 +293,7 @@ async def _commit(
                     submission_id=submission_id,
                     provider=provider,
                     review_session_id=session_id,
+                    before_clinical_mutation=AsyncMock(return_value=provider),
                 )
             await db.commit()
             return case.id
@@ -607,7 +608,15 @@ async def _run_pipeline_job(factory, job_id, provider, storage, kms):
 
 @contextmanager
 def _pipeline_patches(provider, storage, kms):
+    # These C1 fixtures qualify graph isolation and idempotency. Delegated
+    # authority itself is exercised with real provenance in the Slice-2 gate
+    # and migration PostgreSQL suites.
     with (
+        patch(
+            "app.services.pipeline_orchestrator."
+            "recheck_delegated_document_processing_trust",
+            AsyncMock(return_value=None),
+        ),
         patch(
             "app.services.pipeline_orchestrator.get_document_storage",
             return_value=storage,

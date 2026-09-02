@@ -98,6 +98,18 @@ class ExtractionJob(Base, UUIDPrimaryKeyMixin):
     consent_request_id: Mapped[str | None] = mapped_column(
         String(64), nullable=True, index=True
     )
+    authorization_initiated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    authorization_authentication_method: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+    authorization_mfa_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    authorization_assurance_policy_version: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
     document_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("document_storage.id", ondelete="CASCADE"),
@@ -149,6 +161,17 @@ class ExtractionJob(Base, UUIDPrimaryKeyMixin):
             "tenant_id",
             "authorization_provider_id",
             "consent_request_id",
+        ),
+        CheckConstraint(
+            "(authorization_initiated_at IS NULL "
+            "AND authorization_authentication_method IS NULL "
+            "AND authorization_mfa_verified_at IS NULL "
+            "AND authorization_assurance_policy_version IS NULL) "
+            "OR (authorization_initiated_at IS NOT NULL "
+            "AND authorization_authentication_method IS NOT NULL "
+            "AND authorization_mfa_verified_at IS NOT NULL "
+            "AND authorization_assurance_policy_version IS NOT NULL)",
+            name="ck_extraction_jobs_delegated_assurance_complete",
         ),
     )
 
@@ -840,13 +863,13 @@ class DocumentSourceRelationshipRecord(Base, UUIDPrimaryKeyMixin):
     )
 
 
-class PipelineCommit(Base, UUIDPrimaryKeyMixin):
+class PipelineCommit(Base):
     """Job-level commit transaction marker tracking ingestion into clinical sub-models."""
 
     __tablename__ = "pipeline_commits"
 
     job_id: Mapped[uuid.UUID] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=False, unique=True, index=True
+        PG_UUID(as_uuid=True), primary_key=True, nullable=False, unique=True, index=True
     )
     patient_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), nullable=False, index=True

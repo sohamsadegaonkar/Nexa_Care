@@ -60,6 +60,7 @@ def _trusted_rows(now: datetime):
         status="active",
         is_active=True,
         email_verified_at=now - timedelta(days=1),
+        phone_verified_at=now - timedelta(days=1),
     )
     provider.credential = ProviderCredential(
         provider_id=provider.id,
@@ -222,7 +223,7 @@ def test_delegated_result_is_bounded_and_rechecks_current_suspension() -> None:
         initiated_at=now - timedelta(seconds=5),
         authentication_method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
         mfa_verified_at=now - timedelta(seconds=6),
-        assurance_policy_version="test-assurance-v1",
+        assurance_policy_version="test-contact-policy-v1",
         workflow_id=uuid4(),
         consent_request_id=uuid4(),
         required_capability=ClinicalCapability.DOCUMENTS_PROCESS,
@@ -258,6 +259,37 @@ def test_delegated_result_is_bounded_and_rechecks_current_suspension() -> None:
         )
     )
     assert suspended.denial_code is ClinicalEligibilityDenialCode.PROFESSIONAL_SUSPENDED
+
+
+def test_delegated_policy_version_drift_fails_closed() -> None:
+    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    provider, hospital, _ = _trusted_rows(now)
+    assurance = DelegatedInitiationAssurance(
+        initiated_by_provider_id=provider.id,
+        initiated_hospital_id=hospital.id,
+        initiated_at=now - timedelta(seconds=5),
+        authentication_method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
+        mfa_verified_at=now - timedelta(seconds=6),
+        assurance_policy_version="retired-policy-version",
+        workflow_id=uuid4(),
+        consent_request_id=uuid4(),
+        required_capability=ClinicalCapability.DOCUMENTS_PROCESS,
+        workflow_authorization_current=True,
+    )
+    result = _run(
+        _service().evaluate_delegated(
+            _TrustDb(provider, hospital),
+            provider.id,
+            hospital.id,
+            assurance,
+            ClinicalCapability.DOCUMENTS_PROCESS,
+            now=now,
+        )
+    )
+    assert (
+        result.denial_code
+        is ClinicalEligibilityDenialCode.DELEGATED_INITIATION_ASSURANCE_INVALID
+    )
 
 
 def test_legacy_clinician_role_and_registration_claim_do_not_create_trust() -> None:

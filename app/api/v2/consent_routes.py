@@ -37,6 +37,7 @@ from app.core.dependencies import (
     get_provider_context,
     get_scoped_session,
     require_role,
+    require_clinical_capability,
 )
 from app.core.rate_limiter import ConcurrentPushLimiter, RateLimiter
 from app.core.redis import get_async_redis_client
@@ -72,6 +73,7 @@ from app.services.break_glass_policy import (
     validate_justification,
 )
 from app.security.clinical_categories import UnsupportedClinicalCategoryError
+from app.security.provider_capabilities import ClinicalCapability
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import (
     AuditDomain,
@@ -212,7 +214,9 @@ async def issue_break_glass_consent_route(
     payload: BreakGlassConsentIssueRequest,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db_session),
-    provider: ProviderContext = Depends(require_role("clinician")),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.EMERGENCY_ATTEMPT)
+    ),
 ):
     """Issue an emergency break-glass consent token."""
     # Enforce rate limit per provider
@@ -637,7 +641,9 @@ async def _promote_consent_request_atomic(redis, request_id: str) -> bool:
 async def create_consent_request(
     payload: ConsentChallengeRequestPayload,
     background_tasks: BackgroundTasks,
-    provider: ProviderContext = Depends(require_role("clinician")),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.CONSENT_REQUEST)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Initiate a push-based consent request generating a cryptographic challenge.
@@ -1059,7 +1065,9 @@ async def approve_signed_consent(
 )
 async def get_consent_request_status(
     request_id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.CONSENT_REQUEST)
+    ),
 ):
     """Poll consent request resolution status.
 
@@ -1129,7 +1137,9 @@ async def get_consent_request_status(
 async def claim_approved_access(
     request_id: str,
     response: Response,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.CONSENT_REQUEST)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Exchange an approved request for a provider-bound record capability."""

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import asyncio
+import hashlib
 import json
 import uuid
 from contextlib import ExitStack
@@ -25,19 +26,8 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from app.core.dependencies import (
-    get_current_provider,
-    get_provider_context,
-    get_scoped_session,
-)
+from app.core.dependencies import get_scoped_session
 from app.main import app
-from app.models.provider_context import (
-    AffiliationContext,
-    HospitalContext,
-    ProviderContext,
-    ProviderIdentityContext,
-)
-from app.models.provider import AffiliationType
 from app.services.patient_discovery_service import PatientDiscoveryService
 from app.services.signed_approval_verifier import canonical_signed_approval_payload
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
@@ -120,27 +110,6 @@ def _mock_device_row(
     return row
 
 
-def _make_provider_context() -> ProviderContext:
-    return ProviderContext(
-        provider=ProviderIdentityContext(
-            provider_id=uuid.uuid4(),
-            display_name="Dr. Security",
-            contact_email="security@hospital.example",
-        ),
-        hospital=HospitalContext(
-            hospital_id=uuid.uuid4(),
-            facility_code="SEC",
-            display_name="Security Hospital",
-        ),
-        affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(),
-            affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True,
-            roles=["clinician"],
-        ),
-    )
-
-
 def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
     stack = ExitStack()
     stack.enter_context(
@@ -183,12 +152,6 @@ def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
             return_value=fake_redis,
         )
     )
-    stack.enter_context(
-        patch(
-            "app.services.provider_auth_service.get_redis_client",
-            return_value=fake_sync_redis,
-        )
-    )
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
         data=[]
@@ -229,15 +192,17 @@ def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
     return stack
 
 
-def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+def _active_discovery_handle(fake_redis, clinical_session, patient_id: str) -> str:
     service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
     patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     handle = asyncio.run(
         service.issue_handle(
             patient=patient,
-            provider_id=provider.actor_uid,
-            hospital_id=str(provider.hospital_id),
-            session_binding=provider.session_binding,
+            provider_id=str(clinical_session.provider.id),
+            hospital_id=str(clinical_session.hospital.id),
+            session_binding=hashlib.sha256(
+                clinical_session.token.encode("utf-8")
+            ).hexdigest(),
             identifier_type="TEST_DISCOVERY",
         )
     )
@@ -264,21 +229,8 @@ def fake_sync_redis(fake_redis):
 
 
 @pytest.fixture
-def provider():
-    return _make_provider_context()
-
-
-@pytest.fixture
 def patient_id():
     return str(uuid.uuid4())
-
-
-@pytest.fixture
-def overrides():
-    saved = {}
-    yield saved
-    for dep in saved:
-        app.dependency_overrides.pop(dep, None)
 
 
 # ── Test: Wrong keypair ──────────────────────────────────────────────────────
@@ -289,9 +241,8 @@ def test_forged_signature_wrong_keypair(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
-    provider,
     patient_id,
+    real_clinical_session,
 ):
     """T-01a: A signature from an attacker-generated keypair is rejected (401).
 
@@ -301,23 +252,17 @@ def test_forged_signature_wrong_keypair(
     enrolled_private, enrolled_der, enrolled_b64 = _generate_keypair()
     attacker_private, _, _ = _generate_keypair()
     device_id = str(uuid.uuid4())
-    provider_id = str(provider.provider.provider_id)
-
-    async def _provider_dep():
-        return provider
+    provider_id = str(real_clinical_session.provider.id)
 
     async def _session_dep():
         return patient_id
 
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-    overrides[get_provider_context] = _provider_dep
-    app.dependency_overrides[get_provider_context] = _provider_dep
-    overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
     with _patch_stack(fake_redis, fake_sync_redis, patient_id):
-        discovery_handle = _active_discovery_handle(fake_redis, provider, patient_id)
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
         # Enroll with key A
         device_row = _mock_device_row(device_id, patient_id, enrolled_der)
         _reset_mock_db(mock_db)
@@ -347,6 +292,7 @@ def test_forged_signature_wrong_keypair(
         )
         req_resp = client.post(
             "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
             json={
                 "discovery_handle": discovery_handle,
                 "purpose": "checkup",
@@ -408,9 +354,8 @@ def test_forged_signature_revoked_device(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
-    provider,
     patient_id,
+    real_clinical_session,
 ):
     """T-01b: A valid signature from a revoked device is rejected (401).
 
@@ -419,23 +364,17 @@ def test_forged_signature_revoked_device(
     """
     private_key, der_bytes, der_b64 = _generate_keypair()
     device_id = str(uuid.uuid4())
-    provider_id = str(provider.provider.provider_id)
-
-    async def _provider_dep():
-        return provider
+    provider_id = str(real_clinical_session.provider.id)
 
     async def _session_dep():
         return patient_id
 
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-    overrides[get_provider_context] = _provider_dep
-    app.dependency_overrides[get_provider_context] = _provider_dep
-    overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
     with _patch_stack(fake_redis, fake_sync_redis, patient_id):
-        discovery_handle = _active_discovery_handle(fake_redis, provider, patient_id)
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
         # Mock a REVOKED device row
         revoked_row = _mock_device_row(
             device_id,
@@ -458,6 +397,7 @@ def test_forged_signature_revoked_device(
         )
         req_resp = client.post(
             "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
             json={
                 "discovery_handle": discovery_handle,
                 "purpose": "checkup",
@@ -532,9 +472,8 @@ def test_forged_signature_unenrolled_key_direct(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
-    provider,
     patient_id,
+    real_clinical_session,
 ):
     """T-01d: Signature from a key that was never enrolled for the patient → 401.
 
@@ -543,23 +482,17 @@ def test_forged_signature_unenrolled_key_direct(
     """
     attacker_private, _, attacker_b64 = _generate_keypair()
     device_id = str(uuid.uuid4())
-    provider_id = str(provider.provider.provider_id)
-
-    async def _provider_dep():
-        return provider
+    provider_id = str(real_clinical_session.provider.id)
 
     async def _session_dep():
         return patient_id
 
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-    overrides[get_provider_context] = _provider_dep
-    app.dependency_overrides[get_provider_context] = _provider_dep
-    overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
     with _patch_stack(fake_redis, fake_sync_redis, patient_id):
-        discovery_handle = _active_discovery_handle(fake_redis, provider, patient_id)
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
         # Enroll with a DIFFERENT key
         enrolled_private, enrolled_der, enrolled_b64 = _generate_keypair()
         enrolled_row = _mock_device_row(str(uuid.uuid4()), patient_id, enrolled_der)
@@ -591,6 +524,7 @@ def test_forged_signature_unenrolled_key_direct(
         )
         req_resp = client.post(
             "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
             json={
                 "discovery_handle": discovery_handle,
                 "purpose": "checkup",

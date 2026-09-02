@@ -13,7 +13,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import get_current_provider, require_role
+from app.core.dependencies import (
+    require_clinical_capability,
+    require_role,
+)
+from app.security.provider_capabilities import ClinicalCapability
 from app.models.provider_context import ProviderContext
 from app.models.shards import NexaClinical, NexaVault
 import app.services.consent_engine as consent_engine
@@ -166,7 +170,9 @@ async def reconstruct_patient_record(
     patient_id: UUID,
     consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
     purpose: str | None = Header(default=None, alias="X-Consent-Purpose"),
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ),
     db: AsyncSession = Depends(get_db_session),
     kms: EncryptionProvider = Depends(get_kms_provider),
 ) -> dict[str, JsonValue]:
@@ -212,7 +218,9 @@ class EmergencySummaryResponse(BaseModel):
 async def get_emergency_summary(
     patient_id: UUID,
     consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.EMERGENCY_ATTEMPT)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ) -> EmergencySummaryResponse:
     """Return only the clinical categories a live break-glass capability

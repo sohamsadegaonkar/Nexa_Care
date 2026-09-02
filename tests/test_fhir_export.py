@@ -10,7 +10,11 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from app.core.database import get_db_session
-from app.core.dependencies import get_provider_context, require_active_consent
+from app.core.dependencies import (
+    get_provider_context,
+    require_active_consent,
+    require_clinical_capability,
+)
 from app.main import app
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
@@ -20,6 +24,7 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.models.patient_records import Allergy, LabResult, Medication, Vitals
+from app.security.provider_capabilities import ClinicalCapability
 from app.services.fhir_converter import generate_fhir_bundle
 
 
@@ -88,10 +93,16 @@ class TestFHIRExportRoute(unittest.TestCase):
             return self.provider
 
         app.dependency_overrides[get_provider_context] = override_provider
+        app.dependency_overrides[
+            require_clinical_capability(ClinicalCapability.RECORD_READ)
+        ] = override_provider
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
         app.dependency_overrides.pop(get_provider_context, None)
+        app.dependency_overrides.pop(
+            require_clinical_capability(ClinicalCapability.RECORD_READ), None
+        )
 
     @patch("app.services.consent_engine.validate", new_callable=AsyncMock)
     def test_export_without_active_consent_token_returns_403(self, mock_verify) -> None:
@@ -196,11 +207,17 @@ class TestFHIRStructuredExportRoute(unittest.TestCase):
             yield self.db
 
         app.dependency_overrides[require_active_consent] = override_provider
+        app.dependency_overrides[
+            require_clinical_capability(ClinicalCapability.RECORD_READ)
+        ] = override_provider
         app.dependency_overrides[get_db_session] = override_db_session
         self.client = TestClient(app)
 
     def tearDown(self) -> None:
         app.dependency_overrides.pop(require_active_consent, None)
+        app.dependency_overrides.pop(
+            require_clinical_capability(ClinicalCapability.RECORD_READ), None
+        )
         app.dependency_overrides.pop(get_db_session, None)
 
     @patch("app.api.v2.fhir_routes.append_audit_log_or_503", new_callable=AsyncMock)

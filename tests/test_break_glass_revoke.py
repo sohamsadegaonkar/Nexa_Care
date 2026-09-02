@@ -60,7 +60,6 @@ async def test_revoke_break_glass_happy_path(client, mock_provider):
 
     app.dependency_overrides[get_db_session] = lambda: mock_db
     app.dependency_overrides[get_provider_context] = lambda: mock_provider
-    # require_role returns a dependency function
     app.dependency_overrides[require_role("clinician")] = lambda: mock_provider
 
     with (

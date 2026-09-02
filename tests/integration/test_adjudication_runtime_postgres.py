@@ -35,6 +35,7 @@ from app.security.erasure_registry import (
 )
 from app.services.adjudication import (
     AdjudicationError,
+    _existing_vital,
     _live_access,
     commit_submission,
     create_case,
@@ -225,6 +226,7 @@ async def test_jsonb_commit_retry_collision_and_concurrency():
                         submission_id=submission_id,
                         provider=provider,
                         review_session_id=session_id,
+                        before_clinical_mutation=AsyncMock(return_value=provider),
                     )
                     await db.commit()
                     return case.id
@@ -259,6 +261,301 @@ async def test_jsonb_commit_retry_collision_and_concurrency():
                     )
                 )
             ).scalar_one() == 1
+    finally:
+        if patient is not None:
+            async with factory() as db:
+                await db.execute(
+                    text("DELETE FROM public.audit_outbox WHERE patient_id = :patient"),
+                    {"patient": str(patient)},
+                )
+                await db.commit()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_human_commit_final_reauthentication_denial_writes_no_clinical_facts():
+    """Admission access cannot authorize the later human clinical mutation."""
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    patient = None
+    try:
+        provider, patient, case_id, session_id = await _case(factory)
+        submission_id = await _submit(
+            factory,
+            provider,
+            case_id,
+            session_id,
+            f"submit-final-denial-{uuid.uuid4().hex}",
+            _payload(datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)),
+        )
+        assert isinstance(submission_id, uuid.UUID)
+        async with factory() as db:
+            with (
+                patch("app.services.adjudication._live_access", AsyncMock()),
+                patch(
+                    "app.services.adjudication._existing_vital",
+                    wraps=_existing_vital,
+                ) as existing_lookup,
+            ):
+
+                async def deny_after_existing_fact_preflight():
+                    assert existing_lookup.await_count == 1
+                    raise AdjudicationError("ADJUDICATION_ACCESS_DENIED")
+
+                final_gate = AsyncMock(side_effect=deny_after_existing_fact_preflight)
+                with pytest.raises(AdjudicationError) as denial:
+                    await commit_submission(
+                        db,
+                        submission_id=submission_id,
+                        provider=provider,
+                        review_session_id=session_id,
+                        before_clinical_mutation=final_gate,
+                    )
+                assert denial.value.code == "ADJUDICATION_ACCESS_DENIED"
+                await db.rollback()
+            final_gate.assert_awaited_once()
+
+        async with factory() as db:
+            case = (
+                await db.execute(
+                    select(AdjudicationCaseRecord).where(
+                        AdjudicationCaseRecord.id == case_id
+                    )
+                )
+            ).scalar_one()
+            assert case.clinical_committed_at is None
+            assert (
+                await db.execute(
+                    select(func.count(Vitals.id)).where(Vitals.patient_id == patient)
+                )
+            ).scalar_one() == 0
+            assert (
+                await db.execute(
+                    select(func.count(TimelineEvent.id)).where(
+                        TimelineEvent.patient_id == patient
+                    )
+                )
+            ).scalar_one() == 0
+    finally:
+        if patient is not None:
+            async with factory() as db:
+                await db.execute(
+                    text("DELETE FROM public.audit_outbox WHERE patient_id = :patient"),
+                    {"patient": str(patient)},
+                )
+                await db.commit()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "denial_code",
+    ["ADJUDICATION_CONSENT_INACTIVE", "ADJUDICATION_ERASURE_ACCESS_BLOCKED"],
+)
+async def test_human_commit_patient_authority_denial_at_mutation_writes_nothing(
+    denial_code: str,
+):
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    patient = None
+    try:
+        provider, patient, case_id, session_id = await _case(factory)
+        submission_id = await _submit(
+            factory,
+            provider,
+            case_id,
+            session_id,
+            f"submit-patient-denial-{uuid.uuid4().hex}",
+            _payload(datetime(2026, 9, 1, 12, 1, tzinfo=timezone.utc)),
+        )
+        assert isinstance(submission_id, uuid.UUID)
+        final_gate = AsyncMock(return_value=provider)
+        live_access = AsyncMock(side_effect=[None, AdjudicationError(denial_code)])
+        async with factory() as db:
+            with patch("app.services.adjudication._live_access", live_access):
+                with pytest.raises(AdjudicationError) as denial:
+                    await commit_submission(
+                        db,
+                        submission_id=submission_id,
+                        provider=provider,
+                        review_session_id=session_id,
+                        before_clinical_mutation=final_gate,
+                    )
+                assert denial.value.code == denial_code
+                await db.rollback()
+            final_gate.assert_awaited_once()
+            assert live_access.await_count == 2
+
+        async with factory() as db:
+            case = (
+                await db.execute(
+                    select(AdjudicationCaseRecord).where(
+                        AdjudicationCaseRecord.id == case_id
+                    )
+                )
+            ).scalar_one()
+            assert case.clinical_committed_at is None
+            assert (
+                await db.execute(
+                    select(func.count(Vitals.id)).where(Vitals.patient_id == patient)
+                )
+            ).scalar_one() == 0
+            assert (
+                await db.execute(
+                    select(func.count(TimelineEvent.id)).where(
+                        TimelineEvent.patient_id == patient
+                    )
+                )
+            ).scalar_one() == 0
+    finally:
+        if patient is not None:
+            async with factory() as db:
+                await db.execute(
+                    text("DELETE FROM public.audit_outbox WHERE patient_id = :patient"),
+                    {"patient": str(patient)},
+                )
+                await db.commit()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_human_commit_uses_fresh_provider_context_for_patient_binding():
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    patient = None
+    try:
+        provider, patient, case_id, session_id = await _case(factory)
+        submission_id = await _submit(
+            factory,
+            provider,
+            case_id,
+            session_id,
+            f"submit-provider-binding-{uuid.uuid4().hex}",
+            _payload(datetime(2026, 9, 1, 12, 2, tzinfo=timezone.utc)),
+        )
+        assert isinstance(submission_id, uuid.UUID)
+        different_provider = _provider(provider.hospital_id)
+        live_calls = 0
+
+        async def live_access_dispatcher(db, *, job, provider, operation):
+            nonlocal live_calls
+            live_calls += 1
+            if live_calls == 1:
+                return None
+            return await _live_access(
+                db,
+                job=job,
+                provider=provider,
+                operation=operation,
+            )
+
+        async with factory() as db:
+            with patch(
+                "app.services.adjudication._live_access",
+                AsyncMock(side_effect=live_access_dispatcher),
+            ):
+                with pytest.raises(AdjudicationError) as denial:
+                    await commit_submission(
+                        db,
+                        submission_id=submission_id,
+                        provider=provider,
+                        review_session_id=session_id,
+                        before_clinical_mutation=AsyncMock(
+                            return_value=different_provider
+                        ),
+                    )
+                assert denial.value.code == "ADJUDICATION_ACCESS_DENIED"
+                await db.rollback()
+
+        async with factory() as db:
+            case = (
+                await db.execute(
+                    select(AdjudicationCaseRecord).where(
+                        AdjudicationCaseRecord.id == case_id
+                    )
+                )
+            ).scalar_one()
+            assert case.clinical_committed_at is None
+            assert (
+                await db.execute(
+                    select(func.count(Vitals.id)).where(Vitals.patient_id == patient)
+                )
+            ).scalar_one() == 0
+            assert (
+                await db.execute(
+                    select(func.count(TimelineEvent.id)).where(
+                        TimelineEvent.patient_id == patient
+                    )
+                )
+            ).scalar_one() == 0
+    finally:
+        if patient is not None:
+            async with factory() as db:
+                await db.execute(
+                    text("DELETE FROM public.audit_outbox WHERE patient_id = :patient"),
+                    {"patient": str(patient)},
+                )
+                await db.commit()
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_human_commit_precommit_reauthentication_denial_rolls_back_staged_facts():
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    patient = None
+    try:
+        provider, patient, case_id, session_id = await _case(factory)
+        submission_id = await _submit(
+            factory,
+            provider,
+            case_id,
+            session_id,
+            f"submit-precommit-denial-{uuid.uuid4().hex}",
+            _payload(datetime(2026, 9, 1, 12, 3, tzinfo=timezone.utc)),
+        )
+        assert isinstance(submission_id, uuid.UUID)
+        final_gate = AsyncMock(
+            side_effect=[
+                provider,
+                AdjudicationError("ADJUDICATION_ACCESS_DENIED"),
+            ]
+        )
+        async with factory() as db:
+            with patch("app.services.adjudication._live_access", AsyncMock()):
+                with pytest.raises(AdjudicationError) as denial:
+                    await commit_submission(
+                        db,
+                        submission_id=submission_id,
+                        provider=provider,
+                        review_session_id=session_id,
+                        before_clinical_mutation=final_gate,
+                    )
+                assert denial.value.code == "ADJUDICATION_ACCESS_DENIED"
+                await db.rollback()
+            assert final_gate.await_count == 2
+
+        async with factory() as db:
+            case = (
+                await db.execute(
+                    select(AdjudicationCaseRecord).where(
+                        AdjudicationCaseRecord.id == case_id
+                    )
+                )
+            ).scalar_one()
+            assert case.clinical_committed_at is None
+            assert (
+                await db.execute(
+                    select(func.count(Vitals.id)).where(Vitals.patient_id == patient)
+                )
+            ).scalar_one() == 0
+            assert (
+                await db.execute(
+                    select(func.count(TimelineEvent.id)).where(
+                        TimelineEvent.patient_id == patient
+                    )
+                )
+            ).scalar_one() == 0
     finally:
         if patient is not None:
             async with factory() as db:

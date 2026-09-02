@@ -13,7 +13,8 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import require_active_consent
+from app.core.dependencies import require_active_consent, require_clinical_capability
+from app.security.provider_capabilities import ClinicalCapability
 from app.models.patient_records import (
     Allergy,
     LabResult,
@@ -179,7 +180,10 @@ async def _fetch_clinical_records(patient_id: str, db: AsyncSession) -> list[dic
 @router.get("/export/{patient_id}", response_model=FHIRBundleResponse)
 async def export_fhir_bundle(
     patient_id: UUID,
-    provider: ProviderContext = Depends(require_active_consent),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ),
+    _: ProviderContext = Depends(require_active_consent),
     db: AsyncSession = Depends(get_db_session),
 ) -> FHIRBundleResponse:
     """Export current clinical history as a FHIR R4 Bundle."""

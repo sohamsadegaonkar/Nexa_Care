@@ -52,6 +52,7 @@ async def ingest(db, value):
             db,
             PROVIDER_ID,
             AuditContext.for_tenant(tenant_id="tenant-1", domain=AuditDomain.PIPELINE),
+            AsyncMock(return_value=None),
         )
 
 
@@ -65,6 +66,36 @@ async def test_approved_vital_with_units_is_ingested(db):
         if isinstance(item.args[0], PipelineCommit)
     ).args[0]
     assert commit.committed_by == PROVIDER_ID
+
+
+@pytest.mark.asyncio
+async def test_mutation_guard_runs_after_preflight_and_before_first_add(db):
+    async def deny_after_preflight():
+        assert db.execute.await_count == 2
+        assert db.add.call_count == 0
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "DOCUMENT_PROCESSING_ACCESS_REQUIRED"},
+        )
+
+    audit = AsyncMock()
+    with patch("app.services.record_ingestion.enqueue_audit_event", new=audit):
+        with pytest.raises(HTTPException) as exc_info:
+            await ingest_extracted_fields(
+                PATIENT_ID,
+                JOB_ID,
+                [field()],
+                db,
+                PROVIDER_ID,
+                AuditContext.for_tenant(
+                    tenant_id="tenant-1", domain=AuditDomain.PIPELINE
+                ),
+                deny_after_preflight,
+            )
+
+    assert exc_info.value.status_code == 403
+    assert db.add.call_count == 0
+    audit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -127,5 +158,6 @@ async def test_invalid_patient_or_job_identifier_is_rejected_before_write(db):
                 AuditContext.for_tenant(
                     tenant_id="tenant-1", domain=AuditDomain.PIPELINE
                 ),
+                AsyncMock(return_value=None),
             )
     assert exc.value.status_code == 422

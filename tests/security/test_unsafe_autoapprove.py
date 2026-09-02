@@ -26,7 +26,8 @@ from app.ai.auto_approval import should_auto_approve
 from app.ai.medical_validator import validate_field
 from app.models.extracted_field import ExtractedField
 from app.services.pipeline_safety import can_auto_approve
-from app.core.dependencies import get_current_provider
+from app.core.dependencies import get_current_provider, require_clinical_capability
+from app.security.provider_capabilities import ClinicalCapability
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -322,6 +323,9 @@ def test_commit_rejects_high_risk_auto_approved_field(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    commit_gate = require_clinical_capability(ClinicalCapability.DOCUMENTS_COMMIT)
+    overrides[commit_gate] = _provider_dep
+    app.dependency_overrides[commit_gate] = _provider_dep
 
     job = MagicMock()
     job.id = uuid.UUID(job_id)
@@ -424,6 +428,9 @@ def test_commit_rejects_critical_risk_auto_approved_field(
 
     overrides[get_current_provider] = _provider_dep
     app.dependency_overrides[get_current_provider] = _provider_dep
+    commit_gate = require_clinical_capability(ClinicalCapability.DOCUMENTS_COMMIT)
+    overrides[commit_gate] = _provider_dep
+    app.dependency_overrides[commit_gate] = _provider_dep
 
     job = MagicMock()
     job.id = uuid.UUID(job_id)

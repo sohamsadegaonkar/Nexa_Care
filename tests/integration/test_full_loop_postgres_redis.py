@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 import pytest
 import pytest_asyncio
+from unittest.mock import AsyncMock
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import HTTPException
@@ -804,6 +805,7 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
                 submission_id=submission.id,
                 provider=provider,
                 review_session_id=case.review_session_id,
+                before_clinical_mutation=AsyncMock(return_value=provider),
             )
             assert committed_case.clinical_committed_at is not None
             await db.commit()

@@ -11,6 +11,7 @@ from app.security.audit_context import AuditContext
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from fastapi import HTTPException, status
@@ -61,6 +62,7 @@ async def ingest_extracted_fields(
     db: AsyncSession,
     committed_by: str,
     audit_context: AuditContext,
+    before_clinical_mutation: Callable[[], Awaitable[None]],
     audit_metadata: dict[str, str | None] | None = None,
 ) -> IngestionResult:
     """Ingest approved AI extraction fields into patient sub-models with full provenance."""
@@ -111,6 +113,7 @@ async def ingest_extracted_fields(
     te_cnt = 0
 
     now = datetime.now(timezone.utc)
+    prepared: list[tuple[Vitals | LabResult, TimelineEvent, ExtractedField]] = []
 
     for field in approved_fields:
         if field.field_id is None or field.job_id is None:
@@ -191,9 +194,8 @@ async def ingest_extracted_fields(
                 risk_level=str(field.risk_level),
                 source_document_id=doc_uuid,
             )
-            db.add(v)
+            record: Vitals | LabResult = v
             vitals_cnt += 1
-            target_model = "Vitals"
         elif fname in {"medication", "prescription", "drug", "rx"}:
             raise HTTPException(
                 status_code=409,
@@ -231,9 +233,8 @@ async def ingest_extracted_fields(
                 risk_level=str(field.risk_level),
                 source_document_id=doc_uuid,
             )
-            db.add(lab)
+            record = lab
             labs_cnt += 1
-            target_model = "LabResult"
         else:
             raise HTTPException(
                 status_code=409,
@@ -249,8 +250,18 @@ async def ingest_extracted_fields(
             source="ai_extracted",
             summary=f"AI ingested {field.field_name}: {val} (Confidence: {field.confidence})",
         )
-        db.add(te)
         te_cnt += 1
+        prepared.append((record, te, field))
+
+    # All validation and idempotency reads are complete.  The caller-supplied
+    # guard must revalidate provider authority, patient/workflow authority, and
+    # erasure state here.  The first staged clinical mutation follows without
+    # an unrelated await.
+    await before_clinical_mutation()
+
+    for record, timeline_event, field in prepared:
+        db.add(record)
+        db.add(timeline_event)
 
         # Stage the required field audit in the caller-owned clinical transaction.
         await enqueue_audit_event(
@@ -265,7 +276,7 @@ async def ingest_extracted_fields(
             metadata={
                 "job_id": job_id,
                 "field_name": field.field_name,
-                "target_model": target_model,
+                "target_model": type(record).__name__,
                 "confidence": field.confidence,
                 "risk_level": field.risk_level,
                 **(audit_metadata or {}),

@@ -6,10 +6,11 @@ import pytest
 
 from app.ai.identity_decision import IdentityDecisionState
 from app.api.v2.pipeline_routes import ALLOWED_COMMIT_STATUSES, CommitJobRequest
-from app.core.dependencies import get_current_provider
+from app.core.dependencies import require_clinical_capability
 from app.main import app
 from app.models.extraction_decision import RUNTIME_AUTO_COMMIT_ENABLED
 from app.models.pipeline import ExtractedFieldRecord
+from app.security.provider_capabilities import ClinicalCapability
 from app.services.pipeline_orchestrator import (
     _IDENTITY_ERROR_CODES,
     _IDENTITY_REASON_CODES,
@@ -25,9 +26,10 @@ ROUTING = (ROOT / "app/services/extraction_routing.py").read_text(encoding="utf-
 
 @pytest.mark.integration
 def test_upload_requires_real_multipart_document(
-    test_client, admin_headers, admin_context
+    test_client, admin_headers, clinician_context
 ):
-    app.dependency_overrides[get_current_provider] = lambda: admin_context
+    gate = require_clinical_capability(ClinicalCapability.DOCUMENTS_UPLOAD)
+    app.dependency_overrides[gate] = lambda: clinician_context
     try:
         response = test_client.post(
             "/api/v2/pipeline/documents/upload?patient_id=11111111-1111-4111-8111-111111111111",
@@ -36,7 +38,7 @@ def test_upload_requires_real_multipart_document(
         )
         assert response.status_code == 422
     finally:
-        app.dependency_overrides.pop(get_current_provider, None)
+        app.dependency_overrides.pop(gate, None)
 
 
 def test_extracted_records_default_to_human_review():

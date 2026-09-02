@@ -17,7 +17,8 @@ def test_incomplete_extracted_field_is_not_persisted_or_queued_for_review():
 
 
 def test_pipeline_review_requires_role_and_tenant():
-    assert "REVIEW_ROLE_REQUIRED" in PIPELINE
+    assert "ClinicalCapability.DOCUMENTS_REVIEW" in PIPELINE
+    assert "ClinicalCapability.DOCUMENTS_COMMIT" in PIPELINE
     assert "CROSS_TENANT_JOB_ACCESS" in PIPELINE
 
 

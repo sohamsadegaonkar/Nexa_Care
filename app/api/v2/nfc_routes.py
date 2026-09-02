@@ -15,7 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import require_role
+from app.core.dependencies import require_clinical_capability
+from app.security.provider_capabilities import ClinicalCapability
 from app.core.redis import get_async_redis_client
 from app.core.rate_limiter import atomic_fixed_window
 from app.models.provider_context import ProviderContext
@@ -67,7 +68,9 @@ class NFCResolveResponse(BaseModel):
 @router.post("/resolve", response_model=NFCResolveResponse)
 async def resolve_nfc_card(
     payload: NFCResolveRequest,
-    provider: ProviderContext = Depends(require_role("clinician")),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.PATIENT_DISCOVER)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ) -> NFCResolveResponse:
     """Resolve a card UID to an opaque discovery capability.

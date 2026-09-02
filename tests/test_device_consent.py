@@ -53,15 +53,19 @@ def mock_scoped_session():
 
 
 @pytest.fixture
-def mock_provider_auth(admin_context):
-    from app.core.dependencies import get_current_provider, get_provider_context
+def mock_provider_auth(clinician_context):
+    """Explicit clinician-only prerequisite for consent-request route tests."""
+    from app.core.dependencies import get_provider_context, require_clinical_capability
+    from app.security.provider_capabilities import ClinicalCapability
 
-    admin_context.affiliation.roles.append("clinician")
-    app.dependency_overrides[get_current_provider] = lambda: admin_context
-    app.dependency_overrides[get_provider_context] = lambda: admin_context
-    yield admin_context
-    app.dependency_overrides.pop(get_current_provider, None)
-    app.dependency_overrides.pop(get_provider_context, None)
+    gate = require_clinical_capability(ClinicalCapability.CONSENT_REQUEST)
+    app.dependency_overrides[gate] = lambda: clinician_context
+    app.dependency_overrides[get_provider_context] = lambda: clinician_context
+    try:
+        yield clinician_context
+    finally:
+        app.dependency_overrides.pop(gate, None)
+        app.dependency_overrides.pop(get_provider_context, None)
 
 
 def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
@@ -188,13 +192,28 @@ def test_request_consent_no_enrolled_device_409(mock_provider_auth):
     patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     try:
         with (
-            patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis),
-            patch("app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis),
-            patch.object(PatientDiscoveryService, "resolve_patient_id", new=AsyncMock(return_value=(patient, False))),
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            ),
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
+            ),
         ):
             res = client.post(
                 "/api/v2/consent/request",
-                json={"discovery_handle": handle, "purpose": "routine_checkup", "scope": "clinical", "access_duration_seconds": 300},
+                json={
+                    "discovery_handle": handle,
+                    "purpose": "routine_checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 300,
+                },
             )
         assert res.status_code == 409
         assert "Patient device not enrolled" in res.json()["detail"]
@@ -220,14 +239,32 @@ def test_request_consent_creates_pending(mock_provider_auth):
     patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     try:
         with (
-            patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis),
-            patch("app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis),
-            patch("app.api.v2.consent_routes.append_audit_log_or_503", new=AsyncMock(return_value=None)),
-            patch.object(PatientDiscoveryService, "resolve_patient_id", new=AsyncMock(return_value=(patient, False))),
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            ),
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
+                new=AsyncMock(return_value=None),
+            ),
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
+            ),
         ):
             res = client.post(
                 "/api/v2/consent/request",
-                json={"discovery_handle": handle, "purpose": "routine_checkup", "scope": "clinical", "access_duration_seconds": 300},
+                json={
+                    "discovery_handle": handle,
+                    "purpose": "routine_checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 300,
+                },
             )
         assert res.status_code == 201, res.text
         assert res.json()["status"] == "pending"
@@ -254,15 +291,36 @@ def test_request_consent_queues_push_for_active_token(mock_provider_auth):
     patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     try:
         with (
-            patch("app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis),
-            patch("app.api.v2.consent_routes.get_async_redis_client", return_value=fake_redis),
-            patch("app.api.v2.consent_routes.append_audit_log_or_503", new=AsyncMock(return_value=None)),
-            patch("app.api.v2.consent_routes._deliver_consent_notification", new=AsyncMock()) as deliver,
-            patch.object(PatientDiscoveryService, "resolve_patient_id", new=AsyncMock(return_value=(patient, False))),
+            patch(
+                "app.api.v2.consent_routes.get_redis_client",
+                return_value=fake_sync_redis,
+            ),
+            patch(
+                "app.api.v2.consent_routes.get_async_redis_client",
+                return_value=fake_redis,
+            ),
+            patch(
+                "app.api.v2.consent_routes.append_audit_log_or_503",
+                new=AsyncMock(return_value=None),
+            ),
+            patch(
+                "app.api.v2.consent_routes._deliver_consent_notification",
+                new=AsyncMock(),
+            ) as deliver,
+            patch.object(
+                PatientDiscoveryService,
+                "resolve_patient_id",
+                new=AsyncMock(return_value=(patient, False)),
+            ),
         ):
             response = client.post(
                 "/api/v2/consent/request",
-                json={"discovery_handle": handle, "purpose": "routine_checkup", "scope": "clinical", "access_duration_seconds": 300},
+                json={
+                    "discovery_handle": handle,
+                    "purpose": "routine_checkup",
+                    "scope": "clinical",
+                    "access_duration_seconds": 300,
+                },
             )
         assert response.status_code == 201, response.text
         assert response.json()["notification_dispatch"] == "queued"

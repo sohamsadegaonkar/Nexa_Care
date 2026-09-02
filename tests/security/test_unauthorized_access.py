@@ -21,7 +21,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.dependencies import get_current_provider
 from app.main import app
 from app.models.provider_context import (
     AffiliationContext,
@@ -70,12 +69,6 @@ def _patch_stack(fake_redis, fake_sync_redis):
     )
     stack.enter_context(
         patch("app.core.consent_gate.validate_approved_access", return_value=None)
-    )
-    stack.enter_context(
-        patch(
-            "app.services.provider_auth_service.get_redis_client",
-            return_value=fake_sync_redis,
-        )
     )
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
@@ -139,25 +132,17 @@ def test_no_consent_token_rejected(
     client,
     fake_redis,
     fake_sync_redis,
-    mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-06a: Authenticated doctor but no X-Consent-Token → 403.
 
     The require_consent gate detects the missing header and rejects.
     """
     patient_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-
     with _patch_stack(fake_redis, fake_sync_redis):
         resp = client.get(
             f"/api/v2/patient/{patient_id}/summary",
+            headers=real_clinical_session.headers,
             # No X-Consent-Token header
         )
         assert (
@@ -169,26 +154,20 @@ def test_invalid_consent_token_rejected(
     client,
     fake_redis,
     fake_sync_redis,
-    mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-06b: Invalid/nonexistent consent token → 403.
 
     The token doesn't exist in Redis → validate returns None → 403.
     """
     patient_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-
     with _patch_stack(fake_redis, fake_sync_redis):
         resp = client.get(
             f"/api/v2/patient/{patient_id}/summary",
-            headers={"X-Consent-Token": "totally-fake-token"},
+            headers={
+                **real_clinical_session.headers,
+                "X-Consent-Token": "totally-fake-token",
+            },
         )
         assert (
             resp.status_code == 403
@@ -199,8 +178,7 @@ def test_cross_patient_consent_rejected(
     client,
     fake_redis,
     fake_sync_redis,
-    mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-06c: Consent for Patient A cannot access Patient B's records → 403.
 
@@ -209,14 +187,7 @@ def test_cross_patient_consent_rejected(
     """
     patient_a = str(uuid.uuid4())
     patient_b = str(uuid.uuid4())
-    provider = _make_provider_context()
-    provider_id = str(provider.provider.provider_id)
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
+    provider_id = str(real_clinical_session.provider.id)
 
     # Seed consent for Patient A
     token_raw = uuid.uuid4().hex
@@ -239,7 +210,10 @@ def test_cross_patient_consent_rejected(
         # Try to access Patient B with Patient A's consent
         resp = client.get(
             f"/api/v2/patient/{patient_b}/summary",
-            headers={"X-Consent-Token": token_raw},
+            headers={
+                **real_clinical_session.headers,
+                "X-Consent-Token": token_raw,
+            },
         )
         assert (
             resp.status_code == 403
@@ -294,8 +268,7 @@ def test_pipeline_access_without_consent_rejected(
     client,
     fake_redis,
     fake_sync_redis,
-    mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-06f: Pipeline endpoint without consent → 403.
 
@@ -303,18 +276,11 @@ def test_pipeline_access_without_consent_rejected(
     Access without a valid consent token must fail closed.
     """
     job_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-
     with _patch_stack(fake_redis, fake_sync_redis):
         # Job status endpoint requires consent
         resp = client.get(
             f"/api/v2/pipeline/jobs/{job_id}",
+            headers=real_clinical_session.headers,
             # No X-Consent-Token
         )
         assert (

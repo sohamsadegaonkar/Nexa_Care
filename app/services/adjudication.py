@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 
 from pydantic import TypeAdapter, ValidationError
@@ -269,7 +270,7 @@ def _lab_content_matches(
     )
 
 
-async def _ensure_timeline_event(
+async def _timeline_event_exists(
     db: AsyncSession,
     *,
     record: Vitals | LabResult,
@@ -277,7 +278,7 @@ async def _ensure_timeline_event(
     effective_at: datetime,
     patient_id: uuid.UUID,
 ) -> bool:
-    """Create one value-free timeline event, or reuse its exact existing row."""
+    """Preflight one existing fact's value-free timeline idempotency state."""
     existing = (
         (
             await db.execute(
@@ -302,47 +303,8 @@ async def _ensure_timeline_event(
             and event.source == "human_adjudicated"
         ):
             raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
-        return False
-    event = TimelineEvent(
-        patient_id=patient_id,
-        event_type=event_type,
-        event_ref_id=record.id,
-        occurred_at=effective_at,
-        source="human_adjudicated",
-        summary="Human-adjudicated archived document observation",
-    )
-    try:
-        async with db.begin_nested():
-            db.add(event)
-            await db.flush()
-    except IntegrityError as exc:
-        if not _is_expected_c1_unique_violation(exc):
-            raise
-        existing = (
-            (
-                await db.execute(
-                    select(TimelineEvent).where(
-                        TimelineEvent.event_ref_id == record.id,
-                        TimelineEvent.source == "human_adjudicated",
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if len(existing) != 1:
-            raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION") from exc
-        event = existing[0]
-        if not (
-            event.patient_id == patient_id
-            and event.event_type == event_type
-            and event.event_ref_id == record.id
-            and event.occurred_at == effective_at
-            and event.source == "human_adjudicated"
-        ):
-            raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION") from exc
-        return False
-    return True
+        return True
+    return False
 
 
 def _reviewer_role(provider: ProviderContext) -> str:
@@ -1031,6 +993,7 @@ async def commit_submission(
     submission_id: uuid.UUID,
     provider: ProviderContext,
     review_session_id: str,
+    before_clinical_mutation: Callable[[], Awaitable[ProviderContext]],
 ) -> AdjudicationCaseRecord:
     """Commit accepted human data exactly once in the caller transaction."""
     _reviewer_role(provider)
@@ -1206,6 +1169,18 @@ async def commit_submission(
         source_document_id=case.source_document_id,
     )
     await _acquire_clinical_fact_locks(db, identities)
+
+    # Resolve every exact-fact and existing-timeline idempotency decision while
+    # the established lock order is held.  No clinical row is staged here.
+    plans: list[
+        tuple[
+            VitalClinicalField | LabClinicalField,
+            Vitals | LabResult,
+            str,
+            bool,
+            bool,
+        ]
+    ] = []
     new_field_count = 0
     reused_field_count = 0
     for field in fields:
@@ -1221,9 +1196,11 @@ async def commit_submission(
                     record, field, case.patient_id, case.source_document_id
                 ):
                     raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
+                record_is_new = False
                 reused_field_count += 1
             else:
                 record = Vitals(
+                    id=uuid.uuid4(),
                     patient_id=case.patient_id,
                     type=field.vital_type,
                     value=str(field.normalized_value),
@@ -1234,28 +1211,8 @@ async def commit_submission(
                     risk_level="LOW_RISK",
                     source_document_id=case.source_document_id,
                 )
-                try:
-                    async with db.begin_nested():
-                        db.add(record)
-                        await db.flush()
-                except IntegrityError as exc:
-                    if not _is_expected_c1_unique_violation(exc):
-                        raise
-                    record = await _existing_vital(
-                        db,
-                        patient_id=case.patient_id,
-                        source_document_id=case.source_document_id,
-                        field=field,
-                    )
-                    if record is None or not _vital_content_matches(
-                        record, field, case.patient_id, case.source_document_id
-                    ):
-                        raise AdjudicationError(
-                            "ADJUDICATION_CLINICAL_FACT_COLLISION"
-                        ) from exc
-                    reused_field_count += 1
-                else:
-                    new_field_count += 1
+                record_is_new = True
+                new_field_count += 1
             event_type = "vital_human_adjudicated"
         else:
             record = await _existing_lab(
@@ -1269,9 +1226,11 @@ async def commit_submission(
                     record, field, case.patient_id, case.source_document_id
                 ):
                     raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION")
+                record_is_new = False
                 reused_field_count += 1
             else:
                 record = LabResult(
+                    id=uuid.uuid4(),
                     patient_id=case.patient_id,
                     test_name=field.test_name,
                     value=str(field.normalized_value),
@@ -1284,53 +1243,80 @@ async def commit_submission(
                     risk_level="MEDIUM_RISK",
                     source_document_id=case.source_document_id,
                 )
-                try:
-                    async with db.begin_nested():
-                        db.add(record)
-                        await db.flush()
-                except IntegrityError as exc:
-                    if not _is_expected_c1_unique_violation(exc):
-                        raise
-                    record = await _existing_lab(
-                        db,
-                        patient_id=case.patient_id,
-                        source_document_id=case.source_document_id,
-                        field=field,
-                    )
-                    if record is None or not _lab_content_matches(
-                        record, field, case.patient_id, case.source_document_id
-                    ):
-                        raise AdjudicationError(
-                            "ADJUDICATION_CLINICAL_FACT_COLLISION"
-                        ) from exc
-                    reused_field_count += 1
-                else:
-                    new_field_count += 1
+                record_is_new = True
+                new_field_count += 1
             event_type = "lab_human_adjudicated"
-        await _ensure_timeline_event(
-            db,
-            record=record,
-            event_type=event_type,
-            effective_at=field.effective_at,
-            patient_id=case.patient_id,
+
+        timeline_exists = (
+            False
+            if record_is_new
+            else await _timeline_event_exists(
+                db,
+                record=record,
+                event_type=event_type,
+                effective_at=field.effective_at,
+                patient_id=case.patient_id,
+            )
         )
-    case.clinical_committed_at = now
-    await enqueue_audit_event(
+        plans.append((field, record, event_type, record_is_new, timeline_exists))
+
+    try:
+        # Open the savepoint before the final decision.  Once live provider,
+        # patient, and erasure checks return, the first clinical mutation is
+        # staged without another authority-independent await.
+        async with db.begin_nested():
+            current_provider = await before_clinical_mutation()
+            await _live_access(
+                db,
+                job=job,
+                provider=current_provider,
+                operation=DocumentProcessingOperation.COMMIT_VERIFIED_FIELDS,
+            )
+            for field, record, event_type, record_is_new, timeline_exists in plans:
+                if record_is_new:
+                    db.add(record)
+                if not timeline_exists:
+                    db.add(
+                        TimelineEvent(
+                            patient_id=case.patient_id,
+                            event_type=event_type,
+                            event_ref_id=record.id,
+                            occurred_at=field.effective_at,
+                            source="human_adjudicated",
+                            summary=("Human-adjudicated archived document observation"),
+                        )
+                    )
+            case.clinical_committed_at = now
+            await enqueue_audit_event(
+                db,
+                audit_context=_audit_context(case.tenant_id),
+                idempotency_key=f"adjudication-commit:{submission.id}",
+                actor_id=current_provider.actor_uid,
+                event_type="ADJUDICATION_CLINICAL_COMMIT_COMPLETED",
+                target_id=str(submission.id),
+                patient_id=str(case.patient_id),
+                metadata={
+                    "field_count": len(fields),
+                    "new_field_count": new_field_count,
+                    "reused_field_count": reused_field_count,
+                    "provenance": "human_adjudicated",
+                },
+            )
+            await db.flush()
+    except IntegrityError as exc:
+        if _is_expected_c1_unique_violation(exc):
+            raise AdjudicationError("ADJUDICATION_CLINICAL_FACT_COLLISION") from exc
+        raise
+
+    # A second current decision immediately precedes the caller's durable
+    # commit.  Denial here still rolls back facts and the audit outbox.
+    commit_provider = await before_clinical_mutation()
+    await _live_access(
         db,
-        audit_context=_audit_context(case.tenant_id),
-        idempotency_key=f"adjudication-commit:{submission.id}",
-        actor_id=provider.actor_uid,
-        event_type="ADJUDICATION_CLINICAL_COMMIT_COMPLETED",
-        target_id=str(submission.id),
-        patient_id=str(case.patient_id),
-        metadata={
-            "field_count": len(fields),
-            "new_field_count": new_field_count,
-            "reused_field_count": reused_field_count,
-            "provenance": "human_adjudicated",
-        },
+        job=job,
+        provider=commit_provider,
+        operation=DocumentProcessingOperation.COMMIT_VERIFIED_FIELDS,
     )
-    await db.flush()
     return case
 
 

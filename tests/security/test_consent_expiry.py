@@ -22,40 +22,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.dependencies import get_current_provider
 from app.main import app
-from app.models.provider_context import (
-    AffiliationContext,
-    HospitalContext,
-    ProviderContext,
-    ProviderIdentityContext,
-)
-from app.models.provider import AffiliationType
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _make_provider_context(provider_id=None) -> ProviderContext:
-    return ProviderContext(
-        provider=ProviderIdentityContext(
-            provider_id=provider_id or uuid.uuid4(),
-            display_name="Dr. Expiry",
-            contact_email="expiry@hospital.example",
-        ),
-        hospital=HospitalContext(
-            hospital_id=uuid.uuid4(),
-            facility_code="EXP",
-            display_name="Expiry Hospital",
-        ),
-        affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(),
-            affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True,
-            roles=["clinician"],
-        ),
-    )
 
 
 def _patch_stack(fake_redis, fake_sync_redis):
@@ -71,12 +42,6 @@ def _patch_stack(fake_redis, fake_sync_redis):
     )
     stack.enter_context(
         patch("app.core.consent_gate.validate_approved_access", return_value=None)
-    )
-    stack.enter_context(
-        patch(
-            "app.services.provider_auth_service.get_redis_client",
-            return_value=fake_sync_redis,
-        )
     )
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
@@ -125,14 +90,6 @@ def fake_sync_redis(fake_redis):
     return FakeSyncRedis(fake_redis)
 
 
-@pytest.fixture
-def overrides():
-    saved = {}
-    yield saved
-    for dep in saved:
-        app.dependency_overrides.pop(dep, None)
-
-
 # ── Tests ────────────────────────────────────────────────────────────────────
 
 
@@ -163,19 +120,11 @@ def test_expired_routine_consent_rejected_at_gate(
     client,
     fake_redis,
     fake_sync_redis,
-    mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-03b: Access with expired consent → 403 from require_consent gate."""
     patient_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-    provider_id = str(provider.provider.provider_id)
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
+    provider_id = str(real_clinical_session.provider.id)
 
     # Seed an already-expired consent capability in Redis
     token_raw = uuid.uuid4().hex
@@ -197,7 +146,10 @@ def test_expired_routine_consent_rejected_at_gate(
     with _patch_stack(fake_redis, fake_sync_redis):
         resp = client.get(
             f"/api/v2/patient/{patient_id}/summary",
-            headers={"X-Consent-Token": token_raw},
+            headers={
+                **real_clinical_session.headers,
+                "X-Consent-Token": token_raw,
+            },
         )
         assert (
             resp.status_code == 403
@@ -208,26 +160,20 @@ def test_revoked_consent_rejected_at_gate(
     client,
     fake_redis,
     fake_sync_redis,
-    mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-03c: Revoked consent (key deleted from Redis) → 403."""
     patient_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-
     # Token never existed in Redis (revoked = deleted)
     token_raw = uuid.uuid4().hex
 
     with _patch_stack(fake_redis, fake_sync_redis):
         resp = client.get(
             f"/api/v2/patient/{patient_id}/summary",
-            headers={"X-Consent-Token": token_raw},
+            headers={
+                **real_clinical_session.headers,
+                "X-Consent-Token": token_raw,
+            },
         )
         assert (
             resp.status_code == 403
@@ -277,7 +223,6 @@ def test_expired_challenge_cannot_be_approved(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
 ):
     """T-03e: An expired challenge nonce cannot be approved → 403 from verifier.
 

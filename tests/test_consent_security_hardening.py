@@ -806,7 +806,12 @@ class TestCancelEndpointIntegration:
 
     def test_patient_id_injection_is_rejected_after_actual_provider_auth(self) -> None:
         """The actual clinician dependency must reject UUID injection before services run."""
-        from app.core.dependencies import get_provider_context
+        from app.core.dependencies import (
+            get_current_provider,
+            get_provider_context,
+            require_clinical_capability,
+        )
+        from app.security.provider_capabilities import ClinicalCapability
 
         import uuid
         from app.models.provider_context import (
@@ -832,7 +837,15 @@ class TestCancelEndpointIntegration:
                 roles=["clinician"],
             ),
         )
-        app.dependency_overrides[get_provider_context] = lambda: mock_provider
+
+        def provider_factory():
+            return mock_provider
+
+        app.dependency_overrides[get_provider_context] = provider_factory
+        app.dependency_overrides[get_current_provider] = provider_factory
+        app.dependency_overrides[
+            require_clinical_capability(ClinicalCapability.CONSENT_REQUEST)
+        ] = provider_factory
 
         mock_db = AsyncMock()
         from app.core.database import get_db_session as _get_db
@@ -859,4 +872,9 @@ class TestCancelEndpointIntegration:
                 consume_handle.assert_not_awaited()
             finally:
                 app.dependency_overrides.pop(get_provider_context, None)
+                app.dependency_overrides.pop(get_current_provider, None)
+                app.dependency_overrides.pop(
+                    require_clinical_capability(ClinicalCapability.CONSENT_REQUEST),
+                    None,
+                )
                 app.dependency_overrides.pop(_get_db, None)

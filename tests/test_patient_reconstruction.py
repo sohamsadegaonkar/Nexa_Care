@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, patch
 from fastapi.testclient import TestClient
 
 from app.core.database import get_db_session
-from app.core.dependencies import get_current_provider
+from app.core.dependencies import get_current_provider, require_clinical_capability
 from app.main import app
 from app.api.v2.patient_routes import get_kms_provider
 from app.models.provider import AffiliationType
@@ -20,6 +20,8 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.services.consent_engine import ConsentCapability
+from app.security.provider_capabilities import ClinicalCapability
+from tests.conftest import FakeRedis
 
 
 def sample_provider_context() -> ProviderContext:
@@ -147,6 +149,9 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
         return capability
 
     app.dependency_overrides[get_current_provider] = override_provider
+    app.dependency_overrides[
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ] = override_provider
     app.dependency_overrides[get_db_session] = override_db
     app.dependency_overrides[get_kms_provider] = lambda: FakeKMSProvider()
 
@@ -164,6 +169,10 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
                 "app.services.consent_gated_crypto.append_audit_log_or_503",
                 new_callable=AsyncMock,
             ) as mock_audit,
+            patch(
+                "app.api.v2.patient_routes.get_consent_redis_client",
+                return_value=FakeRedis(),
+            ),
         ):
 
             async def audit_side_effect(
@@ -193,6 +202,9 @@ def test_reconstruction_validates_before_and_inside_audit_then_consumes() -> Non
             )
     finally:
         app.dependency_overrides.pop(get_current_provider, None)
+        app.dependency_overrides.pop(
+            require_clinical_capability(ClinicalCapability.RECORD_READ), None
+        )
         app.dependency_overrides.pop(get_db_session, None)
         app.dependency_overrides.pop(get_kms_provider, None)
 

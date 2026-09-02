@@ -25,6 +25,12 @@ ALL_CLINICAL_CAPABILITIES: Final[frozenset[ClinicalCapability]] = frozenset(
 # can contribute capabilities only after every independent trust check passes.
 LEGACY_ROLE_CAPABILITIES: Final[dict[str, frozenset[ClinicalCapability]]] = {
     "clinician": ALL_CLINICAL_CAPABILITIES,
+    "clinical_reviewer": frozenset(
+        {
+            ClinicalCapability.DOCUMENTS_REVIEW,
+            ClinicalCapability.DOCUMENTS_COMMIT,
+        }
+    ),
 }
 
 

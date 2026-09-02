@@ -27,7 +27,8 @@ def test_job_and_field_identifiers_are_strict_uuid():
 
 def test_review_uses_row_lock_role_tenant_and_version():
     assert ".with_for_update()" in CODE
-    assert "REVIEW_ROLE_REQUIRED" in CODE
+    assert "ClinicalCapability.DOCUMENTS_REVIEW" in CODE
+    assert "ClinicalCapability.DOCUMENTS_COMMIT" in CODE
     assert "CROSS_TENANT_JOB_ACCESS" in CODE
     assert "STALE_REVIEW_VERSION" in CODE
 

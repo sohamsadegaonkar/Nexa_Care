@@ -36,6 +36,12 @@ from app.ai.candidate_eligibility import (
     classify_semantic_candidate,
 )
 from app.core.config import get_document_extraction_config, get_document_storage_config
+from app.core.document_processing_gate import (
+    DelegatedClinicalTrustError,
+    DelegatedClinicalTrustQuarantineUnavailable,
+    quarantine_delegated_clinical_trust_denial,
+    recheck_delegated_document_processing_trust,
+)
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.pipeline import (
@@ -670,6 +676,18 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         if now - started < timedelta(minutes=15):
             return {"job_id": str(job.id), "status": "extracting", "idempotent": True}
 
+    try:
+        await recheck_delegated_document_processing_trust(job=job, db=db)
+    except DelegatedClinicalTrustError as exc:
+        quarantined = await quarantine_delegated_clinical_trust_denial(
+            db=db, job_id=job.id, error_code=exc.code
+        )
+        return {
+            "job_id": str(quarantined.id),
+            "status": quarantined.status,
+            "error_code": quarantined.error_code,
+        }
+
     # This immutable snapshot owns both budgets throughout this JOB ATTEMPT.
     config = get_document_extraction_config()
     job.status = "extracting"
@@ -705,88 +723,85 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
         ).scalar_one_or_none()
         if document is None or job.tenant_id is None:
             raise DocumentStorageError("Document metadata unavailable")
-        storage = get_document_storage()
-        document_bytes = await storage.get_document_bytes(
-            document.storage_ref,
-            tenant_id=str(job.tenant_id),
-            patient_id=str(job.patient_id),
-        )
         if async_multipage_eligible(
             provider=config.provider,
             enabled=getattr(config, "async_multipage_enabled", False),
             content_type=document.content_type,
             storage_ref=document.storage_ref,
         ):
-            consent_active = False
-            if all(
-                (job.consent_request_id, job.authorization_provider_id, job.tenant_id)
-            ):
-                try:
-                    consent_active = (
-                        await validate_live_document_processing_request(
-                            request_id=str(job.consent_request_id),
-                            patient_id=str(job.patient_id),
-                            provider_id=str(job.authorization_provider_id),
-                            hospital_id=str(job.tenant_id),
-                        )
-                        is not None
-                    )
-                except ApprovedAccessStoreUnavailable:
-                    consent_active = False
-            if consent_active:
-                storage_config = get_document_storage_config()
-                if storage_config.provider != "s3":
-                    raise TextractSourceStagingError(
-                        "ASYNC_PROVIDER_STORAGE_PROVIDER_UNSUPPORTED"
-                    )
-                stager = TextractSourceStager(
-                    config=TextractStagingConfig(
-                        bucket=storage_config.s3_bucket or "",
-                        region=storage_config.s3_region
-                        or getattr(config, "aws_region", "ap-south-1"),
-                        kms_key_id=storage_config.s3_kms_key_id or "",
-                    ),
-                    storage=storage,
-                    s3_client=getattr(storage, "client", None),
-                    io_timeout_seconds=getattr(config, "timeout_seconds", 30.0),
+            storage = get_document_storage()
+            storage_config = get_document_storage_config()
+            if storage_config.provider != "s3":
+                raise TextractSourceStagingError(
+                    "ASYNC_PROVIDER_STORAGE_PROVIDER_UNSUPPORTED"
                 )
-                if stager.s3 is None:
-                    raise TextractSourceStagingError(
-                        "ASYNC_PROVIDER_STAGING_CONFIG_INVALID"
-                    )
-                attempt, _prepared = await prepare_and_create_provider_attempt(
-                    db,
-                    stager=stager,
-                    job_id=job.id,
-                    tenant_id=job.tenant_id,
-                    patient_id=job.patient_id,
-                    source_document_id=job.document_id,
-                    job_attempt_number=job.attempt_count,
+            stager = TextractSourceStager(
+                config=TextractStagingConfig(
+                    bucket=storage_config.s3_bucket or "",
+                    region=storage_config.s3_region
+                    or getattr(config, "aws_region", "ap-south-1"),
+                    kms_key_id=storage_config.s3_kms_key_id or "",
+                ),
+                storage=storage,
+                s3_client=getattr(storage, "client", None),
+                io_timeout_seconds=getattr(config, "timeout_seconds", 30.0),
+            )
+            if stager.s3 is None:
+                raise TextractSourceStagingError(
+                    "ASYNC_PROVIDER_STAGING_CONFIG_INVALID"
                 )
-                start_result = await start_async_provider_attempt(
-                    db,
-                    provider_attempt_id=attempt.id,
-                    stager=stager,
-                    provider=AsyncTextractProvider(
-                        region=getattr(config, "aws_region", "ap-south-1"),
-                        timeout_seconds=getattr(config, "timeout_seconds", 30.0),
-                    ),
-                )
-                del document_bytes
-                return {
-                    "job_id": str(job.id),
-                    "status": "extracting",
-                    "async_provider_attempt_id": str(start_result.provider_attempt_id),
-                    "provider_status": start_result.status,
-                    "provider_job_id": start_result.provider_job_id,
-                    "expected_page_count": start_result.expected_page_count,
-                }
+            attempt, prepared = await prepare_and_create_provider_attempt(
+                db,
+                stager=stager,
+                job_id=job.id,
+                tenant_id=job.tenant_id,
+                patient_id=job.patient_id,
+                source_document_id=job.document_id,
+                job_attempt_number=job.attempt_count,
+                before_source_retrieval=lambda: recheck_delegated_document_processing_trust(
+                    job=job, db=db
+                ),
+            )
+            start_result = await start_async_provider_attempt(
+                db,
+                provider_attempt_id=attempt.id,
+                prepared=prepared,
+                stager=stager,
+                provider=AsyncTextractProvider(
+                    region=getattr(config, "aws_region", "ap-south-1"),
+                    timeout_seconds=getattr(config, "timeout_seconds", 30.0),
+                ),
+                before_provider_submission=lambda: recheck_delegated_document_processing_trust(
+                    job=job, db=db
+                ),
+            )
+            return {
+                "job_id": str(job.id),
+                "status": "extracting",
+                "async_provider_attempt_id": str(start_result.provider_attempt_id),
+                "provider_status": start_result.status,
+                "provider_job_id": start_result.provider_job_id,
+                "expected_page_count": start_result.expected_page_count,
+            }
+        storage = get_document_storage()
+        # The preceding lifecycle and metadata work may await.  Reauthorize at
+        # the actual PHI boundary, with no unrelated await before decryption.
+        await recheck_delegated_document_processing_trust(job=job, db=db)
+        document_bytes = await storage.get_document_bytes(
+            document.storage_ref,
+            tenant_id=str(job.tenant_id),
+            patient_id=str(job.patient_id),
+        )
         extractor = get_medical_document_extractor(config)
+        # Source retrieval and extractor selection may await.  The protected
+        # provider submission therefore needs a separate current checkpoint.
+        await recheck_delegated_document_processing_trust(job=job, db=db)
         provider_result = await extractor.extract_bytes(
             document_bytes,
             mime_type=document.content_type,
             request_id=job.request_id or str(job.id),
         )
+        await recheck_delegated_document_processing_trust(job=job, db=db)
         provider_result = _validated_provider_result(
             provider_result,
             extractor=extractor,
@@ -857,6 +872,8 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             erasure_clear = True
         except Exception:
             erasure_clear = False
+
+        await recheck_delegated_document_processing_trust(job=job, db=db)
 
         job.status = "extracted"
         await db.flush()
@@ -1184,6 +1201,20 @@ async def process_extraction_job(job_id: str, db: AsyncSession) -> dict[str, Any
             "quarantine_count": quarantine_count,
             **eligibility_counts,
         }
+    except DelegatedClinicalTrustError as exc:
+        quarantined = await quarantine_delegated_clinical_trust_denial(
+            db=db, job_id=job_uuid, error_code=exc.code
+        )
+        return {
+            "job_id": str(quarantined.id),
+            "status": quarantined.status,
+            "error_code": quarantined.error_code,
+            "retryable": False,
+        }
+    except DelegatedClinicalTrustQuarantineUnavailable:
+        # The outbox is part of the fail-closed denial boundary.  A caller may
+        # retry the worker, but it must never continue protected processing.
+        raise
     except EncryptionError:
         job = await _rollback_and_reload_job(db, job_uuid)
         job.status = "validation_failed"

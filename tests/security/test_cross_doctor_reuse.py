@@ -18,41 +18,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.core.dependencies import get_current_provider
 from app.main import app
-from app.models.provider_context import (
-    AffiliationContext,
-    HospitalContext,
-    ProviderContext,
-    ProviderIdentityContext,
-)
-from app.models.provider import AffiliationType
 from app.services.consent_engine import validate
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
+from tests.helpers.clinical_auth_harness import ClinicalSessionFactory
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _make_provider_context(provider_id=None) -> ProviderContext:
-    return ProviderContext(
-        provider=ProviderIdentityContext(
-            provider_id=provider_id or uuid.uuid4(),
-            display_name="Dr. Test",
-            contact_email="test@hospital.example",
-        ),
-        hospital=HospitalContext(
-            hospital_id=uuid.uuid4(),
-            facility_code="TST",
-            display_name="Test Hospital",
-        ),
-        affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(),
-            affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True,
-            roles=["clinician"],
-        ),
-    )
 
 
 def _patch_stack(fake_redis, fake_sync_redis):
@@ -68,12 +40,6 @@ def _patch_stack(fake_redis, fake_sync_redis):
     )
     stack.enter_context(
         patch("app.core.consent_gate.validate_approved_access", return_value=None)
-    )
-    stack.enter_context(
-        patch(
-            "app.services.provider_auth_service.get_redis_client",
-            return_value=fake_sync_redis,
-        )
     )
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
@@ -120,14 +86,6 @@ def fake_redis():
 @pytest.fixture
 def fake_sync_redis(fake_redis):
     return FakeSyncRedis(fake_redis)
-
-
-@pytest.fixture
-def overrides():
-    saved = {}
-    yield saved
-    for dep in saved:
-        app.dependency_overrides.pop(dep, None)
 
 
 # ── Tests ────────────────────────────────────────────────────────────────────
@@ -177,20 +135,12 @@ def test_cross_doctor_consent_rejected_at_gate(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-04b: Doctor B uses Doctor A's consent token → 403 from require_consent."""
     patient_id = str(uuid.uuid4())
-    doctor_a = uuid.uuid4()
-    doctor_b = uuid.uuid4()
-
-    provider_b = _make_provider_context(provider_id=doctor_b)
-
-    async def _provider_dep():
-        return provider_b
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
+    doctor_a_session = asyncio.run(ClinicalSessionFactory(mock_db).create())
+    doctor_a = doctor_a_session.provider.id
 
     # Seed consent for Doctor A
     token_raw = uuid.uuid4().hex
@@ -213,7 +163,10 @@ def test_cross_doctor_consent_rejected_at_gate(
         # Doctor B (authenticated as provider_b) uses Doctor A's token
         resp = client.get(
             f"/api/v2/patient/{patient_id}/summary",
-            headers={"X-Consent-Token": token_raw},
+            headers={
+                **real_clinical_session.headers,
+                "X-Consent-Token": token_raw,
+            },
         )
         assert (
             resp.status_code == 403
@@ -263,7 +216,7 @@ def test_cross_doctor_reuse_audited(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-04d: Cross-doctor consent reuse attempt produces audit event.
 
@@ -272,16 +225,8 @@ def test_cross_doctor_reuse_audited(
     rejection happened (the audit is patched via _patch_stack).
     """
     patient_id = str(uuid.uuid4())
-    doctor_a = uuid.uuid4()
-    doctor_b = uuid.uuid4()
-
-    provider_b = _make_provider_context(provider_id=doctor_b)
-
-    async def _provider_dep():
-        return provider_b
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
+    doctor_a_session = asyncio.run(ClinicalSessionFactory(mock_db).create())
+    doctor_a = doctor_a_session.provider.id
 
     token_raw = uuid.uuid4().hex
     token_key = f"nexa:consent:{token_raw}"
@@ -302,7 +247,10 @@ def test_cross_doctor_reuse_audited(
     with _patch_stack(fake_redis, fake_sync_redis):
         resp = client.get(
             f"/api/v2/patient/{patient_id}/summary",
-            headers={"X-Consent-Token": token_raw},
+            headers={
+                **real_clinical_session.headers,
+                "X-Consent-Token": token_raw,
+            },
         )
         # The rejection proves the defense worked; audit is best-effort
         assert (

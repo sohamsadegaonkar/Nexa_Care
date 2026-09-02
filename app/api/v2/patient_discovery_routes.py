@@ -10,7 +10,8 @@ from typing import Literal
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import require_role
+from app.core.dependencies import require_clinical_capability
+from app.security.provider_capabilities import ClinicalCapability
 from app.core.redis import get_async_redis_client
 from app.core.rate_limiter import atomic_fixed_window
 from app.models.provider_context import ProviderContext
@@ -59,7 +60,9 @@ async def _audit(
 @router.post("", response_model=DiscoveryResponse)
 async def discover_patient(
     payload: DiscoveryRequest,
-    provider: ProviderContext = Depends(require_role("clinician")),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.PATIENT_DISCOVER)
+    ),
     db: AsyncSession = Depends(get_db_session),
 ) -> DiscoveryResponse:
     redis = get_async_redis_client()

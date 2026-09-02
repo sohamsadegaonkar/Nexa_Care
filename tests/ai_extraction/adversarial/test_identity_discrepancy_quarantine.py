@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.ai.extractor import (
     DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
@@ -244,6 +245,10 @@ async def _run_pipeline(
     enqueue_audit = AsyncMock(return_value=None)
     with (
         patch(
+            "app.services.pipeline_orchestrator.recheck_delegated_document_processing_trust",
+            AsyncMock(return_value=None),
+        ),
+        patch(
             "app.services.pipeline_orchestrator.get_document_storage",
             return_value=storage,
         ),
@@ -376,6 +381,7 @@ async def test_scenario_8_identity_discrepancy_is_encrypted_quarantined_and_idem
     commit_db = _DB([run.job])
     with pytest.raises(HTTPException) as commit_error:
         await commit_extraction_job(
+            Request({"type": "http", "method": "POST", "path": "/"}),
             str(run.job.id),
             CommitJobRequest(patient_id=str(run.job.patient_id)),
             provider=provider,

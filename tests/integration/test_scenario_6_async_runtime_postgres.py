@@ -7,6 +7,7 @@ import io
 import os
 import time
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 from botocore.exceptions import ClientError
@@ -17,6 +18,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.ai.async_textract import AsyncTextractProvider
 from app.ai.extractor import ProviderTimeoutError
+from app.core.document_processing_gate import DelegatedClinicalTrustError
 from app.models.pipeline import (
     DocumentStorage,
     ExtractionCandidateRecord,
@@ -28,6 +30,7 @@ from app.models.pipeline import (
 from app.models.provider import HospitalRegistry
 from app.services.document_storage import DocumentStorage as DocumentStorageAdapter
 from app.services.provider_job_lifecycle import (
+    ProviderJobStatus,
     ProviderReconciliationClaim,
     ProviderReconciliationOutcome,
     ReconciliationOutcomeType,
@@ -184,7 +187,16 @@ async def _count(db, model, job_id: uuid.UUID) -> int:
 
 
 @pytest.mark.asyncio
-async def test_scenario_6_timeout_recovery_preserves_attempt_and_blocks_partial_handoff():
+async def test_scenario_6_timeout_recovery_preserves_attempt_and_blocks_partial_handoff(
+    monkeypatch,
+):
+    # This Scenario 6 fixture intentionally predates provider-trust rows; it
+    # qualifies provider pagination/lifecycle only, not delegated authority.
+    trust_guard = AsyncMock(return_value=None)
+    monkeypatch.setattr(
+        "app.services.textract_async_runtime.recheck_delegated_document_processing_trust",
+        trust_guard,
+    )
     engine = create_async_engine(_url(), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     source = _pdf(3)
@@ -262,11 +274,17 @@ async def test_scenario_6_timeout_recovery_preserves_attempt_and_blocks_partial_
                 patient_id=patient,
                 source_document_id=document_id,
                 job_attempt_number=1,
+                before_source_retrieval=AsyncMock(),
             )
             assert prepared.page_count == 3
             assert prepared.bytes_ == source
             started = await start_async_provider_attempt(
-                db, provider_attempt_id=attempt.id, stager=stager, provider=provider
+                db,
+                provider_attempt_id=attempt.id,
+                prepared=prepared,
+                stager=stager,
+                provider=provider,
+                before_provider_submission=AsyncMock(),
             )
             assert started.provider_job_id == textract_client.job_id
             assert started.expected_page_count == 3
@@ -350,6 +368,83 @@ async def test_scenario_6_timeout_recovery_preserves_attempt_and_blocks_partial_
             assert await _count(db, ExtractionDecisionRecord, job_id) == 0
             assert await _count(db, ExtractionRoutingRecord, job_id) == 0
             assert s3.objects == {}
-            assert archive.decrypted_reads >= 2
+            # Initial async submission prepares the source exactly once; the
+            # start phase receives that prepared value and must not decrypt it
+            # a second time.
+            assert archive.decrypted_reads == 1
+
+        # A second immutable attempt proves the handoff race: current trust is
+        # lost after the staging cleanup but before COMPLETE/result return.
+        trust_guard.side_effect = [
+            None,
+            None,
+            None,
+            None,
+            DelegatedClinicalTrustError("PROFESSIONAL_SUSPENDED"),
+        ]
+        # Provider job IDs are globally unique across immutable attempts.
+        textract_client.job_id = f"synthetic-job-{uuid.uuid4().hex}"
+        textract_client.calls = 3
+        async with factory() as db:
+            denied_attempt, denied_prepared = await prepare_and_create_provider_attempt(
+                db,
+                stager=stager,
+                job_id=job_id,
+                tenant_id=tenant,
+                patient_id=patient,
+                source_document_id=document_id,
+                job_attempt_number=2,
+                before_source_retrieval=trust_guard,
+            )
+            await start_async_provider_attempt(
+                db,
+                provider_attempt_id=denied_attempt.id,
+                prepared=denied_prepared,
+                stager=stager,
+                provider=provider,
+                before_provider_submission=trust_guard,
+            )
+            row = (
+                await db.execute(
+                    select(ExtractionProviderJobRecord).where(
+                        ExtractionProviderJobRecord.id == denied_attempt.id
+                    )
+                )
+            ).scalar_one()
+            row = await mark_provider_succeeded(
+                db, provider_attempt_id=row.id, expected_version=row.version
+            )
+            await db.commit()
+
+            with pytest.raises(DelegatedClinicalTrustError) as denial:
+                await retrieve_and_complete_provider_attempt(
+                    db,
+                    provider_attempt_id=denied_attempt.id,
+                    provider=provider,
+                    stager=stager,
+                )
+            assert denial.value.code == "PROFESSIONAL_SUSPENDED"
+
+            denied_job = (
+                await db.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == job_id)
+                )
+            ).scalar_one()
+            denied_row = (
+                await db.execute(
+                    select(ExtractionProviderJobRecord).where(
+                        ExtractionProviderJobRecord.id == denied_attempt.id
+                    )
+                )
+            ).scalar_one()
+            assert denied_job.status == "quarantined"
+            assert denied_job.error_code == "PROFESSIONAL_SUSPENDED"
+            assert denied_row.status == ProviderJobStatus.FAILED_TERMINAL.value
+            assert denied_row.result_retrieval_complete is False
+            assert s3.objects == {}
+            assert await _count(db, ExtractionCandidateRecord, job_id) == 0
+            assert await _count(db, ExtractionDecisionRecord, job_id) == 0
+            assert await _count(db, ExtractionRoutingRecord, job_id) == 0
+            assert archive.decrypted_reads == 2
     finally:
         await engine.dispose()

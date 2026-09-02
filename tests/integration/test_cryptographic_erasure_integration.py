@@ -17,8 +17,10 @@ from app.core.dependencies import (
     get_current_provider,
     get_db_session,
     get_provider_context,
+    require_clinical_capability,
     require_role,
 )
+from app.security.provider_capabilities import ClinicalCapability
 from app.main import app
 from app.models.provider import AffiliationType
 from app.models.provider_context import (
@@ -156,6 +158,9 @@ async def test_cryptographic_erasure_workflow(monkeypatch):
     app.dependency_overrides[get_current_provider] = lambda: provider
     app.dependency_overrides[get_provider_context] = lambda: provider
     app.dependency_overrides[require_role("admin")] = lambda: provider
+    app.dependency_overrides[
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ] = lambda: provider
     app.dependency_overrides[get_kms_provider] = lambda: kms
 
     client = TestClient(app)

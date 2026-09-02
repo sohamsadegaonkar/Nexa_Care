@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
+from starlette.requests import Request
 
 from app.api.v2.pipeline_routes import CommitJobRequest, commit_extraction_job
 from app.models.patient_records import TimelineEvent, Vitals
@@ -18,6 +19,7 @@ from app.models.pipeline import (
     PipelineCommit,
 )
 from app.security.audit_context import AuditContext, AuditDomain
+from app.security.erasure_registry import _PatientErasedSignal
 
 
 class _Scalars:
@@ -146,10 +148,20 @@ async def test_scenario_17_outbox_failure_rolls_back_clinical_commit_and_retry_i
             "app.api.v2.pipeline_routes.current_audit_context",
             return_value=audit_context,
         ),
+        patch(
+            "app.api.v2.pipeline_routes.enforce_current_clinical_capability",
+            AsyncMock(return_value=provider),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.check_erasure_registry",
+            AsyncMock(return_value=None),
+        ),
     )
-    with patches[0], patches[1], patches[2]:
+    request = Request({"type": "http", "method": "POST", "path": "/"})
+    with patches[0], patches[1], patches[2], patches[3], patches[4]:
         with pytest.raises(HTTPException) as exc:
             await commit_extraction_job(
+                request,
                 str(job_id),
                 CommitJobRequest(patient_id=str(patient_id)),
                 provider,
@@ -168,6 +180,7 @@ async def test_scenario_17_outbox_failure_rolls_back_clinical_commit_and_retry_i
 
         db.fail_final_outbox = False
         response = await commit_extraction_job(
+            request,
             str(job_id),
             CommitJobRequest(patient_id=str(patient_id)),
             provider,
@@ -181,3 +194,328 @@ async def test_scenario_17_outbox_failure_rolls_back_clinical_commit_and_retry_i
     assert sum(isinstance(row, PipelineCommit) for row in db.persisted) == 1
     assert sum(isinstance(row, TimelineEvent) for row in db.persisted) == 2
     assert len(db.persisted_outbox) == 2
+
+
+@pytest.mark.asyncio
+async def test_commit_revocation_between_admission_and_final_checkpoint_writes_nothing():
+    """A formerly valid document grant cannot authorize the later mutation."""
+    patient_id, tenant_id, job_id, document_id, field_id = (
+        uuid.uuid4() for _ in range(5)
+    )
+    job = ExtractionJob(
+        id=job_id,
+        patient_id=patient_id,
+        tenant_id=tenant_id,
+        uploader_id="provider-race",
+        authorization_provider_id="provider-race",
+        consent_request_id="workflow-race",
+        document_id=document_id,
+        document_type="application/pdf",
+        status="review_pending",
+        request_id="request-race",
+        created_at=datetime.now(timezone.utc),
+    )
+    approved_field = ExtractedFieldRecord(
+        id=field_id,
+        job_id=job_id,
+        patient_id=patient_id,
+        field_name="blood_pressure",
+        raw_value="120 over 80",
+        units="mmHg",
+        confidence=0.91,
+        risk_level="MEDIUM_RISK",
+        status="approved",
+        source_document_id=document_id,
+    )
+    db = _TransactionalSession(job, approved_field)
+    provider = SimpleNamespace(
+        actor_uid="provider-race",
+        hospital=SimpleNamespace(hospital_id=tenant_id),
+    )
+    capability = SimpleNamespace(request_id="workflow-race")
+    revoked = HTTPException(
+        status_code=403, detail={"error_code": "DOCUMENT_PROCESSING_ACCESS_REQUIRED"}
+    )
+    authorization = AsyncMock(side_effect=[capability, capability, revoked])
+    with (
+        patch(
+            "app.api.v2.pipeline_routes.authorize_document_processing", authorization
+        ),
+        patch("app.api.v2.pipeline_routes.assert_job_authorization_binding"),
+        patch(
+            "app.api.v2.pipeline_routes.current_audit_context",
+            return_value=AuditContext.for_tenant(
+                tenant_id=str(tenant_id), domain=AuditDomain.PIPELINE
+            ),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.enforce_current_clinical_capability",
+            AsyncMock(return_value=provider),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.check_erasure_registry",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await commit_extraction_job(
+                Request({"type": "http", "method": "POST", "path": "/"}),
+                str(job_id),
+                CommitJobRequest(patient_id=str(patient_id)),
+                provider,
+                "consent-capability",
+                db,
+            )
+
+    assert exc_info.value.status_code == 403
+    assert authorization.await_count == 3
+    assert db.extracted_field_selects == 2
+    assert db.persisted == []
+    assert db.persisted_outbox == []
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_commit_erasure_between_admission_and_final_checkpoint_writes_nothing():
+    """An erasure state observed at the final checkpoint blocks all writes."""
+    patient_id, tenant_id, job_id, document_id, field_id = (
+        uuid.uuid4() for _ in range(5)
+    )
+    job = ExtractionJob(
+        id=job_id,
+        patient_id=patient_id,
+        tenant_id=tenant_id,
+        uploader_id="provider-erasure-race",
+        authorization_provider_id="provider-erasure-race",
+        consent_request_id="workflow-erasure-race",
+        document_id=document_id,
+        document_type="application/pdf",
+        status="review_pending",
+        request_id="request-erasure-race",
+        created_at=datetime.now(timezone.utc),
+    )
+    approved_field = ExtractedFieldRecord(
+        id=field_id,
+        job_id=job_id,
+        patient_id=patient_id,
+        field_name="blood_pressure",
+        raw_value="120 over 80",
+        units="mmHg",
+        confidence=0.91,
+        risk_level="MEDIUM_RISK",
+        status="approved",
+        source_document_id=document_id,
+    )
+    db = _TransactionalSession(job, approved_field)
+    provider = SimpleNamespace(
+        actor_uid="provider-erasure-race",
+        hospital=SimpleNamespace(hospital_id=tenant_id),
+    )
+    authorization = AsyncMock(
+        return_value=SimpleNamespace(request_id="workflow-erasure-race")
+    )
+    with (
+        patch(
+            "app.api.v2.pipeline_routes.authorize_document_processing", authorization
+        ),
+        patch("app.api.v2.pipeline_routes.assert_job_authorization_binding"),
+        patch(
+            "app.api.v2.pipeline_routes.current_audit_context",
+            return_value=AuditContext.for_tenant(
+                tenant_id=str(tenant_id), domain=AuditDomain.PIPELINE
+            ),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.enforce_current_clinical_capability",
+            AsyncMock(return_value=provider),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.check_erasure_registry",
+            AsyncMock(side_effect=[None, _PatientErasedSignal(str(patient_id))]),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await commit_extraction_job(
+                Request({"type": "http", "method": "POST", "path": "/"}),
+                str(job_id),
+                CommitJobRequest(patient_id=str(patient_id)),
+                provider,
+                "consent-capability",
+                db,
+            )
+
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail == {"error_code": "PATIENT_ACCESS_ERASED"}
+    assert authorization.await_count == 3
+    assert db.extracted_field_selects == 2
+    assert db.persisted == []
+    assert db.persisted_outbox == []
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_commit_provider_revocation_after_ingestion_preflight_writes_nothing():
+    """Provider trust is current again after the last idempotency read."""
+    patient_id, tenant_id, job_id, document_id, field_id = (
+        uuid.uuid4() for _ in range(5)
+    )
+    job = ExtractionJob(
+        id=job_id,
+        patient_id=patient_id,
+        tenant_id=tenant_id,
+        uploader_id="provider-mutation-race",
+        authorization_provider_id="provider-mutation-race",
+        consent_request_id="workflow-mutation-race",
+        document_id=document_id,
+        document_type="application/pdf",
+        status="review_pending",
+        request_id="request-mutation-race",
+        created_at=datetime.now(timezone.utc),
+    )
+    approved_field = ExtractedFieldRecord(
+        id=field_id,
+        job_id=job_id,
+        patient_id=patient_id,
+        field_name="blood_pressure",
+        raw_value="120 over 80",
+        units="mmHg",
+        confidence=0.91,
+        risk_level="MEDIUM_RISK",
+        status="approved",
+        source_document_id=document_id,
+    )
+    db = _TransactionalSession(job, approved_field)
+    provider = SimpleNamespace(
+        actor_uid="provider-mutation-race",
+        hospital_id=tenant_id,
+        hospital=SimpleNamespace(hospital_id=tenant_id),
+    )
+    denied = HTTPException(
+        status_code=403, detail={"error_code": "CLINICAL_ELIGIBILITY_DENIED"}
+    )
+    provider_gate = AsyncMock(side_effect=[provider, denied])
+    with (
+        patch(
+            "app.api.v2.pipeline_routes.authorize_document_processing",
+            AsyncMock(
+                return_value=SimpleNamespace(
+                    patient_id=str(patient_id),
+                    request_id="workflow-mutation-race",
+                )
+            ),
+        ),
+        patch("app.api.v2.pipeline_routes.assert_job_authorization_binding"),
+        patch(
+            "app.api.v2.pipeline_routes.current_audit_context",
+            return_value=AuditContext.for_tenant(
+                tenant_id=str(tenant_id), domain=AuditDomain.PIPELINE
+            ),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.enforce_current_clinical_capability",
+            provider_gate,
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.check_erasure_registry",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await commit_extraction_job(
+                Request({"type": "http", "method": "POST", "path": "/"}),
+                str(job_id),
+                CommitJobRequest(patient_id=str(patient_id)),
+                provider,
+                "consent-capability",
+                db,
+            )
+
+    assert exc_info.value.status_code == 403
+    assert provider_gate.await_count == 2
+    assert db.extracted_field_selects == 2
+    assert db.persisted == []
+    assert db.persisted_outbox == []
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
+async def test_commit_rejects_fresh_provider_context_that_breaks_job_binding():
+    """The patient check consumes the callback's fresh canonical context."""
+    patient_id, tenant_id, job_id, document_id, field_id = (
+        uuid.uuid4() for _ in range(5)
+    )
+    job = ExtractionJob(
+        id=job_id,
+        patient_id=patient_id,
+        tenant_id=tenant_id,
+        uploader_id="provider-binding-race",
+        authorization_provider_id="provider-binding-race",
+        consent_request_id="workflow-binding-race",
+        document_id=document_id,
+        document_type="application/pdf",
+        status="review_pending",
+        request_id="request-binding-race",
+        created_at=datetime.now(timezone.utc),
+    )
+    approved_field = ExtractedFieldRecord(
+        id=field_id,
+        job_id=job_id,
+        patient_id=patient_id,
+        field_name="blood_pressure",
+        raw_value="120 over 80",
+        units="mmHg",
+        confidence=0.91,
+        risk_level="MEDIUM_RISK",
+        status="approved",
+        source_document_id=document_id,
+    )
+    db = _TransactionalSession(job, approved_field)
+    provider = SimpleNamespace(
+        actor_uid="provider-binding-race",
+        hospital_id=tenant_id,
+        hospital=SimpleNamespace(hospital_id=tenant_id),
+    )
+    different_provider = SimpleNamespace(
+        actor_uid="different-provider",
+        hospital_id=tenant_id,
+        hospital=SimpleNamespace(hospital_id=tenant_id),
+    )
+    capability = SimpleNamespace(
+        patient_id=str(patient_id), request_id="workflow-binding-race"
+    )
+    with (
+        patch(
+            "app.api.v2.pipeline_routes.authorize_document_processing",
+            AsyncMock(return_value=capability),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.current_audit_context",
+            return_value=AuditContext.for_tenant(
+                tenant_id=str(tenant_id), domain=AuditDomain.PIPELINE
+            ),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.enforce_current_clinical_capability",
+            AsyncMock(side_effect=[provider, different_provider]),
+        ),
+        patch(
+            "app.api.v2.pipeline_routes.check_erasure_registry",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await commit_extraction_job(
+                Request({"type": "http", "method": "POST", "path": "/"}),
+                str(job_id),
+                CommitJobRequest(patient_id=str(patient_id)),
+                provider,
+                "consent-capability",
+                db,
+            )
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == {"error_code": "CROSS_PROVIDER_JOB_ACCESS"}
+    assert db.extracted_field_selects == 2
+    assert db.persisted == []
+    assert db.persisted_outbox == []
+    assert db.rollbacks == 1

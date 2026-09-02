@@ -85,7 +85,9 @@ LEGAL_PROVIDER_JOB_TRANSITIONS = MappingProxyType(
                 _S.PROVIDER_UNREACHABLE_MANUAL_REVIEW.value,
             }
         ),
-        _S.SUCCEEDED.value: frozenset({_S.FETCHING_RESULTS.value}),
+        _S.SUCCEEDED.value: frozenset(
+            {_S.FETCHING_RESULTS.value, _S.FAILED_TERMINAL.value}
+        ),
         _S.FETCHING_RESULTS.value: frozenset(
             {
                 _S.VALIDATING_COMPLETE_RESULT.value,

@@ -2,10 +2,12 @@
 Shared test setup.
 """
 
+import asyncio
 import os
 import sys
 import types
 import tempfile
+from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -33,6 +35,11 @@ os.environ.setdefault(
 os.environ["TRUSTED_HOSTS"] = "localhost,127.0.0.1,testserver"
 
 from app.main import app
+from app.core.database import get_db_session
+from tests.helpers.clinical_auth_harness import (
+    ClinicalSessionFactory,
+    ClinicalTestSession,
+)
 
 
 class AwaitableResponse:
@@ -389,6 +396,42 @@ def admin_context():
 
 
 @pytest.fixture
+def clinician_context():
+    """Independent, minimum-role provider context for downstream route tests.
+
+    This fixture is deliberately only a context value.  It does not install
+    dependency overrides or grant capabilities; each non-security test that
+    needs one must declare and scope that precondition itself.
+    """
+    import uuid
+
+    from app.models.provider import AffiliationType
+    from app.models.provider_context import (
+        AffiliationContext,
+        HospitalContext,
+        ProviderContext,
+        ProviderIdentityContext,
+    )
+
+    return ProviderContext(
+        provider=ProviderIdentityContext(
+            provider_id=uuid.uuid4(),
+            display_name="Clinician",
+            contact_email="clinician@example.test",
+        ),
+        hospital=HospitalContext(
+            hospital_id=uuid.uuid4(), facility_code="CLINIC", display_name="Clinic"
+        ),
+        affiliation=AffiliationContext(
+            affiliation_id=uuid.uuid4(),
+            affiliation_type=AffiliationType.PERMANENT,
+            is_primary=True,
+            roles=["clinician"],
+        ),
+    )
+
+
+@pytest.fixture
 def admin_headers(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
 
@@ -408,6 +451,33 @@ def mock_db():
 @pytest.fixture
 def test_db(mock_db):
     return mock_db
+
+
+@pytest.fixture
+def real_clinical_session(
+    mock_db, mock_redis, request
+) -> Iterator[ClinicalTestSession]:
+    """Install only a session-specific authoritative trust-state adapter."""
+
+    factory_kwargs = getattr(request, "param", {})
+    clinical_session = asyncio.run(
+        ClinicalSessionFactory(mock_db).create(**factory_kwargs)
+    )
+    assert any(key.startswith("provider_session:") for key in mock_redis.data)
+
+    previous_db_override = app.dependency_overrides.get(get_db_session)
+
+    async def _clinical_db():
+        yield clinical_session.db
+
+    app.dependency_overrides[get_db_session] = _clinical_db
+    try:
+        yield clinical_session
+    finally:
+        if previous_db_override is None:
+            app.dependency_overrides.pop(get_db_session, None)
+        else:
+            app.dependency_overrides[get_db_session] = previous_db_override
 
 
 @pytest.fixture(autouse=True)

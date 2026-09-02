@@ -20,6 +20,13 @@
 Navigation to a patient-record screen is not authorization; every record
 request remains independently authenticated, capability-checked, and audited.
 
+Before any routine clinical operation, the backend re-evaluates current
+provider account, credential, professional, facility, affiliation, typed
+capability, and MFA/session assurance. It uses the server-owned
+`EMAIL_AND_PHONE` contact policy (`clinical-contact-email-and-phone/v1`),
+which requires both verified contact channels. This is an engineering/product
+policy, not a statutory-contact or legal-compliance statement.
+
 ## Security rules
 
 - Discovery capability is 120-second, provider/hospital/session-bound, and
@@ -39,6 +46,9 @@ Emergency access does not use the discovery flow. It requires recent provider
 MFA, a controlled reason code, and justification. The server selects a
 minimum-necessary emergency scope for 15 minutes, audits access, and attempts
 patient notification. The client must not present it as full-record access.
+`POST /api/v2/emergency/read-card` is retired and returns only
+`410 EMERGENCY_DIRECT_CARD_READ_RETIRED`; clients must never use it to resolve
+a card or retrieve a snapshot.
 
 ## Qualification status
 

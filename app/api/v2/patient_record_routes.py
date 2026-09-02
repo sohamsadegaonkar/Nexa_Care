@@ -25,7 +25,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.consent_gate import require_consent, require_self_patient_access
 from app.core.database import get_db_session
-from app.core.dependencies import get_current_provider, require_role
+from app.core.dependencies import (
+    get_current_provider,
+    require_clinical_capability,
+    require_role,
+)
+from app.security.provider_capabilities import ClinicalCapability
 from app.models.patient_records import (
     Allergy,
     DocumentReference,
@@ -556,7 +561,9 @@ def _as_uuid(value: object) -> uuid.UUID | None:
 @router.get("/api/v2/patient/{id}/summary", status_code=status.HTTP_200_OK)
 async def get_patient_summary(
     id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ),
     capability=Depends(require_consent("clinical_summary")),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -861,7 +868,9 @@ async def get_patient_timeline(
     id: str,
     limit: int = 20,
     cursor: str | None = None,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ),
     capability=Depends(require_consent("timeline_view")),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -926,7 +935,9 @@ async def get_patient_audit_trail(
 @router.get("/api/v2/patient/{id}/structured-record", status_code=status.HTTP_200_OK)
 async def get_patient_structured_record(
     id: str,
-    provider: ProviderContext = Depends(get_current_provider),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.RECORD_READ)
+    ),
     capability=Depends(require_consent("full")),
     db: AsyncSession = Depends(get_db_session),
 ):

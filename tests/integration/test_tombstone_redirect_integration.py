@@ -18,7 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.dependencies import get_db_session, get_provider_context
+from app.core.dependencies import get_db_session, require_clinical_capability
 from app.main import app
 from app.models.nfc_card_registry import NFCCardStatus
 from app.models.provider import AffiliationType
@@ -28,6 +28,7 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
+from app.security.provider_capabilities import ClinicalCapability
 from tests.conftest import FakeRedis
 
 
@@ -99,7 +100,8 @@ class FakeDB:
 
 def _client_with_overrides(db: FakeDB):
     provider = _provider()
-    app.dependency_overrides[get_provider_context] = lambda: provider
+    gate = require_clinical_capability(ClinicalCapability.PATIENT_DISCOVER)
+    app.dependency_overrides[gate] = lambda: provider
     app.dependency_overrides[get_db_session] = lambda: db
     return TestClient(app)
 

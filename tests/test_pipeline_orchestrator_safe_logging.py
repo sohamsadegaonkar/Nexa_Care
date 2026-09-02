@@ -143,6 +143,10 @@ async def test_internal_failure_log_never_leaks_exception_text(
     try:
         with (
             patch(
+                "app.services.pipeline_orchestrator.recheck_delegated_document_processing_trust",
+                AsyncMock(return_value=None),
+            ),
+            patch(
                 "app.services.pipeline_orchestrator.get_document_storage",
                 return_value=fake_storage,
             ),
@@ -207,6 +211,10 @@ async def test_document_only_confidence_routes_source_only_without_staging():
     )
 
     with (
+        patch(
+            "app.services.pipeline_orchestrator.recheck_delegated_document_processing_trust",
+            AsyncMock(return_value=None),
+        ),
         patch(
             "app.services.pipeline_orchestrator.get_document_storage",
             return_value=fake_storage,
@@ -279,6 +287,10 @@ async def test_routing_failure_rolls_back_before_terminal_job_update():
         )
     )
     with (
+        patch(
+            "app.services.pipeline_orchestrator.recheck_delegated_document_processing_trust",
+            AsyncMock(return_value=None),
+        ),
         patch(
             "app.services.pipeline_orchestrator.get_document_storage",
             return_value=fake_storage,

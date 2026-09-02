@@ -9,9 +9,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from sqlalchemy import select
@@ -27,7 +29,12 @@ from app.ai.extractor import (
     ProviderResponseError,
     ProviderTimeoutError,
 )
-from app.models.pipeline import ExtractionProviderJobRecord
+from app.models.pipeline import ExtractionJob, ExtractionProviderJobRecord
+from app.core.document_processing_gate import (
+    DelegatedClinicalTrustError,
+    quarantine_delegated_clinical_trust_denial,
+    recheck_delegated_document_processing_trust,
+)
 from app.services.provider_job_lifecycle import (
     ProviderJobLifecycleError,
     ProviderJobStatus,
@@ -45,6 +52,8 @@ from app.services.textract_source_staging import (
     TextractSourceStager,
     TextractSourceStagingError,
 )
+
+logger = logging.getLogger("nexa_logger")
 
 
 def async_multipage_eligible(
@@ -117,6 +126,118 @@ class AsyncStartResult:
     expected_page_count: int
 
 
+BeforeProviderSubmissionGuard = Callable[[], Awaitable[None]]
+BeforeSourceRetrievalGuard = Callable[[], Awaitable[None]]
+
+
+async def _delete_staged_source_without_replacing_denial(
+    stager: TextractSourceStager,
+    *,
+    tenant_id: uuid.UUID,
+    provider_attempt_id: uuid.UUID,
+) -> None:
+    """Best-effort cleanup that never turns a security denial into a retry."""
+
+    try:
+        await stager.delete(
+            tenant_id=tenant_id, provider_attempt_id=provider_attempt_id
+        )
+    except Exception:  # noqa: BLE001 - cleanup is not an authorization decision
+        logger.warning("delegated_staging_cleanup_failed")
+
+
+async def _mark_pre_submission_denial(
+    db: AsyncSession,
+    *,
+    provider_attempt_id: uuid.UUID,
+    stager: TextractSourceStager,
+) -> None:
+    """Terminally stop an unsubmitted attempt and discard its staged source."""
+
+    current = (
+        await db.execute(
+            select(ExtractionProviderJobRecord)
+            .where(ExtractionProviderJobRecord.id == provider_attempt_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if current is not None and current.status == ProviderJobStatus.SUBMITTING.value:
+        await transition_provider_attempt(
+            db,
+            provider_attempt_id=current.id,
+            expected_version=current.version,
+            target_status=ProviderJobStatus.FAILED_TERMINAL,
+        )
+        await db.commit()
+    if current is not None:
+        await _delete_staged_source_without_replacing_denial(
+            stager, tenant_id=current.tenant_id, provider_attempt_id=current.id
+        )
+
+
+async def _recheck_attempt_trust(
+    db: AsyncSession, *, provider_attempt_id: uuid.UUID
+) -> ExtractionJob:
+    """Load the authoritative workflow rather than trusting lifecycle claims."""
+
+    attempt = (
+        await db.execute(
+            select(ExtractionProviderJobRecord).where(
+                ExtractionProviderJobRecord.id == provider_attempt_id
+            )
+        )
+    ).scalar_one_or_none()
+    job = (
+        await db.execute(
+            select(ExtractionJob).where(
+                ExtractionJob.id == (attempt.job_id if attempt is not None else None)
+            )
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise DelegatedClinicalTrustError("DELEGATED_CLINICAL_WORKFLOW_UNAVAILABLE")
+    await recheck_delegated_document_processing_trust(job=job, db=db)
+    return job
+
+
+async def _quarantine_retrieval_denial(
+    db: AsyncSession,
+    *,
+    provider_attempt_id: uuid.UUID,
+    job_id: uuid.UUID,
+    error_code: str,
+    stager: TextractSourceStager,
+) -> None:
+    """Persist only value-free lifecycle and denial state after trust loss."""
+
+    await quarantine_delegated_clinical_trust_denial(
+        db=db, job_id=job_id, error_code=error_code
+    )
+    current = (
+        await db.execute(
+            select(ExtractionProviderJobRecord)
+            .where(ExtractionProviderJobRecord.id == provider_attempt_id)
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if current is not None and current.status in {
+        ProviderJobStatus.SUCCEEDED.value,
+        ProviderJobStatus.FETCHING_RESULTS.value,
+        ProviderJobStatus.VALIDATING_COMPLETE_RESULT.value,
+    }:
+        await transition_provider_attempt(
+            db,
+            provider_attempt_id=current.id,
+            expected_version=current.version,
+            target_status=ProviderJobStatus.FAILED_TERMINAL,
+        )
+        await db.commit()
+    if current is not None:
+        await _delete_staged_source_without_replacing_denial(
+            stager, tenant_id=current.tenant_id, provider_attempt_id=current.id
+        )
+
+
 async def prepare_and_create_provider_attempt(
     db: AsyncSession,
     *,
@@ -126,6 +247,7 @@ async def prepare_and_create_provider_attempt(
     patient_id: uuid.UUID,
     source_document_id: uuid.UUID,
     job_attempt_number: int,
+    before_source_retrieval: BeforeSourceRetrievalGuard,
     occurred_at: datetime | None = None,
 ) -> tuple[ExtractionProviderJobRecord, PreparedTextractSource]:
     """Create the durable attempt only after independent source preflight."""
@@ -139,6 +261,9 @@ async def prepare_and_create_provider_attempt(
         )
     ).scalar_one_or_none()
     attempt_id = existing.id if existing is not None else uuid.uuid4()
+    # ``prepare_for_graph`` decrypts/reads the source.  The caller must supply
+    # the current delegated decision immediately before that PHI boundary.
+    await before_source_retrieval()
     prepared = await stager.prepare_for_graph(
         db,
         provider_attempt_id=attempt_id,
@@ -178,8 +303,10 @@ async def start_async_provider_attempt(
     db: AsyncSession,
     *,
     provider_attempt_id: uuid.UUID,
+    prepared: PreparedTextractSource,
     stager: TextractSourceStager,
     provider: AsyncTextractProvider,
+    before_provider_submission: BeforeProviderSubmissionGuard,
 ) -> AsyncStartResult:
     """Preflight, stage, start, and bind one immutable provider attempt."""
 
@@ -192,7 +319,6 @@ async def start_async_provider_attempt(
     ).scalar_one_or_none()
     if row is None:
         raise ProviderJobLifecycleError("ASYNC_PROVIDER_ATTEMPT_NOT_FOUND")
-    prepared = await stager.prepare_for_attempt(db, provider_attempt_id=row.id)
     expected_fp = provider_request_fingerprint(
         source_document_id=prepared.source_document_id,
         source_content_hash=prepared.content_hash,
@@ -235,6 +361,16 @@ async def start_async_provider_attempt(
                 target_status=ProviderJobStatus.FAILED_TERMINAL,
             )
             await db.commit()
+        raise
+    try:
+        # Staging itself may have awaited and must never authorize submission.
+        await before_provider_submission()
+    except Exception:
+        await _mark_pre_submission_denial(
+            db,
+            provider_attempt_id=row.id,
+            stager=stager,
+        )
         raise
     try:
         started = await provider.start(
@@ -322,28 +458,59 @@ def make_textract_reconciliation_callback(
                 raise TextractSourceStagingError(
                     "ASYNC_PROVIDER_REQUEST_FINGERPRINT_MISMATCH"
                 )
-            prepared = await stager.prepare_for_attempt(db, provider_attempt_id=row.id)
-            expected_fp = provider_request_fingerprint(
-                source_document_id=prepared.source_document_id,
-                source_content_hash=prepared.content_hash,
-                staging_bucket=prepared.bucket,
-                staging_key=prepared.key,
-                expected_page_count=prepared.page_count,
-            )
-            if not hmac.compare_digest(expected_fp, row.provider_request_fingerprint):
-                raise TextractSourceStagingError(
-                    "ASYNC_PROVIDER_REQUEST_FINGERPRINT_MISMATCH"
+            job = (
+                await db.execute(
+                    select(ExtractionJob).where(ExtractionJob.id == claim.job_id)
                 )
-            token = deterministic_client_request_token(row.id)
-            if row.provider_job_id:
-                return await provider.check_status(provider_job_id=row.provider_job_id)
-            staged = await stager.stage(prepared)
+            ).scalar_one_or_none()
+            if job is None or job.id != row.job_id:
+                raise TextractSourceStagingError(
+                    "ASYNC_PROVIDER_GRAPH_BINDING_MISMATCH"
+                )
             try:
+                await recheck_delegated_document_processing_trust(job=job, db=db)
+                if row.provider_job_id:
+                    return await provider.check_status(
+                        provider_job_id=row.provider_job_id
+                    )
+                # This source preparation reads/decrypts PHI.  It follows the
+                # preceding current trust/consent/workflow-state checkpoint.
+                prepared = await stager.prepare_for_attempt(
+                    db, provider_attempt_id=row.id
+                )
+                expected_fp = provider_request_fingerprint(
+                    source_document_id=prepared.source_document_id,
+                    source_content_hash=prepared.content_hash,
+                    staging_bucket=prepared.bucket,
+                    staging_key=prepared.key,
+                    expected_page_count=prepared.page_count,
+                )
+                if not hmac.compare_digest(
+                    expected_fp, row.provider_request_fingerprint
+                ):
+                    raise TextractSourceStagingError(
+                        "ASYNC_PROVIDER_REQUEST_FINGERPRINT_MISMATCH"
+                    )
+                token = deterministic_client_request_token(row.id)
+                staged = await stager.stage(prepared)
+                # Staging may await, so authorize once more immediately before
+                # provider submission.
+                await recheck_delegated_document_processing_trust(job=job, db=db)
                 started = await provider.start(
                     location=ControlledS3Location(staged.bucket, staged.key),
                     client_request_token=token,
                     provider_request_fingerprint=row.provider_request_fingerprint,
                     provider_attempt_id=str(row.id),
+                )
+            except DelegatedClinicalTrustError as exc:
+                await quarantine_delegated_clinical_trust_denial(
+                    db=db, job_id=job.id, error_code=exc.code
+                )
+                await _delete_staged_source_without_replacing_denial(
+                    stager, tenant_id=row.tenant_id, provider_attempt_id=row.id
+                )
+                return ProviderReconciliationOutcome(
+                    ReconciliationOutcomeType.FAILED_TERMINAL
                 )
             except (DocumentExtractionError, TextractSourceStagingError):
                 raise
@@ -379,6 +546,17 @@ async def retrieve_and_complete_provider_attempt(
         raise ProviderJobLifecycleError("ASYNC_PROVIDER_RESULT_NOT_READY")
     if row.provider_job_id is None or row.expected_page_count is None:
         raise ProviderJobLifecycleError("ASYNC_PROVIDER_RESULT_METADATA_INVALID")
+    try:
+        await _recheck_attempt_trust(db, provider_attempt_id=row.id)
+    except DelegatedClinicalTrustError as exc:
+        await _quarantine_retrieval_denial(
+            db,
+            provider_attempt_id=row.id,
+            job_id=row.job_id,
+            error_code=exc.code,
+            stager=stager,
+        )
+        raise
     row = await transition_provider_attempt(
         db,
         provider_attempt_id=row.id,
@@ -391,6 +569,17 @@ async def retrieve_and_complete_provider_attempt(
             provider_job_id=row.provider_job_id,
             expected_page_count=row.expected_page_count,
         )
+        try:
+            await _recheck_attempt_trust(db, provider_attempt_id=row.id)
+        except DelegatedClinicalTrustError as exc:
+            await _quarantine_retrieval_denial(
+                db,
+                provider_attempt_id=row.id,
+                job_id=row.job_id,
+                error_code=exc.code,
+                stager=stager,
+            )
+            raise
         observed = provider.last_observed_page_count
         if observed != row.expected_page_count:
             raise ProviderResponseError("Async Textract page completeness failed")
@@ -405,6 +594,19 @@ async def retrieve_and_complete_provider_attempt(
         # Cleanup is deliberately before the durable COMPLETE transition and
         # before any downstream candidate handoff.
         await stager.delete(tenant_id=row.tenant_id, provider_attempt_id=row.id)
+        try:
+            # Cleanup is external I/O; a prior allow cannot authorize the
+            # result handoff after this awaited boundary.
+            await _recheck_attempt_trust(db, provider_attempt_id=row.id)
+        except DelegatedClinicalTrustError as exc:
+            await _quarantine_retrieval_denial(
+                db,
+                provider_attempt_id=row.id,
+                job_id=row.job_id,
+                error_code=exc.code,
+                stager=stager,
+            )
+            raise
         row = await transition_provider_attempt(
             db,
             provider_attempt_id=row.id,

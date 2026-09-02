@@ -1,15 +1,23 @@
 from pathlib import Path
+import ast
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 
 ROOT = Path(__file__).resolve().parents[1]
-REVISION = "20260830_provider_trust"
+REVISION = "20260830_delegated_assurance"
+TRUST_REVISION = "20260830_provider_trust"
 
 
 def _source() -> str:
     return (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def _trust_source() -> str:
+    return (ROOT / "alembic" / "versions" / f"{TRUST_REVISION}.py").read_text(
         encoding="utf-8"
     )
 
@@ -19,11 +27,11 @@ def test_provider_trust_migration_is_current_single_head() -> None:
     config.set_main_option("script_location", str(ROOT / "alembic"))
     scripts = ScriptDirectory.from_config(config)
     assert scripts.get_heads() == [REVISION]
-    assert scripts.get_revision(REVISION).down_revision == "20260827_patient_public_id"
+    assert scripts.get_revision(REVISION).down_revision == "20260830_provider_trust"
 
 
 def test_migration_backfills_trust_state_fail_closed_and_is_forward_only() -> None:
-    source = _source()
+    source = _trust_source()
     assert "'NOT_SUBMITTED'" in source
     assert "'DRAFT'" in source
     assert "'PENDING_ACTIVATION'" in source
@@ -33,7 +41,7 @@ def test_migration_backfills_trust_state_fail_closed_and_is_forward_only() -> No
 
 
 def test_migration_defines_modelled_tables_constraints_and_documentation() -> None:
-    source = _source()
+    source = _trust_source()
     for required in (
         "professional_verification",
         "facility_verification",
@@ -54,3 +62,38 @@ def test_migration_defines_modelled_tables_constraints_and_documentation() -> No
         "Forward-fix strategy:",
     ):
         assert required in source
+
+
+def test_delegated_assurance_migration_requires_complete_non_secret_provenance() -> (
+    None
+):
+    source = _source()
+    for required in (
+        "authorization_initiated_at",
+        "authorization_authentication_method",
+        "authorization_mfa_verified_at",
+        "authorization_assurance_policy_version",
+        "ck_extraction_jobs_delegated_assurance_complete",
+        "forward-only",
+        "raise RuntimeError",
+    ):
+        assert required in source
+
+
+def test_every_production_extraction_job_creation_sets_complete_assurance() -> None:
+    required = {
+        "authorization_initiated_at",
+        "authorization_authentication_method",
+        "authorization_mfa_verified_at",
+        "authorization_assurance_policy_version",
+    }
+    for path in (ROOT / "app").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            if not (
+                isinstance(node.func, ast.Name) and node.func.id == "ExtractionJob"
+            ):
+                continue
+            assert required.issubset({item.arg for item in node.keywords})

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import hashlib
 import uuid
 from contextlib import ExitStack
 from datetime import datetime, timezone
@@ -25,15 +26,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.dependencies import get_current_provider, get_provider_context
+from app.core.dependencies import get_scoped_session
 from app.main import app
-from app.models.provider_context import (
-    AffiliationContext,
-    HospitalContext,
-    ProviderContext,
-    ProviderIdentityContext,
-)
-from app.models.provider import AffiliationType
 from app.services.consent_engine import ConsentCapability
 from app.services.patient_discovery_service import PatientDiscoveryService
 from app.services.signed_approval_verifier import canonical_signed_approval_payload
@@ -43,31 +37,10 @@ from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 
-def _make_provider_context(provider_id=None) -> ProviderContext:
-    return ProviderContext(
-        provider=ProviderIdentityContext(
-            provider_id=provider_id or uuid.uuid4(),
-            display_name="Dr. Audit",
-            contact_email="audit@hospital.example",
-        ),
-        hospital=HospitalContext(
-            hospital_id=uuid.uuid4(),
-            facility_code="AUD",
-            display_name="Audit Hospital",
-        ),
-        affiliation=AffiliationContext(
-            affiliation_id=uuid.uuid4(),
-            affiliation_type=AffiliationType.PERMANENT,
-            is_primary=True,
-            roles=["clinician"],
-        ),
-    )
-
-
-def _make_capability(patient_id: str) -> ConsentCapability:
+def _make_capability(patient_id: str, clinician_id: str) -> ConsentCapability:
     return ConsentCapability(
         patient_id=patient_id,
-        clinician_id=str(uuid.uuid4()),
+        clinician_id=clinician_id,
         purpose="TREATMENT",
         scope=["clinical.*", "pii.*"],
         is_break_glass=False,
@@ -115,15 +88,17 @@ def _reset_mock_db(mock_db):
     )
 
 
-def _active_discovery_handle(fake_redis, provider, patient_id: str) -> str:
+def _active_discovery_handle(fake_redis, clinical_session, patient_id: str) -> str:
     service = PatientDiscoveryService(db=MagicMock(), redis=fake_redis)
     patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     handle = asyncio.run(
         service.issue_handle(
             patient=patient,
-            provider_id=provider.actor_uid,
-            hospital_id=str(provider.hospital_id),
-            session_binding=provider.session_binding,
+            provider_id=str(clinical_session.provider.id),
+            hospital_id=str(clinical_session.hospital.id),
+            session_binding=hashlib.sha256(
+                clinical_session.token.encode("utf-8")
+            ).hexdigest(),
             identifier_type="TEST_DISCOVERY",
         )
     )
@@ -165,7 +140,7 @@ def test_consent_access_produces_audit(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-07a: Successful consent-gated access produces ≥1 audit call.
 
@@ -173,16 +148,7 @@ def test_consent_access_produces_audit(
     verify it was called during the access.
     """
     patient_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-    capability = _make_capability(patient_id)
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-    overrides[get_provider_context] = _provider_dep
-    app.dependency_overrides[get_provider_context] = _provider_dep
+    capability = _make_capability(patient_id, str(real_clinical_session.provider.id))
 
     with ExitStack() as stack:
         stack.enter_context(
@@ -239,7 +205,7 @@ def test_consent_access_produces_audit(
         _reset_mock_db(mock_db)
         client.get(
             f"/api/v2/patient/{patient_id}/summary",
-            headers={"X-Consent-Token": "t"},
+            headers={**real_clinical_session.headers, "X-Consent-Token": "t"},
         )
 
         # The consent gate must have called audit at least once
@@ -251,18 +217,10 @@ def test_consent_failure_produces_audit(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-07b: Failed consent access (missing token) produces audit with FORBIDDEN status."""
     patient_id = str(uuid.uuid4())
-    provider = _make_provider_context()
-
-    async def _provider_dep():
-        return provider
-
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-
     with ExitStack() as stack:
         stack.enter_context(
             patch("app.core.redis.get_redis_client", return_value=fake_sync_redis)
@@ -301,7 +259,10 @@ def test_consent_failure_produces_audit(
 
         _reset_mock_db(mock_db)
         # No X-Consent-Token → 403
-        resp = client.get(f"/api/v2/patient/{patient_id}/summary")
+        resp = client.get(
+            f"/api/v2/patient/{patient_id}/summary",
+            headers=real_clinical_session.headers,
+        )
         assert resp.status_code == 403
 
         # Audit must have been called for the failure
@@ -356,13 +317,12 @@ def test_consent_action_audited_on_approve(
     fake_redis,
     fake_sync_redis,
     mock_db,
-    overrides,
+    real_clinical_session,
 ):
     """T-07e: Consent approval produces CONSENT_APPROVED_SIGNED audit event."""
     import base64
     from cryptography.hazmat.primitives.asymmetric import ec
     from cryptography.hazmat.primitives import serialization
-    from app.core.dependencies import get_scoped_session
 
     private_key = ec.generate_private_key(ec.SECP256R1())
     der_bytes = private_key.public_key().public_bytes(
@@ -372,20 +332,11 @@ def test_consent_action_audited_on_approve(
     der_b64 = base64.b64encode(der_bytes).decode("ascii")
     device_id = str(uuid.uuid4())
     patient_id_val = str(uuid.uuid4())
-    provider = _make_provider_context()
-    provider_id = str(provider.provider.provider_id)
-
-    async def _provider_dep():
-        return provider
+    provider_id = str(real_clinical_session.provider.id)
 
     async def _session_dep():
         return patient_id_val
 
-    overrides[get_current_provider] = _provider_dep
-    app.dependency_overrides[get_current_provider] = _provider_dep
-    overrides[get_provider_context] = _provider_dep
-    app.dependency_overrides[get_provider_context] = _provider_dep
-    overrides[get_scoped_session] = _session_dep
     app.dependency_overrides[get_scoped_session] = _session_dep
 
     device_row = MagicMock()
@@ -412,9 +363,7 @@ def test_consent_action_audited_on_approve(
                 return_value=fake_redis,
             )
         )
-        patient = MagicMock(
-            patient_uuid=uuid.UUID(patient_id_val), is_deleted=False
-        )
+        patient = MagicMock(patient_uuid=uuid.UUID(patient_id_val), is_deleted=False)
         stack.enter_context(
             patch.object(
                 PatientDiscoveryService,
@@ -426,12 +375,6 @@ def test_consent_action_audited_on_approve(
             patch(
                 "app.services.consent_engine.get_consent_redis_client",
                 return_value=fake_redis,
-            )
-        )
-        stack.enter_context(
-            patch(
-                "app.services.provider_auth_service.get_redis_client",
-                return_value=fake_sync_redis,
             )
         )
         mock_supabase = MagicMock()
@@ -499,7 +442,7 @@ def test_consent_action_audited_on_approve(
 
         # Request consent
         discovery_handle = _active_discovery_handle(
-            fake_redis, provider, patient_id_val
+            fake_redis, real_clinical_session, patient_id_val
         )
         _reset_mock_db(mock_db)
         mock_db.execute.side_effect = _side_effect_with_fallback(
@@ -509,6 +452,7 @@ def test_consent_action_audited_on_approve(
         )
         req_resp = client.post(
             "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
             json={
                 "discovery_handle": discovery_handle,
                 "purpose": "checkup",

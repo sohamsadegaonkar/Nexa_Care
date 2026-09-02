@@ -30,6 +30,9 @@ import hashlib
 import json
 import logging
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from datetime import datetime
+from functools import lru_cache
 from typing import NamedTuple
 from uuid import UUID
 
@@ -50,6 +53,16 @@ from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
+from app.models.provider import ProviderIdentity
+from app.security.provider_capabilities import ClinicalCapability
+from app.services.clinical_eligibility import (
+    ClinicalAuthenticationMethod,
+    ClinicalEligibilityDenialCode,
+    ClinicalEligibilityService,
+    ClinicalEligibilityUnavailable,
+    InteractiveClinicalAuthentication,
+)
+from app.security.clinical_policy import CLINICAL_CONTACT_ASSURANCE_POLICY
 from app.services.auth_service import validate_session_context
 from app.services.patient_auth_service import decode_patient_access_token
 from app.services.consent_engine import (
@@ -60,10 +73,10 @@ from app.services.provider_auth_service import (
     ProviderAuthFailure,
     authenticate_provider_password,
     authenticate_provider_session,
+    resolve_provider_session_context,
 )
 
 logger = logging.getLogger("nexa_logger")
-
 
 # ---------------------------------------------------------------------------
 # Strict patient-self JWT-only auth dependency
@@ -450,6 +463,263 @@ def require_role(required_role: str):
         return provider
 
     return _require_role
+
+
+def _clinical_session_from_request(request: Request) -> str | None:
+    """Return only the opaque session transport accepted for clinical authority."""
+
+    authorization = request.headers.get("authorization", "")
+    scheme, _, bearer = authorization.partition(" ")
+    session = (
+        bearer.strip()
+        if scheme.lower() == "bearer" and bearer.strip()
+        else request.cookies.get("nexa_provider_session")
+    )
+    return session if isinstance(session, str) and session else None
+
+
+async def enforce_current_clinical_capability(
+    *,
+    request: Request,
+    provider: ProviderContext,
+    db: AsyncSession,
+    capability: ClinicalCapability,
+) -> ProviderContext:
+    """Reauthenticate and evaluate one current clinical operation.
+
+    This is intentionally reusable at route admission and immediately before
+    durable clinical mutation.  It never treats a prior dependency result,
+    frontend state, Basic authentication, or a raw Redis lookup as current
+    clinical authority.
+    """
+    if not isinstance(capability, ClinicalCapability):
+        raise TypeError("capability must be a server-owned ClinicalCapability")
+
+    raw_session = _clinical_session_from_request(request)
+    if raw_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    try:
+        canonical = await authenticate_provider_session(
+            db,
+            raw_session,
+            provider.hospital_id,
+            user_agent=request.headers.get("user-agent"),
+            client_ip=_client_ip_from_request(request),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "CLINICAL_TRUST_UNAVAILABLE"},
+        ) from exc
+    current_provider = canonical.context
+    if (
+        current_provider is None
+        or current_provider.actor_uid != provider.actor_uid
+        or current_provider.hospital_id != provider.hospital_id
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    try:
+        session = await resolve_provider_session_context(raw_session)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "CLINICAL_TRUST_UNAVAILABLE"},
+        ) from exc
+    if session is None or str(session.get("provider_id")) != current_provider.actor_uid:
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    raw_mfa_verified_at = session.get("mfa_verified_at")
+    try:
+        mfa_verified_at = (
+            datetime.fromisoformat(raw_mfa_verified_at)
+            if isinstance(raw_mfa_verified_at, str)
+            else None
+        )
+    except ValueError:
+        mfa_verified_at = None
+
+    authentication = InteractiveClinicalAuthentication(
+        provider_id=current_provider.provider.provider_id,
+        hospital_id=current_provider.hospital_id,
+        method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
+        session_authenticated=bool(session.get("authenticated")),
+        mfa_verified_at=mfa_verified_at,
+    )
+    try:
+        result = await ClinicalEligibilityService(
+            contact_assurance_policy=CLINICAL_CONTACT_ASSURANCE_POLICY
+        ).evaluate_interactive(
+            db,
+            ProviderIdentity(id=current_provider.provider.provider_id),
+            authentication,
+            capability,
+        )
+    except ClinicalEligibilityUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "CLINICAL_TRUST_UNAVAILABLE"},
+        ) from exc
+
+    if result.allowed:
+        # Preserve the server-derived binding used by short-lived discovery
+        # handles while keeping the opaque session itself out of the context.
+        return current_provider.model_copy(
+            update={
+                "session_binding": hashlib.sha256(
+                    raw_session.encode("utf-8")
+                ).hexdigest()
+            }
+        )
+
+    denial_code = (
+        result.denial_code
+        or ClinicalEligibilityDenialCode.TRUST_STATE_INTEGRITY_FAILURE
+    )
+    await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
+        actor_uid=current_provider.actor_uid,
+        event_type="CLINICAL_ELIGIBILITY_DENIED",
+        target_id=str(current_provider.hospital_id),
+        status="DENIED",
+        metadata={
+            "capability": capability.value,
+            "denial_code": denial_code.value,
+            "mode": result.mode.value,
+            "policy_version": result.policy_version or "unavailable",
+        },
+    )
+    if denial_code is ClinicalEligibilityDenialCode.CLINICAL_SESSION_REQUIRED:
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    if denial_code in {
+        ClinicalEligibilityDenialCode.CLINICAL_MFA_ENROLLMENT_REQUIRED,
+        ClinicalEligibilityDenialCode.CLINICAL_MFA_REQUIRED,
+        ClinicalEligibilityDenialCode.RECENT_MFA_REQUIRED,
+    }:
+        raise HTTPException(status_code=428, detail={"error_code": denial_code.value})
+    raise HTTPException(
+        status_code=403,
+        detail={"error_code": "CLINICAL_ELIGIBILITY_DENIED"},
+    )
+
+
+@lru_cache(maxsize=None)
+def require_clinical_capability(capability: ClinicalCapability):
+    """FastAPI dependency wrapper for the reusable current-trust enforcer."""
+
+    if not isinstance(capability, ClinicalCapability):
+        raise TypeError("capability must be a server-owned ClinicalCapability")
+
+    async def _require_clinical_capability(
+        request: Request,
+        provider: ProviderContext = Depends(get_current_provider),
+        db: AsyncSession = Depends(get_db_session),
+    ) -> ProviderContext:
+        return await enforce_current_clinical_capability(
+            request=request,
+            provider=provider,
+            db=db,
+            capability=capability,
+        )
+
+    return _require_clinical_capability
+
+
+@dataclass(frozen=True, slots=True)
+class ClinicalInitiationAssurance:
+    """Non-secret server-derived provenance for delegated clinical work."""
+
+    initiated_at: datetime
+    authentication_method: ClinicalAuthenticationMethod
+    mfa_verified_at: datetime
+    assurance_policy_version: str
+
+
+async def capture_clinical_initiation_assurance(
+    request: Request, provider: ProviderContext, db: AsyncSession
+) -> ClinicalInitiationAssurance:
+    """Capture minimal delegated-work provenance after an interactive gate.
+
+    The opaque session token is resolved only to obtain server-side assurance
+    facts and is never returned, logged, or stored on the extraction job.
+    """
+
+    raw_session = _clinical_session_from_request(request)
+    if raw_session is None:
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    try:
+        canonical = await authenticate_provider_session(
+            db,
+            raw_session,
+            provider.hospital_id,
+            user_agent=request.headers.get("user-agent"),
+            client_ip=_client_ip_from_request(request),
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "CLINICAL_TRUST_UNAVAILABLE"},
+        ) from exc
+    current_provider = canonical.context
+    if (
+        current_provider is None
+        or current_provider.actor_uid != provider.actor_uid
+        or current_provider.hospital_id != provider.hospital_id
+    ):
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    try:
+        session = await resolve_provider_session_context(raw_session)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "CLINICAL_TRUST_UNAVAILABLE"},
+        ) from exc
+    if session is None or str(session.get("provider_id")) != current_provider.actor_uid:
+        raise HTTPException(
+            status_code=401,
+            detail={"error_code": "CLINICAL_SESSION_REQUIRED"},
+        )
+    raw_mfa_verified_at = session.get("mfa_verified_at")
+    try:
+        mfa_verified_at = (
+            datetime.fromisoformat(raw_mfa_verified_at)
+            if isinstance(raw_mfa_verified_at, str)
+            else None
+        )
+    except ValueError:
+        mfa_verified_at = None
+    if (
+        not bool(session.get("authenticated"))
+        or mfa_verified_at is None
+        or mfa_verified_at.tzinfo is None
+        or mfa_verified_at.utcoffset() is None
+    ):
+        raise HTTPException(
+            status_code=428,
+            detail={"error_code": "CLINICAL_MFA_REQUIRED"},
+        )
+    return ClinicalInitiationAssurance(
+        initiated_at=datetime.now(mfa_verified_at.tzinfo),
+        authentication_method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
+        mfa_verified_at=mfa_verified_at,
+        assurance_policy_version=CLINICAL_CONTACT_ASSURANCE_POLICY.version,
+    )
 
 
 async def require_active_consent(

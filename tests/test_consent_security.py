@@ -31,15 +31,6 @@ from app.models.patient_device_keys import PatientDeviceKey
 client = TestClient(app)
 
 
-@pytest.fixture(autouse=True)
-def auth_override(admin_context):
-    from app.core.dependencies import get_current_provider
-
-    app.dependency_overrides[get_current_provider] = lambda: admin_context
-    yield
-    app.dependency_overrides.pop(get_current_provider, None)
-
-
 @pytest.fixture
 def keypair_and_device():
     private_key = ec.generate_private_key(ec.SECP256R1())
@@ -192,7 +183,7 @@ def test_abuse_revoked_device_signature(mock_scoped_pat, keypair_and_device):
         app.dependency_overrides.pop(get_db_session, None)
 
 
-def test_abuse_cross_doctor_token_reuse(admin_headers):
+def test_abuse_cross_doctor_token_reuse(real_clinical_session):
     """Test 3: Cross-doctor token reuse -> 403."""
     # Token issued to doc-A, but doc-B (current provider) attempts to use it
     with (
@@ -202,7 +193,7 @@ def test_abuse_cross_doctor_token_reuse(admin_headers):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
             headers={
-                **admin_headers,
+                **real_clinical_session.headers,
                 "X-Consent-Token": "tok-for-doc-a",
                 "X-Consent-Purpose": "clinical_summary",
             },
@@ -210,7 +201,7 @@ def test_abuse_cross_doctor_token_reuse(admin_headers):
         assert res.status_code == 403
 
 
-def test_abuse_wrong_purpose_access(admin_headers):
+def test_abuse_wrong_purpose_access(real_clinical_session):
     """Test 4: Wrong-purpose access -> 403."""
     with (
         patch("app.core.consent_gate.validate_consent_capability", return_value=None),
@@ -219,7 +210,7 @@ def test_abuse_wrong_purpose_access(admin_headers):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
             headers={
-                **admin_headers,
+                **real_clinical_session.headers,
                 "X-Consent-Token": "tok-for-research",
                 "X-Consent-Purpose": "clinical_summary",
             },
@@ -227,7 +218,7 @@ def test_abuse_wrong_purpose_access(admin_headers):
         assert res.status_code == 403
 
 
-def test_abuse_expired_grant_access(admin_headers):
+def test_abuse_expired_grant_access(real_clinical_session):
     """Test 5: Expired grant access -> 403."""
     with (
         patch("app.core.consent_gate.validate_consent_capability", return_value=None),
@@ -236,7 +227,7 @@ def test_abuse_expired_grant_access(admin_headers):
         res = client.get(
             "/api/v2/patient/pat-101/summary",
             headers={
-                **admin_headers,
+                **real_clinical_session.headers,
                 "X-Consent-Token": "expired-tok",
                 "X-Consent-Purpose": "clinical_summary",
             },
