@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import uuid
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
