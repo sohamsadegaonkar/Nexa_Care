@@ -60,6 +60,13 @@ class ProviderRegistrationConfig:
 
 
 @dataclass(frozen=True)
+class ProviderContactAssuranceConfig:
+    """Independent HMAC key for provider contact-verification proof material."""
+
+    hmac_secret: str
+
+
+@dataclass(frozen=True)
 class HandshakeConfig:
     pepper_secret: str
 
@@ -412,6 +419,22 @@ def get_provider_registration_config() -> ProviderRegistrationConfig:
             "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET must be at least 32 bytes"
         )
     return ProviderRegistrationConfig(idempotency_hmac_secret=secret)
+
+
+def get_provider_contact_assurance_config() -> ProviderContactAssuranceConfig:
+    """Load the secret that binds provider contact-verification challenges.
+
+    Both the destination binding and verifier are HMACed because an email
+    address, telephone number, or short verifier must never be recoverable
+    from a database row or mutation-idempotency fingerprint.
+    """
+
+    secret = _require_env("PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET")
+    if len(secret.encode("utf-8")) < 32:
+        raise ConfigError(
+            "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET must be at least 32 bytes"
+        )
+    return ProviderContactAssuranceConfig(hmac_secret=secret)
 
 
 def get_handshake_config() -> HandshakeConfig:

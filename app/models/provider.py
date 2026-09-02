@@ -165,6 +165,9 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         uselist=False,
         cascade="all, delete-orphan",
     )
+    contact_verification_challenges: Mapped[
+        list["ProviderContactVerificationChallenge"]
+    ] = relationship(back_populates="provider", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_provider_identity_provider_uid", "provider_uid"),
@@ -228,6 +231,68 @@ class ProviderHospitalAffiliation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "'REVOKED', 'EXPIRED', 'LEFT')",
             name="ck_provider_hospital_affiliation_trust_status",
         ),
+    )
+
+
+class ProviderContactVerificationChallenge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Authoritative, non-secret provider self-contact verification state.
+
+    The contact and verifier are never duplicated here.  Their domain-separated
+    HMAC fingerprints bind this one-time challenge to the exact canonical
+    contact value that was current when it was issued.
+    """
+
+    __tablename__ = "provider_contact_verification_challenge"
+
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_identity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    channel: Mapped[str] = mapped_column(String(8), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    contact_binding_hmac: Mapped[str] = mapped_column(String(64), nullable=False)
+    verifier_hmac: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    failed_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    succeeded_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    invalidated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    provider: Mapped[ProviderIdentity] = relationship(
+        back_populates="contact_verification_challenges"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "channel IN ('EMAIL', 'PHONE')",
+            name="ck_provider_contact_challenge_channel",
+        ),
+        CheckConstraint(
+            "max_attempts > 0 AND failed_attempt_count >= 0 "
+            "AND failed_attempt_count <= max_attempts",
+            name="ck_provider_contact_challenge_attempts",
+        ),
+        CheckConstraint(
+            "(succeeded_at IS NULL) OR (consumed_at IS NOT NULL)",
+            name="ck_provider_contact_challenge_success_consumed",
+        ),
+        Index(
+            "ix_provider_contact_challenge_provider_channel_purpose",
+            "provider_id",
+            "channel",
+            "purpose",
+        ),
+        Index("ix_provider_contact_challenge_expires_at", "expires_at"),
     )
 
 

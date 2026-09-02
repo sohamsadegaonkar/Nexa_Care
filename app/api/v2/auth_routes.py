@@ -32,6 +32,7 @@ from starlette.concurrency import run_in_threadpool
 
 from app.observability.audit_ledger import append_audit_log
 from app.security.audit_context import AuditDomain, current_audit_context
+from app.services.audit_outbox import enqueue_audit_event
 from app.core.database import get_db_session
 from app.core.dependencies import get_current_provider
 from app.core.rate_limiter import (
@@ -63,6 +64,7 @@ from app.core.redis import get_async_redis_client
 from app.core.session_binding import provider_session_binding
 from app.core.config import (
     ConfigError,
+    get_provider_contact_assurance_config,
     get_otp_rate_limit_config,
     get_provider_registration_config,
 )
@@ -91,6 +93,13 @@ from app.services.provider_registration_service import (
     ProviderRegistrationError,
     bootstrap_provider_account,
 )
+from app.services.provider_contact_assurance_service import (
+    ProviderContactAssuranceError,
+    get_provider_contact_challenge_transport,
+    issue_provider_contact_challenge,
+    update_provider_contact,
+    verify_provider_contact_challenge,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -116,6 +125,47 @@ _mfa_verify_rate_limiter = RateLimiter(
     max_requests=5, window_seconds=60, key_func=client_ip_key
 )
 _otp_rate_limiter = OtpRedisRateLimiter()
+
+
+async def _check_provider_contact_throttle(
+    request: Request, *, provider_id: UUID, action: str, channel: str
+) -> None:
+    """Fail closed on Redis loss; Redis is abuse control, never assurance."""
+
+    try:
+        await _otp_rate_limiter.check(
+            action=action,
+            ip=resolve_client_ip(request) or "unknown",
+            normalized_phone=f"provider-contact:{provider_id}:{channel}",
+        )
+    except OtpRateLimitExceeded as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"error_code": "CONTACT_CHALLENGE_RATE_LIMITED"},
+        ) from exc
+    except OtpRateLimitBackendUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CONTACT_CHALLENGE_THROTTLE_UNAVAILABLE", "retryable": True},
+        ) from exc
+
+
+def _contact_assurance_http_error(exc: ProviderContactAssuranceError) -> HTTPException:
+    if exc.code in {"IDEMPOTENCY_KEY_REUSED", "CONTACT_ASSURANCE_IN_PROGRESS"}:
+        code = status.HTTP_409_CONFLICT
+    elif exc.code in {
+        "CONTACT_ASSURANCE_UNAVAILABLE",
+        "CONTACT_CHALLENGE_DELIVERY_UNAVAILABLE",
+    }:
+        code = status.HTTP_503_SERVICE_UNAVAILABLE
+    elif exc.code in {"CONTACT_ASSURANCE_DENIED"}:
+        code = status.HTTP_403_FORBIDDEN
+    else:
+        code = status.HTTP_422_UNPROCESSABLE_ENTITY
+    detail: dict[str, object] = {"error_code": exc.code}
+    if code == status.HTTP_503_SERVICE_UNAVAILABLE:
+        detail["retryable"] = True
+    return HTTPException(status_code=code, detail=detail)
 
 
 class PatientOtpSendRequest(BaseModel):
@@ -1098,6 +1148,220 @@ class ProviderMfaSetupVerifyRequest(BaseModel):
     totp_code: str = Field(..., min_length=6, max_length=8)
 
 
+class ProviderContactUpdateRequest(BaseModel):
+    """Self-service contact mutation; authority fields are intentionally absent."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    contact: str = Field(..., min_length=3, max_length=320)
+
+
+class ProviderContactVerificationRequest(BaseModel):
+    """A challenge handle plus a high-entropy verifier delivered out of band."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    challenge_id: UUID
+    verifier: str = Field(..., min_length=32, max_length=128)
+
+
+async def _issue_provider_contact_challenge_route(
+    *,
+    request: Request,
+    channel: str,
+    db: AsyncSession,
+    provider: ProviderContext,
+) -> dict[str, object]:
+    await _check_provider_contact_throttle(
+        request,
+        provider_id=provider.provider.provider_id,
+        action="send",
+        channel=channel,
+    )
+    try:
+        issued = await issue_provider_contact_challenge(
+            db,
+            provider_id=provider.provider.provider_id,
+            channel=channel,
+            hmac_secret=get_provider_contact_assurance_config().hmac_secret,
+            audit_context=current_audit_context(AuditDomain.AUTH),
+            transport=get_provider_contact_challenge_transport(),
+        )
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CONTACT_ASSURANCE_UNAVAILABLE", "retryable": True},
+        ) from exc
+    except ProviderContactAssuranceError as exc:
+        raise _contact_assurance_http_error(exc) from None
+    return {
+        "challenge_id": str(issued.challenge_id),
+        "channel": issued.channel.lower(),
+        "expires_at": issued.expires_at,
+        "message": "Verification challenge issued.",
+    }
+
+
+@router.post("/me/contact/email/challenge", status_code=status.HTTP_202_ACCEPTED)
+async def issue_provider_email_verification_challenge(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    return await _issue_provider_contact_challenge_route(
+        request=request, channel="EMAIL", db=db, provider=provider
+    )
+
+
+@router.post("/me/contact/phone/challenge", status_code=status.HTTP_202_ACCEPTED)
+async def issue_provider_phone_verification_challenge(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    return await _issue_provider_contact_challenge_route(
+        request=request, channel="PHONE", db=db, provider=provider
+    )
+
+
+async def _verify_provider_contact_challenge_route(
+    *,
+    request: Request,
+    channel: str,
+    payload: ProviderContactVerificationRequest,
+    idempotency_key: str,
+    db: AsyncSession,
+    provider: ProviderContext,
+) -> dict[str, object]:
+    await _check_provider_contact_throttle(
+        request,
+        provider_id=provider.provider.provider_id,
+        action="verify",
+        channel=channel,
+    )
+    try:
+        result = await verify_provider_contact_challenge(
+            db,
+            provider_id=provider.provider.provider_id,
+            channel=channel,
+            challenge_id=payload.challenge_id,
+            verifier=payload.verifier,
+            idempotency_key=idempotency_key,
+            hmac_secret=get_provider_contact_assurance_config().hmac_secret,
+            audit_context=current_audit_context(AuditDomain.AUTH),
+        )
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CONTACT_ASSURANCE_UNAVAILABLE", "retryable": True},
+        ) from exc
+    except ProviderContactAssuranceError as exc:
+        raise _contact_assurance_http_error(exc) from None
+    return {
+        "channel": result.channel.lower(),
+        "verified": True,
+        "idempotent_replay": result.idempotent_replay,
+    }
+
+
+@router.post("/me/contact/email/verify")
+async def verify_provider_email(
+    request: Request,
+    payload: ProviderContactVerificationRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    return await _verify_provider_contact_challenge_route(
+        request=request,
+        channel="EMAIL",
+        payload=payload,
+        idempotency_key=idempotency_key,
+        db=db,
+        provider=provider,
+    )
+
+
+@router.post("/me/contact/phone/verify")
+async def verify_provider_phone(
+    request: Request,
+    payload: ProviderContactVerificationRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    return await _verify_provider_contact_challenge_route(
+        request=request,
+        channel="PHONE",
+        payload=payload,
+        idempotency_key=idempotency_key,
+        db=db,
+        provider=provider,
+    )
+
+
+async def _update_provider_contact_route(
+    *,
+    channel: str,
+    payload: ProviderContactUpdateRequest,
+    idempotency_key: str,
+    db: AsyncSession,
+    provider: ProviderContext,
+) -> dict[str, object]:
+    try:
+        result = await update_provider_contact(
+            db,
+            provider_id=provider.provider.provider_id,
+            channel=channel,
+            value=payload.contact,
+            idempotency_key=idempotency_key,
+            hmac_secret=get_provider_contact_assurance_config().hmac_secret,
+            audit_context=current_audit_context(AuditDomain.AUTH),
+        )
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CONTACT_ASSURANCE_UNAVAILABLE", "retryable": True},
+        ) from exc
+    except ProviderContactAssuranceError as exc:
+        raise _contact_assurance_http_error(exc) from None
+    return {
+        "channel": result.channel.lower(),
+        "verification_reset": True,
+        "idempotent_replay": result.idempotent_replay,
+    }
+
+
+@router.put("/me/contact/email")
+async def update_provider_email(
+    payload: ProviderContactUpdateRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    return await _update_provider_contact_route(
+        channel="EMAIL",
+        payload=payload,
+        idempotency_key=idempotency_key,
+        db=db,
+        provider=provider,
+    )
+
+
+@router.put("/me/contact/phone")
+async def update_provider_phone(
+    payload: ProviderContactUpdateRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(get_current_provider),
+):
+    return await _update_provider_contact_route(
+        channel="PHONE",
+        payload=payload,
+        idempotency_key=idempotency_key,
+        db=db,
+        provider=provider,
+    )
+
+
 @router.post("/mfa/setup", response_model=ProviderMfaSetupResponse)
 async def provider_mfa_setup(
     db: AsyncSession = Depends(get_db_session),
@@ -1117,7 +1381,7 @@ async def provider_mfa_setup(
 
     stmt = select(ProviderCredential).where(
         ProviderCredential.provider_id == provider.provider.provider_id
-    )
+    ).with_for_update()
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:
@@ -1192,8 +1456,10 @@ async def provider_mfa_setup_verify(
     If the code is correct, the MFA flag is enabled for the account.
     """
 
-    stmt = select(ProviderCredential).where(
-        ProviderCredential.provider_id == provider.provider.provider_id
+    stmt = (
+        select(ProviderCredential)
+        .where(ProviderCredential.provider_id == provider.provider.provider_id)
+        .with_for_update()
     )
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
@@ -1227,16 +1493,26 @@ async def provider_mfa_setup_verify(
             detail="Invalid MFA code. Verification failed.",
         )
 
-    row.mfa_enabled = True
-    await db.commit()
-
-    await append_audit_log(
-        audit_context=current_audit_context(AuditDomain.AUTH),
-        actor_uid=provider.actor_uid,
-        event_type="PROVIDER_MFA_SETUP_SUCCESS",
-        target_id=str(provider.provider.provider_id),
-        status="SUCCESS",
-    )
+    # The authority transition and its required audit-outbox fact are one
+    # transaction.  If outbox staging or commit fails, MFA remains disabled.
+    try:
+        row.mfa_enabled = True
+        await enqueue_audit_event(
+            db,
+            audit_context=current_audit_context(AuditDomain.AUTH),
+            idempotency_key=f"provider-mfa-setup-success:{provider.provider.provider_id}",
+            actor_id=provider.actor_uid,
+            event_type="PROVIDER_MFA_SETUP_SUCCESS",
+            target_id=str(provider.provider.provider_id),
+            patient_id=None,
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "PROVIDER_MFA_AUDIT_UNAVAILABLE", "retryable": True},
+        ) from exc
 
     return {"message": "MFA has been successfully enabled."}
 

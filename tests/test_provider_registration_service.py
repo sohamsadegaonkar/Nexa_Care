@@ -12,6 +12,8 @@ from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.api.v2.auth_routes import (
+    ProviderContactUpdateRequest,
+    ProviderContactVerificationRequest,
     ProviderRegistrationRequest,
     provider_registration,
 )
@@ -69,6 +71,23 @@ def test_provider_bootstrap_normalizes_identifiers_and_password_safe_hash() -> N
     assert "provider-bootstrap-password" not in first
     assert normalize_professional_registration_authority_code(" council-1 ") == "COUNCIL-1"
     assert normalize_professional_registration_number(" reg- 12 / 3 ") == "REG12/3"
+
+
+@pytest.mark.parametrize("schema", [ProviderContactUpdateRequest, ProviderContactVerificationRequest])
+@pytest.mark.parametrize(
+    "authority_field",
+    ["email_verified_at", "phone_verified_at", "mfa_enabled", "role", "capabilities"],
+)
+def test_provider_contact_schemas_reject_authority_fields(schema, authority_field: str) -> None:
+    payload = (
+        {"contact": "contact@example.test"}
+        if schema is ProviderContactUpdateRequest
+        else {"challenge_id": str(uuid.uuid4()), "verifier": "x" * 32}
+    )
+    payload[authority_field] = True
+    with pytest.raises(ValidationError) as exc_info:
+        schema.model_validate(payload)
+    assert exc_info.value.errors()[0]["type"] == "extra_forbidden"
 
 
 @pytest.mark.parametrize(
