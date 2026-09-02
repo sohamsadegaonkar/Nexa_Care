@@ -53,6 +53,13 @@ class OtpRateLimitConfig:
 
 
 @dataclass(frozen=True)
+class ProviderRegistrationConfig:
+    """Secret material for provider-bootstrap request fingerprinting."""
+
+    idempotency_hmac_secret: str
+
+
+@dataclass(frozen=True)
 class HandshakeConfig:
     pepper_secret: str
 
@@ -389,6 +396,22 @@ def get_otp_rate_limit_config() -> OtpRateLimitConfig:
     if len(secret.encode("utf-8")) < 32:
         raise ConfigError("OTP_RATE_LIMIT_HMAC_SECRET must be at least 32 bytes")
     return OtpRateLimitConfig(hmac_secret=secret)
+
+
+def get_provider_registration_config() -> ProviderRegistrationConfig:
+    """Load the independent secret for provider-registration idempotency.
+
+    The registration request contains a password.  Its durable idempotency
+    fingerprint must therefore use a domain-separated server-side HMAC rather
+    than retaining a plain SHA-256 password digest in PostgreSQL.
+    """
+
+    secret = _require_env("PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET")
+    if len(secret.encode("utf-8")) < 32:
+        raise ConfigError(
+            "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET must be at least 32 bytes"
+        )
+    return ProviderRegistrationConfig(idempotency_hmac_secret=secret)
 
 
 def get_handshake_config() -> HandshakeConfig:

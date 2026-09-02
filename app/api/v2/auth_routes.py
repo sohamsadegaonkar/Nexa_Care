@@ -13,7 +13,16 @@ from datetime import datetime, timedelta, timezone
 import uuid
 from uuid import UUID
 
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response, status
+from fastapi import (
+    APIRouter,
+    Cookie,
+    Depends,
+    Header,
+    HTTPException,
+    Request,
+    Response,
+    status,
+)
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -52,7 +61,11 @@ from app.services.provider_auth_service import (
 
 from app.core.redis import get_async_redis_client
 from app.core.session_binding import provider_session_binding
-from app.core.config import get_otp_rate_limit_config
+from app.core.config import (
+    ConfigError,
+    get_otp_rate_limit_config,
+    get_provider_registration_config,
+)
 from app.core.rate_limiter import atomic_fixed_window
 from app.core.client_ip import resolve_client_ip
 from app.core.supabase import get_supabase_client
@@ -72,6 +85,11 @@ from app.services.patient_registration_attempt_service import (
     finalize_registration_attempt,
     issue_registration_attempt,
     release_registration_attempt_claim,
+)
+from app.services.provider_registration_service import (
+    ProviderBootstrapRequest,
+    ProviderRegistrationError,
+    bootstrap_provider_account,
 )
 
 logger = logging.getLogger("nexa_logger")
@@ -545,6 +563,31 @@ class ProviderLoginRequest(BaseModel):
     hospital_id: UUID | None = None
 
 
+class ProviderRegistrationRequest(BaseModel):
+    """Public bootstrap input; authority-bearing fields are rejected."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    display_name: str = Field(..., min_length=1, max_length=255)
+    login_identifier: str = Field(..., min_length=3, max_length=320)
+    contact_email: str = Field(..., min_length=3, max_length=320)
+    contact_phone: str = Field(..., min_length=10, max_length=32)
+    password: str = Field(..., min_length=12, max_length=256)
+    hospital_id: UUID
+    registration_authority_code: str | None = Field(default=None, max_length=64)
+    registration_number: str | None = Field(default=None, max_length=128)
+
+
+class ProviderRegistrationResponse(BaseModel):
+    """Deliberately excludes credentials, verification state, and authority."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    provider_id: UUID
+    registration_state: str = "registered"
+    idempotent_replay: bool
+
+
 class ProviderLoginResponse(BaseModel):
     """Opaque provider session token response."""
 
@@ -727,6 +770,61 @@ async def _issue_login_response(
         expires_at=expires_at,
         provider_uid=context.actor_uid,
         hospital_id=context.hospital.hospital_id,
+    )
+
+
+@router.post(
+    "/provider/register",
+    response_model=ProviderRegistrationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def provider_registration(
+    payload: ProviderRegistrationRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    db: AsyncSession = Depends(get_db_session),
+) -> ProviderRegistrationResponse:
+    """Create an authentication-capable provider with zero clinical authority."""
+
+    try:
+        registration_config = get_provider_registration_config()
+    except ConfigError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "PROVIDER_REGISTRATION_UNAVAILABLE", "retryable": True},
+        ) from exc
+    try:
+        result = await bootstrap_provider_account(
+            db,
+            request=ProviderBootstrapRequest(
+                display_name=payload.display_name,
+                login_identifier=payload.login_identifier,
+                contact_email=payload.contact_email,
+                contact_phone=payload.contact_phone,
+                password=payload.password,
+                hospital_id=payload.hospital_id,
+                registration_authority_code=payload.registration_authority_code,
+                registration_number=payload.registration_number,
+            ),
+            idempotency_key=idempotency_key,
+            idempotency_hmac_secret=registration_config.idempotency_hmac_secret,
+        )
+    except ProviderRegistrationError as exc:
+        if exc.code in {
+            "IDEMPOTENCY_KEY_REUSED",
+            "PROVIDER_REGISTRATION_CONFLICT",
+            "PROVIDER_REGISTRATION_IN_PROGRESS",
+        }:
+            status_code = status.HTTP_409_CONFLICT
+        elif exc.code == "PROVIDER_REGISTRATION_UNAVAILABLE":
+            status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        else:
+            status_code = status.HTTP_422_UNPROCESSABLE_ENTITY
+        detail = {"error_code": exc.code}
+        if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+            detail["retryable"] = True
+        raise HTTPException(status_code=status_code, detail=detail) from None
+    return ProviderRegistrationResponse(
+        provider_id=UUID(result.provider_id), idempotent_replay=result.idempotent_replay
     )
 
 
