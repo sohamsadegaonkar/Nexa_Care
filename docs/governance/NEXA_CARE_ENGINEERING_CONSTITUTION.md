@@ -163,7 +163,7 @@ Validation query:
 Forward-fix strategy:
 ```
 
-Current head is `20260830_delegated_assurance`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
+Current head is `20260903_trust_authorization`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
 
 ## 11. Frontend standard
 

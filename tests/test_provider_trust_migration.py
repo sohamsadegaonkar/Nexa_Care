@@ -10,6 +10,7 @@ REVISION = "20260830_delegated_assurance"
 TRUST_REVISION = "20260830_provider_trust"
 CONTACT_ASSURANCE_REVISION = "20260902_contact_assurance"
 LIFECYCLE_REVISION = "20260903_trust_lifecycle"
+AUTHORIZATION_REVISION = "20260903_trust_authorization"
 
 
 def _source() -> str:
@@ -34,15 +35,20 @@ def test_provider_trust_migration_is_current_single_head() -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == [LIFECYCLE_REVISION]
+    assert scripts.get_heads() == [AUTHORIZATION_REVISION]
     assert scripts.get_revision(REVISION).down_revision == "20260830_provider_trust"
     assert (
         scripts.get_revision(LIFECYCLE_REVISION).down_revision
         == CONTACT_ASSURANCE_REVISION
     )
+    assert (
+        scripts.get_revision(AUTHORIZATION_REVISION).down_revision == LIFECYCLE_REVISION
+    )
 
 
-def test_lifecycle_version_migration_is_documented_backfilled_and_forward_only() -> None:
+def test_lifecycle_version_migration_is_documented_backfilled_and_forward_only() -> (
+    None
+):
     source = _lifecycle_source()
     for required in (
         "professional_verification",

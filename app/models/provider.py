@@ -168,6 +168,9 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     contact_verification_challenges: Mapped[
         list["ProviderContactVerificationChallenge"]
     ] = relationship(back_populates="provider", cascade="all, delete-orphan")
+    trust_permission_grants: Mapped[list["ProviderTrustPermissionGrant"]] = (
+        relationship(back_populates="provider", cascade="all, delete-orphan")
+    )
 
     __table_args__ = (
         Index("ix_provider_identity_provider_uid", "provider_uid"),
@@ -213,6 +216,7 @@ class ProviderHospitalAffiliation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         default=AffiliationTrustStatus.PENDING_ACTIVATION.value,
     )
+
     # Stored generation only; transactional compare-and-swap is Phase 3E.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -239,6 +243,79 @@ class ProviderHospitalAffiliation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
 
 
+class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Authoritative organizational trust grant, separate from clinical roles.
+
+    Active-grant uniqueness is released only by an explicit ``revoked_at``.
+    An expired but non-revoked row is unusable for authorization yet deliberately
+    retains its uniqueness slot, so a future re-grant flow must first apply an
+    explicit, governed revocation or supersession transaction.
+    """
+
+    __tablename__ = "provider_trust_permission_grant"
+
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_identity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    permission: Mapped[str] = mapped_column(String(64), nullable=False)
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    facility_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hospital_registry.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    granted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    granted_by_actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    governance_reference: Mapped[str | None] = mapped_column(String(128))
+
+    provider: Mapped[ProviderIdentity] = relationship(
+        back_populates="trust_permission_grants"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('PROFESSIONAL_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
+            name="ck_provider_trust_permission_grant_permission",
+        ),
+        CheckConstraint(
+            "scope_type IN ('GLOBAL', 'FACILITY')",
+            name="ck_provider_trust_permission_grant_scope_type",
+        ),
+        CheckConstraint(
+            "(permission IN ('PROFESSIONAL_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
+            name="ck_provider_trust_permission_grant_scope_binding",
+        ),
+        CheckConstraint(
+            "valid_until IS NULL OR valid_from IS NULL OR valid_until > valid_from",
+            name="ck_provider_trust_permission_grant_validity",
+        ),
+        Index(
+            "uq_provider_trust_permission_grant_global_active",
+            "provider_id",
+            "permission",
+            unique=True,
+            postgresql_where=(scope_type == "GLOBAL") & revoked_at.is_(None),
+        ),
+        Index(
+            "uq_provider_trust_permission_grant_facility_active",
+            "provider_id",
+            "permission",
+            "facility_id",
+            unique=True,
+            postgresql_where=(scope_type == "FACILITY") & revoked_at.is_(None),
+        ),
+        Index("ix_provider_trust_permission_grant_provider_id", "provider_id"),
+        Index("ix_provider_trust_permission_grant_facility_id", "facility_id"),
+    )
+
+
 class ProviderContactVerificationChallenge(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Authoritative, non-secret provider self-contact verification state.
 
@@ -258,7 +335,9 @@ class ProviderContactVerificationChallenge(Base, UUIDPrimaryKeyMixin, TimestampM
     purpose: Mapped[str] = mapped_column(String(64), nullable=False)
     contact_binding_hmac: Mapped[str] = mapped_column(String(64), nullable=False)
     verifier_hmac: Mapped[str] = mapped_column(String(64), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
     failed_attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
