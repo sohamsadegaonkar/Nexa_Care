@@ -32,8 +32,11 @@ def test_provider_trust_models_are_registered_and_relationships_are_one_to_one()
     }
     assert {
         "ck_provider_hospital_affiliation_trust_status",
+        "ck_provider_hospital_affiliation_version_positive",
         "ck_professional_verification_status",
+        "ck_professional_verification_version_positive",
         "ck_facility_verification_status",
+        "ck_facility_verification_version_positive",
     } <= constraints
 
 
@@ -55,3 +58,9 @@ def test_trust_defaults_are_fail_closed() -> None:
         FacilityVerification.__table__.c.status.default.arg
         == FacilityVerificationStatus.DRAFT.value
     )
+    for model in (
+        ProviderHospitalAffiliation,
+        ProfessionalVerification,
+        FacilityVerification,
+    ):
+        assert model.__table__.c.version.default.arg == 1

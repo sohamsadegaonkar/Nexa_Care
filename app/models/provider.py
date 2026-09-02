@@ -213,6 +213,8 @@ class ProviderHospitalAffiliation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         nullable=False,
         default=AffiliationTrustStatus.PENDING_ACTIVATION.value,
     )
+    # Stored generation only; transactional compare-and-swap is Phase 3E.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     provider: Mapped[ProviderIdentity] = relationship(back_populates="affiliations")
     hospital: Mapped[HospitalRegistry] = relationship(back_populates="affiliations")
@@ -230,6 +232,9 @@ class ProviderHospitalAffiliation(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "trust_status IN ('PENDING_ACTIVATION', 'ACTIVE', 'SUSPENDED', "
             "'REVOKED', 'EXPIRED', 'LEFT')",
             name="ck_provider_hospital_affiliation_trust_status",
+        ),
+        CheckConstraint(
+            "version > 0", name="ck_provider_hospital_affiliation_version_positive"
         ),
     )
 
@@ -415,6 +420,8 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     decision_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # The lifecycle policy emits the next generation; it does not apply it yet.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     provider: Mapped[ProviderIdentity] = relationship(
         back_populates="professional_verification"
@@ -433,6 +440,9 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "'RECHECK_DUE', 'VERIFICATION_STALE', 'SUSPENDED', 'REJECTED', "
             "'REVOKED', 'EXPIRED')",
             name="ck_professional_verification_status",
+        ),
+        CheckConstraint(
+            "version > 0", name="ck_professional_verification_version_positive"
         ),
     )
 
@@ -467,6 +477,8 @@ class FacilityVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     decision_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Stored generation only; transactional compare-and-swap is Phase 3E.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     facility: Mapped[HospitalRegistry] = relationship(back_populates="verification")
 
@@ -477,5 +489,8 @@ class FacilityVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "status IN ('DRAFT', 'PENDING_VERIFICATION', 'VERIFIED', "
             "'RECHECK_REQUIRED', 'SUSPENDED', 'REJECTED', 'CLOSED')",
             name="ck_facility_verification_status",
+        ),
+        CheckConstraint(
+            "version > 0", name="ck_facility_verification_version_positive"
         ),
     )

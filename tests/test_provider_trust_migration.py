@@ -8,6 +8,8 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "20260830_delegated_assurance"
 TRUST_REVISION = "20260830_provider_trust"
+CONTACT_ASSURANCE_REVISION = "20260902_contact_assurance"
+LIFECYCLE_REVISION = "20260903_trust_lifecycle"
 
 
 def _source() -> str:
@@ -22,12 +24,43 @@ def _trust_source() -> str:
     )
 
 
+def _lifecycle_source() -> str:
+    return (ROOT / "alembic" / "versions" / f"{LIFECYCLE_REVISION}.py").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_provider_trust_migration_is_current_single_head() -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == [REVISION]
+    assert scripts.get_heads() == [LIFECYCLE_REVISION]
     assert scripts.get_revision(REVISION).down_revision == "20260830_provider_trust"
+    assert (
+        scripts.get_revision(LIFECYCLE_REVISION).down_revision
+        == CONTACT_ASSURANCE_REVISION
+    )
+
+
+def test_lifecycle_version_migration_is_documented_backfilled_and_forward_only() -> None:
+    source = _lifecycle_source()
+    for required in (
+        "professional_verification",
+        "facility_verification",
+        "provider_hospital_affiliation",
+        "SET version = 1",
+        "nullable=False",
+        "version > 0",
+        "Purpose:",
+        "Preconditions:",
+        "Existing-data behavior:",
+        "Locking risk:",
+        "Rollback position:",
+        "Validation query:",
+        "Forward-fix strategy:",
+        "raise RuntimeError",
+    ):
+        assert required in source
 
 
 def test_migration_backfills_trust_state_fail_closed_and_is_forward_only() -> None:
