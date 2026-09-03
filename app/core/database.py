@@ -56,3 +56,19 @@ async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
             yield session
         finally:
             await session.close()
+
+
+async def get_provider_contact_mutation_session() -> AsyncGenerator[AsyncSession, None]:
+    """Yield a distinct request-scoped async database session for contact mutations.
+
+    Separates contact mutation transactions from authentication read transactions,
+    ensuring provider_contact_assurance_service enters with a clean session and
+    retains sole ownership of its transaction boundary.
+    """
+
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        try:
+            yield session
+        finally:
+            await session.close()

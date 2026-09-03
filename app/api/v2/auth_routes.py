@@ -33,7 +33,7 @@ from starlette.concurrency import run_in_threadpool
 from app.observability.audit_ledger import append_audit_log
 from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.audit_outbox import enqueue_audit_event
-from app.core.database import get_db_session
+from app.core.database import get_db_session, get_provider_contact_mutation_session
 from app.core.dependencies import get_current_provider
 from app.core.rate_limiter import (
     OtpRateLimitBackendUnavailable,
@@ -146,7 +146,10 @@ async def _check_provider_contact_throttle(
     except OtpRateLimitBackendUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error_code": "CONTACT_CHALLENGE_THROTTLE_UNAVAILABLE", "retryable": True},
+            detail={
+                "error_code": "CONTACT_CHALLENGE_THROTTLE_UNAVAILABLE",
+                "retryable": True,
+            },
         ) from exc
 
 
@@ -840,7 +843,10 @@ async def provider_registration(
     except ConfigError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error_code": "PROVIDER_REGISTRATION_UNAVAILABLE", "retryable": True},
+            detail={
+                "error_code": "PROVIDER_REGISTRATION_UNAVAILABLE",
+                "retryable": True,
+            },
         ) from exc
     try:
         result = await bootstrap_provider_account(
@@ -1203,7 +1209,7 @@ async def _issue_provider_contact_challenge_route(
 @router.post("/me/contact/email/challenge", status_code=status.HTTP_202_ACCEPTED)
 async def issue_provider_email_verification_challenge(
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_provider_contact_mutation_session),
     provider: ProviderContext = Depends(get_current_provider),
 ):
     return await _issue_provider_contact_challenge_route(
@@ -1214,7 +1220,7 @@ async def issue_provider_email_verification_challenge(
 @router.post("/me/contact/phone/challenge", status_code=status.HTTP_202_ACCEPTED)
 async def issue_provider_phone_verification_challenge(
     request: Request,
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_provider_contact_mutation_session),
     provider: ProviderContext = Depends(get_current_provider),
 ):
     return await _issue_provider_contact_challenge_route(
@@ -1267,7 +1273,7 @@ async def verify_provider_email(
     request: Request,
     payload: ProviderContactVerificationRequest,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_provider_contact_mutation_session),
     provider: ProviderContext = Depends(get_current_provider),
 ):
     return await _verify_provider_contact_challenge_route(
@@ -1285,7 +1291,7 @@ async def verify_provider_phone(
     request: Request,
     payload: ProviderContactVerificationRequest,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_provider_contact_mutation_session),
     provider: ProviderContext = Depends(get_current_provider),
 ):
     return await _verify_provider_contact_challenge_route(
@@ -1334,7 +1340,7 @@ async def _update_provider_contact_route(
 async def update_provider_email(
     payload: ProviderContactUpdateRequest,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_provider_contact_mutation_session),
     provider: ProviderContext = Depends(get_current_provider),
 ):
     return await _update_provider_contact_route(
@@ -1350,7 +1356,7 @@ async def update_provider_email(
 async def update_provider_phone(
     payload: ProviderContactUpdateRequest,
     idempotency_key: str = Header(alias="Idempotency-Key"),
-    db: AsyncSession = Depends(get_db_session),
+    db: AsyncSession = Depends(get_provider_contact_mutation_session),
     provider: ProviderContext = Depends(get_current_provider),
 ):
     return await _update_provider_contact_route(
@@ -1379,9 +1385,11 @@ async def provider_mfa_setup(
       to prevent unverified secret overwrite/interception.
     """
 
-    stmt = select(ProviderCredential).where(
-        ProviderCredential.provider_id == provider.provider.provider_id
-    ).with_for_update()
+    stmt = (
+        select(ProviderCredential)
+        .where(ProviderCredential.provider_id == provider.provider.provider_id)
+        .with_for_update()
+    )
     result = await db.execute(stmt)
     row = result.scalar_one_or_none()
     if row is None:

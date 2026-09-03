@@ -221,6 +221,25 @@ a fail-closed denial; grace has no effect unless a separately approved
 expiration is recorded. This documentation makes no DPDP, NMC, ABDM, HPR/HFR,
 Aadhaar, or production-integration compliance claim.
 
+### Slice-3 End-to-End Adversarial Qualification (Phase 3G) and SEC-041 Contact Mutation Isolation
+
+Phase 3G end-to-end qualification was executed against disposable loopback PostgreSQL and Redis in `tests/integration/test_provider_registration_trust_e2e_postgres_redis.py`.
+The canonical 12-test qualification suite verified all Slice 3 invariants: fresh migration to sole head `20260903_trust_authorization` with zero auto-grants and zero legacy backfills, provider registration bootstrap with zero authority and strict idempotency replay/hash collision protection, professional transition adversarial proofs with fail-closed gates, facility and affiliation scoping with strict actor-facility isolation, mark recheck due with zero grace persistence, contradictory HTTP reviewer race with PostgreSQL row-level locks and CAS version conflict handling (409), CSRF double-submit cookies with CORS and session isolation, legacy role confusion matrix with all 6 legacy roles strictly denied (403 AUTHORIZATION_DENIED), outbox secret scanning with zero credentials/secrets/PII, exact 24 command-specific POST route table verification, and contact mutation transaction isolation (SEC-041).
+
+#### SEC-041: Contact Mutation Transaction Isolation (Phase 3G Remediation)
+
+Authenticated provider contact-assurance HTTP mutation endpoints (`POST /me/contact/email/challenge`, `POST /me/contact/phone/challenge`, `POST /me/contact/email/verify`, `POST /me/contact/phone/verify`, `PUT /me/contact/email`, `PUT /me/contact/phone`) must execute their mutation logic within a distinct, clean database session (`get_provider_contact_mutation_session`), separated from the provider authentication session.
+Provider authentication read queries that auto-begin an implicit transaction in SQLAlchemy must never taint or share the session passed to `provider_contact_assurance_service`.
+The contact-assurance service retains sole, top-level ownership of its outer transaction boundary via `async with db.begin():`.
+Session separation guarantees that:
+1. `mutation_db.in_transaction()` is `False` at service entry.
+2. The contact-assurance service manages its own locking, idempotency reservation, mutation, and audit-outbox staging within a single atomic transaction.
+3. Audit failure atomicity is fully preserved: an audit outbox failure triggers complete rollback of verification timestamps, challenge consumption, and idempotency status.
+4. No nested transactions (`begin_nested()`) are used in `provider_contact_assurance_service`, preserving deterministic failure modes and top-level transaction boundaries.
+
+This qualification represents synthetic local qualification only against loopback disposable PostgreSQL and Redis. No live email/SMS delivery qualification, no live registry integration qualification, and no production deployment qualification is claimed. This control does not constitute ABDM, HPR, DPDP, or statutory compliance.
+
+
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)
 
 Patient-self onboarding accepts only an authenticated patient JWT transported as `Bearer <token>`; the server derives patient identity and trusted audit tenant after database identity validation. Request bodies may contain only profile name/date of birth or legal document types, never a patient identifier, provider subject, document version/digest, acceptance timestamp, or audit scope.
