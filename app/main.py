@@ -76,6 +76,11 @@ from app.api.v2.contract_routes import router as contract_v2_router
 from app.api.v2.device_routes import router as device_v2_router
 from app.api.v2.patient_self_routes import router as patient_self_v2_router
 from app.api.v2.patient_discovery_routes import router as patient_discovery_v2_router
+from app.api.v2.provider_trust_routes import (
+    ProviderTrustRouteError,
+    provider_trust_route_error_response,
+    router as provider_trust_v2_router,
+)
 from app.core.config import (
     get_database_config,
     get_handshake_config,
@@ -371,6 +376,9 @@ app.include_router(dashboard_v2_router)
 app.include_router(consent_history_v2_router)
 app.include_router(patient_self_v2_router)
 app.include_router(patient_discovery_v2_router)
+app.include_router(provider_trust_v2_router)
+
+app.add_exception_handler(ProviderTrustRouteError, provider_trust_route_error_response)
 
 
 @app.exception_handler(PatientDataErased)

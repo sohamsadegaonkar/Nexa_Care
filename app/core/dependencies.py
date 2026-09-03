@@ -31,7 +31,7 @@ import json
 import logging
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from functools import lru_cache
 from typing import NamedTuple
 from uuid import UUID
@@ -47,7 +47,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.security import hash_client_ip
+from app.core.security import hash_client_ip, hash_user_agent
 from app.core.client_ip import resolve_client_ip
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
@@ -75,6 +75,7 @@ from app.services.provider_auth_service import (
     authenticate_provider_session,
     resolve_provider_session_context,
 )
+from app.services.provider_trust_authorization import TrustManagementAuthentication
 
 logger = logging.getLogger("nexa_logger")
 
@@ -433,6 +434,118 @@ async def get_current_provider(
         status=_audit_status_for_failure(result.failure),
     )
     raise _http_exception_for_failure(result.failure)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderTrustRoutePrincipal:
+    """Session-derived identity for organizational trust-management routes.
+
+    This intentionally does not resolve an affiliation or clinical capability.
+    Phase 3E reloads and locks current PostgreSQL actor, credential, and grant
+    state at the mutation boundary.
+    """
+
+    actor_provider_id: UUID
+    authentication: TrustManagementAuthentication
+
+
+async def get_provider_trust_route_principal(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_provider_bearer_scheme),
+) -> ProviderTrustRoutePrincipal:
+    """Accept only an existing opaque Bearer or provider-cookie session.
+
+    Basic credentials have no path through this dependency.  The raw opaque
+    value is used only to resolve its server-side session record and never
+    enters responses, exceptions, or audit metadata.
+    """
+
+    if credentials is not None and credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    cookie_token = request.cookies.get("nexa_provider_session")
+    session_token = (
+        credentials.credentials
+        if credentials is not None and credentials.credentials
+        else cookie_token
+    )
+    if not isinstance(session_token, str) or not session_token:
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    session = await resolve_provider_session_context(session_token)
+    if session is None:
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    if session.get("authenticated") is not True:
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    try:
+        provider_id = UUID(str(session["provider_id"]))
+        expires_at = datetime.fromisoformat(str(session["expires_at"]))
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        ) from None
+    try:
+        mfa_verified_at = datetime.fromisoformat(str(session["mfa_verified_at"]))
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=428, detail={"error_code": "MFA_SESSION_ASSURANCE_REQUIRED"}
+        ) from None
+    if (
+        expires_at.tzinfo is None
+        or expires_at.utcoffset() is None
+        or expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    if (
+        mfa_verified_at.tzinfo is None
+        or mfa_verified_at.utcoffset() is None
+        or mfa_verified_at > datetime.now(timezone.utc)
+    ):
+        raise HTTPException(
+            status_code=428, detail={"error_code": "MFA_SESSION_ASSURANCE_REQUIRED"}
+        )
+    user_agent = request.headers.get("user-agent")
+    stored_ua_hash = session.get("ua_hash", "")
+    current_ua_hash = hash_user_agent(user_agent)
+    if (
+        not isinstance(stored_ua_hash, str)
+        or not stored_ua_hash
+        or not current_ua_hash
+        or stored_ua_hash != current_ua_hash
+    ):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    stored_ip_hash = session.get("ip_hash", "")
+    client_ip = _client_ip_from_request(request)
+    current_ip_hash = hash_client_ip(client_ip)
+    if stored_ip_hash and current_ip_hash and stored_ip_hash != current_ip_hash:
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "SESSION_IP_ROTATION_DETECTED",
+                    "provider_id": str(provider_id),
+                    "ip_hash": current_ip_hash,
+                }
+            )
+        )
+    return ProviderTrustRoutePrincipal(
+        actor_provider_id=provider_id,
+        authentication=TrustManagementAuthentication(
+            provider_id=provider_id,
+            method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
+            session_authenticated=True,
+            mfa_verified_at=mfa_verified_at,
+        ),
+    )
 
 
 def require_role(required_role: str):

@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from app.models.provider import ProviderHospitalAffiliation
+from app.models.provider import (
+    ProfessionalVerification,
+    ProviderHospitalAffiliation,
+    VerificationSourceFailureReason,
+)
 from app.services.provider_trust_lifecycle import (
     ProfessionalTransitionCommand,
     ProfessionalTransitionFacts,
@@ -107,3 +111,38 @@ def test_invalid_expected_version_is_rejected_before_transaction():
             )
         )
     assert exc.value.code == "INVALID_REQUEST"
+
+
+def test_route_mark_recheck_due_derives_locked_facts_and_never_grants_grace() -> None:
+    """The Phase-3F flag discards even a trusted-facts-shaped caller object."""
+    service = ProviderTrustLifecycleApplicationService(db=None)  # type: ignore[arg-type]
+    target = ProfessionalVerification(
+        id=uuid4(),
+        provider_id=uuid4(),
+        status="VERIFIED",
+        version=7,
+        previous_verification_valid=True,
+        registration_valid_until=NOW + timedelta(days=30),
+    )
+
+    plan = service._plan(
+        "professional",
+        target,
+        ProfessionalTransitionCommand.MARK_RECHECK_DUE,
+        ProfessionalTransitionFacts(
+            previous_verification_valid=False,
+            recheck_failure_reason=VerificationSourceFailureReason.SOURCE_UNAVAILABLE,
+            grace_expires_at=NOW + timedelta(hours=12),
+            recheck_attempted_at=NOW + timedelta(days=1),
+        ),
+        uuid4(),
+        NOW,
+        route_recheck_no_grace=True,
+    )
+    updates = {update.field: update.value for update in plan.updates}
+
+    assert plan.new_state == "RECHECK_DUE"
+    assert updates["recheck_attempted_at"] == NOW
+    assert updates["recheck_failure_reason"] is None
+    assert updates["grace_expires_at"] is None
+    assert updates["previous_verification_valid"] is True

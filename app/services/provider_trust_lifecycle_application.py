@@ -152,6 +152,7 @@ class ProviderTrustLifecycleApplicationService:
         expected_version: int,
         idempotency_key: str,
         now: datetime | None = None,
+        route_recheck_no_grace: bool = False,
     ) -> ProviderTrustLifecycleResult:
         return await self._apply(
             "professional",
@@ -163,6 +164,7 @@ class ProviderTrustLifecycleApplicationService:
             expected_version,
             idempotency_key,
             now,
+            route_recheck_no_grace=route_recheck_no_grace,
         )
 
     async def apply_facility(
@@ -224,6 +226,8 @@ class ProviderTrustLifecycleApplicationService:
         expected_version: int,
         idempotency_key: str,
         now: datetime | None,
+        *,
+        route_recheck_no_grace: bool = False,
     ) -> ProviderTrustLifecycleResult:
         try:
             return await self._apply_transaction(
@@ -236,6 +240,7 @@ class ProviderTrustLifecycleApplicationService:
                 expected_version,
                 idempotency_key,
                 now,
+                route_recheck_no_grace=route_recheck_no_grace,
             )
         except ProviderTrustLifecycleApplicationError:
             raise
@@ -259,6 +264,8 @@ class ProviderTrustLifecycleApplicationService:
         expected_version: int,
         idempotency_key: str,
         now: datetime | None,
+        *,
+        route_recheck_no_grace: bool = False,
     ) -> ProviderTrustLifecycleResult:
         try:
             key = validate_idempotency_key(idempotency_key)
@@ -349,7 +356,15 @@ class ProviderTrustLifecycleApplicationService:
                 raise ProviderTrustLifecycleApplicationError(
                     "LIFECYCLE_VERSION_CONFLICT"
                 )
-            plan = self._plan(lifecycle_type, target, command, facts, actor_id, moment)
+            plan = self._plan(
+                lifecycle_type,
+                target,
+                command,
+                facts,
+                actor_id,
+                moment,
+                route_recheck_no_grace=route_recheck_no_grace,
+            )
             if (
                 plan.expected_version != target.version
                 or plan.next_version != target.version + 1
@@ -533,9 +548,27 @@ class ProviderTrustLifecycleApplicationService:
         facts: object,
         actor_id: UUID,
         now: datetime,
+        *,
+        route_recheck_no_grace: bool = False,
     ) -> LifecycleTransitionPlan:
         try:
             if kind == "professional":
+                if (
+                    command is ProfessionalTransitionCommand.MARK_RECHECK_DUE
+                    and route_recheck_no_grace
+                ):
+                    # HTTP reviewers may request a recheck, never manufacture
+                    # a source failure, grace, prior-validity, or absence of an
+                    # adverse signal.  These facts are reconstructed solely
+                    # from the target row already locked by this transaction.
+                    facts = ProfessionalTransitionFacts(
+                        previous_verification_valid=target.previous_verification_valid,
+                        authoritative_adverse_signal_at=(
+                            target.authoritative_adverse_signal_at
+                        ),
+                        registration_valid_until=target.registration_valid_until,
+                        recheck_attempted_at=now,
+                    )
                 if command is not ProfessionalTransitionCommand.SUBMIT:
                     facts = ProfessionalTransitionFacts(
                         **{**asdict(facts), "reviewer_id": str(actor_id)}
