@@ -57,7 +57,9 @@ from app.services.clinical_eligibility import (
 )
 from app.services.provider_auth_service import (
     hash_provider_password,
+    issue_mfa_pending_token,
     issue_provider_session_token,
+    verify_totp_code_once,
 )
 from app.services.provider_contact_assurance_service import (
     ProviderContactChallengeTransport,
@@ -658,14 +660,11 @@ async def test_02_complete_provider_registration_and_trust_journey_e2e(
     assert login_mfa_step1.status_code == 200
     mfa_pending_token = login_mfa_step1.json()["mfa_token"]
 
-    # Ensure fresh TOTP timestep for login
-    r_client = Redis.from_url(_get_redis_url(), decode_responses=True)
-    async for key in r_client.scan_iter(match=f"*{provider_a_id}*"):
-        if "mfa_totp_used" in key:
-            await r_client.delete(key)
-    await r_client.close()
+    # Generate an unused adjacent TOTP counter without mutating Redis replay state
+    totp = pyotp.TOTP(mfa_secret)
+    totp_fresh = totp.at(datetime.now(timezone.utc) + timedelta(seconds=totp.interval))
+    assert totp_fresh != totp_code
 
-    totp_fresh = pyotp.TOTP(mfa_secret).now()
     login_mfa_step2 = await client.post(
         "/api/v2/auth/mfa/verify",
         headers={"User-Agent": _USER_AGENT, "X-Forwarded-For": "127.0.0.1"},
@@ -681,6 +680,55 @@ async def test_02_complete_provider_registration_and_trust_journey_e2e(
         "Authorization": f"Bearer {mfa_assured_token_a}",
         "User-Agent": _USER_AGENT,
     }
+
+    # -------------------------------------------------------------------------
+    # PROVE BOTH COUNTERS REMAIN CONSUMED & REPLAY IS REJECTED
+    # -------------------------------------------------------------------------
+    # 1. Read-only inspection of Redis replay markers: both counters must exist
+    r_check = Redis.from_url(_get_redis_url(), decode_responses=True)
+    replay_keys = [
+        k async for k in r_check.scan_iter(match=f"*mfa_totp_used:{provider_a_id}:*")
+    ]
+    await r_check.close()
+    assert (
+        len(replay_keys) == 2
+    ), f"Expected exactly 2 distinct durable replay markers in Redis, found {replay_keys}"
+
+    # 2. Replaying the enrollment TOTP code through real auth fails closed
+    replay_token_1 = await issue_mfa_pending_token(provider_a_id)
+    replay_enroll_resp = await client.post(
+        "/api/v2/auth/mfa/verify",
+        headers={"User-Agent": _USER_AGENT, "X-Forwarded-For": "127.0.0.1"},
+        json={
+            "mfa_token": replay_token_1,
+            "totp_code": totp_code,
+            "hospital_id": str(fac_a_id),
+        },
+    )
+    assert replay_enroll_resp.status_code == 401
+    assert replay_enroll_resp.json()["detail"] == "Invalid authenticator code."
+
+    # 3. Replaying the login TOTP code through real auth fails closed
+    replay_token_2 = await issue_mfa_pending_token(provider_a_id)
+    replay_login_resp = await client.post(
+        "/api/v2/auth/mfa/verify",
+        headers={"User-Agent": _USER_AGENT, "X-Forwarded-For": "127.0.0.1"},
+        json={
+            "mfa_token": replay_token_2,
+            "totp_code": totp_fresh,
+            "hospital_id": str(fac_a_id),
+        },
+    )
+    assert replay_login_resp.status_code == 401
+    assert replay_login_resp.json()["detail"] == "Invalid authenticator code."
+
+    # 4. Direct service-level verification proves both timesteps remain locked
+    assert not await verify_totp_code_once(
+        provider_a_id, mfa_secret, totp_code, redis_client=get_async_redis_client()
+    )
+    assert not await verify_totp_code_once(
+        provider_a_id, mfa_secret, totp_fresh, redis_client=get_async_redis_client()
+    )
 
     # -------------------------------------------------------------------------
     # STEP 8 — PROFESSIONAL SELF SUBMISSION

@@ -400,7 +400,7 @@ Manual Reviewer Attestation
 Slice 5 Phase 5B implements the schema and persistence foundations for external authoritative verification evidence and facility trust lifecycle parity:
 
 1. **Explicit Provenance Vocabulary**:
-   - `MANUAL_REVIEWER_ATTESTATION`: Human reviewer manual attestation with optional reviewer notes, where `adapter_version` is optional/null.
+   - `MANUAL_REVIEWER_ATTESTATION`: Human-review provenance classification; `adapter_version` may be NULL.
    - `SERVER_REGISTRY_OBSERVATION`: System automated registry integration observation, requiring non-empty `adapter_version`.
    - Neither evidence record type confers clinical capability, modifies provider roles, or bypasses `ClinicalEligibilityService`.
 2. **Immutable Append-Only Evidence**:
@@ -416,7 +416,7 @@ Slice 5 Phase 5B implements the schema and persistence foundations for external 
    - `FacilityVerification` is extended with 9 fields matching professional verification: `registration_authority_code`, `registration_number_normalized`, `registration_valid_from`, `registration_valid_until`, `grace_expires_at`, `recheck_attempted_at`, `recheck_failure_reason`, `previous_verification_valid`, `authoritative_adverse_signal_at`.
    - Facility grace remains disabled (`grace_expires_at` is schema-only; no grace policy or automated extension is enabled).
 6. **No Multi-License Redesign**:
-   - Professional verification remains 1:1 with provider identity (`provider_identity_id` unique constraint preserved).
+   - Professional verification remains 1:1 with provider identity (`provider_id` unique constraint preserved).
 7. **Synthetic Local Qualification Disclaimer**:
    - All qualifications are executed against disposable local loopback PostgreSQL.
    - No claim of live ABDM, HFR, HPR, NMC, SMC, DPDP, or statutory compliance is made.
