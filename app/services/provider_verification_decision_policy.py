@@ -365,10 +365,6 @@ def evaluate_professional_observation(
         raise VerificationPolicyInputError(
             "request and observation lookup purpose mismatch"
         )
-    if request.lookup_purpose != observation.lookup_purpose:
-        raise VerificationPolicyInputError(
-            "request and observation lookup purpose mismatch"
-        )
 
     now_utc = now.astimezone(timezone.utc)
 
@@ -384,6 +380,21 @@ def evaluate_professional_observation(
             candidate_command=None,
             expected_resource_version=context.current_version,
             reason_code=VerificationDecisionReason.REGISTRATION_IDENTITY_MISMATCH,
+            requires_human_review=True,
+            grace_expires_at=None,
+            source_id=observation.source_id,
+            lookup_purpose=observation.lookup_purpose,
+            outcome=observation.outcome,
+        )
+
+    # MANUAL_REVIEW: strictly human-adjudication path, never automate regardless of resource state or outcome
+    if observation.lookup_purpose == VerificationEvidenceLookupPurpose.MANUAL_REVIEW:
+        return VerificationDecisionPlan(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+            candidate_command=None,
+            expected_resource_version=context.current_version,
+            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
             requires_human_review=True,
             grace_expires_at=None,
             source_id=observation.source_id,
@@ -456,21 +467,6 @@ def evaluate_professional_observation(
             candidate_command=None,
             expected_resource_version=context.current_version,
             reason_code=VerificationDecisionReason.INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED,
-            requires_human_review=True,
-            grace_expires_at=None,
-            source_id=observation.source_id,
-            lookup_purpose=observation.lookup_purpose,
-            outcome=observation.outcome,
-        )
-
-    # MANUAL_REVIEW: strictly human-adjudication path, never automate
-    if observation.lookup_purpose == VerificationEvidenceLookupPurpose.MANUAL_REVIEW:
-        return VerificationDecisionPlan(
-            resource_type=RegistryResourceType.PROFESSIONAL,
-            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
-            candidate_command=None,
-            expected_resource_version=context.current_version,
-            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
             requires_human_review=True,
             grace_expires_at=None,
             source_id=observation.source_id,
@@ -758,6 +754,21 @@ def evaluate_facility_observation(
             outcome=observation.outcome,
         )
 
+    # MANUAL_REVIEW: strictly human-adjudication path, never automate regardless of resource state or outcome
+    if observation.lookup_purpose == VerificationEvidenceLookupPurpose.MANUAL_REVIEW:
+        return VerificationDecisionPlan(
+            resource_type=RegistryResourceType.FACILITY,
+            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+            candidate_command=None,
+            expected_resource_version=context.current_version,
+            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
+            requires_human_review=True,
+            grace_expires_at=None,
+            source_id=observation.source_id,
+            lookup_purpose=observation.lookup_purpose,
+            outcome=observation.outcome,
+        )
+
     # Terminal states: never automated, cannot resurrect
     terminal_statuses = (
         FacilityVerificationStatus.REJECTED,
@@ -821,21 +832,6 @@ def evaluate_facility_observation(
             candidate_command=None,
             expected_resource_version=context.current_version,
             reason_code=VerificationDecisionReason.INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED,
-            requires_human_review=True,
-            grace_expires_at=None,
-            source_id=observation.source_id,
-            lookup_purpose=observation.lookup_purpose,
-            outcome=observation.outcome,
-        )
-
-    # MANUAL_REVIEW: strictly human-adjudication path, never automate
-    if observation.lookup_purpose == VerificationEvidenceLookupPurpose.MANUAL_REVIEW:
-        return VerificationDecisionPlan(
-            resource_type=RegistryResourceType.FACILITY,
-            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
-            candidate_command=None,
-            expected_resource_version=context.current_version,
-            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
             requires_human_review=True,
             grace_expires_at=None,
             source_id=observation.source_id,

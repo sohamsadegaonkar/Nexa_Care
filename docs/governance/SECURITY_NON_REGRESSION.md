@@ -524,7 +524,7 @@ Slice 5 Phase 5D implements the pure decision-policy layer that evaluates a vali
    - Initial verification for professionals (`PENDING_REVIEW`, `NOT_SUBMITTED`) and facilities (`PENDING_VERIFICATION`, `DRAFT`) is permanently human-gated (`HUMAN_REVIEW_REQUIRED` with `INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED`).
    - Automated initial activation is strictly prohibited, regardless of registry observation outcome.
    - `REJECTED` is a terminal state; it is not classified as an initial state.
-   - `MANUAL_REVIEW` lookup purpose is permanently human-gated (`HUMAN_REVIEW_REQUIRED` with `MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED`, `candidate_command=None`), regardless of observation outcome.
+   - `MANUAL_REVIEW` lookup purpose is permanently human-gated (`HUMAN_REVIEW_REQUIRED` with `MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED`, `candidate_command=None`), regardless of resource lifecycle state (including terminal, suspended, initial, verified, or recheck states) or observation outcome. The `MANUAL_REVIEW` gate evaluates immediately after request/observation purpose and identity binding, strictly preceding state-specific automation policies.
 
 5. **Strict Positive Recheck Requirements & Automation Candidate Commands**:
    - Positive recheck can only produce `SYSTEM_TRANSITION_CANDIDATE` with `candidate_command=COMPLETE_RECHECK` when:

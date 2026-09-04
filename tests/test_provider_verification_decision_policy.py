@@ -1734,7 +1734,12 @@ def test_professional_grace_requires_recheck_purpose_and_adverse_outage_no_grace
 
 
 def test_manual_review_purpose_always_human_gated() -> None:
-    """MANUAL_REVIEW lookup purpose never produces system automation candidates across all outcomes."""
+    """MANUAL_REVIEW lookup purpose never produces system automation candidates across all states and outcomes.
+
+    Professional: 9 statuses x 10 outcomes = 90 combinations
+    Facility: 7 statuses x 10 outcomes = 70 combinations
+    Total: 160 combinations
+    """
     now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)
 
     prof_req = ProfessionalLookupRequest(
@@ -1742,68 +1747,85 @@ def test_manual_review_purpose_always_human_gated() -> None:
         registration_number_normalized="REG1",
         lookup_purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
     )
-    prof_ctx = ProfessionalVerificationContext(
-        current_status=ProfessionalVerificationStatus.VERIFIED,
-        current_version=1,
-        registration_authority_code="AUTH",
-        registration_number_normalized="REG1",
-        server_provenance_established=True,
-        established_server_source_id="TEST_SOURCE",
-    )
-    for outcome in VerificationEvidenceOutcome:
-        obs = _make_prof_obs(
-            outcome=outcome,
-            purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
-            source_id="TEST_SOURCE",
+
+    prof_combinations = 0
+    for status in ProfessionalVerificationStatus:
+        prof_ctx = ProfessionalVerificationContext(
+            current_status=status,
+            current_version=1,
+            registration_authority_code="AUTH",
+            registration_number_normalized="REG1",
+            server_provenance_established=True,
+            established_server_source_id="TEST_SOURCE",
         )
-        plan = evaluate_professional_observation(
-            observation=obs,
-            request=prof_req,
-            context=prof_ctx,
-            now=now,
-        )
-        assert plan.disposition == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
-        assert plan.candidate_command is None
-        assert plan.requires_human_review is True
-        assert plan.grace_expires_at is None
-        assert (
-            plan.reason_code
-            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED
-        )
+        for outcome in VerificationEvidenceOutcome:
+            obs = _make_prof_obs(
+                outcome=outcome,
+                purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
+                source_id="TEST_SOURCE",
+            )
+            plan = evaluate_professional_observation(
+                observation=obs,
+                request=prof_req,
+                context=prof_ctx,
+                now=now,
+            )
+            assert (
+                plan.disposition
+                == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
+            )
+            assert plan.candidate_command is None
+            assert plan.requires_human_review is True
+            assert plan.grace_expires_at is None
+            assert (
+                plan.reason_code
+                == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED
+            )
+            prof_combinations += 1
+    assert prof_combinations == 90
 
     fac_req = FacilityLookupRequest(
         registration_authority_code="AUTH",
         registration_number_normalized="REG1",
         lookup_purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
     )
-    fac_ctx = FacilityVerificationContext(
-        current_status=FacilityVerificationStatus.VERIFIED,
-        current_version=1,
-        registration_authority_code="AUTH",
-        registration_number_normalized="REG1",
-        server_provenance_established=True,
-        established_server_source_id="TEST_SOURCE",
-    )
-    for outcome in VerificationEvidenceOutcome:
-        obs = _make_facility_obs(
-            outcome=outcome,
-            purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
-            source_id="TEST_SOURCE",
+
+    fac_combinations = 0
+    for status in FacilityVerificationStatus:
+        fac_ctx = FacilityVerificationContext(
+            current_status=status,
+            current_version=1,
+            registration_authority_code="AUTH",
+            registration_number_normalized="REG1",
+            server_provenance_established=True,
+            established_server_source_id="TEST_SOURCE",
         )
-        plan = evaluate_facility_observation(
-            observation=obs,
-            request=fac_req,
-            context=fac_ctx,
-            now=now,
-        )
-        assert plan.disposition == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
-        assert plan.candidate_command is None
-        assert plan.requires_human_review is True
-        assert plan.grace_expires_at is None
-        assert (
-            plan.reason_code
-            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED
-        )
+        for outcome in VerificationEvidenceOutcome:
+            obs = _make_facility_obs(
+                outcome=outcome,
+                purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
+                source_id="TEST_SOURCE",
+            )
+            plan = evaluate_facility_observation(
+                observation=obs,
+                request=fac_req,
+                context=fac_ctx,
+                now=now,
+            )
+            assert (
+                plan.disposition
+                == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
+            )
+            assert plan.candidate_command is None
+            assert plan.requires_human_review is True
+            assert plan.grace_expires_at is None
+            assert (
+                plan.reason_code
+                == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED
+            )
+            fac_combinations += 1
+    assert fac_combinations == 70
+    assert prof_combinations + fac_combinations == 160
 
 
 def test_observation_request_binding_gap_constant() -> None:
