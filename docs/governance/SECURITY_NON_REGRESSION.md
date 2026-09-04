@@ -343,6 +343,50 @@ Slice 4 Phase 4F implements the authoritative offline root-of-trust seam for `TR
 
 This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
 
+#### SEC-046: Slice 4 Final Organizational Trust Administration Qualification (Phase 4G)
+
+```text
+Synthetic Local Qualification
+!= Production Deployment
+!= Cloud KMS / Hardware HSM Evidence
+!= Statutory / Regulatory Certification
+!= ABDM / NMC / DPDP Compliance
+```
+
+Phase 4G performs the final end-to-end adversarial, PostgreSQL, and Redis qualification of Slice 4 (Organizational Trust Permission Administration) across its full canonical journey and adversarial matrices:
+
+1. **Canonical 14-Step Full Journey**: Validates the end-to-end lifecycle on real PostgreSQL and Redis:
+   - Step 1: Unprovisioned provider denied permission administration (403 `AUTHORIZATION_DENIED`).
+   - Step 2: Governed offline root provisioning via `scripts/governance_trust_root.py` (`GRANT_ROOT` -> `TRUST_PERMISSION_MANAGE`).
+   - Step 3: Root alone without fresh MFA denied (428 `MFA_STEP_UP_REQUIRED`), with zero subordinate permission rows created.
+   - Step 4: Real affiliation-independent MFA step-up via `POST /api/v2/auth/mfa/verify-action` consumes TOTP, updates `mfa_verified_at` in place on the same session, and logs `PROVIDER_STEP_UP_MFA_VERIFIED` (`AUTH` domain).
+   - Step 5: Same-key retry of Step 3 succeeds (200, `PROFESSIONAL_REVIEW` granted, outbox partitioned `platform:platform`).
+   - Step 6: Idempotent replay with same key returns original response (`idempotent_replay=True`).
+   - Step 7: Scope violations denied (global with facility -> 400 `GLOBAL_PERMISSION_FACILITY_PROHIBITED`; facility without facility -> 400 `INVALID_REQUEST`).
+   - Step 8: Facility-scoped permission granted (`AFFILIATION_MANAGE` bound to `fac_id`, outbox partitioned `hospital:{fac_id}:platform`).
+   - Step 9: Re-granting active permission denied (409 `ACTIVE_GRANT_EXISTS`).
+   - Step 10: Target account deactivation revokes subordinate permission via `apply_revoke` (200, `revocation_reason_code=ACCESS_REMOVED`).
+   - Step 11: Idempotent replay of revocation returns `idempotent_replay=True`.
+   - Step 12: Re-revocation denied (409 `GRANT_ALREADY_REVOKED`).
+   - Step 13: Offline root revocation via governance CLI (`REVOKE_ROOT`, `expected_active_root_count=1`, `acknowledge_zero_active_roots=True`).
+   - Step 14: Prior manager immediately denied on ordinary grant route (403 `AUTHORIZATION_DENIED`).
+
+2. **Public Root Protection Matrix**: Direct attempts to grant or revoke `TRUST_PERMISSION_MANAGE` via public HTTP routes strictly fail closed (403 `ROOT_PERMISSION_OFFLINE_ONLY`), and attempts with non-existent grant IDs return 403 `ROOT_PERMISSION_OFFLINE_ONLY` before target lookup.
+3. **Legacy Role & Clinical Confusion Matrix**: Zero legacy clinician/reviewer roles confer trust permission authority (403 `AUTHORIZATION_DENIED`). Trust permissions confer zero clinical capabilities, zero professional verifications, zero hospital affiliations, and zero interactive clinical eligibility under `ClinicalEligibilityService`.
+4. **Authentication & Session Boundary Matrix**: Missing sessions, non-Bearer schemes, invalid session tokens, expired Redis sessions, and User-Agent mismatches fail closed with uniform 401 `PROVIDER_SESSION_REQUIRED`. Stale MFA returns 428 `MFA_STEP_UP_REQUIRED`. Session IP rotation is admitted with warning logs.
+5. **Target Disclosure Prevention Matrix**: Uniform `404 TARGET_PROVIDER_UNAVAILABLE` returned for non-existent providers, inactive providers, and providers with inactive credentials, completely mitigating account-state enumeration oracles.
+6. **Adversarial Request Shape Matrix**: Extraneous fields (422), non-UUID identifiers (422), invalid ISO datetimes (422), naive datetimes (400 `INVALID_DATETIME_TIMEZONE`), inverted intervals (400 `INVALID_VALIDITY_INTERVAL`), and client attempts to pass internal `EXPIRED_SUPERSEDED` revocation reason (422) strictly fail closed.
+7. **Adversarial Offline Root CLI Matrix**: Validates DB name enforcement (`DATABASE_NAME_MISMATCH`), schema revision preflight (`SCHEMA_REVISION_MISMATCH`), double-confirmation mismatches (`CONFIRMATION_MISMATCH`), missing `--apply` (`EXPLICIT_APPLY_REQUIRED`), target contact unverified, target credential inactive, zero-root acknowledgment guard, and stale expected-count CAS (`ROOT_SET_CHANGED`).
+8. **Concurrency & Atomicity Qualification**:
+   - Root set serialization: concurrent root grants serialize under PostgreSQL transaction advisory locks (`pg_advisory_xact_lock`); CAS enforces expected count.
+   - Ordinary duplicate grants: concurrent identical grants serialize on target locks (exactly one succeeds; second denies with 409 `ACTIVE_GRANT_EXISTS`).
+   - Reciprocal managers: deterministic UUID-ordered row locking eliminates PostgreSQL deadlocks.
+   - Root revocation linearization: revoking manager root immediately invalidates in-flight subordinate grants upon lock acquisition (403 `AUTHORIZATION_DENIED`).
+9. **Lifecycle & Temporal Boundaries**: Expired root grants deny authority at boundary (`valid_until <= now`), future-effective root grants deny before `valid_from`, and contact assurance invalidation / account deactivation immediately revoke authority upon row evaluation.
+10. **Audit Outbox & Route Freeze**: Verified strict partition derivation (`platform:platform` for global, `hospital:{fac_id}:platform` for facility scope), value-free payloads with server-owned metadata (`governance_mode: OFFLINE_ROOT`), and exact 26-route provider-trust command surface freeze.
+
+This documentation is an internal engineering specification and records synthetic qualification evidence against disposable local PostgreSQL and Redis. It makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
+
 
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)
 
