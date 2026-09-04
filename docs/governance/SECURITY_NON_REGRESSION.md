@@ -289,6 +289,30 @@ Slice 4 Phase 4D refactors `POST /api/v2/auth/mfa/verify-action` to establish an
 
 This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
 
+#### SEC-044: Organizational Trust Permission Administration HTTP Boundary (Slice 4 Phase 4E)
+
+```text
+HTTP Command Adaptation
+!= Transaction Ownership
+!= Permission Policy
+!= Root Governance Tooling
+!= MFA Step-Up Boundary
+!= Clinical Role / Capability
+```
+
+Slice 4 Phase 4E exposes the already-authoritative Phase 4C permission application service through a minimal, strict HTTP command surface under `/api/v2/provider-trust`:
+
+1. **Exact 26-Route Surface**: Exposes exactly two new command-specific POST endpoints (`POST /api/v2/provider-trust/permissions/grant`, `POST /api/v2/provider-trust/permissions/{grant_id}/revoke`). The total provider-trust command surface expands from 24 (Slice 3F lifecycle) to exactly 26 POST endpoints. Zero GET, PATCH, DELETE, list, or search endpoints exist under `/api/v2/provider-trust`.
+2. **Principal & Clean Session Boundary**: Both endpoints depend strictly on `get_provider_trust_route_principal` (`ProviderTrustRoutePrincipal`), which authenticates against Redis and executes zero PostgreSQL queries. The request-scoped `AsyncSession` arrives at Phase 4C with `in_transaction() == False`. Phase 4C maintains sole ownership of the database transaction (`async with self.db.begin():`). The route layer performs zero database commits, begins, or savepoints.
+3. **Mandatory Idempotency**: `Idempotency-Key` header is strictly required on both endpoints. Replay requests return 200 with `idempotent_replay=True`. Key collision with semantic mutation differences returns 409 `IDEMPOTENCY_KEY_REUSED`.
+4. **MFA 428 Precondition Mapping**: Phase 4C rejects stale MFA assurance (>15m) with `MFA_STEP_UP_REQUIRED`. The route maps this to `HTTP 428 Precondition Required` (`MFA_STEP_UP_REQUIRED`), enabling callers to step up their session assurance via `POST /api/v2/auth/mfa/verify-action` and retry the exact same idempotency key to completion.
+5. **Collapsed Target-State Disclosure**: To prevent provider existence and credential enumeration, all target eligibility denials (`TARGET_PROVIDER_NOT_FOUND`, `TARGET_PROVIDER_INACTIVE`, `TARGET_CREDENTIAL_INACTIVE`) collapse into a uniform `HTTP 404 TARGET_PROVIDER_UNAVAILABLE`.
+6. **Root Permission Denial**: Requests targeting root authority (`TRUST_PERMISSION_MANAGE`) in grant or revoke routes fail closed with `HTTP 403 ROOT_PERMISSION_OFFLINE_ONLY`. There is no successful public HTTP route branch for root governance.
+7. **Client Revocation Reasons**: `RevokePermissionRequest` restricts revocation reasons to `ClientRevocationReasonCode` (`ACCESS_REMOVED`, `ROLE_CHANGED`, `SECURITY_RESPONSE`, `GOVERNANCE_CHANGE`). `EXPIRED_SUPERSEDED` is server-owned for internal expired-slot supersession and is rejected at input validation (422).
+8. **CSRF & Clinical Isolation**: State-changing cookie mutations require double-submit CSRF verification; Bearer tokens operate without cookie CSRF requirements. Permission grants never modify `ProviderHospitalAffiliation.roles`, `ClinicalCapability`, or patient records, and do not confer clinical eligibility under `ClinicalEligibilityService`.
+
+This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
+
 
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)
 
