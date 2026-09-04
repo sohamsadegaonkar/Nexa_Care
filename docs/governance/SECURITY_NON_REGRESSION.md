@@ -79,6 +79,7 @@ The system minimises data and observability, uses durable idempotency, distingui
 | SEC-042 | Organizational trust permission administration | Public/ordinary administration of organizational trust permissions could mint or revoke root authority, allow self-escalation, bypass scope bindings, fail to clear expired unrevoked index slots, allow concurrent duplicate slot creation, deadlock reciprocal managers, operate under stale MFA/authorization, or conflate trust permissions with clinical capabilities. | Pure domain policy strictly fails closed: ordinary administration handles ONLY subordinate permissions (`PROFESSIONAL_REVIEW`, `FACILITY_REVIEW`, `AFFILIATION_MANAGE`). Requesting `TRUST_PERMISSION_MANAGE` denies as `ROOT_PERMISSION_OFFLINE_ONLY`. Self-grant is strictly prohibited (`SELF_GRANT_PROHIBITED`). Self-revocation of subordinate permissions is allowed. Scope is server-derived (`scope_for_permission`); facility bindings are strictly validated against permission types and `HospitalRegistry` existence. Active/future-effective slot conflicts deny as `ACTIVE_GRANT_EXISTS`. Expired unrevoked slots generate an atomic supersession plan (`superseded_grant_id` with internal server-selected `EXPIRED_SUPERSEDED` revocation). Grants are append-only; existing rows are never mutated in place except for `revoked_at`. Authoritative grant state validation verifies target provider ID, permission, scope, facility ID, and timezone-aware timestamps before supersession or revocation (`GRANT_STATE_INVALID`). Target provider must have active account and active credential. Application service (`ProviderTrustPermissionApplicationService`) executes within a single atomic PostgreSQL transaction (`async with self.db.begin():`) with no route-owned commits. Deterministic sorted lock order over unique involved provider UUIDs (`ProviderIdentity` -> `ProviderCredential` -> `ProviderTrustPermissionGrant` with `populate_existing=True`) eliminates deadlocks for reciprocal managers. Step-Up MFA freshness defense-in-depth enforces `mfa_verified_at` <= 15 minutes (`MFA_STEP_UP_REQUIRED`). Mutation idempotency (`platform-provider-trust`) and value-free audit-outbox events commit atomically. Concurrently, target provider lock serializes duplicate grant attempts (exactly one succeeds; second denies with `ACTIVE_GRANT_EXISTS`). Zero clinical roles/capabilities are read or assigned. Audit uses `AuditDomain.PLATFORM` with exact event literals `PROVIDER_TRUST_PERMISSION_GRANTED` and `PROVIDER_TRUST_PERMISSION_REVOKED`. | `app/services/provider_trust_permission_policy.py`; `app/services/provider_trust_permission_application.py`; `app/observability/provider_trust_events.py`; `app/security/trust_management_permissions.py` | `tests/test_provider_trust_permission_policy.py`; `tests/test_provider_trust_permission_application.py`; `tests/integration/test_provider_trust_permission_application_postgres.py` | Enforced locally; PostgreSQL qualification verified on disposable database (12/12 integration proofs passed) | 2026-09-04 |
 | SEC-047 | Verification evidence and facility trust schema foundations | External registry responses, raw HTML/payloads, tokens, or automated verification runs could be forged, mutated, or conflated with clinical authority; facility verification lacked lifecycle parity with professional trust; evidence rows could be deleted or updated to conceal verification histories or adverse signals. | Pure append-only verification evidence persistence (`ProviderTrustVerificationEvidence`) enforced by PostgreSQL trigger (`ERRCODE = '55000'`); resource target XOR check constraint (`professional_verification_id` XOR `facility_verification_id`); strict closed enums for origin, lookup purpose, outcome, and identity binding result; server observations require non-empty adapter version and safe 64-character SHA-256 evidence digest; raw HTTP responses and external tokens strictly prohibited from storage; facility verification aligned with professional trust schema (authority code, normalized registration number, validity dates, grace expiry, recheck fields, authoritative adverse signal, previous valid boolean) while facility grace remains disabled; manual reviewer attestation, server registry observation, system automation, and clinical authority strictly decoupled; foreign keys enforced with `ON DELETE RESTRICT`. | `app/models/provider.py`; `alembic/versions/20260904_verification_evidence.py` | `tests/test_provider_verification_evidence_models.py`; `tests/integration/test_provider_verification_evidence_postgres.py` | Enforced locally on disposable PostgreSQL 16; external registry adapters, live delivery, and regulatory certification deferred | 2026-09-04 |
 | SEC-048 | Registry adapter contract and normalized observation boundary | External registry lookup requests, raw responses, or test adapters could leak provider credentials, manufacture trusted provider identity, retain raw HTML/tokens, conflate observation data with clinical authority, or bypass provenance checks. | Pure, fail-closed registry adapter boundary (`RegistryAdapter`); server-owned source descriptor (`RegistrySourceDescriptor`) with required non-empty `source_id` and `adapter_version`; closed resource type vocabulary (`PROFESSIONAL`, `FACILITY`); immutable request contracts (`ProfessionalLookupRequest`, `FacilityLookupRequest`) rejecting authority/session/credential/PII fields; immutable observation result (`RegistryObservation`) matching 5B evidence schema; closed outcome and identity binding vocabularies; strict separation of transient availability (`SOURCE_UNAVAILABLE`) from client auth (`SOURCE_AUTHENTICATION_FAILURE`) and integrity (`SOURCE_INTEGRITY_FAILURE`) failures; strict response-integrity digest calculation (lowercase SHA-256); raw response payload and credential retention strictly prohibited; orchestrator provenance validation (`validate_observation_provenance`) enforcing source ID, adapter version, and resource type matching; synthetic test adapter only (`SyntheticRegistryAdapter`); zero database writes, zero lifecycle mutations, zero system authority, and zero clinical capability changes. | `app/services/provider_verification_registry.py` | `tests/test_provider_verification_registry.py` | Enforced locally via pure unit and architectural AST guards; no live registry, network, or statutory compliance claimed | 2026-09-04 |
+| SEC-049 | Registry observation decision policy and automation eligibility freeze | Evaluating external registry observations or source failures could automatically mutate provider verification states, grant unauthorized clinical authority, fabricate reviewer credentials or system actor identities, bypass human gates on initial verification, grant unauthorized grace periods, or extend grace indefinitely upon repeated outages. | Pure decision-policy layer (`app/services/provider_verification_decision_policy.py`) implementing permanent authority separation: `REGISTRY OBSERVATION != DECISION POLICY != AUTOMATION ELIGIBILITY != SYSTEM EXECUTION AUTHORITY != LIFECYCLE MUTATION != CLINICAL AUTHORITY`; initial verification permanently human-gated (`INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED`); frozen static automation command allowlists (`COMPLETE_RECHECK`, `MARK_RECHECK_DUE` for professional; `COMPLETE_RECHECK`, `MARK_RECHECK_REQUIRED` for facility); positive recheck strictly requires established server source continuity, registration identity match, `MATCHED` identity binding, no active authoritative adverse signals, and registration validity; maximum 24h grace period granted strictly on first `SOURCE_UNAVAILABLE` for currently `VERIFIED` professional with established server source and valid unexpired registration, bounded by registration expiry; repeated outages preserve existing grace without extension; non-outage failures and adverse findings never receive grace; active-grace cancellation semantic gap explicitly preserved as `LIFECYCLE_SEMANTIC_GAP` (`RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE`); facility grace permanently disabled; terminal and suspended states non-resurrectable; zero database transactions, zero DB sessions, zero HTTP clients, zero system credentials, zero MFA fabrication, zero reviewer ID fabrication, and zero clinical eligibility modifications; enforced by pure unit tests and AST architectural isolation. | `app/services/provider_verification_decision_policy.py` | `tests/test_provider_verification_decision_policy.py` | Enforced locally via pure unit and architectural AST guards; zero DB/network/runtime mutations | 2026-09-05 |
 
 ### Provider clinical-trust boundary (Slices 1, 2, 3A through 3F)
 
@@ -480,6 +481,80 @@ Slice 5 Phase 5C implements the pure, fail-closed registry adapter boundary for 
    - Zero live registry integration with NMC, SMC, ABDM HPR, ABDM HFR, NHA, or ROHINI is claimed.
    - Zero database writes, zero migrations, zero system authority, and zero HTTP routes are introduced.
    - No claim of statutory or regulatory compliance is made.
+
+#### SEC-049: Registry Observation Decision Policy and Automation Eligibility Freeze (Slice 5 Phase 5D)
+
+```text
+Registry Observation
+!= Decision Policy
+!= Automation Eligibility
+!= System Execution Authority
+!= Lifecycle Mutation
+!= Clinical Authority
+```
+
+Slice 5 Phase 5D implements the pure decision-policy layer that evaluates a validated `RegistryObservation` against trusted current verification context and determines automation eligibility without granting execution authority or modifying database state:
+
+1. **Permanent Authority Chain**:
+   - The decision policy is pure and advisory; it never mutates lifecycle rows, creates system sessions, manufactures reviewer credentials, issues tokens, or interacts with `ClinicalEligibilityService`.
+   - Permanent chain invariant:
+     ```text
+     REGISTRY OBSERVATION
+     != DECISION POLICY
+     != AUTOMATION ELIGIBILITY
+     != SYSTEM EXECUTION AUTHORITY
+     != LIFECYCLE MUTATION
+     != CLINICAL AUTHORITY
+     ```
+
+2. **Immutable Context Models & Clean Normalization**:
+   - `ProfessionalVerificationContext` and `FacilityVerificationContext` are slotted, frozen dataclasses requiring explicit types and timezone-aware timestamps normalized to UTC.
+   - Authority codes and registration numbers are validated against schema boundaries (`^[A-Z0-9][A-Z0-9_.-]{0,63}$` and `^[A-Z0-9/]{1,128}$`).
+   - Cross-resource identity protection verifies that lookup request registration parameters match the context registration identity; mismatches return `HUMAN_REVIEW_REQUIRED` with `REGISTRATION_IDENTITY_MISMATCH`.
+
+3. **Pure Output Plan (`VerificationDecisionPlan`)**:
+   - Returns a frozen, slotted dataclass containing:
+     `resource_type`, `disposition`, `candidate_command`, `expected_resource_version`, `reason_code`, `requires_human_review`, `grace_expires_at`, `source_id`, `lookup_purpose`, `outcome`.
+   - Contains zero authority fields: no actor IDs, session tokens, bypass flags, or transaction handles.
+
+4. **Permanent Human Gates on Initial Verification**:
+   - Initial verification for professionals (`PENDING_REVIEW`, `NOT_SUBMITTED`) and facilities (`PENDING_VERIFICATION`, `DRAFT`) is permanently human-gated (`HUMAN_REVIEW_REQUIRED` with `INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED`).
+   - Automated initial activation is strictly prohibited, regardless of registry observation outcome.
+   - `REJECTED` is a terminal state; it is not classified as an initial state.
+
+5. **Strict Positive Recheck Requirements & Automation Candidate Commands**:
+   - Positive recheck can only produce `SYSTEM_TRANSITION_CANDIDATE` with `candidate_command=COMPLETE_RECHECK` when ALL of the following hold:
+     - Resource is in active recheck state (`RECHECK_DUE` for professional; `RECHECK_REQUIRED` for facility).
+     - Observation `lookup_purpose == RECHECK` and `outcome == CONFIRMED_ACTIVE`.
+     - Observation `identity_binding_result == MATCHED`.
+     - Established server source continuity: `server_provenance_established` is True and matches `established_server_source_id == observation.source_id`.
+     - No authoritative adverse signals recorded (`authoritative_adverse_signal_at is None`).
+     - Registration has not expired (`registration_valid_until is None` or `registration_valid_until > now`).
+   - If any prerequisite fails, the disposition falls closed to `HUMAN_REVIEW_REQUIRED`.
+
+6. **Fail-Closed Outage Handling and 24-Hour Grace Rules**:
+   - Grace periods are limited strictly to `SOURCE_UNAVAILABLE` on a currently `VERIFIED` professional who has established server source provenance and valid registration.
+   - Grace duration is strictly `min(now + 24 hours, registration_valid_until)`. If registration validity is already expired, grace cannot be granted.
+   - Non-outage failures (`NOT_FOUND`, `IDENTITY_MISMATCH`, `CONFIRMED_INACTIVE`, `SOURCE_AUTHENTICATION_FAILURE`, `SOURCE_INTEGRITY_FAILURE`, `SOURCE_RESPONSE_INVALID`, `AMBIGUOUS`, `REVIEW_REQUIRED`) never receive grace and transition immediately to recheck with human review required.
+   - Repeated outage during active grace preserves the existing `grace_expires_at` without extending the deadline.
+   - Facility grace is permanently disabled (`grace_expires_at` is always None for facilities).
+
+7. **Terminal and Suspended State Protection**:
+   - Suspended states (`SUSPENDED` for professional; `SUSPENDED` for facility) never allow automated transitions (`HUMAN_REVIEW_REQUIRED` with `SUSPENDED_STATE_NO_AUTOMATION`). Automated `RESTORE` is strictly prohibited.
+   - Terminal states (`REJECTED`, `REVOKED`, `EXPIRED`, `VERIFICATION_STALE` for professional; `REJECTED`, `CLOSED` for facility) never allow automated transitions (`HUMAN_REVIEW_REQUIRED` with `TERMINAL_STATE_NO_AUTOMATION`).
+
+8. **Static Automation Command Allowlists**:
+   - The set of commands permitted in automated candidate plans is frozen:
+     - Professional: `{ProfessionalTransitionCommand.MARK_RECHECK_DUE, ProfessionalTransitionCommand.COMPLETE_RECHECK}`
+     - Facility: `{FacilityTransitionCommand.MARK_RECHECK_REQUIRED, FacilityTransitionCommand.COMPLETE_RECHECK}`
+   - All other canonical commands (professional: `SUBMIT`, `VERIFY`, `REJECT`, `SUSPEND`, `RESTORE`, `MARK_STALE`, `REVOKE`, `EXPIRE`; facility: `SUBMIT`, `VERIFY`, `REJECT`, `SUSPEND`, `RESTORE`, `CLOSE`) are strictly forbidden from system automation.
+
+9. **Recorded Architectural Gaps for Phase 5E Resolution**:
+   - **Active Grace Cancellation Gap (`RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE`)**: When a professional is in `RECHECK_DUE` with active grace and receives an authoritative non-outage adverse signal, the Slice-3 lifecycle lacks a non-terminal "cancel grace and remain recheck_due" command. The policy explicitly returns `LIFECYCLE_SEMANTIC_GAP` to preserve safety without invalid mutations.
+   - **System Actor Provenance Gap (`SYSTEM_ACTOR_PROVENANCE_GAP`)**: Existing lifecycle verification and recheck planners require reviewer provenance through `reviewer_id` (persisted as `String(128)` and populated by the application layer from authenticated human provider actor identity). Existing lifecycle semantics do not yet distinguish a verified human reviewer actor from an authorized machine/system automation actor. Phase 5D must not fabricate a dummy string (`'system'`, `'registry_worker'`) or fake provider identity to satisfy this field; Phase 5E execution authority must resolve this.
+
+10. **AST-Enforced Purity and Isolation**:
+    - Structural AST checks verify that `provider_verification_decision_policy.py` contains zero imports of database sessions, ORM models, SQL engines, HTTP/network clients, Celery/scheduler tasks, authentication routes, or clinical eligibility services.
 
 
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)
