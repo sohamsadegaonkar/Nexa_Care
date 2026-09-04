@@ -266,6 +266,29 @@ Slice 4 governs organizational trust-management permission administration. The p
 
 This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
 
+#### SEC-043: Affiliation-Independent Provider Step-Up Authentication Boundary (Slice 4 Phase 4D)
+
+```text
+Step-up authentication
+!= Organizational authorization
+!= Active hospital affiliation
+!= Clinical capability
+!= Professional verification
+```
+
+Slice 4 Phase 4D refactors `POST /api/v2/auth/mfa/verify-action` to establish an affiliation-independent provider MFA step-up boundary suitable for organizational trust-management permission administration:
+
+1. **Affiliation Independence**: Step-up authentication depends on `get_provider_step_up_principal` (`ProviderStepUpPrincipal`), intentionally decoupling MFA verification from `get_current_provider` (`ProviderContext`). Providers without active hospital affiliations, facility verifications, or clinical roles can successfully step up their session assurance.
+2. **Session Principal & Transport Binding**: Resolves the caller from an existing live opaque Redis session (`provider_session:<token>`), supporting Bearer token and HttpOnly cookie (`nexa_provider_session`). Conflicting tokens across both transports are rejected with `401 AMBIGUOUS_SESSION_TRANSPORT`. User-Agent hard binding is strictly enforced; IP rotation is admitted with warning logs.
+3. **Stale/Missing MFA Elevation**: Existing sessions with stale (`mfa_verified_at > 15m`) or missing MFA timestamps are admitted to step up (the explicit elevation path). Naive or future-dated timestamps fail closed (`401 INVALID_SESSION_STATE`).
+4. **Account & Credential Verification**: Revalidates PostgreSQL `ProviderIdentity` and `ProviderCredential` without clinical joins, enforcing `is_active`, `status == "active"`, `credential.is_active`, and `credential.mfa_enabled`.
+5. **Replay-Resistant TOTP Consumption**: TOTP verification uses `verify_totp_code_once`, atomically consuming the counter window in Redis. Replayed or expired codes fail closed (`401 INVALID_MFA_CODE`). Redis failure fails closed.
+6. **In-Place Refresh & TTL Preservation**: Updates `mfa_verified_at` on the same session token in place. The session expiration TTL is strictly preserved and never extended.
+7. **Audit-Before-Refresh Ordering**: The audit event `PROVIDER_STEP_UP_MFA_VERIFIED` (`AuditDomain.AUTH`) must append successfully via `append_audit_log_or_503` before `mark_provider_session_mfa_verified` modifies Redis. An audit failure fails closed with 503 and leaves the prior session MFA timestamp unchanged.
+8. **Non-Escalation & Authority Separation**: Step-up refreshes session authentication assurance only; it does not grant permissions or authorize organizational mutations. Phase 4C remains the sole authority gate, independently validating row locks, provider active status, and explicit unrevoked `TRUST_PERMISSION_MANAGE` grants alongside the 15-minute freshness check.
+
+This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
+
 
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)
 

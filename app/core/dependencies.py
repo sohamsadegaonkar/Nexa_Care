@@ -548,6 +548,166 @@ async def get_provider_trust_route_principal(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderStepUpPrincipal:
+    """Session-derived identity for provider MFA step-up verification.
+
+    This principal is strictly affiliation-independent: it contains only the
+    authenticated provider UUID, session authentication indicator, opaque session
+    token handle, and transport. It deliberately excludes clinical affiliations,
+    roles, capabilities, TOTP secrets, passwords, and patient data.
+    """
+
+    provider_id: UUID
+    session_authenticated: bool
+    session_token: str
+    transport: str = "bearer"
+
+    def __repr__(self) -> str:
+        return (
+            f"ProviderStepUpPrincipal(provider_id={self.provider_id}, "
+            f"session_authenticated={self.session_authenticated}, "
+            f"transport={self.transport!r})"
+        )
+
+    def __str__(self) -> str:
+        return self.__repr__()
+
+
+async def get_provider_step_up_principal(
+    request: Request,
+    credentials: HTTPAuthorizationCredentials | None = Depends(_provider_bearer_scheme),
+) -> ProviderStepUpPrincipal:
+    """Accept only an existing opaque Bearer or provider-cookie session for MFA step-up.
+
+    Validates session presence, active session authentication, unexpired TTL, and User-Agent
+    hard binding without requiring existing MFA assurance (allowing stale or missing MFA assurance
+    to step up).
+
+    Fails closed if both Bearer and Cookie transports are supplied with conflicting sessions.
+    """
+    if credentials is not None and credentials.scheme.lower() != "bearer":
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    bearer_token = (
+        credentials.credentials.strip()
+        if credentials is not None
+        and credentials.credentials
+        and credentials.credentials.strip()
+        else None
+    )
+    cookie_raw = request.cookies.get("nexa_provider_session")
+    cookie_token = (
+        cookie_raw.strip()
+        if isinstance(cookie_raw, str) and cookie_raw.strip()
+        else None
+    )
+
+    if bearer_token and cookie_token:
+        if bearer_token != cookie_token:
+            raise HTTPException(
+                status_code=401,
+                detail={"error_code": "AMBIGUOUS_SESSION_TRANSPORT"},
+            )
+        session_token = bearer_token
+        transport = "bearer"
+    elif bearer_token:
+        session_token = bearer_token
+        transport = "bearer"
+    elif cookie_token:
+        session_token = cookie_token
+        transport = "cookie"
+    else:
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+
+    session = await resolve_provider_session_context(session_token)
+    if session is None:
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    if session.get("authenticated") is not True:
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+
+    try:
+        provider_id = UUID(str(session["provider_id"]))
+        expires_at = datetime.fromisoformat(str(session["expires_at"]))
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        ) from None
+
+    if (
+        expires_at.tzinfo is None
+        or expires_at.utcoffset() is None
+        or expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+
+    raw_mfa = session.get("mfa_verified_at")
+    if raw_mfa is not None:
+        try:
+            mfa_dt = datetime.fromisoformat(str(raw_mfa))
+            if (
+                mfa_dt.tzinfo is None
+                or mfa_dt.utcoffset() is None
+                or mfa_dt > datetime.now(timezone.utc)
+            ):
+                raise HTTPException(
+                    status_code=401,
+                    detail={"error_code": "PROVIDER_SESSION_REQUIRED"},
+                )
+        except (TypeError, ValueError):
+            raise HTTPException(
+                status_code=401,
+                detail={"error_code": "PROVIDER_SESSION_REQUIRED"},
+            ) from None
+
+    user_agent = request.headers.get("user-agent")
+    stored_ua_hash = session.get("ua_hash", "")
+    current_ua_hash = hash_user_agent(user_agent)
+    if (
+        not isinstance(stored_ua_hash, str)
+        or not stored_ua_hash
+        or not current_ua_hash
+        or stored_ua_hash != current_ua_hash
+    ):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+
+    stored_ip_hash = session.get("ip_hash", "")
+    client_ip = _client_ip_from_request(request)
+    current_ip_hash = hash_client_ip(client_ip)
+    if stored_ip_hash and not isinstance(stored_ip_hash, str):
+        raise HTTPException(
+            status_code=401, detail={"error_code": "PROVIDER_SESSION_REQUIRED"}
+        )
+    if stored_ip_hash and current_ip_hash and stored_ip_hash != current_ip_hash:
+        logger.warning(
+            json.dumps(
+                {
+                    "event": "SESSION_IP_ROTATION_DETECTED",
+                    "provider_id": str(provider_id),
+                    "ip_hash": current_ip_hash,
+                }
+            )
+        )
+
+    return ProviderStepUpPrincipal(
+        provider_id=provider_id,
+        session_authenticated=True,
+        session_token=session_token,
+        transport=transport,
+    )
+
+
 def require_role(required_role: str):
     """Factory that returns a FastAPI dependency enforcing a provider role.
 
