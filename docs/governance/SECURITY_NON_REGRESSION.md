@@ -313,6 +313,36 @@ Slice 4 Phase 4E exposes the already-authoritative Phase 4C permission applicati
 
 This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
 
+#### SEC-045: Governed Offline Root-of-Trust Seam (Slice 4 Phase 4F)
+
+```text
+Dedicated Database Credential Custody
+!= Provider Authentication
+!= Fresh MFA
+!= Trust Permission Authority
+!= Clinical Capability
+!= Patient Consent
+```
+
+Slice 4 Phase 4F implements the authoritative offline root-of-trust seam for `TRUST_PERMISSION_MANAGE`:
+
+1. **Offline Authority Boundary**: Public HTTP, provider sessions, and ordinary authentication are strictly prohibited from granting or revoking `TRUST_PERMISSION_MANAGE`. Operational authority is grounded entirely in custody of the dedicated database credential provided via `NEXA_TRUST_ROOT_DATABASE_URL`. The service (`ProviderTrustRootGovernanceService`) and operator script (`scripts/governance_trust_root.py`) operate without FastAPI, Redis, or session dependencies.
+2. **Recorded Governance Evidence**: Every mutation requires `operator_actor_id`, `approver_actor_id`, and `governance_reference` (normalized, non-empty, <= 128 characters, `operator_actor_id != approver_actor_id`). These are recorded governance evidence in audit outbox and idempotency records; they do not represent cryptographically verified dual-control authentication by the tool itself.
+3. **Safety & Preflight Guards**: The CLI adapter requires:
+   - `--expected-database-name`: asserts `SELECT current_database()` matches the expected target (`DATABASE_NAME_MISMATCH`).
+   - Schema Revision Preflight: derives repository heads dynamically via Alembic `ScriptDirectory` and requires exactly one head matching the database `alembic_version.version_num` (`SCHEMA_REVISION_MISMATCH`).
+   - `--apply`: mandatory explicit execution flag (`EXPLICIT_APPLY_REQUIRED`).
+   - Double-entry confirmation: `--target-provider-id` == `--confirm-target-provider-id` and `--grant-id` == `--confirm-grant-id` (`CONFIRMATION_MISMATCH`).
+4. **Global Advisory Serialization & 4C Lock Compatibility**: Root mutations acquire a server-owned PostgreSQL transaction advisory lock (`pg_advisory_xact_lock`) before evaluating the root set. Subsequent row locks on the target provider acquire `ProviderIdentity` FOR UPDATE, `ProviderCredential` FOR UPDATE, and `ProviderTrustPermissionGrant` FOR UPDATE in UUID order. This order is strictly compatible with Phase 4C, preventing deadlocks and race conditions.
+5. **Expected Active Root Count CAS**: Both grant and revoke operations require `expected_active_root_count`. If the live count of effective, unrevoked root grants differs after acquiring the advisory lock, the mutation denies with `ROOT_SET_CHANGED`.
+6. **Bounded Root Lifetime**: Root grants are strictly finite-lived (`valid_until` required, timezone-aware, strictly > transaction now, maximum 90 days). Indefinite roots and client-supplied `valid_from` are rejected.
+7. **Target Eligibility**: Root grant targets must have active `ProviderIdentity` (`status == "active"`), active `ProviderCredential`, verified email and phone, and MFA enabled with an encrypted secret. No professional verification, facility verification, or clinical affiliation is required.
+8. **Expired-Root Supersession & Revocation Integrity**: Active or future-effective root duplicates deny as `ACTIVE_ROOT_GRANT_EXISTS`. Expired unrevoked root slots undergo atomic supersession (`superseded_grant_id` with internal server-owned `EXPIRED_SUPERSEDED` revocation reason). Root revocation operates against inactive, suspended, or disabled accounts as a security containment primitive using a closed offline reason vocabulary (`ACCESS_REMOVED`, `SECURITY_RESPONSE`, `GOVERNANCE_CHANGE`, `ROOT_ROTATION`, `COMPROMISE_RESPONSE`).
+9. **Zero-Root Containment & Recovery**: Revoking the final effective root requires explicit acknowledgment (`--acknowledge-zero-active-roots`); otherwise, it denies with `ZERO_ROOT_ACK_REQUIRED`. Re-establishing root authority from a zero-root state requires governed offline `grant_root` with `expected_active_root_count=0`.
+10. **Transactional Atomicity & Audit Outbox**: Root mutation, audit outbox (`AuditContext.platform(domain=AuditDomain.PLATFORM)`), and mutation idempotency (`platform-provider-trust`) share a single transaction (`async with self.db.begin():`). Replays return 200 with `idempotent_replay=True`.
+
+This documentation is an internal engineering specification and makes no DPDP, NMC, ABDM, HPR/HFR, or statutory compliance claims.
+
 
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)
 
