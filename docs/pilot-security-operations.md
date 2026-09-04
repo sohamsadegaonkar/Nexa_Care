@@ -79,7 +79,7 @@ python scripts/run_pilot_migrations.py
 ```
 
 The repository and database must both resolve to the single Alembic head
-`20260903_trust_authorization`. API container startup never runs migrations and
+`20260904_verification_evidence`. API container startup never runs migrations and
 must not be used to stamp or downgrade a database.
 
 `GET /healthz` is the dependency-free liveness probe for the container and load

@@ -6,13 +6,16 @@ from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "20260903_trust_authorization"
+HEAD_REVISION = "20260904_verification_evidence"
 
 
 def test_trust_authorization_migration_is_single_head_and_forward_only() -> None:
     scripts = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert scripts.get_heads() == [REVISION]
+    assert scripts.get_heads() == [HEAD_REVISION]
     revision = scripts.get_revision(REVISION)
     assert revision is not None and revision.down_revision == "20260903_trust_lifecycle"
+    evidence_revision = scripts.get_revision(HEAD_REVISION)
+    assert evidence_revision is not None and evidence_revision.down_revision == REVISION
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (
         "provider_trust_permission_grant",

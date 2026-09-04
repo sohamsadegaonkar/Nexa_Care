@@ -39,7 +39,7 @@ from app.services.provider_trust_authorization import TrustManagementAuthenticat
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
-HEAD = "20260903_trust_authorization"
+HEAD = "20260904_verification_evidence"
 
 
 def _url() -> str:

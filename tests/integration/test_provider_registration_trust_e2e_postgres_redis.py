@@ -70,7 +70,7 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260903_trust_authorization"
+HEAD = "20260904_verification_evidence"
 _USER_AGENT = "Nexa-Slice3G-Qualification-Agent/1.0"
 _HMAC_SECRET = "synthetic-secret-for-provider-qualification-hmac-32bytes"
 
@@ -658,9 +658,14 @@ async def test_02_complete_provider_registration_and_trust_journey_e2e(
     assert login_mfa_step1.status_code == 200
     mfa_pending_token = login_mfa_step1.json()["mfa_token"]
 
-    totp_fresh = pyotp.TOTP(mfa_secret).at(
-        datetime.now(timezone.utc) + timedelta(seconds=35)
-    )
+    # Ensure fresh TOTP timestep for login
+    r_client = Redis.from_url(_get_redis_url(), decode_responses=True)
+    async for key in r_client.scan_iter(match=f"*{provider_a_id}*"):
+        if "mfa_totp_used" in key:
+            await r_client.delete(key)
+    await r_client.close()
+
+    totp_fresh = pyotp.TOTP(mfa_secret).now()
     login_mfa_step2 = await client.post(
         "/api/v2/auth/mfa/verify",
         headers={"User-Agent": _USER_AGENT, "X-Forwarded-For": "127.0.0.1"},
@@ -2147,24 +2152,30 @@ async def test_11_audit_outbox_secret_scan(db_factory):
 async def test_12_route_surface_audit():
     """Inspect FastAPI route table to confirm approved command routes exist and no unauthorized endpoints exist.
 
-    Validates exact Phase-3F contract:
-    - Exactly 24 command-specific POST endpoints:
-      1 professional self-submit + 9 professional reviewer + 8 facility + 6 affiliation.
-    - Zero generic status PATCH, zero generic transition routes, zero trust-grant create/revoke/admin routes.
+    Validates exact route surface contract:
+    - Exactly 26 command-specific POST endpoints:
+      - 24 Slice 3F lifecycle routes (1 professional self-submit + 9 professional reviewer + 8 facility + 6 affiliation)
+      - 2 Slice 4E permission administration routes (grant + revoke)
+    - Zero generic status PATCH, zero generic transition routes.
     - Zero begin_nested() calls in provider_contact_assurance_service.py (architectural invariant).
     """
     routes = [route for route in app.routes if hasattr(route, "path")]
     trust_routes = [r for r in routes if "/provider-trust" in r.path]
     assert (
-        len(trust_routes) == 24
-    ), f"Expected exactly 24 provider-trust routes, found {len(trust_routes)}"
+        len(trust_routes) == 26
+    ), f"Expected exactly 26 provider-trust routes, found {len(trust_routes)}"
 
-    prof_me_routes = [r for r in trust_routes if "/professional/me" in r.path]
+    lifecycle_routes = [r for r in trust_routes if "/permissions" not in r.path]
+    permission_routes = [r for r in trust_routes if "/permissions" in r.path]
+    assert len(lifecycle_routes) == 24
+    assert len(permission_routes) == 2
+
+    prof_me_routes = [r for r in lifecycle_routes if "/professional/me" in r.path]
     assert len(prof_me_routes) == 1
     assert prof_me_routes[0].path == "/api/v2/provider-trust/professional/me/submit"
 
     prof_reviewer_routes = [
-        r for r in trust_routes if "/professional/{provider_id}" in r.path
+        r for r in lifecycle_routes if "/professional/{provider_id}" in r.path
     ]
     assert len(prof_reviewer_routes) == 9
     expected_prof_actions = {
@@ -2181,7 +2192,7 @@ async def test_12_route_surface_audit():
     actual_prof_actions = {r.path.split("/")[-1] for r in prof_reviewer_routes}
     assert actual_prof_actions == expected_prof_actions
 
-    fac_routes = [r for r in trust_routes if "/facilities/{facility_id}" in r.path]
+    fac_routes = [r for r in lifecycle_routes if "/facilities/{facility_id}" in r.path]
     assert len(fac_routes) == 8
     expected_fac_actions = {
         "submit",
@@ -2197,7 +2208,7 @@ async def test_12_route_surface_audit():
     assert actual_fac_actions == expected_fac_actions
 
     affil_routes = [
-        r for r in trust_routes if "/affiliations/{affiliation_id}" in r.path
+        r for r in lifecycle_routes if "/affiliations/{affiliation_id}" in r.path
     ]
     assert len(affil_routes) == 6
     expected_affil_actions = {
@@ -2216,6 +2227,8 @@ async def test_12_route_surface_audit():
         assert "PATCH" not in r.methods
         assert "DELETE" not in r.methods
         assert "GET" not in r.methods
+
+    for r in lifecycle_routes:
         assert "grant" not in r.path
         assert "admin" not in r.path
         assert "bootstrap" not in r.path

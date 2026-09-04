@@ -48,7 +48,7 @@ import app.services.provider_trust_lifecycle_application as lifecycle_applicatio
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
-HEAD = "20260903_trust_authorization"
+HEAD = "20260904_verification_evidence"
 
 
 def _url() -> str:

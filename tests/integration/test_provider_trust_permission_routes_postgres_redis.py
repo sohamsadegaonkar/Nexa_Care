@@ -61,7 +61,7 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260903_trust_authorization"
+HEAD = "20260904_verification_evidence"
 _USER_AGENT = "Nexa-PermRoutes-Qual-Agent/1.0"
 _CLIENT_IP = "127.0.0.1"
 

@@ -84,6 +84,46 @@ class VerificationSourceFailureReason(str, enum.Enum):
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
 
 
+class VerificationEvidenceOrigin(str, enum.Enum):
+    """Server-owned provenance for an evidence observation."""
+
+    MANUAL_REVIEWER_ATTESTATION = "MANUAL_REVIEWER_ATTESTATION"
+    SERVER_REGISTRY_OBSERVATION = "SERVER_REGISTRY_OBSERVATION"
+
+
+class VerificationEvidenceLookupPurpose(str, enum.Enum):
+    """Purpose of an external verification or review check."""
+
+    INITIAL_VERIFICATION = "INITIAL_VERIFICATION"
+    RECHECK = "RECHECK"
+    ADVERSE_SIGNAL_CHECK = "ADVERSE_SIGNAL_CHECK"
+    MANUAL_REVIEW = "MANUAL_REVIEW"
+
+
+class VerificationEvidenceOutcome(str, enum.Enum):
+    """Normalized observation outcome from external source or manual review."""
+
+    CONFIRMED_ACTIVE = "CONFIRMED_ACTIVE"
+    CONFIRMED_INACTIVE = "CONFIRMED_INACTIVE"
+    NOT_FOUND = "NOT_FOUND"
+    IDENTITY_MISMATCH = "IDENTITY_MISMATCH"
+    AMBIGUOUS = "AMBIGUOUS"
+    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
+    SOURCE_RESPONSE_INVALID = "SOURCE_RESPONSE_INVALID"
+    SOURCE_AUTHENTICATION_FAILURE = "SOURCE_AUTHENTICATION_FAILURE"
+    SOURCE_INTEGRITY_FAILURE = "SOURCE_INTEGRITY_FAILURE"
+    REVIEW_REQUIRED = "REVIEW_REQUIRED"
+
+
+class VerificationIdentityBindingResult(str, enum.Enum):
+    """Evidence-level identity binding outcome."""
+
+    NOT_EVALUATED = "NOT_EVALUATED"
+    MATCHED = "MATCHED"
+    MISMATCHED = "MISMATCHED"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
 class HospitalRegistry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Base hospital / facility registry entry."""
 
@@ -505,6 +545,10 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     provider: Mapped[ProviderIdentity] = relationship(
         back_populates="professional_verification"
     )
+    evidence: Mapped[list["ProviderTrustVerificationEvidence"]] = relationship(
+        back_populates="professional_verification",
+        passive_deletes="all",
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -545,6 +589,33 @@ class FacilityVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     verification_reference: Mapped[str | None] = mapped_column(
         String(128), nullable=True
     )
+    registration_authority_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    registration_number_normalized: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    registration_valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    registration_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    grace_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recheck_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recheck_failure_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    previous_verification_valid: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    authoritative_adverse_signal_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -560,10 +631,19 @@ class FacilityVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     facility: Mapped[HospitalRegistry] = relationship(back_populates="verification")
+    evidence: Mapped[list["ProviderTrustVerificationEvidence"]] = relationship(
+        back_populates="facility_verification",
+        passive_deletes="all",
+    )
 
     __table_args__ = (
         Index("ix_facility_verification_status", "status"),
         Index("ix_facility_verification_facility_id", "facility_id"),
+        Index(
+            "ix_facility_verification_registration",
+            "registration_authority_code",
+            "registration_number_normalized",
+        ),
         CheckConstraint(
             "status IN ('DRAFT', 'PENDING_VERIFICATION', 'VERIFIED', "
             "'RECHECK_REQUIRED', 'SUSPENDED', 'REJECTED', 'CLOSED')",
@@ -572,4 +652,135 @@ class FacilityVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         CheckConstraint(
             "version > 0", name="ck_facility_verification_version_positive"
         ),
+        CheckConstraint(
+            "registration_valid_until IS NULL OR registration_valid_from IS NULL "
+            "OR registration_valid_until >= registration_valid_from",
+            name="ck_facility_verification_validity",
+        ),
+        CheckConstraint(
+            "recheck_failure_reason IS NULL OR recheck_failure_reason IN "
+            "('SOURCE_UNAVAILABLE', 'SOURCE_RESPONSE_INVALID', 'SOURCE_NOT_FOUND', 'REVIEW_REQUIRED')",
+            name="ck_facility_verification_recheck_failure_reason",
+        ),
+    )
+
+
+class ProviderTrustVerificationEvidence(Base, UUIDPrimaryKeyMixin):
+    """Immutable, append-only verification evidence observation.
+
+    Relates to exactly one authoritative lifecycle resource:
+    ProfessionalVerification OR FacilityVerification.
+    It does not grant authority by itself; it records observation facts.
+    """
+
+    __tablename__ = "provider_trust_verification_evidence"
+
+    professional_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professional_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    facility_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("facility_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    adapter_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    lookup_purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_record_reference: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    observed_valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    observed_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    identity_binding_result: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationIdentityBindingResult.NOT_EVALUATED.value,
+    )
+    binding_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_transaction_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    observed_resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    professional_verification: Mapped[ProfessionalVerification | None] = relationship(
+        back_populates="evidence"
+    )
+    facility_verification: Mapped[FacilityVerification | None] = relationship(
+        back_populates="evidence"
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(professional_verification_id IS NOT NULL AND facility_verification_id IS NULL) "
+            "OR (professional_verification_id IS NULL AND facility_verification_id IS NOT NULL)",
+            name="ck_provider_trust_verification_evidence_resource_target",
+        ),
+        CheckConstraint(
+            "origin IN ('MANUAL_REVIEWER_ATTESTATION', 'SERVER_REGISTRY_OBSERVATION')",
+            name="ck_provider_trust_verification_evidence_origin",
+        ),
+        CheckConstraint(
+            "lookup_purpose IN ('INITIAL_VERIFICATION', 'RECHECK', 'ADVERSE_SIGNAL_CHECK', 'MANUAL_REVIEW')",
+            name="ck_provider_trust_verification_evidence_lookup_purpose",
+        ),
+        CheckConstraint(
+            "outcome IN ('CONFIRMED_ACTIVE', 'CONFIRMED_INACTIVE', 'NOT_FOUND', "
+            "'IDENTITY_MISMATCH', 'AMBIGUOUS', 'SOURCE_UNAVAILABLE', "
+            "'SOURCE_RESPONSE_INVALID', 'SOURCE_AUTHENTICATION_FAILURE', "
+            "'SOURCE_INTEGRITY_FAILURE', 'REVIEW_REQUIRED')",
+            name="ck_provider_trust_verification_evidence_outcome",
+        ),
+        CheckConstraint(
+            "identity_binding_result IN ('NOT_EVALUATED', 'MATCHED', 'MISMATCHED', 'AMBIGUOUS')",
+            name="ck_provider_trust_verification_evidence_identity_binding_result",
+        ),
+        CheckConstraint(
+            "observed_resource_version >= 1",
+            name="ck_ptve_observed_resource_version",
+        ),
+        CheckConstraint(
+            "(origin = 'SERVER_REGISTRY_OBSERVATION' AND adapter_version IS NOT NULL AND length(trim(adapter_version)) > 0) "
+            "OR (origin = 'MANUAL_REVIEWER_ATTESTATION')",
+            name="ck_provider_trust_verification_evidence_adapter_version_origin",
+        ),
+        CheckConstraint(
+            "observed_valid_until IS NULL OR observed_valid_from IS NULL OR observed_valid_until >= observed_valid_from",
+            name="ck_provider_trust_verification_evidence_validity_interval",
+        ),
+        CheckConstraint(
+            "response_digest IS NULL OR response_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_provider_trust_verification_evidence_response_digest",
+        ),
+        CheckConstraint(
+            "length(trim(source_id)) > 0",
+            name="ck_provider_trust_verification_evidence_source_id_non_empty",
+        ),
+        Index(
+            "ix_provider_trust_verification_evidence_prof_id",
+            "professional_verification_id",
+        ),
+        Index(
+            "ix_provider_trust_verification_evidence_fac_id",
+            "facility_verification_id",
+        ),
+        Index("ix_provider_trust_verification_evidence_source_id", "source_id"),
+        Index("ix_provider_trust_verification_evidence_observed_at", "observed_at"),
+        Index("ix_provider_trust_verification_evidence_outcome", "outcome"),
     )
