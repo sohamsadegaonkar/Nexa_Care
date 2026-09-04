@@ -12,12 +12,14 @@ from app.models.provider import (
     VerificationEvidenceLookupPurpose,
     VerificationEvidenceOutcome,
     VerificationIdentityBindingResult,
+    VerificationSourceFailureReason,
 )
 from app.services.provider_trust_lifecycle import (
     FacilityTransitionCommand,
     ProfessionalTransitionCommand,
 )
 from app.services.provider_verification_decision_policy import (
+    OBSERVATION_REQUEST_BINDING_GAP,
     PROVIDER_VERIFICATION_DECISION_POLICY_VERSION,
     SYSTEM_ACTOR_PROVENANCE_GAP,
     FacilityVerificationContext,
@@ -1512,3 +1514,303 @@ def test_system_actor_provenance_gap_constant() -> None:
     assert "authenticated human provider actor" in SYSTEM_ACTOR_PROVENANCE_GAP
     assert "Phase 5E" in SYSTEM_ACTOR_PROVENANCE_GAP
     assert "requires a UUID" not in SYSTEM_ACTOR_PROVENANCE_GAP
+
+
+# ---------------------------------------------------------------------------
+# Phase 5D Post-Commit Correctness Tests: Failure Vocabulary, Purpose Binding & Gaps
+# ---------------------------------------------------------------------------
+
+
+def test_recheck_failure_reason_uses_verification_source_failure_reason() -> None:
+    """Prove current_recheck_failure_reason uses VerificationSourceFailureReason and rejects observation outcomes."""
+    expected_failure_reasons = {
+        "SOURCE_UNAVAILABLE",
+        "SOURCE_RESPONSE_INVALID",
+        "SOURCE_NOT_FOUND",
+        "REVIEW_REQUIRED",
+    }
+    assert {
+        r.value for r in VerificationSourceFailureReason
+    } == expected_failure_reasons
+
+    # Valid failure reasons can populate context
+    for reason in VerificationSourceFailureReason:
+        prof_ctx = ProfessionalVerificationContext(
+            current_status=ProfessionalVerificationStatus.VERIFIED,
+            current_version=1,
+            registration_authority_code="AUTH",
+            registration_number_normalized="REG1",
+            current_recheck_failure_reason=reason,
+        )
+        assert prof_ctx.current_recheck_failure_reason is reason
+
+        fac_ctx = FacilityVerificationContext(
+            current_status=FacilityVerificationStatus.VERIFIED,
+            current_version=1,
+            registration_authority_code="AUTH",
+            registration_number_normalized="REG1",
+            current_recheck_failure_reason=reason,
+        )
+        assert fac_ctx.current_recheck_failure_reason is reason
+
+    # Observation-only outcomes must be rejected as lifecycle failure state
+    invalid_outcomes = [
+        VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE,
+        VerificationEvidenceOutcome.SOURCE_INTEGRITY_FAILURE,
+        VerificationEvidenceOutcome.CONFIRMED_INACTIVE,
+        VerificationEvidenceOutcome.IDENTITY_MISMATCH,
+    ]
+    for inv in invalid_outcomes:
+        with pytest.raises(
+            VerificationPolicyInputError,
+            match="current_recheck_failure_reason must be a VerificationSourceFailureReason",
+        ):
+            ProfessionalVerificationContext(
+                current_status=ProfessionalVerificationStatus.VERIFIED,
+                current_version=1,
+                registration_authority_code="AUTH",
+                registration_number_normalized="REG1",
+                current_recheck_failure_reason=inv,  # type: ignore[arg-type]
+            )
+
+        with pytest.raises(
+            VerificationPolicyInputError,
+            match="current_recheck_failure_reason must be a VerificationSourceFailureReason",
+        ):
+            FacilityVerificationContext(
+                current_status=FacilityVerificationStatus.VERIFIED,
+                current_version=1,
+                registration_authority_code="AUTH",
+                registration_number_normalized="REG1",
+                current_recheck_failure_reason=inv,  # type: ignore[arg-type]
+            )
+
+
+def test_request_observation_purpose_mismatch_fails_closed() -> None:
+    """Request and observation lookup purpose mismatch fails closed with safe static error."""
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)
+
+    prof_req = ProfessionalLookupRequest(
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+    )
+    prof_obs_mismatch = _make_prof_obs(
+        outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+        purpose=VerificationEvidenceLookupPurpose.INITIAL_VERIFICATION,
+    )
+    prof_ctx = ProfessionalVerificationContext(
+        current_status=ProfessionalVerificationStatus.RECHECK_DUE,
+        current_version=1,
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+    )
+
+    with pytest.raises(
+        VerificationPolicyInputError,
+        match="request and observation lookup purpose mismatch",
+    ) as exc_prof:
+        evaluate_professional_observation(
+            observation=prof_obs_mismatch,
+            request=prof_req,
+            context=prof_ctx,
+            now=now,
+        )
+    assert (
+        str(exc_prof.value)
+        == "[VERIFICATION_POLICY_INPUT_INVALID] request and observation lookup purpose mismatch"
+    )
+
+    fac_req = FacilityLookupRequest(
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+    )
+    fac_obs_mismatch = _make_facility_obs(
+        outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+        purpose=VerificationEvidenceLookupPurpose.ADVERSE_SIGNAL_CHECK,
+    )
+    fac_ctx = FacilityVerificationContext(
+        current_status=FacilityVerificationStatus.RECHECK_REQUIRED,
+        current_version=1,
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+    )
+
+    with pytest.raises(
+        VerificationPolicyInputError,
+        match="request and observation lookup purpose mismatch",
+    ) as exc_fac:
+        evaluate_facility_observation(
+            observation=fac_obs_mismatch,
+            request=fac_req,
+            context=fac_ctx,
+            now=now,
+        )
+    assert (
+        str(exc_fac.value)
+        == "[VERIFICATION_POLICY_INPUT_INVALID] request and observation lookup purpose mismatch"
+    )
+
+
+def test_professional_grace_requires_recheck_purpose_and_adverse_outage_no_grace() -> (
+    None
+):
+    """SOURCE_UNAVAILABLE yields grace ONLY on RECHECK; ADVERSE_SIGNAL_CHECK outage receives NO grace."""
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)
+    prof_ctx_verified = ProfessionalVerificationContext(
+        current_status=ProfessionalVerificationStatus.VERIFIED,
+        current_version=1,
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        server_provenance_established=True,
+        established_server_source_id="TEST_SOURCE",
+        registration_valid_until=now + timedelta(days=30),
+        previous_verification_valid=True,
+    )
+
+    # 1. RECHECK purpose + SOURCE_UNAVAILABLE + prerequisites -> GRACE GRANTED
+    recheck_req = ProfessionalLookupRequest(
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+    )
+    recheck_obs = _make_prof_obs(
+        outcome=VerificationEvidenceOutcome.SOURCE_UNAVAILABLE,
+        purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        source_id="TEST_SOURCE",
+    )
+    plan_grace = evaluate_professional_observation(
+        observation=recheck_obs,
+        request=recheck_req,
+        context=prof_ctx_verified,
+        now=now,
+    )
+    assert (
+        plan_grace.disposition
+        == VerificationDecisionDisposition.SYSTEM_TRANSITION_CANDIDATE
+    )
+    assert (
+        plan_grace.candidate_command is ProfessionalTransitionCommand.MARK_RECHECK_DUE
+    )
+    assert (
+        plan_grace.reason_code
+        == VerificationDecisionReason.SOURCE_UNAVAILABLE_BOUNDED_GRACE
+    )
+    assert plan_grace.grace_expires_at == now + timedelta(hours=24)
+    assert plan_grace.requires_human_review is False
+
+    # 2. ADVERSE_SIGNAL_CHECK purpose + SOURCE_UNAVAILABLE -> NO GRACE (fail-closed and review)
+    adverse_req = ProfessionalLookupRequest(
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        lookup_purpose=VerificationEvidenceLookupPurpose.ADVERSE_SIGNAL_CHECK,
+    )
+    adverse_obs = _make_prof_obs(
+        outcome=VerificationEvidenceOutcome.SOURCE_UNAVAILABLE,
+        purpose=VerificationEvidenceLookupPurpose.ADVERSE_SIGNAL_CHECK,
+        source_id="TEST_SOURCE",
+    )
+    plan_no_grace = evaluate_professional_observation(
+        observation=adverse_obs,
+        request=adverse_req,
+        context=prof_ctx_verified,
+        now=now,
+    )
+    assert (
+        plan_no_grace.disposition
+        == VerificationDecisionDisposition.SYSTEM_FAIL_CLOSED_AND_REVIEW
+    )
+    assert (
+        plan_no_grace.candidate_command
+        is ProfessionalTransitionCommand.MARK_RECHECK_DUE
+    )
+    assert (
+        plan_no_grace.reason_code
+        == VerificationDecisionReason.SOURCE_UNAVAILABLE_NO_GRACE_FAIL_CLOSED
+    )
+    assert plan_no_grace.grace_expires_at is None
+    assert plan_no_grace.requires_human_review is True
+
+
+def test_manual_review_purpose_always_human_gated() -> None:
+    """MANUAL_REVIEW lookup purpose never produces system automation candidates across all outcomes."""
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)
+
+    prof_req = ProfessionalLookupRequest(
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        lookup_purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
+    )
+    prof_ctx = ProfessionalVerificationContext(
+        current_status=ProfessionalVerificationStatus.VERIFIED,
+        current_version=1,
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        server_provenance_established=True,
+        established_server_source_id="TEST_SOURCE",
+    )
+    for outcome in VerificationEvidenceOutcome:
+        obs = _make_prof_obs(
+            outcome=outcome,
+            purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
+            source_id="TEST_SOURCE",
+        )
+        plan = evaluate_professional_observation(
+            observation=obs,
+            request=prof_req,
+            context=prof_ctx,
+            now=now,
+        )
+        assert plan.disposition == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
+        assert plan.candidate_command is None
+        assert plan.requires_human_review is True
+        assert plan.grace_expires_at is None
+        assert (
+            plan.reason_code
+            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED
+        )
+
+    fac_req = FacilityLookupRequest(
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        lookup_purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
+    )
+    fac_ctx = FacilityVerificationContext(
+        current_status=FacilityVerificationStatus.VERIFIED,
+        current_version=1,
+        registration_authority_code="AUTH",
+        registration_number_normalized="REG1",
+        server_provenance_established=True,
+        established_server_source_id="TEST_SOURCE",
+    )
+    for outcome in VerificationEvidenceOutcome:
+        obs = _make_facility_obs(
+            outcome=outcome,
+            purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW,
+            source_id="TEST_SOURCE",
+        )
+        plan = evaluate_facility_observation(
+            observation=obs,
+            request=fac_req,
+            context=fac_ctx,
+            now=now,
+        )
+        assert plan.disposition == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
+        assert plan.candidate_command is None
+        assert plan.requires_human_review is True
+        assert plan.grace_expires_at is None
+        assert (
+            plan.reason_code
+            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED
+        )
+
+
+def test_observation_request_binding_gap_constant() -> None:
+    """Verify OBSERVATION_REQUEST_BINDING_GAP constant accurately records the structural pairing gap."""
+    assert isinstance(OBSERVATION_REQUEST_BINDING_GAP, str)
+    assert len(OBSERVATION_REQUEST_BINDING_GAP) > 0
+    assert "RegistryObservation" in OBSERVATION_REQUEST_BINDING_GAP
+    assert "registration authority code" in OBSERVATION_REQUEST_BINDING_GAP
+    assert "Phase 5E" in OBSERVATION_REQUEST_BINDING_GAP
+    assert "structural invocation lineage" in OBSERVATION_REQUEST_BINDING_GAP

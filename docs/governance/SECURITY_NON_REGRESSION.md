@@ -497,6 +497,7 @@ Slice 5 Phase 5D implements the pure decision-policy layer that evaluates a vali
 
 1. **Permanent Authority Chain**:
    - The decision policy is pure and advisory; it never mutates lifecycle rows, creates system sessions, manufactures reviewer credentials, issues tokens, or interacts with `ClinicalEligibilityService`.
+   - `VerificationDecisionPlan` is purely advisory and does not convey execution authority; Phase 5E must recompute and validate against locked state and never trust a caller-provided plan.
    - Permanent chain invariant:
      ```text
      REGISTRY OBSERVATION
@@ -509,31 +510,46 @@ Slice 5 Phase 5D implements the pure decision-policy layer that evaluates a vali
 
 2. **Immutable Context Models & Clean Normalization**:
    - `ProfessionalVerificationContext` and `FacilityVerificationContext` are slotted, frozen dataclasses requiring explicit types and timezone-aware timestamps normalized to UTC.
-   - Authority codes and registration numbers are validated against schema boundaries (`^[A-Z0-9][A-Z0-9_.-]{0,63}$` and `^[A-Z0-9/]{1,128}$`).
+   - Authority codes and registration numbers are validated as non-empty stripped strings with equality checks against lookup requests. Canonical professional registration format validation remains owned by Phase 5C (`VALID_REGISTRATION_NUMBER_RE` from `app.services.provider_verification_registry`).
+   - Failure state tracking strictly accepts canonical `VerificationSourceFailureReason` (`SOURCE_UNAVAILABLE`, `SOURCE_RESPONSE_INVALID`, `SOURCE_NOT_FOUND`, `REVIEW_REQUIRED`), rejecting observation-only outcomes (`CONFIRMED_INACTIVE`, `IDENTITY_MISMATCH`, `SOURCE_AUTHENTICATION_FAILURE`, `SOURCE_INTEGRITY_FAILURE`).
    - Cross-resource identity protection verifies that lookup request registration parameters match the context registration identity; mismatches return `HUMAN_REVIEW_REQUIRED` with `REGISTRATION_IDENTITY_MISMATCH`.
+   - Request and observation lookup purposes must match strictly; any mismatch fails closed (`VerificationPolicyInputError`).
 
 3. **Pure Output Plan (`VerificationDecisionPlan`)**:
    - Returns a frozen, slotted dataclass containing:
      `resource_type`, `disposition`, `candidate_command`, `expected_resource_version`, `reason_code`, `requires_human_review`, `grace_expires_at`, `source_id`, `lookup_purpose`, `outcome`.
    - Contains zero authority fields: no actor IDs, session tokens, bypass flags, or transaction handles.
 
-4. **Permanent Human Gates on Initial Verification**:
+4. **Permanent Human Gates on Initial Verification & Manual Review Purpose**:
    - Initial verification for professionals (`PENDING_REVIEW`, `NOT_SUBMITTED`) and facilities (`PENDING_VERIFICATION`, `DRAFT`) is permanently human-gated (`HUMAN_REVIEW_REQUIRED` with `INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED`).
    - Automated initial activation is strictly prohibited, regardless of registry observation outcome.
    - `REJECTED` is a terminal state; it is not classified as an initial state.
+   - `MANUAL_REVIEW` lookup purpose is permanently human-gated (`HUMAN_REVIEW_REQUIRED` with `MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED`, `candidate_command=None`), regardless of observation outcome.
 
 5. **Strict Positive Recheck Requirements & Automation Candidate Commands**:
-   - Positive recheck can only produce `SYSTEM_TRANSITION_CANDIDATE` with `candidate_command=COMPLETE_RECHECK` when ALL of the following hold:
-     - Resource is in active recheck state (`RECHECK_DUE` for professional; `RECHECK_REQUIRED` for facility).
-     - Observation `lookup_purpose == RECHECK` and `outcome == CONFIRMED_ACTIVE`.
-     - Observation `identity_binding_result == MATCHED`.
-     - Established server source continuity: `server_provenance_established` is True and matches `established_server_source_id == observation.source_id`.
-     - No authoritative adverse signals recorded (`authoritative_adverse_signal_at is None`).
-     - Registration has not expired (`registration_valid_until is None` or `registration_valid_until > now`).
+   - Positive recheck can only produce `SYSTEM_TRANSITION_CANDIDATE` with `candidate_command=COMPLETE_RECHECK` when:
+     - **Professional**:
+       - Resource is in active recheck state (`RECHECK_DUE`).
+       - Observation `lookup_purpose == RECHECK` and `outcome == CONFIRMED_ACTIVE`.
+       - Observation `identity_binding_result == MATCHED`.
+       - Established server source continuity: `server_provenance_established` is True and matches `established_server_source_id == observation.source_id`.
+       - Matching registration identity between request and context.
+       - No authoritative adverse signals recorded (`authoritative_adverse_signal_at is None`).
+       - Registration validity: `registration_valid_until is None` or `registration_valid_until > now`.
+       - Current resource version >= 1.
+     - **Facility**:
+       - Resource is in active recheck state (`RECHECK_REQUIRED`).
+       - Observation `lookup_purpose == RECHECK` and `outcome == CONFIRMED_ACTIVE`.
+       - Observation `identity_binding_result == MATCHED`.
+       - Established server source continuity: `server_provenance_established` is True and matches `established_server_source_id == observation.source_id`.
+       - Matching registration identity between request and context.
+       - Current resource version >= 1.
+       - *(Note: Facility verification context does not evaluate `authoritative_adverse_signal_at` or `registration_valid_until` as facility trust does not track these in context/model).*
    - If any prerequisite fails, the disposition falls closed to `HUMAN_REVIEW_REQUIRED`.
 
 6. **Fail-Closed Outage Handling and 24-Hour Grace Rules**:
-   - Grace periods are limited strictly to `SOURCE_UNAVAILABLE` on a currently `VERIFIED` professional who has established server source provenance and valid registration.
+   - Grace periods are limited strictly to `SOURCE_UNAVAILABLE` on a currently `VERIFIED` professional with established server source provenance, valid unexpired registration, AND `observation.lookup_purpose == VerificationEvidenceLookupPurpose.RECHECK`.
+   - Outages during `ADVERSE_SIGNAL_CHECK` receive NO grace period; an unavailable source during adverse signal check yields `SYSTEM_FAIL_CLOSED_AND_REVIEW` with `MARK_RECHECK_DUE`.
    - Grace duration is strictly `min(now + 24 hours, registration_valid_until)`. If registration validity is already expired, grace cannot be granted.
    - Non-outage failures (`NOT_FOUND`, `IDENTITY_MISMATCH`, `CONFIRMED_INACTIVE`, `SOURCE_AUTHENTICATION_FAILURE`, `SOURCE_INTEGRITY_FAILURE`, `SOURCE_RESPONSE_INVALID`, `AMBIGUOUS`, `REVIEW_REQUIRED`) never receive grace and transition immediately to recheck with human review required.
    - Repeated outage during active grace preserves the existing `grace_expires_at` without extending the deadline.
@@ -550,6 +566,7 @@ Slice 5 Phase 5D implements the pure decision-policy layer that evaluates a vali
    - All other canonical commands (professional: `SUBMIT`, `VERIFY`, `REJECT`, `SUSPEND`, `RESTORE`, `MARK_STALE`, `REVOKE`, `EXPIRE`; facility: `SUBMIT`, `VERIFY`, `REJECT`, `SUSPEND`, `RESTORE`, `CLOSE`) are strictly forbidden from system automation.
 
 9. **Recorded Architectural Gaps for Phase 5E Resolution**:
+   - **Observation-Request Structural Lineage Gap (`OBSERVATION_REQUEST_BINDING_GAP`)**: `RegistryObservation` does not contain registration authority or number. The decision policy verifies request == context identity, but cannot independently prove observation was produced by that request. Phase 5E execution boundary must not expose APIs accepting arbitrary independent request and observation pairs; Phase 5E must establish structural invocation lineage (e.g. validated lookup envelopes).
    - **Active Grace Cancellation Gap (`RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE`)**: When a professional is in `RECHECK_DUE` with active grace and receives an authoritative non-outage adverse signal, the Slice-3 lifecycle lacks a non-terminal "cancel grace and remain recheck_due" command. The policy explicitly returns `LIFECYCLE_SEMANTIC_GAP` to preserve safety without invalid mutations.
    - **System Actor Provenance Gap (`SYSTEM_ACTOR_PROVENANCE_GAP`)**: Existing lifecycle verification and recheck planners require reviewer provenance through `reviewer_id` (persisted as `String(128)` and populated by the application layer from authenticated human provider actor identity). Existing lifecycle semantics do not yet distinguish a verified human reviewer actor from an authorized machine/system automation actor. Phase 5D must not fabricate a dummy string (`'system'`, `'registry_worker'`) or fake provider identity to satisfy this field; Phase 5E execution authority must resolve this.
 

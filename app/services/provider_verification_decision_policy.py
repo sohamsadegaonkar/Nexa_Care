@@ -36,6 +36,7 @@ from app.models.provider import (
     VerificationEvidenceLookupPurpose,
     VerificationEvidenceOutcome,
     VerificationIdentityBindingResult,
+    VerificationSourceFailureReason,
 )
 from app.services.provider_trust_lifecycle import (
     FacilityTransitionCommand,
@@ -60,6 +61,16 @@ SYSTEM_ACTOR_PROVENANCE_GAP = (
     "not yet distinguish a verified human reviewer actor from an authorized machine/system "
     "automation actor. Phase 5D must not fabricate a dummy string ('system', 'registry_worker') "
     "or fake provider identity to satisfy this field; Phase 5E execution authority must resolve this."
+)
+
+OBSERVATION_REQUEST_BINDING_GAP = (
+    "RegistryObservation contains source, adapter, resource_type, lookup_purpose, outcome, "
+    "and provenance metadata, but does not contain the queried registration authority code or "
+    "number. The decision policy verifies that the supplied lookup request parameters match "
+    "current lifecycle context, but cannot independently verify that the RegistryObservation "
+    "was produced by that exact request. Phase 5E execution boundaries must not expose APIs "
+    "that accept arbitrary independent request and observation pairings, but must establish "
+    "structural invocation lineage (e.g. server-created validated lookup envelopes)."
 )
 
 
@@ -106,6 +117,8 @@ class VerificationDecisionReason(str, enum.Enum):
     REGISTRATION_EXPIRED = "REGISTRATION_EXPIRED"
     IDENTITY_BINDING_NOT_MATCHED = "IDENTITY_BINDING_NOT_MATCHED"
     SYSTEM_ACTOR_PROVENANCE_GAP = "SYSTEM_ACTOR_PROVENANCE_GAP"
+    OBSERVATION_REQUEST_BINDING_GAP = "OBSERVATION_REQUEST_BINDING_GAP"
+    MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED = "MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED"
 
 
 # ---------------------------------------------------------------------------
@@ -152,7 +165,7 @@ class ProfessionalVerificationContext:
     registration_valid_until: datetime | None = None
     previous_verification_valid: bool | None = None
     current_grace_expires_at: datetime | None = None
-    current_recheck_failure_reason: VerificationEvidenceOutcome | None = None
+    current_recheck_failure_reason: VerificationSourceFailureReason | None = None
     authoritative_adverse_signal_at: datetime | None = None
     server_provenance_established: bool = False
     established_server_source_id: str | None = None
@@ -162,6 +175,14 @@ class ProfessionalVerificationContext:
             raise VerificationPolicyInputError(
                 "current_status must be a ProfessionalVerificationStatus"
             )
+        if self.current_recheck_failure_reason is not None:
+            if not isinstance(
+                self.current_recheck_failure_reason,
+                VerificationSourceFailureReason,
+            ):
+                raise VerificationPolicyInputError(
+                    "current_recheck_failure_reason must be a VerificationSourceFailureReason"
+                )
         if not isinstance(self.current_version, int) or self.current_version < 1:
             raise VerificationPolicyInputError(
                 "current_version must be an integer >= 1"
@@ -238,13 +259,21 @@ class FacilityVerificationContext:
     server_provenance_established: bool = False
     established_server_source_id: str | None = None
     current_grace_expires_at: datetime | None = None
-    current_recheck_failure_reason: VerificationEvidenceOutcome | None = None
+    current_recheck_failure_reason: VerificationSourceFailureReason | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.current_status, FacilityVerificationStatus):
             raise VerificationPolicyInputError(
                 "current_status must be a FacilityVerificationStatus"
             )
+        if self.current_recheck_failure_reason is not None:
+            if not isinstance(
+                self.current_recheck_failure_reason,
+                VerificationSourceFailureReason,
+            ):
+                raise VerificationPolicyInputError(
+                    "current_recheck_failure_reason must be a VerificationSourceFailureReason"
+                )
         if not isinstance(self.current_version, int) or self.current_version < 1:
             raise VerificationPolicyInputError(
                 "current_version must be an integer >= 1"
@@ -332,6 +361,14 @@ def evaluate_professional_observation(
         )
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise VerificationPolicyInputError("now must be a timezone-aware datetime")
+    if request.lookup_purpose != observation.lookup_purpose:
+        raise VerificationPolicyInputError(
+            "request and observation lookup purpose mismatch"
+        )
+    if request.lookup_purpose != observation.lookup_purpose:
+        raise VerificationPolicyInputError(
+            "request and observation lookup purpose mismatch"
+        )
 
     now_utc = now.astimezone(timezone.utc)
 
@@ -426,6 +463,21 @@ def evaluate_professional_observation(
             outcome=observation.outcome,
         )
 
+    # MANUAL_REVIEW: strictly human-adjudication path, never automate
+    if observation.lookup_purpose == VerificationEvidenceLookupPurpose.MANUAL_REVIEW:
+        return VerificationDecisionPlan(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+            candidate_command=None,
+            expected_resource_version=context.current_version,
+            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
+            requires_human_review=True,
+            grace_expires_at=None,
+            source_id=observation.source_id,
+            lookup_purpose=observation.lookup_purpose,
+            outcome=observation.outcome,
+        )
+
     # State: VERIFIED
     if context.current_status == ProfessionalVerificationStatus.VERIFIED:
         if observation.outcome == VerificationEvidenceOutcome.CONFIRMED_ACTIVE:
@@ -460,9 +512,10 @@ def evaluate_professional_observation(
             )
 
         if observation.outcome == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE:
-            # Check all grace prerequisites
+            # Check all grace prerequisites (requires RECHECK purpose)
             has_prereqs = (
-                context.previous_verification_valid is True
+                observation.lookup_purpose == VerificationEvidenceLookupPurpose.RECHECK
+                and context.previous_verification_valid is True
                 and context.server_provenance_established is True
                 and context.established_server_source_id == observation.source_id
                 and context.authoritative_adverse_signal_at is None
@@ -681,6 +734,10 @@ def evaluate_facility_observation(
         )
     if not isinstance(now, datetime) or now.tzinfo is None:
         raise VerificationPolicyInputError("now must be a timezone-aware datetime")
+    if request.lookup_purpose != observation.lookup_purpose:
+        raise VerificationPolicyInputError(
+            "request and observation lookup purpose mismatch"
+        )
 
     # Cross-resource identity check
     if (
@@ -764,6 +821,21 @@ def evaluate_facility_observation(
             candidate_command=None,
             expected_resource_version=context.current_version,
             reason_code=VerificationDecisionReason.INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED,
+            requires_human_review=True,
+            grace_expires_at=None,
+            source_id=observation.source_id,
+            lookup_purpose=observation.lookup_purpose,
+            outcome=observation.outcome,
+        )
+
+    # MANUAL_REVIEW: strictly human-adjudication path, never automate
+    if observation.lookup_purpose == VerificationEvidenceLookupPurpose.MANUAL_REVIEW:
+        return VerificationDecisionPlan(
+            resource_type=RegistryResourceType.FACILITY,
+            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+            candidate_command=None,
+            expected_resource_version=context.current_version,
+            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
             requires_human_review=True,
             grace_expires_at=None,
             source_id=observation.source_id,
