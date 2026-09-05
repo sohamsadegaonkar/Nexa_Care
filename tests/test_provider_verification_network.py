@@ -1,16 +1,21 @@
 """Unit tests for SSRF-safe registry network client and URL validation."""
 
 import ipaddress
-from unittest.mock import AsyncMock, patch
+import ssl
+from typing import Any
+from unittest.mock import patch
 
 import httpx
 import pytest
 
 from app.models.provider import VerificationEvidenceOutcome
 from app.services.provider_verification_network import (
+    DEFAULT_NOT_FOUND_STATUS_CODES,
+    DEFAULT_RETRYABLE_STATUS_CODES,
     RegistrySourceRuntimeConfig,
     SafeRegistryHttpClient,
     VerificationNetworkError,
+    classify_network_error,
     is_ip_blocked,
     validate_registry_url,
 )
@@ -112,76 +117,167 @@ async def test_safe_http_client_status_classification() -> None:
         allowed_hostnames=frozenset({"registry.gov.in"}),
     )
 
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-
     # 1. 200 OK
-    resp_200 = httpx.Response(
-        status_code=200,
-        content=b'{"status": "ACTIVE"}',
-        headers={"Content-Type": "application/json"},
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(
+            status_code=200,
+            content=b'{"status": "ACTIVE"}',
+            headers={"Content-Type": "application/json"},
+        )
     )
-    mock_client.request.return_value = resp_200
-    safe_client = SafeRegistryHttpClient(
-        config, http_client=mock_client, resolve_dns=False
-    )
-
-    res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert res.status_code == 200
-    assert res.classified_outcome == VerificationEvidenceOutcome.CONFIRMED_ACTIVE
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert res.status_code == 200
+        assert res.classified_outcome == VerificationEvidenceOutcome.CONFIRMED_ACTIVE
 
     # 2. 401 Auth Failure
-    mock_client.request.return_value = httpx.Response(
-        status_code=401, content=b"Unauthorized"
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(status_code=401, content=b"Unauthorized")
     )
-    res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert (
-        res.classified_outcome
-        == VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE
-    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert (
+            res.classified_outcome
+            == VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE
+        )
 
-    mock_client.request.return_value = httpx.Response(
-        status_code=403, content=b"Forbidden"
+    # 3. 403 Auth Failure
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(status_code=403, content=b"Forbidden")
     )
-    res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert (
-        res.classified_outcome
-        == VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE
-    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert (
+            res.classified_outcome
+            == VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE
+        )
 
-    # 3. 404 Not Found
-    mock_client.request.return_value = httpx.Response(
-        status_code=404, content=b"Not found"
+    # 4. Default 404 is NOT_FOUND by default? NO! Section 8: default 404 -> SOURCE_RESPONSE_INVALID
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(status_code=404, content=b"Not found")
     )
-    res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert res.classified_outcome == VerificationEvidenceOutcome.NOT_FOUND
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert (
+            res.classified_outcome
+            == VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+        )
 
-    # 4. 503 Service Unavailable
-    mock_client.request.return_value = httpx.Response(
-        status_code=503, content=b"Unavailable"
+    # 5. Explicit source opt-in not_found_status_codes={404} -> NOT_FOUND
+    opt_in_404_config = RegistrySourceRuntimeConfig(
+        base_url="https://registry.gov.in",
+        allowed_hostnames=frozenset({"registry.gov.in"}),
+        not_found_status_codes=frozenset({404}),
     )
-    res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert res.classified_outcome == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            opt_in_404_config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert res.classified_outcome == VerificationEvidenceOutcome.NOT_FOUND
+
+    # 6. Default 429 is retryable by default? NO! Section 7: default 429 -> SOURCE_RESPONSE_INVALID
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(status_code=429, content=b"Too Many Requests")
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert (
+            res.classified_outcome
+            == VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+        )
+
+    # 7. Explicit source opt-in retryable_status_codes={..., 429} -> SOURCE_UNAVAILABLE
+    opt_in_429_config = RegistrySourceRuntimeConfig(
+        base_url="https://registry.gov.in",
+        allowed_hostnames=frozenset({"registry.gov.in"}),
+        retryable_status_codes=frozenset({408, 429, 500, 502, 503, 504}),
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            opt_in_429_config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert res.classified_outcome == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+
+    # 8. 503 Service Unavailable
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(status_code=503, content=b"Unavailable")
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        res = await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert res.classified_outcome == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
 
 
 @pytest.mark.asyncio
-async def test_safe_http_client_size_limit_rejection() -> None:
+async def test_safe_http_client_streaming_size_limit_rejection() -> None:
     config = RegistrySourceRuntimeConfig(
         base_url="https://registry.gov.in",
         allowed_hostnames=frozenset({"registry.gov.in"}),
         max_response_bytes=100,
     )
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.request.return_value = httpx.Response(
-        status_code=200,
-        content=b"x" * 200,
+
+    chunks_generated = 0
+
+    async def streaming_generator():
+        nonlocal chunks_generated
+        while True:
+            chunks_generated += 1
+            yield b"x" * 60  # Chunk 1: 60 bytes, Chunk 2: 120 bytes > 100 max
+
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(status_code=200, content=streaming_generator())
     )
-    safe_client = SafeRegistryHttpClient(
-        config, http_client=mock_client, resolve_dns=False
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        with pytest.raises(VerificationNetworkError) as exc:
+            await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert exc.value.code == "RESPONSE_TOO_LARGE"
+        # Proves reading aborted at chunk 2, never continued streaming infinitely
+        assert chunks_generated == 2
+
+
+@pytest.mark.asyncio
+async def test_safe_http_client_unexpected_content_encoding() -> None:
+    config = RegistrySourceRuntimeConfig(
+        base_url="https://registry.gov.in",
+        allowed_hostnames=frozenset({"registry.gov.in"}),
     )
 
-    with pytest.raises(VerificationNetworkError) as exc:
-        await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert exc.value.code == "RESPONSE_TOO_LARGE"
+    transport = httpx.MockTransport(
+        lambda req: httpx.Response(
+            status_code=200,
+            content=b"compressed data",
+            headers={"Content-Type": "application/json", "Content-Encoding": "gzip"},
+        )
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        with pytest.raises(VerificationNetworkError) as exc:
+            await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert exc.value.code == "UNEXPECTED_CONTENT_ENCODING"
 
 
 @pytest.mark.asyncio
@@ -190,24 +286,32 @@ async def test_safe_http_client_timeout_and_tls_handling() -> None:
         base_url="https://registry.gov.in",
         allowed_hostnames=frozenset({"registry.gov.in"}),
     )
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    safe_client = SafeRegistryHttpClient(
-        config, http_client=mock_client, resolve_dns=False
-    )
 
     # Timeout
-    mock_client.request.side_effect = httpx.ConnectTimeout("timeout")
-    with pytest.raises(VerificationNetworkError) as exc:
-        await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert exc.value.code == "NETWORK_TIMEOUT"
+    def timeout_handler(req: httpx.Request) -> Any:
+        raise httpx.ConnectTimeout("timeout")
+
+    transport = httpx.MockTransport(timeout_handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        with pytest.raises(VerificationNetworkError) as exc:
+            await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert exc.value.code == "NETWORK_TIMEOUT"
 
     # TLS error
-    import ssl
+    def ssl_handler(req: httpx.Request) -> Any:
+        raise ssl.SSLError("cert failure")
 
-    mock_client.request.side_effect = ssl.SSLError("cert failure")
-    with pytest.raises(VerificationNetworkError) as exc:
-        await safe_client.execute_request("GET", "https://registry.gov.in/check")
-    assert exc.value.code == "TLS_VERIFICATION_FAILURE"
+    transport = httpx.MockTransport(ssl_handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        with pytest.raises(VerificationNetworkError) as exc:
+            await safe_client.execute_request("GET", "https://registry.gov.in/check")
+        assert exc.value.code == "TLS_VERIFICATION_FAILURE"
 
 
 @pytest.mark.asyncio
@@ -216,24 +320,34 @@ async def test_safe_http_client_rejects_redirect_and_unexpected_content_type() -
         base_url="https://registry.gov.in",
         allowed_hostnames=frozenset({"registry.gov.in"}),
     )
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    safe_client = SafeRegistryHttpClient(
-        config, http_client=mock_client, resolve_dns=False
-    )
 
-    mock_client.request.return_value = httpx.Response(
-        status_code=302, headers={"location": "https://elsewhere.example"}
+    transport_302 = httpx.MockTransport(
+        lambda req: httpx.Response(
+            status_code=302, headers={"location": "https://elsewhere.example"}
+        )
     )
-    with pytest.raises(VerificationNetworkError, match="REDIRECT_REJECTED"):
-        await safe_client.execute_request("GET", "https://registry.gov.in/check")
+    async with httpx.AsyncClient(transport=transport_302) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        with pytest.raises(VerificationNetworkError, match="REDIRECT_REJECTED"):
+            await safe_client.execute_request("GET", "https://registry.gov.in/check")
 
-    mock_client.request.return_value = httpx.Response(
-        status_code=200,
-        content=b"<html>not a registry result</html>",
-        headers={"content-type": "text/html"},
+    transport_html = httpx.MockTransport(
+        lambda req: httpx.Response(
+            status_code=200,
+            content=b"<html>not a registry result</html>",
+            headers={"content-type": "text/html"},
+        )
     )
-    with pytest.raises(VerificationNetworkError, match="UNSAFE_RESPONSE_CONTENT_TYPE"):
-        await safe_client.execute_request("GET", "https://registry.gov.in/check")
+    async with httpx.AsyncClient(transport=transport_html) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
+        )
+        with pytest.raises(
+            VerificationNetworkError, match="UNSAFE_RESPONSE_CONTENT_TYPE"
+        ):
+            await safe_client.execute_request("GET", "https://registry.gov.in/check")
 
 
 @pytest.mark.asyncio
@@ -258,19 +372,70 @@ async def test_network_error_and_logs_do_not_include_request_secrets_or_body(
         base_url="https://registry.gov.in",
         allowed_hostnames=frozenset({"registry.gov.in"}),
     )
-    mock_client = AsyncMock(spec=httpx.AsyncClient)
-    mock_client.request.side_effect = httpx.ConnectTimeout("transport failure")
-    safe_client = SafeRegistryHttpClient(
-        config, http_client=mock_client, resolve_dns=False
-    )
 
-    with pytest.raises(VerificationNetworkError) as exc:
-        await safe_client.execute_request(
-            "GET",
-            "https://registry.gov.in/check",
-            headers={"Authorization": "Bearer test-secret"},
+    transport = httpx.MockTransport(
+        lambda req: (_ for _ in ()).throw(httpx.ConnectTimeout("transport failure"))
+    )
+    async with httpx.AsyncClient(transport=transport) as client:
+        safe_client = SafeRegistryHttpClient(
+            config, http_client=client, resolve_dns=False
         )
-    assert exc.value.code == "NETWORK_TIMEOUT"
-    rendered = caplog.text
-    assert "test-secret" not in rendered
-    assert "Authorization" not in rendered
+
+        with pytest.raises(VerificationNetworkError) as exc:
+            await safe_client.execute_request(
+                "GET",
+                "https://registry.gov.in/check",
+                headers={"Authorization": "Bearer test-secret"},
+            )
+        assert exc.value.code == "NETWORK_TIMEOUT"
+        rendered = caplog.text
+        assert "test-secret" not in rendered
+        assert "Authorization" not in rendered
+
+
+def test_classify_network_error_closed_taxonomy() -> None:
+    assert (
+        classify_network_error(VerificationNetworkError("DNS_RESOLUTION_FAILURE"))
+        == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("NETWORK_TIMEOUT"))
+        == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("NETWORK_CONNECTION_ERROR"))
+        == VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("TLS_VERIFICATION_FAILURE"))
+        == VerificationEvidenceOutcome.SOURCE_INTEGRITY_FAILURE
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("RESPONSE_TOO_LARGE"))
+        == VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("UNSAFE_RESPONSE_CONTENT_TYPE"))
+        == VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("REDIRECT_REJECTED"))
+        == VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+    )
+    assert (
+        classify_network_error(VerificationNetworkError("UNEXPECTED_CONTENT_ENCODING"))
+        == VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+    )
+    # SSRF and internal configuration violations must return None (not an outage)
+    assert classify_network_error(VerificationNetworkError("SSRF_BLOCKED_IP")) is None
+    assert (
+        classify_network_error(VerificationNetworkError("DISALLOWED_HOSTNAME")) is None
+    )
+    assert classify_network_error(VerificationNetworkError("UNSAFE_URL_SCHEME")) is None
+
+
+def test_network_default_status_codes_freeze() -> None:
+    assert DEFAULT_NOT_FOUND_STATUS_CODES == frozenset()
+    assert DEFAULT_RETRYABLE_STATUS_CODES == frozenset({408, 500, 502, 503, 504})
+    assert 404 not in DEFAULT_NOT_FOUND_STATUS_CODES
+    assert 429 not in DEFAULT_RETRYABLE_STATUS_CODES

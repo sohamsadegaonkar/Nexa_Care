@@ -25,6 +25,7 @@ from app.services.provider_verification_registry import (
     RegistryRequestInvalidError,
     RegistryResourceType,
     RegistrySourceDescriptor,
+    RegistryTransientUnavailableError,
     RegistryUnsupportedResourceError,
     SyntheticRegistryAdapter,
     compute_response_digest,
@@ -1132,6 +1133,98 @@ async def test_protected_hook_registry_adapter_error_sanitization() -> None:
     tb_lines = traceback.format_exception(exc_info.type, exc_info.value, exc_info.tb)
     tb_text = "".join(tb_lines)
     assert "SUPER_SECRET_INTERNAL_TOKEN" not in tb_text
+
+
+class MockTransientErrorAdapter(RegistryAdapter):
+    """Adapter whose hooks raise RegistryTransientUnavailableError or other errors."""
+
+    def __init__(self, exc_to_raise: Exception) -> None:
+        self._exc = exc_to_raise
+
+    @property
+    def source_descriptor(self) -> RegistrySourceDescriptor:
+        return RegistrySourceDescriptor(
+            source_id="TRANSIENT_SRC",
+            adapter_version="1.0.0",
+            supported_resource_types=(
+                RegistryResourceType.PROFESSIONAL,
+                RegistryResourceType.FACILITY,
+            ),
+        )
+
+    async def _lookup_professional(
+        self, request: ProfessionalLookupRequest
+    ) -> RegistryObservation:
+        raise self._exc
+
+    async def _lookup_facility(
+        self, request: FacilityLookupRequest
+    ) -> RegistryObservation:
+        raise self._exc
+
+
+@pytest.mark.asyncio
+async def test_template_method_allows_only_transient_unavailable_error_through() -> (
+    None
+):
+    """RegistryTransientUnavailableError is the SOLE exception that crosses the template method untouched."""
+    # 1. RegistryTransientUnavailableError passes through unchanged
+    transient_exc = RegistryTransientUnavailableError(
+        "Registry service temporarily unreachable"
+    )
+    adapter_transient = MockTransientErrorAdapter(transient_exc)
+
+    prof_req = ProfessionalLookupRequest(
+        registration_authority_code="TEST_PROF_AUTHORITY",
+        registration_number_normalized="REG1001",
+        lookup_purpose=VerificationEvidenceLookupPurpose.INITIAL_VERIFICATION,
+    )
+    with pytest.raises(RegistryTransientUnavailableError) as exc_info:
+        await adapter_transient.lookup_professional(prof_req)
+    assert exc_info.value is transient_exc
+
+    fac_req = FacilityLookupRequest(
+        registration_authority_code="TEST_FACILITY_AUTHORITY",
+        registration_number_normalized="FAC500",
+        lookup_purpose=VerificationEvidenceLookupPurpose.INITIAL_VERIFICATION,
+    )
+    with pytest.raises(RegistryTransientUnavailableError) as exc_info:
+        await adapter_transient.lookup_facility(fac_req)
+    assert exc_info.value is transient_exc
+
+    # 2. Other RegistryAdapterError subclasses are sanitized into RegistryAdapterContractError
+    other_adapter_error = RegistryRequestInvalidError("some normalization failure")
+    adapter_other = MockTransientErrorAdapter(other_adapter_error)
+    with pytest.raises(RegistryAdapterContractError) as exc_info:
+        await adapter_other.lookup_professional(prof_req)
+    assert exc_info.value.error_code == "REGISTRY_CONTRACT_ERROR"
+    assert exc_info.value.message == "Registry adapter unexpected execution error"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+    with pytest.raises(RegistryAdapterContractError) as exc_info:
+        await adapter_other.lookup_facility(fac_req)
+    assert exc_info.value.error_code == "REGISTRY_CONTRACT_ERROR"
+    assert exc_info.value.message == "Registry adapter unexpected execution error"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+    # 3. Generic exceptions are sanitized into RegistryAdapterContractError
+    generic_error = RuntimeError("unexpected database or network crash")
+    adapter_generic = MockTransientErrorAdapter(generic_error)
+    with pytest.raises(RegistryAdapterContractError) as exc_info:
+        await adapter_generic.lookup_professional(prof_req)
+    assert exc_info.value.error_code == "REGISTRY_CONTRACT_ERROR"
+    assert exc_info.value.message == "Registry adapter unexpected execution error"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+
+    with pytest.raises(RegistryAdapterContractError) as exc_info:
+        await adapter_generic.lookup_facility(fac_req)
+    assert exc_info.value.error_code == "REGISTRY_CONTRACT_ERROR"
+    assert exc_info.value.message == "Registry adapter unexpected execution error"
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
 
 
 class MockCrashingDescriptorAdapter(RegistryAdapter):

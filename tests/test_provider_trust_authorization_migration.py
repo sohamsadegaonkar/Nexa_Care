@@ -6,7 +6,8 @@ from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "20260903_trust_authorization"
-HEAD_REVISION = "20260905_verification_application"
+APPLICATION_REVISION = "20260905_verification_application"
+HEAD_REVISION = "20260906_verification_scheduler"
 
 
 def test_trust_authorization_migration_is_single_head_and_forward_only() -> None:
@@ -16,10 +17,15 @@ def test_trust_authorization_migration_is_single_head_and_forward_only() -> None
     assert revision is not None and revision.down_revision == "20260903_trust_lifecycle"
     evidence_revision = scripts.get_revision("20260904_verification_evidence")
     assert evidence_revision is not None and evidence_revision.down_revision == REVISION
+    app_revision = scripts.get_revision(APPLICATION_REVISION)
+    assert (
+        app_revision is not None
+        and app_revision.down_revision == "20260904_verification_evidence"
+    )
     head_revision = scripts.get_revision(HEAD_REVISION)
     assert (
         head_revision is not None
-        and head_revision.down_revision == "20260904_verification_evidence"
+        and head_revision.down_revision == APPLICATION_REVISION
     )
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (

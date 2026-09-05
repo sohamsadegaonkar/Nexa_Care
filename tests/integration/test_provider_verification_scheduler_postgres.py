@@ -51,6 +51,7 @@ from app.services.provider_verification_worker import ProviderVerificationWorker
 from app.services.provider_verification_registry import (
     RegistryResourceType,
     RegistrySourceDescriptor,
+    RegistryTransientUnavailableError,
     SyntheticRegistryAdapter,
 )
 
@@ -1053,7 +1054,7 @@ async def test_retry_exhaustion_emits_exactly_one_real_5e_outage_evidence(
 
     class UnavailableAdapter(SyntheticRegistryAdapter):
         async def _lookup_professional(self, request):
-            raise RuntimeError("synthetic transport outage")
+            raise RegistryTransientUnavailableError("synthetic transport outage")
 
     policy = SourceAutomationPolicyRegistry(
         [_worker_policy(RegistryResourceType.PROFESSIONAL, "NMC", "NMC_REGISTRY")]

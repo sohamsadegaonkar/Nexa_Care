@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_MAX_RESPONSE_BYTES = 1048576  # 1 MiB
 DEFAULT_CONNECT_TIMEOUT_SECONDS = 5.0
 DEFAULT_READ_TIMEOUT_SECONDS = 10.0
-DEFAULT_RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
-DEFAULT_NOT_FOUND_STATUS_CODES = frozenset({404})
+DEFAULT_RETRYABLE_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
+DEFAULT_NOT_FOUND_STATUS_CODES: frozenset[int] = frozenset()
 DEFAULT_ALLOWED_CONTENT_TYPES = frozenset({"application/json"})
 
 
@@ -237,12 +237,71 @@ class SafeRegistryHttpClient:
             }
 
             try:
-                response = await client.request(
+                async with client.stream(
                     method=method,
                     url=url,
                     headers=req_headers,
                     json=json_body,
-                )
+                ) as response:
+                    # Reject unexpected non-identity content encoding
+                    content_encoding = response.headers.get("content-encoding")
+                    if content_encoding and content_encoding.strip().lower() not in (
+                        "",
+                        "identity",
+                    ):
+                        logger.warning(
+                            "Registry response returned unexpected content-encoding",
+                            extra={"content_encoding": content_encoding},
+                        )
+                        raise VerificationNetworkError(
+                            "UNEXPECTED_CONTENT_ENCODING",
+                            f"Unexpected content-encoding: {content_encoding}",
+                        )
+
+                    # Bounded streaming read
+                    body_chunks: list[bytes] = []
+                    bytes_read = 0
+                    async for chunk in response.aiter_bytes():
+                        bytes_read += len(chunk)
+                        if bytes_read > self.config.max_response_bytes:
+                            logger.warning(
+                                "Registry response exceeded max permitted bytes",
+                                extra={"bytes_received": bytes_read},
+                            )
+                            raise VerificationNetworkError("RESPONSE_TOO_LARGE")
+                        body_chunks.append(chunk)
+                    content = b"".join(body_chunks)
+
+                    # Classify status codes
+                    status = response.status_code
+                    if 300 <= status < 400:
+                        raise VerificationNetworkError("REDIRECT_REJECTED")
+                    content_type = response.headers.get("content-type", "").split(
+                        ";", 1
+                    )[0]
+                    if 200 <= status < 300 and content_type.lower() not in {
+                        value.lower() for value in self.config.allowed_content_types
+                    }:
+                        raise VerificationNetworkError("UNSAFE_RESPONSE_CONTENT_TYPE")
+                    if status in (401, 403):
+                        outcome = (
+                            VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE
+                        )
+                    elif status in self.config.not_found_status_codes:
+                        outcome = VerificationEvidenceOutcome.NOT_FOUND
+                    elif status in self.config.retryable_status_codes:
+                        outcome = VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+                    elif 200 <= status < 300:
+                        outcome = VerificationEvidenceOutcome.CONFIRMED_ACTIVE
+                    else:
+                        outcome = VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+
+                    return SafeHttpResponse(
+                        status_code=status,
+                        body_bytes=content,
+                        headers=dict(response.headers),
+                        classified_outcome=outcome,
+                    )
             except ssl.SSLError as exc:
                 logger.warning(
                     "Registry TLS verification failure for safe host",
@@ -267,43 +326,35 @@ class SafeRegistryHttpClient:
                     extra={"error_type": type(exc).__name__},
                 )
                 raise VerificationNetworkError("NETWORK_CONNECTION_ERROR") from exc
-
-            # Check response size bounds
-            content = response.content
-            if len(content) > self.config.max_response_bytes:
+            except httpx.DecodingError as exc:
                 logger.warning(
-                    "Registry response exceeded max permitted bytes",
-                    extra={"bytes_received": len(content)},
+                    "Registry response decoding error",
+                    extra={"error_type": "DecodingError"},
                 )
-                raise VerificationNetworkError("RESPONSE_TOO_LARGE")
-
-            # Classify status codes
-            status = response.status_code
-            if 300 <= status < 400:
-                raise VerificationNetworkError("REDIRECT_REJECTED")
-            content_type = response.headers.get("content-type", "").split(";", 1)[0]
-            if 200 <= status < 300 and content_type.lower() not in {
-                value.lower() for value in self.config.allowed_content_types
-            }:
-                raise VerificationNetworkError("UNSAFE_RESPONSE_CONTENT_TYPE")
-            if status in (401, 403):
-                outcome = VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE
-            elif status in self.config.not_found_status_codes:
-                outcome = VerificationEvidenceOutcome.NOT_FOUND
-            elif status in self.config.retryable_status_codes:
-                outcome = VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
-            elif 200 <= status < 300:
-                outcome = VerificationEvidenceOutcome.CONFIRMED_ACTIVE
-            else:
-                outcome = VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
-
-            return SafeHttpResponse(
-                status_code=status,
-                body_bytes=content,
-                headers=dict(response.headers),
-                classified_outcome=outcome,
-            )
+                raise VerificationNetworkError("UNEXPECTED_CONTENT_ENCODING") from exc
 
         finally:
             if should_close_client:
                 await client.aclose()
+
+
+def classify_network_error(
+    error: VerificationNetworkError,
+) -> VerificationEvidenceOutcome | None:
+    """Classify a network error into an observation outcome, or None if internal configuration/SSRF failure."""
+    if error.code in {
+        "DNS_RESOLUTION_FAILURE",
+        "NETWORK_TIMEOUT",
+        "NETWORK_CONNECTION_ERROR",
+    }:
+        return VerificationEvidenceOutcome.SOURCE_UNAVAILABLE
+    if error.code == "TLS_VERIFICATION_FAILURE":
+        return VerificationEvidenceOutcome.SOURCE_INTEGRITY_FAILURE
+    if error.code in {
+        "RESPONSE_TOO_LARGE",
+        "UNSAFE_RESPONSE_CONTENT_TYPE",
+        "REDIRECT_REJECTED",
+        "UNEXPECTED_CONTENT_ENCODING",
+    }:
+        return VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID
+    return None

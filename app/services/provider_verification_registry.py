@@ -104,6 +104,16 @@ class RegistryObservationInvalidError(RegistryAdapterContractError):
     error_code: ClassVar[str] = "REGISTRY_OBSERVATION_INVALID"
 
 
+class RegistryTransientUnavailableError(RegistryAdapterError):
+    """Raised only when an external registry source experiences transient availability failure.
+
+    This is the sole retryable transport error. It must never contain raw provider
+    exception text, URL, credentials, response body, or headers.
+    """
+
+    error_code: ClassVar[str] = "REGISTRY_TRANSIENT_UNAVAILABLE"
+
+
 # ---------------------------------------------------------------------------
 # Server-Owned Source Descriptor
 # ---------------------------------------------------------------------------
@@ -485,13 +495,15 @@ class RegistryAdapter(ABC):
         observation: RegistryObservation | None = None
         try:
             observation = await self._lookup_professional(request)
+        except RegistryTransientUnavailableError:
+            raise
         except Exception:
             failed = True
 
         if failed or observation is None:
             raise RegistryAdapterContractError(
                 "Registry adapter unexpected execution error"
-            )
+            ) from None
 
         self._validate_returned_observation(
             observation=observation,
@@ -515,13 +527,15 @@ class RegistryAdapter(ABC):
         observation: RegistryObservation | None = None
         try:
             observation = await self._lookup_facility(request)
+        except RegistryTransientUnavailableError:
+            raise
         except Exception:
             failed = True
 
         if failed or observation is None:
             raise RegistryAdapterContractError(
                 "Registry adapter unexpected execution error"
-            )
+            ) from None
 
         self._validate_returned_observation(
             observation=observation,

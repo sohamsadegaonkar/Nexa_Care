@@ -26,8 +26,13 @@ from app.services.provider_verification_application import (
     VerificationApplicationError,
 )
 from app.services.provider_verification_registry import (
+    RegistryAdapterContractError,
+    RegistryObservationInvalidError,
+    RegistryRequestInvalidError,
     RegistryResourceType,
     RegistrySourceDescriptor,
+    RegistryTransientUnavailableError,
+    RegistryUnsupportedResourceError,
     SyntheticRegistryAdapter,
 )
 from app.services.provider_verification_worker import (
@@ -277,20 +282,23 @@ class TestProcessNoAdapter:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# process_work_item — transient failure rescheduling
+# ---------------------------------------------------------------------------
+
+
 class TestProcessTransientFailure:
     @pytest.mark.asyncio
     async def test_transient_failure_reschedules_with_backoff(self) -> None:
         work = _make_work(attempt_count=0, max_attempts=3)
         db = _make_db()
 
-        # Adapter that always raises
+        # Adapter that raises RegistryTransientUnavailableError
         failing_adapter = AsyncMock(
             spec=["lookup_professional", "_resolve_source_descriptor"]
         )
-        from app.services.provider_verification_registry import RegistryAdapterError
-
         failing_adapter.lookup_professional = AsyncMock(
-            side_effect=RegistryAdapterError("transient network error")
+            side_effect=RegistryTransientUnavailableError("transient network error")
         )
         failing_adapter._resolve_source_descriptor = MagicMock(return_value=_DESCRIPTOR)
 
@@ -298,7 +306,7 @@ class TestProcessTransientFailure:
 
         with patch(
             "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
-            side_effect=RegistryAdapterError("transient"),
+            side_effect=RegistryTransientUnavailableError("transient"),
         ):
             result = await svc.process_work_item(work, now=_NOW)
 
@@ -313,13 +321,11 @@ class TestProcessTransientFailure:
         work = _make_work(attempt_count=0, max_attempts=5)
         db = _make_db()
 
-        from app.services.provider_verification_registry import RegistryAdapterError
-
         svc = _make_svc(db)
 
         with patch(
             "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
-            side_effect=RegistryAdapterError("transient"),
+            side_effect=RegistryTransientUnavailableError("transient"),
         ):
             await svc.process_work_item(work, now=_NOW)
 
@@ -339,15 +345,13 @@ class TestProcessExhausted:
         work = _make_work(attempt_count=2, max_attempts=3)
         db = _make_db()
 
-        from app.services.provider_verification_registry import RegistryAdapterError
-
         svc = _make_svc(db)
 
         # Mock apply_verification_observation so it doesn't try to hit DB
         with (
             patch(
                 "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
-                side_effect=RegistryAdapterError("source down"),
+                side_effect=RegistryTransientUnavailableError("source down"),
             ),
             patch(
                 "app.services.provider_verification_worker.ProviderVerificationApplicationService"
@@ -365,6 +369,134 @@ class TestProcessExhausted:
         assert work.status == VerificationWorkStatus.EXHAUSTED.value
         # Adapter's _resolve_source_descriptor must have been called to build exhaustion obs
         mock_app.apply_verification_observation.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# process_work_item — non-retryable failures (Section 12 matrix)
+# ---------------------------------------------------------------------------
+
+
+class TestProcessNonRetryableFailures:
+    @pytest.mark.asyncio
+    async def test_contract_error_marks_failed_terminal_with_zero_5e_calls(
+        self,
+    ) -> None:
+        work = _make_work(attempt_count=0, max_attempts=5)
+        db = _make_db()
+        svc = _make_svc(db)
+
+        with (
+            patch(
+                "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
+                side_effect=RegistryAdapterContractError("contract violation"),
+            ),
+            patch(
+                "app.services.provider_verification_worker.ProviderVerificationApplicationService"
+            ) as mock_app_cls,
+        ):
+            mock_app = AsyncMock()
+            mock_app_cls.return_value = mock_app
+
+            result = await svc.process_work_item(work, now=_NOW)
+
+        assert result == VerificationWorkStatus.FAILED_TERMINAL
+        assert work.status == VerificationWorkStatus.FAILED_TERMINAL.value
+        assert work.last_error_code == "REGISTRY_CONTRACT_ERROR"
+        assert not hasattr(work, "last_error_message")
+        mock_app.apply_verification_observation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_observation_invalid_error_marks_failed_terminal_with_zero_5e_calls(
+        self,
+    ) -> None:
+        work = _make_work(attempt_count=0, max_attempts=5)
+        db = _make_db()
+        svc = _make_svc(db)
+
+        with (
+            patch(
+                "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
+                side_effect=RegistryObservationInvalidError(
+                    "invalid observation bounds"
+                ),
+            ),
+            patch(
+                "app.services.provider_verification_worker.ProviderVerificationApplicationService"
+            ) as mock_app_cls,
+        ):
+            mock_app = AsyncMock()
+            mock_app_cls.return_value = mock_app
+
+            result = await svc.process_work_item(work, now=_NOW)
+
+        assert result == VerificationWorkStatus.FAILED_TERMINAL
+        assert work.status == VerificationWorkStatus.FAILED_TERMINAL.value
+        assert work.last_error_code == "REGISTRY_OBSERVATION_INVALID"
+        assert not hasattr(work, "last_error_message")
+        mock_app.apply_verification_observation.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_request_invalid_error_marks_failed_terminal(self) -> None:
+        work = _make_work(attempt_count=0, max_attempts=5)
+        db = _make_db()
+        svc = _make_svc(db)
+
+        with patch(
+            "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
+            side_effect=RegistryRequestInvalidError("bad request"),
+        ):
+            result = await svc.process_work_item(work, now=_NOW)
+
+        assert result == VerificationWorkStatus.FAILED_TERMINAL
+        assert work.status == VerificationWorkStatus.FAILED_TERMINAL.value
+        assert work.last_error_code == "REGISTRY_REQUEST_INVALID"
+        assert not hasattr(work, "last_error_message")
+
+    @pytest.mark.asyncio
+    async def test_unsupported_resource_error_marks_failed_terminal(self) -> None:
+        work = _make_work(attempt_count=0, max_attempts=5)
+        db = _make_db()
+        svc = _make_svc(db)
+
+        with patch(
+            "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
+            side_effect=RegistryUnsupportedResourceError("unsupported resource"),
+        ):
+            result = await svc.process_work_item(work, now=_NOW)
+
+        assert result == VerificationWorkStatus.FAILED_TERMINAL
+        assert work.status == VerificationWorkStatus.FAILED_TERMINAL.value
+        assert work.last_error_code == "REGISTRY_UNSUPPORTED_RESOURCE"
+        assert not hasattr(work, "last_error_message")
+
+    @pytest.mark.asyncio
+    async def test_generic_runtime_error_marks_failed_terminal_no_retry_zero_5e_calls(
+        self,
+    ) -> None:
+        work = _make_work(attempt_count=0, max_attempts=5)
+        db = _make_db()
+        svc = _make_svc(db)
+
+        with (
+            patch(
+                "app.services.provider_verification_worker.execute_lookup_and_create_envelope",
+                side_effect=RuntimeError("Authorization: Bearer SUPER_SECRET_TOKEN"),
+            ),
+            patch(
+                "app.services.provider_verification_worker.ProviderVerificationApplicationService"
+            ) as mock_app_cls,
+        ):
+            mock_app = AsyncMock()
+            mock_app_cls.return_value = mock_app
+
+            result = await svc.process_work_item(work, now=_NOW)
+
+        assert result == VerificationWorkStatus.FAILED_TERMINAL
+        assert work.status == VerificationWorkStatus.FAILED_TERMINAL.value
+        assert work.last_error_code == "WORKER_INTERNAL_ERROR"
+        assert "SUPER_SECRET_TOKEN" not in getattr(work, "last_error_code", "")
+        assert not hasattr(work, "last_error_message")
+        mock_app.apply_verification_observation.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

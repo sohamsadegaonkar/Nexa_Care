@@ -28,9 +28,14 @@ from app.services.provider_verification_registry import (
     FacilityLookupRequest,
     ProfessionalLookupRequest,
     RegistryAdapter,
+    RegistryAdapterContractError,
     RegistryAdapterError,
     RegistryObservation,
+    RegistryObservationInvalidError,
+    RegistryRequestInvalidError,
     RegistryResourceType,
+    RegistryTransientUnavailableError,
+    RegistryUnsupportedResourceError,
 )
 
 _DEFAULT_LEASE_SECONDS = 60
@@ -191,13 +196,35 @@ class ProviderVerificationWorkerService:
         )
         try:
             envelope = await execute_lookup_and_create_envelope(adapter, invocation)
-        except RegistryAdapterError:
+        except RegistryTransientUnavailableError:
             return await self._retry_or_exhaust(
                 work, resource_type, invocation, adapter, moment
             )
+        except (
+            RegistryAdapterContractError,
+            RegistryUnsupportedResourceError,
+            RegistryRequestInvalidError,
+            RegistryObservationInvalidError,
+        ) as exc:
+            return await self._terminalize_without_application(
+                work.id,
+                VerificationWorkStatus.FAILED_TERMINAL,
+                moment,
+                getattr(exc, "error_code", "REGISTRY_CONTRACT_ERROR"),
+            )
+        except RegistryAdapterError as exc:
+            return await self._terminalize_without_application(
+                work.id,
+                VerificationWorkStatus.FAILED_TERMINAL,
+                moment,
+                getattr(exc, "error_code", "REGISTRY_ADAPTER_ERROR"),
+            )
         except Exception:
-            return await self._retry_or_exhaust(
-                work, resource_type, invocation, adapter, moment
+            return await self._terminalize_without_application(
+                work.id,
+                VerificationWorkStatus.FAILED_TERMINAL,
+                moment,
+                "WORKER_INTERNAL_ERROR",
             )
         return await self._apply_and_terminalize(
             work.id,
