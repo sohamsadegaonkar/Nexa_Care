@@ -1,3 +1,4 @@
+# NOTE: CI qualification baseline only, not production deployment specification.
 name: CI
 
 on:
@@ -7,7 +8,8 @@ on:
     branches: [main, beta/remote-pilot]
 
 jobs:
-  test:
+  quality:
+    name: Quality & Pure Unit (Partition A)
     runs-on: ubuntu-latest
 
     steps:
@@ -30,34 +32,163 @@ jobs:
       - name: Lint
         run: ruff check .
 
-      # F-12 fix: was `python -m unittest discover -s tests -v`
-      #
-      # unittest discover collected test_route_registration.py and
-      # test_sharding.py but found no TestCase subclasses in them (they use
-      # bare `assert` statements — pytest style).  It reported them as
-      # passing with zero tests run, meaning:
-      #   • the aadhaar_abha_id routing regression guard (test_sharding.py)
-      #   • the duplicate-route registration guard (test_route_registration.py)
-      # never executed in CI.  Switching to pytest collects and runs all
-      # test functions regardless of whether they are TestCase subclasses.
-      - name: Run tests
-        run: python -m pytest tests/ -v --tb=short
+      - name: Run Partition A (not postgres and not redis)
+        run: python -m pytest tests/ -m "not postgres and not redis" -q --tb=short --junitxml=.test-results/quality.xml
         env:
-          # Provider routes authenticate via get_provider_context(), which
-          # validates credentials against provider_credential in Postgres.
-          # DATABASE_URL is required at startup even though unit tests mock
-          # the session layer — no live database is contacted in CI.
           SUPABASE_URL: "https://placeholder.supabase.co"
           SUPABASE_KEY: "placeholder-key"
-          UPSTASH_REDIS_URL: "redis://localhost:6379"
+          UPSTASH_REDIS_URL: "redis://127.0.0.1:6379/0"
           HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
           KEK_ROOT_SECRET: "test-kek-root-secret-32-bytes-minimum"
           NEXA_PEPPER_KEY: "test-pepper-key"
           ENVIRONMENT: "test"
-          DATABASE_URL: "postgresql+asyncpg://ci:ci@localhost:5432/nexa_ci"
-          # app/core/security.py::_load_key requires 32-byte base64 Fernet
-          # keys for any code path that encrypts PII/MFA fields at rest
-          # (patient registration, document pipeline, review approval).
-          # These are throwaway CI-only keys, not real secrets.
+          DATABASE_URL: "postgresql+asyncpg://ci:ci@127.0.0.1:5432/nexa_ci"
           PII_ENCRYPTION_KEY: "vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw="
           MFA_ENCRYPTION_KEY: "ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8="
+
+      - name: Assert Zero Skips (Partition A)
+        run: python scripts/ci/assert_pytest_junit.py .test-results/quality.xml
+
+  postgres:
+    name: PostgreSQL Qualification (Partition B)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexa
+          POSTGRES_PASSWORD: nexa_test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_dev.txt
+
+      - name: Prepare CI Shared Disposable Database
+        run: python scripts/ci/prepare_ci_shared_db.py
+        env:
+          TEST_DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+
+      - name: Run Partition B (postgres and not redis)
+        run: python -m pytest tests/ -m "postgres and not redis" -q --tb=short --junitxml=.test-results/postgres.xml
+        env:
+          TEST_DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_KEY: "placeholder-key"
+          HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
+          KEK_ROOT_SECRET: "test-kek-root-secret-32-bytes-minimum"
+          NEXA_PEPPER_KEY: "test-pepper-key"
+          ENVIRONMENT: "test"
+          PII_ENCRYPTION_KEY: "vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw="
+          MFA_ENCRYPTION_KEY: "ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8="
+          OTP_RATE_LIMIT_HMAC_SECRET: "ci-test-otp-rate-limit-secret-32-bytes"
+          PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET: "ci-test-registration-hmac-secret-32-bytes"
+          PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET: "ci-test-contact-assurance-secret-32-bytes"
+          PATIENT_JWT_SECRET: "synthetic-patient-jwt-secret-at-least-32-chars-long"
+          TRUST_PERMISSION_DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+
+      - name: Assert Zero Skips (Partition B)
+        run: python scripts/ci/assert_pytest_junit.py .test-results/postgres.xml
+
+  postgres-redis:
+    name: PostgreSQL + Redis Qualification (Partition C)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexa
+          POSTGRES_PASSWORD: nexa_test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr poppler-utils
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_dev.txt
+
+      - name: Prepare CI Shared Disposable Database
+        run: python scripts/ci/prepare_ci_shared_db.py
+        env:
+          TEST_DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+
+      - name: Run Partition C (redis)
+        run: python -m pytest tests/ -m "redis" -q --tb=short --junitxml=.test-results/postgres-redis.xml
+        env:
+          TEST_DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
+          TEST_REDIS_URL: "redis://127.0.0.1:6379/0"
+          UPSTASH_REDIS_URL: "redis://127.0.0.1:6379/0"
+          TEST_REDIS_PREFIX: "nexa-qual-ci-test:"
+          NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+          PATIENT_JWT_SECRET: "synthetic-patient-jwt-secret-at-least-32-chars-long"
+          SUPABASE_URL: "https://placeholder.supabase.co"
+          SUPABASE_KEY: "placeholder-key"
+          HANDSHAKE_PEPPER_SECRET: "ci-test-pepper"
+          KEK_ROOT_SECRET: "test-kek-root-secret-32-bytes-minimum"
+          NEXA_PEPPER_KEY: "test-pepper-key"
+          ENVIRONMENT: "test"
+          PII_ENCRYPTION_KEY: "vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw="
+          MFA_ENCRYPTION_KEY: "ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8="
+          OTP_RATE_LIMIT_HMAC_SECRET: "ci-test-otp-rate-limit-secret-32-bytes"
+          PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET: "ci-test-registration-hmac-secret-32-bytes"
+          PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET: "ci-test-contact-assurance-secret-32-bytes"
+
+      - name: Assert Zero Skips (Partition C)
+        run: python scripts/ci/assert_pytest_junit.py .test-results/postgres-redis.xml

@@ -18,8 +18,6 @@ from unittest.mock import patch
 import httpx
 import pyotp
 import pytest
-from alembic import command
-from alembic.config import Config
 from cryptography.fernet import Fernet
 from redis.asyncio import Redis
 from sqlalchemy import select, text
@@ -64,6 +62,13 @@ from app.services.provider_auth_service import (
 from app.services.provider_contact_assurance_service import (
     ProviderContactChallengeTransport,
 )
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    get_qualification_redis_url,
+    migrate_database_to_head,
+    postgres_database_url,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -75,6 +80,7 @@ pytestmark = [
 HEAD = "20260905_verification_application"
 _USER_AGENT = "Nexa-Slice3G-Qualification-Agent/1.0"
 _HMAC_SECRET = "synthetic-secret-for-provider-qualification-hmac-32bytes"
+_DB_NAME = "nexa_qual_provider_journey_3g"
 
 
 class CaptureTransport(ProviderContactChallengeTransport):
@@ -91,37 +97,28 @@ class CaptureTransport(ProviderContactChallengeTransport):
 
 
 def _get_db_url() -> str:
-    test_url = os.getenv("TEST_DATABASE_URL")
-    if test_url:
-        url = test_url
-    else:
-        db_url = os.getenv("DATABASE_URL")
-        if db_url and "nexa_qual_" in db_url:
-            url = db_url
-        elif db_url and "nexa_qual_" not in db_url:
-            pytest.skip("No disposable nexa_qual_ database configured in TEST_DATABASE_URL")
-        else:
-            url = "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/nexa_qual_provider_journey_3g"
-    if "127.0.0.1" not in url and "localhost" not in url:
-        pytest.fail("Database URL must be loopback-only")
-    if "nexa_qual_" not in url:
-        pytest.fail("Database URL must name a disposable nexa_qual_ database")
-    return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return postgres_database_url(_DB_NAME)
 
 
 def _get_redis_url() -> str:
-    url = os.getenv("TEST_REDIS_URL") or os.getenv(
-        "UPSTASH_REDIS_URL", "redis://127.0.0.1:6389/0"
-    )
-    if "127.0.0.1" not in url and "localhost" not in url:
-        pytest.fail("Redis URL must be loopback-only")
-    return url
+    return get_qualification_redis_url()
 
 
 @pytest.fixture(scope="module", autouse=True)
 def _setup_qualification_environment():
     db_url = _get_db_url()
     redis_url = _get_redis_url()
+
+    _prev_test_db = os.environ.get("TEST_DATABASE_URL")
+    _prev_db = os.environ.get("DATABASE_URL")
+    _prev_upstash = os.environ.get("UPSTASH_REDIS_URL")
+    _prev_test_redis = os.environ.get("TEST_REDIS_URL")
+    _prev_prefix = os.environ.get("TEST_REDIS_PREFIX")
+    _prev_otp_hmac = os.environ.get("OTP_RATE_LIMIT_HMAC_SECRET")
+    _prev_reg_hmac = os.environ.get("PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET")
+    _prev_cont_hmac = os.environ.get("PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET")
+    _prev_mfa = os.environ.get("MFA_ENCRYPTION_KEY")
+    _prev_cors = os.environ.get("CORS_ALLOWED_ORIGINS")
 
     os.environ["TEST_DATABASE_URL"] = db_url
     os.environ["DATABASE_URL"] = db_url
@@ -143,12 +140,29 @@ def _setup_qualification_environment():
         if hasattr(fn, "cache_clear"):
             fn.cache_clear()
 
-    # Verify migration to sole head on fresh database
-    cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", db_url)
-    command.upgrade(cfg, HEAD)
+    asyncio.run(create_disposable_database(_DB_NAME))
+    migrate_database_to_head(db_url, target_head=HEAD)
 
     yield
+
+    for k, v in [
+        ("TEST_DATABASE_URL", _prev_test_db),
+        ("DATABASE_URL", _prev_db),
+        ("UPSTASH_REDIS_URL", _prev_upstash),
+        ("TEST_REDIS_URL", _prev_test_redis),
+        ("TEST_REDIS_PREFIX", _prev_prefix),
+        ("OTP_RATE_LIMIT_HMAC_SECRET", _prev_otp_hmac),
+        ("PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET", _prev_reg_hmac),
+        ("PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET", _prev_cont_hmac),
+        ("MFA_ENCRYPTION_KEY", _prev_mfa),
+        ("CORS_ALLOWED_ORIGINS", _prev_cors),
+    ]:
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+    asyncio.run(drop_disposable_database(_DB_NAME))
 
 
 @pytest.fixture(autouse=True)

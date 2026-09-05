@@ -14,10 +14,45 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    postgres_database_url,
+)
+
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 
 PREVIOUS_HEAD = "20260902_contact_assurance"
 CURRENT_HEAD = "20260903_trust_lifecycle"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_lifecycle_migration_databases():
+    fresh_url = os.getenv("TRUST_LIFECYCLE_FRESH_DATABASE_URL")
+    prev_url = os.getenv("TRUST_LIFECYCLE_PREVIOUS_DATABASE_URL")
+    created_fresh = False
+    created_prev = False
+    if not fresh_url:
+        asyncio.run(create_disposable_database("nexa_qual_trust_life_fresh"))
+        os.environ["TRUST_LIFECYCLE_FRESH_DATABASE_URL"] = postgres_database_url(
+            "nexa_qual_trust_life_fresh"
+        )
+        created_fresh = True
+    if not prev_url:
+        asyncio.run(create_disposable_database("nexa_qual_trust_life_prev"))
+        os.environ["TRUST_LIFECYCLE_PREVIOUS_DATABASE_URL"] = postgres_database_url(
+            "nexa_qual_trust_life_prev"
+        )
+        created_prev = True
+    try:
+        yield
+    finally:
+        if created_fresh:
+            os.environ.pop("TRUST_LIFECYCLE_FRESH_DATABASE_URL", None)
+            asyncio.run(drop_disposable_database("nexa_qual_trust_life_fresh"))
+        if created_prev:
+            os.environ.pop("TRUST_LIFECYCLE_PREVIOUS_DATABASE_URL", None)
+            asyncio.run(drop_disposable_database("nexa_qual_trust_life_prev"))
 
 
 def _url(name: str) -> str:
@@ -34,7 +69,8 @@ def _url(name: str) -> str:
 
 def _config(url: str) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", url)
+    sync_url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", sync_url)
     return config
 
 
@@ -45,31 +81,54 @@ async def _seed_previous_head(url: str) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with factory() as db:
-            await db.execute(text("""
+            await db.execute(
+                text("""
                 INSERT INTO hospital_registry
                     (id, facility_code, legal_name, display_name, country_code, is_active, created_at, updated_at)
                 VALUES (:id, :code, 'Synthetic Lifecycle Facility', 'Synthetic Lifecycle Facility', 'IN', TRUE, now(), now())
-            """), {"id": facility_id, "code": f"LIFE-{facility_id.hex[:16]}"})
-            await db.execute(text("""
+            """),
+                {"id": facility_id, "code": f"LIFE-{facility_id.hex[:16]}"},
+            )
+            await db.execute(
+                text("""
                 INSERT INTO provider_identity
                     (id, provider_uid, hospital_id, role, status, is_active, created_at, updated_at)
                 VALUES (:id, :uid, :hospital_id, 'provider', 'active', TRUE, now(), now())
-            """), {"id": provider_id, "uid": str(provider_id), "hospital_id": facility_id})
-            await db.execute(text("""
+            """),
+                {
+                    "id": provider_id,
+                    "uid": str(provider_id),
+                    "hospital_id": facility_id,
+                },
+            )
+            await db.execute(
+                text("""
                 INSERT INTO professional_verification
                     (id, provider_id, status, previous_verification_valid, created_at, updated_at)
                 VALUES (gen_random_uuid(), :provider_id, 'NOT_SUBMITTED', FALSE, now(), now())
-            """), {"provider_id": provider_id})
-            await db.execute(text("""
+            """),
+                {"provider_id": provider_id},
+            )
+            await db.execute(
+                text("""
                 INSERT INTO facility_verification
                     (id, facility_id, status, created_at, updated_at)
                 VALUES (gen_random_uuid(), :facility_id, 'DRAFT', now(), now())
-            """), {"facility_id": facility_id})
-            await db.execute(text("""
+            """),
+                {"facility_id": facility_id},
+            )
+            await db.execute(
+                text("""
                 INSERT INTO provider_hospital_affiliation
                     (id, provider_id, hospital_id, affiliation_type, roles, is_primary, is_active, trust_status, created_at, updated_at)
                 VALUES (:id, :provider_id, :hospital_id, 'permanent', '[]'::jsonb, FALSE, TRUE, 'PENDING_ACTIVATION', now(), now())
-            """), {"id": affiliation_id, "provider_id": provider_id, "hospital_id": facility_id})
+            """),
+                {
+                    "id": affiliation_id,
+                    "provider_id": provider_id,
+                    "hospital_id": facility_id,
+                },
+            )
             await db.commit()
     finally:
         await engine.dispose()
@@ -92,11 +151,18 @@ async def test_fresh_postgres_upgrade_creates_positive_lifecycle_versions(
         async with factory() as db:
             version = await db.scalar(text("SELECT version_num FROM alembic_version"))
             assert version == CURRENT_HEAD
-            for table in ("professional_verification", "facility_verification", "provider_hospital_affiliation"):
-                default = await db.scalar(text("""
+            for table in (
+                "professional_verification",
+                "facility_verification",
+                "provider_hospital_affiliation",
+            ):
+                default = await db.scalar(
+                    text("""
                     SELECT column_default FROM information_schema.columns
                     WHERE table_schema = 'public' AND table_name = :table AND column_name = 'version'
-                """), {"table": table})
+                """),
+                    {"table": table},
+                )
                 assert default is not None and "1" in str(default)
     finally:
         await engine.dispose()
@@ -117,15 +183,41 @@ async def test_previous_head_upgrade_backfills_versions_and_enforces_positive_va
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with factory() as db:
-            assert await db.scalar(text("SELECT version FROM professional_verification WHERE provider_id = :id"), {"id": provider_id}) == 1
-            assert await db.scalar(text("SELECT version FROM facility_verification WHERE facility_id = :id"), {"id": facility_id}) == 1
-            assert await db.scalar(text("SELECT version FROM provider_hospital_affiliation WHERE id = :id"), {"id": affiliation_id}) == 1
-            nulls_or_non_positive = await db.scalar(text("""
+            assert (
+                await db.scalar(
+                    text(
+                        "SELECT version FROM professional_verification WHERE provider_id = :id"
+                    ),
+                    {"id": provider_id},
+                )
+                == 1
+            )
+            assert (
+                await db.scalar(
+                    text(
+                        "SELECT version FROM facility_verification WHERE facility_id = :id"
+                    ),
+                    {"id": facility_id},
+                )
+                == 1
+            )
+            assert (
+                await db.scalar(
+                    text(
+                        "SELECT version FROM provider_hospital_affiliation WHERE id = :id"
+                    ),
+                    {"id": affiliation_id},
+                )
+                == 1
+            )
+            nulls_or_non_positive = await db.scalar(
+                text("""
                 SELECT
                     (SELECT count(*) FROM professional_verification WHERE version IS NULL OR version <= 0) +
                     (SELECT count(*) FROM facility_verification WHERE version IS NULL OR version <= 0) +
                     (SELECT count(*) FROM provider_hospital_affiliation WHERE version IS NULL OR version <= 0)
-            """))
+            """)
+            )
             assert nulls_or_non_positive == 0
         for statement, values in (
             (

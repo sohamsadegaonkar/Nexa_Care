@@ -34,39 +34,58 @@ from app.services.patient_discovery_service import (
 )
 from app.core.rate_limiter import atomic_fixed_window
 
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    get_qualification_redis_url,
+    normalize_sync_postgres_url,
+    postgres_database_url,
+)
+
 pytestmark = [pytest.mark.postgres, pytest.mark.redis]
 
 PREVIOUS_HEAD = "20260819_patient_profile_legal"
 CURRENT_HEAD = "20260830_delegated_assurance"
+_DB_NAME = "nexa_qual_patient_discovery"
 
 
 def _database_url() -> str:
-    value = os.getenv("TEST_DATABASE_URL")
-    if not value:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-    if "127.0.0.1" not in value or "nexa_qual_" not in value:
-        pytest.fail("TEST_DATABASE_URL must identify a loopback disposable database")
-    return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return postgres_database_url(_DB_NAME)
 
 
 def _redis_url() -> str:
-    value = os.getenv("TEST_REDIS_URL")
-    if not value:
-        pytest.skip("TEST_REDIS_URL is not configured")
-    if "127.0.0.1" not in value:
-        pytest.fail("TEST_REDIS_URL must be loopback-only")
-    return value
+    return get_qualification_redis_url()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _setup_database():
+    """Ensure disposable database exists for migration qualification."""
+    db_url = _database_url()
+    _prev = os.environ.get("TEST_DATABASE_URL")
+    os.environ["TEST_DATABASE_URL"] = db_url
+
+    asyncio.run(create_disposable_database(_DB_NAME))
+    yield
+
+    if _prev is None:
+        os.environ.pop("TEST_DATABASE_URL", None)
+    else:
+        os.environ["TEST_DATABASE_URL"] = _prev
+
+    asyncio.run(drop_disposable_database(_DB_NAME))
 
 
 async def _upgrade(url: str, revision: str) -> None:
     cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", url)
+    sync_url = normalize_sync_postgres_url(url)
+    cfg.set_main_option("sqlalchemy.url", sync_url)
     await asyncio.to_thread(command.upgrade, cfg, revision)
 
 
 async def _downgrade(url: str, revision: str) -> None:
     cfg = Config("alembic.ini")
-    cfg.set_main_option("sqlalchemy.url", url)
+    sync_url = normalize_sync_postgres_url(url)
+    cfg.set_main_option("sqlalchemy.url", sync_url)
     await asyncio.to_thread(command.downgrade, cfg, revision)
 
 
@@ -204,6 +223,7 @@ async def test_real_redis_discovery_handle_contracts(monkeypatch) -> None:
     """Exercise the production Lua consume path against a disposable Redis."""
     url = _database_url()
     redis = Redis.from_url(_redis_url(), decode_responses=True)
+    await redis.flushdb()
     engine = create_async_engine(url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:

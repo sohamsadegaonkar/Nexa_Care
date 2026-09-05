@@ -31,7 +31,6 @@ from app.models.pipeline import (
     ExtractionCandidateRecord,
     ExtractionRoutingRecord,
 )
-from app.models.provider import HospitalRegistry
 from app.models.shards import NexaVault
 from app.services.approved_access_capability import (
     issue_from_approved_request,
@@ -50,9 +49,11 @@ from tests.integration.test_full_loop_postgres_redis import (
     _provider,
     _synthetic_extracted_document,
 )
+from tests.helpers.qualification_infra import seed_qualification_provider_trust
 
 pytest_plugins = ("tests.integration.test_full_loop_postgres_redis",)
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.redis]
+_USER_AGENT = "NexaClinicalSecurityTest/1.0"
 
 
 def _one_page_pdf() -> bytes:
@@ -133,7 +134,7 @@ async def test_document_processing_http_to_human_adjudicated_clinical_record(
     document_bytes = _one_page_pdf()
     run_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc)
-    request_id = f"e2e-request-{run_id}"
+    request_id = str(uuid.uuid4())
     idempotency_key = f"e2e-upload-{run_id}"
     request_data = {
         "request_id": request_id,
@@ -178,22 +179,23 @@ async def test_document_processing_http_to_human_adjudicated_clinical_record(
     app.dependency_overrides[get_current_provider] = lambda: provider
     app.dependency_overrides[get_db_session] = db_override
     try:
+        session_token = None
         async with factory() as db:
             await db.execute(
                 text("INSERT INTO public.patients (patient_uuid) VALUES (:id)"),
                 {"id": patient_id},
             )
-            db.add(
-                HospitalRegistry(
-                    id=hospital_id,
-                    facility_code=f"QUAL-E2E-{run_id[:10]}",
-                    legal_name="NEXA qualification hospital",
-                    display_name="NEXA qualification hospital",
-                    country_code="IN",
-                    is_active=True,
-                )
+            trust_info = await seed_qualification_provider_trust(
+                db,
+                provider_id=provider_id,
+                hospital_id=hospital_id,
+                facility_code=f"QUAL-E2E-{run_id[:10]}",
+                roles=["clinician"],
+                now=now,
+                issue_session=True,
+                user_agent=_USER_AGENT,
             )
-            await db.flush()
+            session_token = trust_info["token"]
             kms = get_encryption_provider()
             await kms.generate_dek(str(patient_id), db)
             encrypted_name = await kms.encrypt_field(
@@ -213,9 +215,17 @@ async def test_document_processing_http_to_human_adjudicated_clinical_record(
             "X-Consent-Token": token,
             "Idempotency-Key": idempotency_key,
         }
+        client_default_headers = {
+            "Authorization": f"Bearer {session_token}",
+            "X-Hospital-Id": str(hospital_id),
+            "User-Agent": _USER_AGENT,
+            "X-Consent-Token": token,
+        }
         transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://testserver"
+            transport=transport,
+            base_url="http://testserver",
+            headers=client_default_headers,
         ) as client:
             upload = await client.post(
                 "/api/v2/pipeline/documents/upload",

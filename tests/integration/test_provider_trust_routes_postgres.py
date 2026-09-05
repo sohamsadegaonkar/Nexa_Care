@@ -34,8 +34,15 @@ from app.models.provider import (
     ProviderIdentity,
     ProviderTrustPermissionGrant,
 )
+from urllib.parse import urlsplit
 from app.services.clinical_eligibility import ClinicalAuthenticationMethod
 from app.services.provider_trust_authorization import TrustManagementAuthentication
+from tests.helpers.qualification_infra import (
+    normalize_async_postgres_url,
+    postgres_database_url,
+    require_disposable_database_name,
+    require_loopback_postgres_url,
+)
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -43,12 +50,17 @@ HEAD = "20260905_verification_application"
 
 
 def _url() -> str:
-    value = os.getenv("TRUST_LIFECYCLE_DATABASE_URL", "")
+    value = (
+        os.getenv("TRUST_LIFECYCLE_DATABASE_URL")
+        or os.getenv("TEST_DATABASE_URL")
+        or os.getenv("DATABASE_URL")
+        or ""
+    )
     if not value:
-        pytest.skip("TRUST_LIFECYCLE_DATABASE_URL is not configured")
-    if "127.0.0.1" not in value or "nexa_qual_" not in value:
-        pytest.fail("qualification database must be disposable and loopback-only")
-    return value.replace("postgresql://", "postgresql+asyncpg://", 1)
+        value = postgres_database_url("nexa_qual_ci_shared")
+    require_loopback_postgres_url(value)
+    require_disposable_database_name(urlsplit(value).path.lstrip("/"))
+    return normalize_async_postgres_url(value)
 
 
 def _config(url: str) -> Config:

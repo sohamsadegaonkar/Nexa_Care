@@ -12,37 +12,45 @@ import hashlib
 import json
 import os
 import re
+from urllib.parse import urlsplit
 import uuid
 from datetime import datetime, timezone
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, utils
+import pyotp
 from redis.asyncio import Redis
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.database import get_async_engine, get_session_factory
 from app.core.redis import get_async_redis_client, get_redis_client
+from app.core.security import encrypt_mfa_secret
 from app.main import app
 from app.models.nfc_card_registry import NFCCardRegistry
 from app.models.patient import Patient
 from app.models.patient_device_keys import PatientDeviceKey
 from app.models.patient_records import Vitals
-from app.models.provider import (
-    HospitalRegistry,
-    ProviderCredential,
-    ProviderHospitalAffiliation,
-    ProviderIdentity,
-)
+from app.models.provider import ProviderCredential
 from app.services.patient_auth_service import issue_patient_access_token
 from app.services.provider_auth_service import hash_provider_password
 from app.services.signed_approval_verifier import canonical_signed_approval_payload
+from tests.helpers.qualification_infra import (
+    get_qualification_redis_url,
+    postgres_database_url,
+    require_disposable_database_name,
+    require_loopback_postgres_url,
+    require_loopback_redis_url,
+    seed_qualification_provider_trust,
+)
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.redis, pytest.mark.asyncio]
 
+_DB_NAME = "nexa_qual_ci_shared"
 _PUBLIC_ID_RE = re.compile(r"^NC-[0-9A-F]{24}$")
 
 
@@ -57,13 +65,22 @@ def override_deps():
         app.dependency_overrides.clear()
 
 
-def _require_disposable_url(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        pytest.skip(f"{name} is not configured")
-    if "127.0.0.1" not in value and "localhost" not in value:
-        pytest.fail(f"{name} must be loopback-only")
-    return value
+def _get_db_url() -> str:
+    url = os.getenv("TEST_DATABASE_URL")
+    if url:
+        require_loopback_postgres_url(url)
+        db_name = urlsplit(url).path.lstrip("/")
+        require_disposable_database_name(db_name)
+        return url
+    return postgres_database_url(_DB_NAME)
+
+
+def _get_redis_url() -> str:
+    url = os.getenv("TEST_REDIS_URL")
+    if url:
+        require_loopback_redis_url(url)
+        return url
+    return get_qualification_redis_url()
 
 
 async def _seed_graph(db_url: str) -> dict[str, object]:
@@ -74,50 +91,42 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
         serialization.Encoding.DER,
         serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+    hospital_id = uuid.uuid4()
+    provider_id = uuid.uuid4()
+    password = "E2E-disposable-password-123!"
+    totp_secret = pyotp.random_base32()
+    suffix = uuid.uuid4().hex
+    card_uid = f"E2E-{suffix[:20]}".upper()
+
     try:
         async with factory() as db:
-            suffix = uuid.uuid4().hex
-            hospital = HospitalRegistry(
-                facility_code=f"E2E-{suffix[:12]}",
-                legal_name="Disposable E2E Hospital",
-                display_name="Disposable E2E Hospital",
-                is_active=True,
-            )
-            provider = ProviderIdentity(
-                provider_uid=f"e2e-{suffix}",
-                display_name="E2E Clinician",
-                contact_email=f"{suffix}@e2e.invalid",
-                role="clinician",
-                status="active",
-                is_active=True,
-            )
-            db.add_all([hospital, provider])
-            await db.flush()
-            affiliation = ProviderHospitalAffiliation(
-                provider_id=provider.id,
-                hospital_id=hospital.id,
-                affiliation_type="permanent",
+            await seed_qualification_provider_trust(
+                db,
+                hospital_id=hospital_id,
+                provider_id=provider_id,
                 roles=["clinician"],
-                is_primary=True,
-                is_active=True,
+                issue_session=False,
             )
-            password = "E2E-disposable-password-123!"
-            credential = ProviderCredential(
-                provider_id=provider.id,
-                provider_uid=provider.provider_uid,
-                login_identifier=f"e2e-{suffix}@example.invalid",
-                password_hash=hash_provider_password(password),
-                mfa_enabled=False,
-                is_active=True,
-            )
+            cred = (
+                await db.execute(
+                    select(ProviderCredential).where(
+                        ProviderCredential.provider_id == provider_id
+                    )
+                )
+            ).scalar_one()
+            cred.password_hash = hash_provider_password(password)
+            cred.mfa_enabled = True
+            cred.mfa_secret_encrypted = encrypt_mfa_secret(totp_secret)
+            login_identifier = cred.login_identifier
+
             patient = Patient(is_deleted=False)
-            db.add_all([affiliation, credential, patient])
+            db.add(patient)
             await db.flush()
-            card_uid = f"E2E-{suffix[:20]}".upper()
+
             card = NFCCardRegistry(
                 card_uid=card_uid,
                 patient_id=patient.patient_uuid,
-                issued_by=provider.id,
+                issued_by=provider_id,
                 status="active",
             )
             device = PatientDeviceKey(
@@ -146,10 +155,11 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
                 "public_patient_id": patient.public_patient_id,
                 "device_id": str(device.id),
                 "card_uid": card_uid,
-                "provider_id": str(provider.id),
-                "hospital_id": str(hospital.id),
-                "login_identifier": credential.login_identifier,
+                "provider_id": str(provider_id),
+                "hospital_id": str(hospital_id),
+                "login_identifier": login_identifier,
                 "password": password,
+                "totp_secret": totp_secret,
             }
     finally:
         await engine.dispose()
@@ -211,10 +221,28 @@ async def _approve(
 
 
 async def test_true_patient_provider_routine_access_e2e() -> None:
-    db_url = _require_disposable_url("TEST_DATABASE_URL")
-    redis_url = _require_disposable_url("TEST_REDIS_URL")
-    if "nexa_qual_" not in db_url:
-        pytest.fail("TEST_DATABASE_URL must name a disposable qualification database")
+    db_url = _get_db_url()
+    redis_url = _get_redis_url()
+
+    env_overrides = {
+        "TEST_DATABASE_URL": db_url,
+        "DATABASE_URL": db_url,
+        "TEST_REDIS_URL": redis_url,
+        "UPSTASH_REDIS_URL": redis_url,
+        "PATIENT_JWT_SECRET": os.getenv(
+            "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
+        ),
+        "OTP_RATE_LIMIT_HMAC_SECRET": os.getenv(
+            "OTP_RATE_LIMIT_HMAC_SECRET", "test-secret-at-least-32-chars-long-here!!"
+        ),
+        "MFA_ENCRYPTION_KEY": os.getenv(
+            "MFA_ENCRYPTION_KEY", Fernet.generate_key().decode("utf-8")
+        ),
+        "ENVIRONMENT": "test",
+        "ENV": "test",
+    }
+    prev_env = {k: os.environ.get(k) for k in env_overrides}
+    os.environ.update(env_overrides)
 
     get_async_engine.cache_clear()
     get_session_factory.cache_clear()
@@ -228,127 +256,139 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
         str(graph["patient_id"]), "e2e-patient-subject"
     )
 
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(
-        transport=transport, base_url="http://testserver"
-    ) as client:
-        login = await client.post(
-            "/api/v2/auth/login",
-            headers={"User-Agent": "Nexa-True-E2E/1.0"},
-            json={
-                "login_identifier": graph["login_identifier"],
-                "password": graph["password"],
-                "hospital_id": graph["hospital_id"],
-            },
-        )
-        assert login.status_code == 200, login.text
-        provider_token = login.json()["access_token"]
-        headers = _provider_headers(provider_token, str(graph["hospital_id"]))
-
-        pre_consent = await client.get(
-            f"/api/v2/patient/{graph['patient_id']}/summary", headers=headers
-        )
-        assert pre_consent.status_code == 403
-
-        nfc = await client.post(
-            "/api/v2/nfc/resolve",
-            headers=headers,
-            json={"card_uid": graph["card_uid"]},
-        )
-        assert nfc.status_code == 200, nfc.text
-        discovery = nfc.json()
-        assert set(discovery) == {"discovery_handle", "expires_at"}
-        assert not any(
-            field in discovery
-            for field in (
-                "patient_id",
-                "patient_uuid",
-                "canonical_patient_id",
-                "public_patient_id",
-                "clinical_data",
-            )
-        )
-
-        request = await client.post(
-            "/api/v2/consent/request",
-            headers=headers,
-            json={
-                "discovery_handle": discovery["discovery_handle"],
-                "purpose": "treatment",
-                "scope": "clinical",
-                "access_duration_seconds": 900,
-            },
-        )
-        assert request.status_code == 201, request.text
-        request_data = request.json()
-        assert request_data["status"] == "pending"
-        request_id = request_data["request_id"]
-        assert 110 <= await redis.ttl(f"consent_request:{request_id}") <= 120
-
-        reused = await client.post(
-            "/api/v2/consent/request",
-            headers=headers,
-            json={
-                "discovery_handle": discovery["discovery_handle"],
-                "purpose": "treatment",
-                "scope": "clinical",
-                "access_duration_seconds": 900,
-            },
-        )
-        assert reused.status_code == 403
-
-        await _approve(
-            client,
-            patient_token=patient_token,
-            private_key=graph["private_key"],
-            request_id=request_id,
-            patient_id=str(graph["patient_id"]),
-            device_id=str(graph["device_id"]),
-        )
-
-        status_response = await client.get(
-            f"/api/v2/consent/status/{request_id}", headers=headers
-        )
-        assert status_response.status_code == 200
-        assert status_response.json()["status"] == "approved"
-
-        claim = await client.post(
-            f"/api/v2/consent/{request_id}/claim-access", headers=headers
-        )
-        assert claim.status_code == 200, claim.text
-        claim_data = claim.json()
-        assert claim_data["patient_id"] == graph["patient_id"]
-        assert claim_data["purpose"] == "treatment"
-        assert claim_data["scope"] == "clinical"
-        assert claim_data["consent_token"]
-
-        replay = await client.post(
-            f"/api/v2/consent/{request_id}/claim-access", headers=headers
-        )
-        assert replay.status_code in {403, 409}
-
-        summary = await client.get(
-            f"/api/v2/patient/{claim_data['patient_id']}/summary",
-            headers={**headers, "X-Consent-Token": claim_data["consent_token"]},
-        )
-        assert summary.status_code == 200, summary.text
-        assert summary.json()["patient_id"] == graph["patient_id"]
-        assert summary.json()["clinical_summary"]["latest_vitals"]
-
-        full_scope = await client.get(
-            f"/api/v2/patient/{claim_data['patient_id']}/structured-record",
-            headers={**headers, "X-Consent-Token": claim_data["consent_token"]},
-        )
-        assert full_scope.status_code == 403
-
-    stored_request = json.loads(await redis.get(f"consent_request:{request_id}"))
-    assert stored_request["status"] == "approved"
-    assert await redis.get(f"consent_access:claim:{request_id}")
-    capability_keys = await redis.keys("consent_access:capability:*")
-    assert len(capability_keys) == 1
-
     engine = create_async_engine(db_url)
     try:
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as client:
+            login = await client.post(
+                "/api/v2/auth/login",
+                headers={"User-Agent": "Nexa-True-E2E/1.0"},
+                json={
+                    "login_identifier": graph["login_identifier"],
+                    "password": graph["password"],
+                    "hospital_id": graph["hospital_id"],
+                },
+            )
+            assert login.status_code == 200, login.text
+            mfa_token = login.json()["mfa_token"]
+
+            mfa_verify = await client.post(
+                "/api/v2/auth/mfa/verify",
+                headers={"User-Agent": "Nexa-True-E2E/1.0"},
+                json={
+                    "mfa_token": mfa_token,
+                    "totp_code": pyotp.TOTP(graph["totp_secret"]).now(),
+                    "hospital_id": graph["hospital_id"],
+                },
+            )
+            assert mfa_verify.status_code == 200, mfa_verify.text
+            provider_token = mfa_verify.json()["access_token"]
+            headers = _provider_headers(provider_token, str(graph["hospital_id"]))
+
+            pre_consent = await client.get(
+                f"/api/v2/patient/{graph['patient_id']}/summary", headers=headers
+            )
+            assert pre_consent.status_code == 403
+
+            nfc = await client.post(
+                "/api/v2/nfc/resolve",
+                headers=headers,
+                json={"card_uid": graph["card_uid"]},
+            )
+            assert nfc.status_code == 200, nfc.text
+            discovery = nfc.json()
+            assert set(discovery) == {"discovery_handle", "expires_at"}
+            assert not any(
+                field in discovery
+                for field in (
+                    "patient_id",
+                    "patient_uuid",
+                    "canonical_patient_id",
+                    "public_patient_id",
+                    "clinical_data",
+                )
+            )
+
+            request = await client.post(
+                "/api/v2/consent/request",
+                headers=headers,
+                json={
+                    "discovery_handle": discovery["discovery_handle"],
+                    "purpose": "treatment",
+                    "scope": "clinical",
+                    "access_duration_seconds": 900,
+                },
+            )
+            assert request.status_code == 201, request.text
+            request_data = request.json()
+            assert request_data["status"] == "pending"
+            request_id = request_data["request_id"]
+            assert 110 <= await redis.ttl(f"consent_request:{request_id}") <= 120
+
+            reused = await client.post(
+                "/api/v2/consent/request",
+                headers=headers,
+                json={
+                    "discovery_handle": discovery["discovery_handle"],
+                    "purpose": "treatment",
+                    "scope": "clinical",
+                    "access_duration_seconds": 900,
+                },
+            )
+            assert reused.status_code == 403
+
+            await _approve(
+                client,
+                patient_token=patient_token,
+                private_key=graph["private_key"],
+                request_id=request_id,
+                patient_id=str(graph["patient_id"]),
+                device_id=str(graph["device_id"]),
+            )
+
+            status_response = await client.get(
+                f"/api/v2/consent/status/{request_id}", headers=headers
+            )
+            assert status_response.status_code == 200
+            assert status_response.json()["status"] == "approved"
+
+            claim = await client.post(
+                f"/api/v2/consent/{request_id}/claim-access", headers=headers
+            )
+            assert claim.status_code == 200, claim.text
+            claim_data = claim.json()
+            assert claim_data["patient_id"] == graph["patient_id"]
+            assert claim_data["purpose"] == "treatment"
+            assert claim_data["scope"] == "clinical"
+            assert claim_data["consent_token"]
+
+            replay = await client.post(
+                f"/api/v2/consent/{request_id}/claim-access", headers=headers
+            )
+            assert replay.status_code in {403, 409}
+
+            summary = await client.get(
+                f"/api/v2/patient/{claim_data['patient_id']}/summary",
+                headers={**headers, "X-Consent-Token": claim_data["consent_token"]},
+            )
+            assert summary.status_code == 200, summary.text
+            assert summary.json()["patient_id"] == graph["patient_id"]
+            assert summary.json()["clinical_summary"]["latest_vitals"]
+
+            full_scope = await client.get(
+                f"/api/v2/patient/{claim_data['patient_id']}/structured-record",
+                headers={**headers, "X-Consent-Token": claim_data["consent_token"]},
+            )
+            assert full_scope.status_code == 403
+
+        stored_request = json.loads(await redis.get(f"consent_request:{request_id}"))
+        assert stored_request["status"] == "approved"
+        assert await redis.get(f"consent_access:claim:{request_id}")
+        capability_keys = await redis.keys("consent_access:capability:*")
+        assert len(capability_keys) == 1
+
         async with engine.connect() as conn:
             events = (
                 await conn.execute(
@@ -379,3 +419,8 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
         get_async_redis_client.cache_clear()
         get_redis_client().close()
         get_redis_client.cache_clear()
+        for k, v in prev_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v

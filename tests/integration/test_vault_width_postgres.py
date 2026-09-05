@@ -7,6 +7,8 @@ import os
 import uuid
 from datetime import datetime, timezone
 
+from urllib.parse import urlsplit
+
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -18,6 +20,15 @@ from app.models.dek_store import PatientDEKStore
 from app.models.shards import NexaVault
 from app.services.crypto_kms import LocalEnvelopeProvider, PatientDataErased
 from app.services.sharding import decrypt_vault_field, encrypt_vault_payload
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    normalize_async_postgres_url,
+    normalize_sync_postgres_url,
+    postgres_database_url,
+    require_disposable_database_name,
+    require_loopback_postgres_url,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -26,14 +37,12 @@ CURRENT_HEAD = "20260819_widen_vault_pii_columns"
 
 
 def _url() -> str:
-    value = os.getenv("TEST_DATABASE_URL")
+    value = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
     if not value:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-    normalized = value.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "127.0.0.1" not in normalized and "localhost" not in normalized:
-        pytest.fail("TEST_DATABASE_URL must be loopback-only")
-    if "nexa_qual_" not in normalized:
-        pytest.fail("TEST_DATABASE_URL must name a disposable nexa_qual_ database")
+        value = postgres_database_url("nexa_qual_ci_shared")
+    normalized = normalize_async_postgres_url(value)
+    require_loopback_postgres_url(normalized)
+    require_disposable_database_name(urlsplit(normalized).path.lstrip("/"))
     return normalized
 
 
@@ -61,17 +70,18 @@ async def _cleanup(factory) -> None:
 @pytest.mark.asyncio
 async def test_postgres_vault_width_migration_lifecycle(env_setup, monkeypatch):
     """Prove previous-head preservation, widening, and downgrade safety."""
-    url = _url()
+    db_name = "nexa_qual_vault_width_mig"
+    url = await create_disposable_database(db_name)
     monkeypatch.setenv("TEST_DATABASE_URL", url)
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", url)
+    alembic_cfg.set_main_option("sqlalchemy.url", normalize_sync_postgres_url(url))
 
     # This qualification requires a fresh disposable database. Setup failures
-    # intentionally propagate instead of being hidden by broad exception paths.
-    await asyncio.to_thread(command.upgrade, alembic_cfg, PREVIOUS_HEAD)
-    engine = create_async_engine(url)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = None
     try:
+        await asyncio.to_thread(command.upgrade, alembic_cfg, PREVIOUS_HEAD)
+        engine = create_async_engine(url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
         kms = LocalEnvelopeProvider()
         legacy_patient_id = str(uuid.uuid4())
         legacy_plaintext = "Nexa"
@@ -175,7 +185,9 @@ async def test_postgres_vault_width_migration_lifecycle(env_setup, monkeypatch):
         await asyncio.to_thread(command.downgrade, alembic_cfg, PREVIOUS_HEAD)
         await asyncio.to_thread(command.upgrade, alembic_cfg, CURRENT_HEAD)
     finally:
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
+        await drop_disposable_database(db_name)
 
 
 @pytest.mark.asyncio

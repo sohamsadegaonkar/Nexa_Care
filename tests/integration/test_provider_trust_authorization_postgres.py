@@ -32,6 +32,11 @@ from app.services.provider_trust_authorization import (
     TrustAuthorizationDenialCode,
     TrustManagementAuthentication,
 )
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    postgres_database_url,
+)
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
@@ -47,6 +52,35 @@ _LEGACY_ROLES = (
 )
 
 
+@pytest.fixture(scope="module", autouse=True)
+def setup_auth_databases():
+    fresh_url = os.getenv("TRUST_AUTH_FRESH_DATABASE_URL")
+    prev_url = os.getenv("TRUST_AUTH_PREVIOUS_DATABASE_URL")
+    created_fresh = False
+    created_prev = False
+    if not fresh_url:
+        asyncio.run(create_disposable_database("nexa_qual_trust_auth_fresh"))
+        os.environ["TRUST_AUTH_FRESH_DATABASE_URL"] = postgres_database_url(
+            "nexa_qual_trust_auth_fresh"
+        )
+        created_fresh = True
+    if not prev_url:
+        asyncio.run(create_disposable_database("nexa_qual_trust_auth_prev"))
+        os.environ["TRUST_AUTH_PREVIOUS_DATABASE_URL"] = postgres_database_url(
+            "nexa_qual_trust_auth_prev"
+        )
+        created_prev = True
+    try:
+        yield
+    finally:
+        if created_fresh:
+            os.environ.pop("TRUST_AUTH_FRESH_DATABASE_URL", None)
+            asyncio.run(drop_disposable_database("nexa_qual_trust_auth_fresh"))
+        if created_prev:
+            os.environ.pop("TRUST_AUTH_PREVIOUS_DATABASE_URL", None)
+            asyncio.run(drop_disposable_database("nexa_qual_trust_auth_prev"))
+
+
 def _url(name: str) -> str:
     value = os.getenv(name, "")
     if not value:
@@ -60,7 +94,8 @@ def _url(name: str) -> str:
 
 def _config(url: str) -> Config:
     config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", url)
+    sync_url = url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    config.set_main_option("sqlalchemy.url", sync_url)
     return config
 
 
@@ -202,7 +237,7 @@ async def test_current_postgresql_grant_revocation_denies_the_next_evaluation(
 ):
     url = _url("TRUST_AUTH_FRESH_DATABASE_URL")
     monkeypatch.setenv("TEST_DATABASE_URL", url)
-    await asyncio.to_thread(command.upgrade, _config(url), CURRENT_HEAD)
+    await asyncio.to_thread(command.upgrade, _config(url), "head")
     engine = create_async_engine(url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     now = datetime.now(timezone.utc)

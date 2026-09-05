@@ -112,6 +112,7 @@ from app.services.signed_approval_verifier import (
     canonical_signed_approval_payload,
 )
 from app.security.document_processing_policy import DocumentProcessingOperation
+from tests.helpers.qualification_infra import seed_qualification_provider_trust
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.redis]
@@ -431,7 +432,7 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
     device_id = uuid.uuid4()
     provider = _provider(hospital_a, provider_id)
     audit_token = bind_trusted_audit_hospital(str(hospital_a))
-    capability_request = f"loop-capability-{uuid.uuid4().hex}"
+    capability_request = str(uuid.uuid4())
     challenge_request = f"{prefix}{uuid.uuid4()}"
     challenge_nonce = f"{prefix}{uuid.uuid4().hex}"
     storage_root = tempfile.TemporaryDirectory(prefix="nexa-qual-doc-")
@@ -541,15 +542,13 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
                 text("INSERT INTO public.patients (patient_uuid) VALUES (:id)"),
                 {"id": patient_id},
             )
-            db.add(
-                HospitalRegistry(
-                    id=hospital_a,
-                    facility_code=f"QUAL-A-{uuid.uuid4().hex[:10]}",
-                    legal_name="Synthetic qualification hospital A",
-                    display_name="Synthetic qualification hospital A",
-                    country_code="IN",
-                    is_active=True,
-                )
+            await seed_qualification_provider_trust(
+                db,
+                provider_id=provider_id,
+                hospital_id=hospital_a,
+                facility_code=f"QUAL-A-{uuid.uuid4().hex[:10]}",
+                roles=["clinician"],
+                now=now,
             )
             db.add(
                 HospitalRegistry(
@@ -618,6 +617,10 @@ async def test_local_postgres_redis_full_loop(local_loop_services, monkeypatch):
                     retryable=False,
                     version=1,
                     created_at=now,
+                    authorization_initiated_at=now,
+                    authorization_authentication_method="PROVIDER_SESSION",
+                    authorization_mfa_verified_at=now,
+                    authorization_assurance_policy_version="clinical-contact-email-and-phone/v1",
                 )
             )
             await db.flush()

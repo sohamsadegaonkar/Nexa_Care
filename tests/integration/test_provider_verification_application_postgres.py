@@ -81,7 +81,14 @@ from app.services.provider_verification_decision_policy import (
     VerificationDecisionPlan,
     VerificationDecisionReason,
 )
-
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    migrate_database_to_head,
+    normalize_sync_postgres_url,
+    postgres_admin_url,
+    postgres_database_url,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -95,33 +102,16 @@ _DB_NAME = "nexa_qual_slice5_app"
 
 
 def _get_db_url() -> str:
-    test_url = os.getenv("TEST_DATABASE_URL")
-    if test_url:
-        url = test_url
-    else:
-        db_url = os.getenv("DATABASE_URL")
-        if db_url and "nexa_qual_" in db_url:
-            url = db_url
-        elif db_url and "nexa_qual_" not in db_url:
-            pytest.skip(
-                "No disposable nexa_qual_ database configured in TEST_DATABASE_URL"
-            )
-        else:
-            url = f"postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/{_DB_NAME}"
-    if "127.0.0.1" not in url and "localhost" not in url:
-        pytest.fail("Database URL must be loopback-only")
-    if "nexa_qual_" not in url:
-        pytest.fail("Database URL must name a disposable nexa_qual_ database")
-    return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return postgres_database_url(_DB_NAME)
 
 
 def _get_async_admin_url() -> str:
-    return "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/postgres"
+    return postgres_admin_url()
 
 
 def _config(db_url: str) -> Config:
     config = Config("alembic.ini")
-    sync_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
+    sync_url = normalize_sync_postgres_url(db_url)
     config.set_main_option("sqlalchemy.url", sync_url)
     return config
 
@@ -133,20 +123,8 @@ def _setup_database():
     _prev = os.environ.get("TEST_DATABASE_URL")
     os.environ["TEST_DATABASE_URL"] = db_url
 
-    async def _init_db():
-        admin_engine = create_async_engine(
-            _get_async_admin_url(),
-            isolation_level="AUTOCOMMIT",
-        )
-        async with admin_engine.connect() as conn:
-            await conn.execute(text(f"DROP DATABASE IF EXISTS {_DB_NAME} WITH (FORCE)"))
-            await conn.execute(text(f"CREATE DATABASE {_DB_NAME}"))
-        await admin_engine.dispose()
-
-    asyncio.run(_init_db())
-
-    config = _config(db_url)
-    command.upgrade(config, HEAD)
+    asyncio.run(create_disposable_database(_DB_NAME))
+    migrate_database_to_head(db_url, target_head=HEAD)
 
     yield
 
@@ -154,6 +132,8 @@ def _setup_database():
         os.environ["TEST_DATABASE_URL"] = _prev
     else:
         os.environ.pop("TEST_DATABASE_URL", None)
+
+    asyncio.run(drop_disposable_database(_DB_NAME))
 
 
 @pytest_asyncio.fixture

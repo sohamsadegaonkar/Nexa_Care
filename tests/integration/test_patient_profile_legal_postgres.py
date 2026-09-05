@@ -25,6 +25,8 @@ import uuid
 from contextvars import ContextVar
 from datetime import date
 
+from urllib.parse import urlsplit
+
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -51,6 +53,15 @@ from app.services.patient_profile_service import (
     create_or_update_profile,
     get_profile,
 )
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    normalize_async_postgres_url,
+    normalize_sync_postgres_url,
+    postgres_database_url,
+    require_disposable_database_name,
+    require_loopback_postgres_url,
+)
 
 pytestmark = pytest.mark.postgres
 
@@ -59,14 +70,12 @@ CURRENT_HEAD = "20260819_patient_profile_legal"
 
 
 def _url() -> str:
-    value = os.getenv("TEST_DATABASE_URL")
+    value = os.getenv("TEST_DATABASE_URL") or os.getenv("DATABASE_URL") or ""
     if not value:
-        pytest.skip("TEST_DATABASE_URL is not configured")
-    normalized = value.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "127.0.0.1" not in normalized and "localhost" not in normalized:
-        pytest.fail("TEST_DATABASE_URL must be loopback-only")
-    if "nexa_qual_" not in normalized:
-        pytest.fail("TEST_DATABASE_URL must name a disposable nexa_qual_ database")
+        value = postgres_database_url("nexa_qual_ci_shared")
+    normalized = normalize_async_postgres_url(value)
+    require_loopback_postgres_url(normalized)
+    require_disposable_database_name(urlsplit(normalized).path.lstrip("/"))
     return normalized
 
 
@@ -145,22 +154,30 @@ async def test_postgres_patient_profile_legal_migration_lifecycle(
     env_setup, monkeypatch
 ):
     """Prove clean upgrade, downgrade, and re-upgrade on PostgreSQL."""
-    url = _url()
+    db_name = "nexa_qual_profile_legal_mig"
+    url = await create_disposable_database(db_name)
     monkeypatch.setenv("TEST_DATABASE_URL", url)
     alembic_cfg = Config("alembic.ini")
-    alembic_cfg.set_main_option("sqlalchemy.url", url)
+    alembic_cfg.set_main_option("sqlalchemy.url", normalize_sync_postgres_url(url))
 
-    # Upgrade to previous head, then to current head
-    await asyncio.to_thread(command.upgrade, alembic_cfg, PREVIOUS_HEAD)
-    await asyncio.to_thread(command.upgrade, alembic_cfg, CURRENT_HEAD)
-
-    engine = create_async_engine(url)
-    factory = async_sessionmaker(engine, expire_on_commit=False)
+    engine = None
     try:
+        # Upgrade to previous head, then to current head
+        await asyncio.to_thread(command.upgrade, alembic_cfg, PREVIOUS_HEAD)
+        await asyncio.to_thread(command.upgrade, alembic_cfg, CURRENT_HEAD)
+
+        engine = create_async_engine(url)
+        factory = async_sessionmaker(engine, expire_on_commit=False)
+
         # Create test patient
         pid = uuid.uuid4()
         async with factory() as db:
-            db.add(Patient(patient_uuid=pid, is_deleted=False))
+            await db.execute(
+                text(
+                    "INSERT INTO patients (patient_uuid, is_deleted) VALUES (:pid, FALSE)"
+                ),
+                {"pid": pid},
+            )
             await db.commit()
 
         # Insert valid profile and legal acceptance
@@ -201,9 +218,10 @@ async def test_postgres_patient_profile_legal_migration_lifecycle(
         # Downgrade to PREVIOUS_HEAD and re-upgrade
         await asyncio.to_thread(command.downgrade, alembic_cfg, PREVIOUS_HEAD)
         await asyncio.to_thread(command.upgrade, alembic_cfg, CURRENT_HEAD)
-
     finally:
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
+        await drop_disposable_database(db_name)
 
 
 @pytest.mark.asyncio

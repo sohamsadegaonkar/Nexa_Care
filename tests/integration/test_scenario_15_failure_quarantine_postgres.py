@@ -34,7 +34,7 @@ from app.models.pipeline import (
     ExtractionJob,
     ExtractionRoutingRecord,
 )
-from app.models.provider import AffiliationType, HospitalRegistry
+from app.models.provider import AffiliationType
 from app.models.provider_context import (
     AffiliationContext,
     HospitalContext,
@@ -58,6 +58,7 @@ from tests.ai_extraction.adversarial.scenario_catalog import (
     RUNTIME_AUTO_COMMIT_APPROVED,
     RUNTIME_AUTO_COMMIT_ENABLED,
 )
+from tests.helpers.qualification_infra import seed_qualification_provider_trust
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.postgres, pytest.mark.redis]
@@ -177,7 +178,7 @@ def _reviewer(tenant_id: uuid.UUID) -> ProviderContext:
         affiliation=AffiliationContext(
             affiliation_id=uuid.uuid4(),
             affiliation_type=AffiliationType.PERMANENT,
-            roles=["clinical_reviewer"],
+            roles=["clinician", "clinical_reviewer"],
             is_primary=True,
         ),
     )
@@ -253,8 +254,9 @@ async def test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_with
 ):
     factory, redis, redis_prefix = local_scenario_15_services
     tenant_id, patient_id, document_id, job_id = (uuid.uuid4() for _ in range(4))
-    request_id = f"s15-{uuid.uuid4().hex[:24]}"
+    request_id = str(uuid.uuid4())
     reviewer = _reviewer(tenant_id)
+    now = datetime.now(timezone.utc)
     provider = _AlwaysRetryableFailureProvider()
     monkeypatch.setattr(
         "app.services.pipeline_orchestrator.get_medical_document_extractor",
@@ -271,9 +273,7 @@ async def test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_with
         "hospital_id": str(tenant_id),
         "patient_id": str(patient_id),
         "status": "approved",
-        "access_expires_at": (
-            datetime.now(timezone.utc) + timedelta(minutes=20)
-        ).isoformat(),
+        "access_expires_at": (now + timedelta(minutes=20)).isoformat(),
         "purpose": DOCUMENT_PROCESSING_PURPOSE,
         "scope": DOCUMENT_PROCESSING_SCOPE,
     }
@@ -282,17 +282,14 @@ async def test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_with
 
     try:
         async with factory() as db:
-            db.add(
-                HospitalRegistry(
-                    id=tenant_id,
-                    facility_code=f"S15-{uuid.uuid4().hex[:10]}",
-                    legal_name="Synthetic Scenario 15 facility",
-                    display_name="Synthetic Scenario 15 facility",
-                    country_code="IN",
-                    is_active=True,
-                )
+            await seed_qualification_provider_trust(
+                db,
+                provider_id=reviewer.provider.provider_id,
+                hospital_id=tenant_id,
+                facility_code=f"S15-{uuid.uuid4().hex[:10]}",
+                roles=["clinician", "clinical_reviewer"],
+                now=now,
             )
-            await db.flush()
             await db.execute(
                 text("INSERT INTO public.patients (patient_uuid) VALUES (:patient)"),
                 {"patient": patient_id},
@@ -311,7 +308,7 @@ async def test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_with
                     upload_purpose="qualification",
                     consent_session_id=request_id,
                     source_system="SYNTHETIC_SCENARIO_15",
-                    uploaded_at=datetime.now(timezone.utc),
+                    uploaded_at=now,
                 )
             )
             db.add(
@@ -329,7 +326,11 @@ async def test_scenario_15_retry_exhaustion_escalates_to_manual_disposition_with
                     attempt_count=0,
                     retryable=False,
                     version=1,
-                    created_at=datetime.now(timezone.utc),
+                    created_at=now,
+                    authorization_initiated_at=now,
+                    authorization_authentication_method="PROVIDER_SESSION",
+                    authorization_mfa_verified_at=now,
+                    authorization_assurance_policy_version="clinical-contact-email-and-phone/v1",
                 )
             )
             await db.commit()

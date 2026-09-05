@@ -47,8 +47,38 @@ from app.services.provider_trust_lifecycle_application import (
 import app.services.provider_trust_lifecycle_application as lifecycle_application
 
 
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    migrate_database_to_head,
+    postgres_database_url,
+)
+
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
 HEAD = "20260905_verification_application"
+
+
+@pytest.fixture(scope="module", autouse=True)
+def setup_lifecycle_database():
+    env_url = os.getenv("TRUST_LIFECYCLE_DATABASE_URL")
+    if env_url and "nexa_qual_trust_lifecycle_app" in env_url:
+        yield
+        return
+
+    db_name = "nexa_qual_trust_lifecycle_app"
+    asyncio.run(create_disposable_database(db_name))
+    url = postgres_database_url(db_name)
+    migrate_database_to_head(url, target_head=HEAD)
+    prev = os.environ.get("TRUST_LIFECYCLE_DATABASE_URL")
+    os.environ["TRUST_LIFECYCLE_DATABASE_URL"] = url
+    try:
+        yield
+    finally:
+        if prev is not None:
+            os.environ["TRUST_LIFECYCLE_DATABASE_URL"] = prev
+        else:
+            os.environ.pop("TRUST_LIFECYCLE_DATABASE_URL", None)
+        asyncio.run(drop_disposable_database(db_name))
 
 
 def _url() -> str:

@@ -41,8 +41,6 @@ from unittest.mock import AsyncMock, patch
 
 import pyotp
 import pytest
-from alembic import command
-from alembic.config import Config
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text
@@ -85,6 +83,13 @@ from app.services.provider_trust_root_governance import (
     RootRevocationReasonCode,
 )
 from scripts.governance_trust_root import run_governance
+from tests.helpers.qualification_infra import (
+    create_disposable_database,
+    drop_disposable_database,
+    get_qualification_redis_url,
+    migrate_database_to_head,
+    postgres_database_url,
+)
 
 pytestmark = [
     pytest.mark.integration,
@@ -93,38 +98,18 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260905_verification_application"
+HEAD = "20260906_verification_scheduler"
 _USER_AGENT = "Nexa-Slice4-Qual-Agent/1.0"
 _CLIENT_IP = "127.0.0.1"
 _DB_NAME = "nexa_qual_slice4_e2e"
 
 
 def _get_db_url() -> str:
-    test_url = os.getenv("TEST_DATABASE_URL")
-    if test_url:
-        url = test_url
-    else:
-        db_url = os.getenv("DATABASE_URL")
-        if db_url and "nexa_qual_" in db_url:
-            url = db_url
-        elif db_url and "nexa_qual_" not in db_url:
-            pytest.skip("No disposable nexa_qual_ database configured in TEST_DATABASE_URL")
-        else:
-            url = f"postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/{_DB_NAME}"
-    if "127.0.0.1" not in url and "localhost" not in url:
-        pytest.fail("Database URL must be loopback-only")
-    if "nexa_qual_" not in url:
-        pytest.fail("Database URL must name a disposable nexa_qual_ database")
-    return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return postgres_database_url(_DB_NAME)
 
 
 def _get_redis_url() -> str:
-    url = os.getenv("TEST_REDIS_URL") or os.getenv(
-        "UPSTASH_REDIS_URL", "redis://127.0.0.1:6389/0"
-    )
-    if "127.0.0.1" not in url and "localhost" not in url:
-        pytest.fail("Redis URL must be loopback-only")
-    return url
+    return get_qualification_redis_url()
 
 
 def _key(prefix: str) -> str:
@@ -135,6 +120,14 @@ def _key(prefix: str) -> str:
 def _setup_env():
     db_url = _get_db_url()
     redis_url = _get_redis_url()
+
+    _prev_test_db = os.environ.get("TEST_DATABASE_URL")
+    _prev_db = os.environ.get("DATABASE_URL")
+    _prev_root_db = os.environ.get("NEXA_TRUST_ROOT_DATABASE_URL")
+    _prev_upstash = os.environ.get("UPSTASH_REDIS_URL")
+    _prev_test_redis = os.environ.get("TEST_REDIS_URL")
+    _prev_mfa = os.environ.get("MFA_ENCRYPTION_KEY")
+    _prev_cors = os.environ.get("CORS_ALLOWED_ORIGINS")
 
     os.environ["TEST_DATABASE_URL"] = db_url
     os.environ["DATABASE_URL"] = db_url
@@ -154,11 +147,25 @@ def _setup_env():
             fn.cache_clear()
 
     # Ensure database exists and is migrated to HEAD
-    cfg = Config("alembic.ini")
-    sync_url = db_url.replace("postgresql+asyncpg://", "postgresql://", 1)
-    cfg.set_main_option("sqlalchemy.url", sync_url)
-    command.upgrade(cfg, HEAD)
+    asyncio.run(create_disposable_database(_DB_NAME))
+    migrate_database_to_head(db_url, target_head=HEAD)
     yield
+
+    for k, v in [
+        ("TEST_DATABASE_URL", _prev_test_db),
+        ("DATABASE_URL", _prev_db),
+        ("NEXA_TRUST_ROOT_DATABASE_URL", _prev_root_db),
+        ("UPSTASH_REDIS_URL", _prev_upstash),
+        ("TEST_REDIS_URL", _prev_test_redis),
+        ("MFA_ENCRYPTION_KEY", _prev_mfa),
+        ("CORS_ALLOWED_ORIGINS", _prev_cors),
+    ]:
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+    asyncio.run(drop_disposable_database(_DB_NAME))
 
 
 @pytest.fixture(autouse=True)
