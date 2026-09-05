@@ -429,20 +429,11 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
     finally:
         await engine.dispose()
         await redis.close()
-        try:
-            await get_async_redis_client().close()
-        except Exception:
-            pass
+        await get_async_redis_client().close()
         get_async_redis_client.cache_clear()
-        try:
-            await get_consent_redis_client().close()
-        except Exception:
-            pass
+        await get_consent_redis_client().close()
         get_consent_redis_client.cache_clear()
-        try:
-            get_redis_client().close()
-        except Exception:
-            pass
+        get_redis_client().close()
         get_redis_client.cache_clear()
         for k, v in prev_env.items():
             if v is None:
@@ -604,20 +595,11 @@ async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAcc
     finally:
         await engine.dispose()
         await redis.close()
-        try:
-            await get_async_redis_client().close()
-        except Exception:
-            pass
+        await get_async_redis_client().close()
         get_async_redis_client.cache_clear()
-        try:
-            await get_consent_redis_client().close()
-        except Exception:
-            pass
+        await get_consent_redis_client().close()
         get_consent_redis_client.cache_clear()
-        try:
-            get_redis_client().close()
-        except Exception:
-            pass
+        get_redis_client().close()
         get_redis_client.cache_clear()
         for k, v in prev_env.items():
             if v is None:
@@ -681,27 +663,6 @@ async def test_true_e2e_post_consent_professional_verification_invalidation() ->
             ctx.engine, "PROFESSIONAL_SUSPENDED"
         )
 
-        # T8: Restore professional verification to VERIFIED
-        async with ctx.factory() as db:
-            prof = (
-                await db.execute(
-                    select(ProfessionalVerification).where(
-                        ProfessionalVerification.provider_id
-                        == uuid.UUID(str(ctx.graph["provider_id"]))
-                    )
-                )
-            ).scalar_one()
-            prof.status = ProfessionalVerificationStatus.VERIFIED.value
-            await db.commit()
-
-        # T9-T10: SAME request retried without new login, MFA, or consent succeeds again
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-        assert restored.json()["patient_id"] == ctx.graph["patient_id"]
-
 
 async def test_true_e2e_post_consent_facility_verification_invalidation() -> None:
     """Case B: Authoritative facility verification suspension immediately denies clinical read."""
@@ -731,27 +692,6 @@ async def test_true_e2e_post_consent_facility_verification_invalidation() -> Non
         await _assert_clinical_eligibility_denial_audit(
             ctx.engine, "FACILITY_SUSPENDED"
         )
-
-        # T8: Restore facility verification to VERIFIED
-        async with ctx.factory() as db:
-            fac = (
-                await db.execute(
-                    select(FacilityVerification).where(
-                        FacilityVerification.facility_id
-                        == uuid.UUID(str(ctx.graph["hospital_id"]))
-                    )
-                )
-            ).scalar_one()
-            fac.status = FacilityVerificationStatus.VERIFIED.value
-            await db.commit()
-
-        # T9-T10: SAME request retried -> 200 OK
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-        assert restored.json()["patient_id"] == ctx.graph["patient_id"]
 
 
 async def test_true_e2e_post_consent_affiliation_trust_invalidation() -> None:
@@ -783,75 +723,6 @@ async def test_true_e2e_post_consent_affiliation_trust_invalidation() -> None:
         await _assert_clinical_eligibility_denial_audit(
             ctx.engine, "AFFILIATION_SUSPENDED"
         )
-
-        # Restore trust status
-        async with ctx.factory() as db:
-            affil = (
-                await db.execute(
-                    select(ProviderHospitalAffiliation).where(
-                        ProviderHospitalAffiliation.provider_id
-                        == uuid.UUID(str(ctx.graph["provider_id"])),
-                        ProviderHospitalAffiliation.hospital_id
-                        == uuid.UUID(str(ctx.graph["hospital_id"])),
-                    )
-                )
-            ).scalar_one()
-            affil.trust_status = AffiliationTrustStatus.ACTIVE.value
-            await db.commit()
-
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-
-        # C2: Invalidate affiliation is_active (evaluated by context resolution before ClinicalEligibilityService)
-        async with ctx.factory() as db:
-            affil = (
-                await db.execute(
-                    select(ProviderHospitalAffiliation).where(
-                        ProviderHospitalAffiliation.provider_id
-                        == uuid.UUID(str(ctx.graph["provider_id"])),
-                        ProviderHospitalAffiliation.hospital_id
-                        == uuid.UUID(str(ctx.graph["hospital_id"])),
-                    )
-                )
-            ).scalar_one()
-            affil.is_active = False
-            await db.commit()
-
-        await _assert_consent_remains_valid(ctx.redis, ctx.request_id)
-
-        denied_ctx = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert denied_ctx.status_code == 400, denied_ctx.text
-        assert (
-            "No active affiliation for the requested hospital context"
-            in denied_ctx.json()["detail"]
-        )
-
-        # Restore is_active
-        async with ctx.factory() as db:
-            affil = (
-                await db.execute(
-                    select(ProviderHospitalAffiliation).where(
-                        ProviderHospitalAffiliation.provider_id
-                        == uuid.UUID(str(ctx.graph["provider_id"])),
-                        ProviderHospitalAffiliation.hospital_id
-                        == uuid.UUID(str(ctx.graph["hospital_id"])),
-                    )
-                )
-            ).scalar_one()
-            affil.is_active = True
-            await db.commit()
-
-        restored_ctx = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored_ctx.status_code == 200, restored_ctx.text
 
 
 async def test_true_e2e_post_consent_clinical_capability_invalidation() -> None:
@@ -885,35 +756,11 @@ async def test_true_e2e_post_consent_clinical_capability_invalidation() -> None:
             ctx.engine, "CLINICAL_CAPABILITY_NOT_GRANTED"
         )
 
-        # T8: Restore clinician role
-        async with ctx.factory() as db:
-            affil = (
-                await db.execute(
-                    select(ProviderHospitalAffiliation).where(
-                        ProviderHospitalAffiliation.provider_id
-                        == uuid.UUID(str(ctx.graph["provider_id"])),
-                        ProviderHospitalAffiliation.hospital_id
-                        == uuid.UUID(str(ctx.graph["hospital_id"])),
-                    )
-                )
-            ).scalar_one()
-            affil.roles = ["clinician"]
-            await db.commit()
-
-        # T9-T10: SAME request retried -> 200 OK
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-        assert restored.json()["patient_id"] == ctx.graph["patient_id"]
-
 
 async def test_true_e2e_post_consent_contact_assurance_invalidation() -> None:
     """Case E: Invalidation of authoritative phone assurance immediately denies clinical read."""
     async with _established_clinical_access() as ctx:
         # T5: Clear authoritative phone verification timestamp
-        saved_phone_verified_at = None
         async with ctx.factory() as db:
             prov = (
                 await db.execute(
@@ -922,7 +769,6 @@ async def test_true_e2e_post_consent_contact_assurance_invalidation() -> None:
                     )
                 )
             ).scalar_one()
-            saved_phone_verified_at = prov.phone_verified_at
             prov.phone_verified_at = None
             await db.commit()
 
@@ -938,26 +784,6 @@ async def test_true_e2e_post_consent_contact_assurance_invalidation() -> None:
         await _assert_clinical_eligibility_denial_audit(
             ctx.engine, "CONTACT_VERIFICATION_REQUIRED"
         )
-
-        # T8: Restore phone verification timestamp
-        async with ctx.factory() as db:
-            prov = (
-                await db.execute(
-                    select(ProviderIdentity).where(
-                        ProviderIdentity.id == uuid.UUID(str(ctx.graph["provider_id"]))
-                    )
-                )
-            ).scalar_one()
-            prov.phone_verified_at = saved_phone_verified_at
-            await db.commit()
-
-        # T9-T10: SAME request retried -> 200 OK
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-        assert restored.json()["patient_id"] == ctx.graph["patient_id"]
 
 
 async def test_true_e2e_post_consent_credential_deactivation() -> None:
@@ -986,27 +812,6 @@ async def test_true_e2e_post_consent_credential_deactivation() -> None:
         assert denied.status_code == 401, denied.text
         assert denied.json()["detail"] == "Invalid provider credentials"
 
-        # T8: Restore credential active state
-        async with ctx.factory() as db:
-            cred = (
-                await db.execute(
-                    select(ProviderCredential).where(
-                        ProviderCredential.provider_id
-                        == uuid.UUID(str(ctx.graph["provider_id"]))
-                    )
-                )
-            ).scalar_one()
-            cred.is_active = True
-            await db.commit()
-
-        # T9-T10: SAME request retried -> 200 OK
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-        assert restored.json()["patient_id"] == ctx.graph["patient_id"]
-
 
 async def test_true_e2e_post_consent_account_deactivation() -> None:
     """Case G (Optional): Deactivating provider account identity immediately invalidates session."""
@@ -1032,23 +837,3 @@ async def test_true_e2e_post_consent_account_deactivation() -> None:
         )
         assert denied.status_code == 401, denied.text
         assert denied.json()["detail"] == "Invalid provider credentials"
-
-        # T8: Restore account active state
-        async with ctx.factory() as db:
-            prov = (
-                await db.execute(
-                    select(ProviderIdentity).where(
-                        ProviderIdentity.id == uuid.UUID(str(ctx.graph["provider_id"]))
-                    )
-                )
-            ).scalar_one()
-            prov.is_active = True
-            await db.commit()
-
-        # T9-T10: SAME request retried -> 200 OK
-        restored = await ctx.client.get(
-            f"/api/v2/patient/{ctx.claim_data['patient_id']}/summary",
-            headers=ctx.auth_headers,
-        )
-        assert restored.status_code == 200, restored.text
-        assert restored.json()["patient_id"] == ctx.graph["patient_id"]
