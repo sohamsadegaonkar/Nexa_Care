@@ -71,6 +71,10 @@ def professional_command_permission(
 ) -> TrustManagementPermission | None:
     if not isinstance(command, ProfessionalTransitionCommand):
         raise TypeError("command must be server-owned")
+    if command is ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE:
+        raise ValueError(
+            "CANCEL_RECHECK_GRACE cannot be authorized for human reviewers"
+        )
     return (
         None
         if command is ProfessionalTransitionCommand.SUBMIT

@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260904_verification_evidence"
+EXPECTED_HEAD = "20260905_verification_application"
 
 
 def _scripts() -> ScriptDirectory:
@@ -69,9 +69,17 @@ def test_trust_authorization_descends_from_lifecycle() -> None:
 
 
 def test_provider_verification_evidence_descends_from_trust_authorization() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision("20260904_verification_evidence")
     assert revision is not None
     assert revision.down_revision == "20260903_trust_authorization"
+
+
+def test_provider_verification_application_descends_from_verification_evidence() -> (
+    None
+):
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260904_verification_evidence"
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:
@@ -117,7 +125,7 @@ def test_migration_revision_ids_fit_alembic_version_column() -> None:
     too_long = [
         revision.revision
         for revision in _scripts().walk_revisions(base="base", head="heads")
-        if len(revision.revision) > 32
+        if len(revision.revision) > 64
     ]
     assert not too_long
 

@@ -106,6 +106,8 @@ class VerificationDecisionReason(str, enum.Enum):
     RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE = (
         "RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE"
     )
+    RECHECK_GRACE_CANCELLED = "RECHECK_GRACE_CANCELLED"
+    OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION = "OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION"
     REPEATED_OUTAGE_EXISTING_GRACE_PRESERVED = (
         "REPEATED_OUTAGE_EXISTING_GRACE_PRESERVED"
     )
@@ -169,6 +171,7 @@ class ProfessionalVerificationContext:
     authoritative_adverse_signal_at: datetime | None = None
     server_provenance_established: bool = False
     established_server_source_id: str | None = None
+    open_human_review_required: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.current_status, ProfessionalVerificationStatus):
@@ -260,6 +263,7 @@ class FacilityVerificationContext:
     established_server_source_id: str | None = None
     current_grace_expires_at: datetime | None = None
     current_recheck_failure_reason: VerificationSourceFailureReason | None = None
+    open_human_review_required: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.current_status, FacilityVerificationStatus):
@@ -632,6 +636,20 @@ def evaluate_professional_observation(
                     outcome=observation.outcome,
                 )
 
+            if context.open_human_review_required:
+                return VerificationDecisionPlan(
+                    resource_type=RegistryResourceType.PROFESSIONAL,
+                    disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                    candidate_command=None,
+                    expected_resource_version=context.current_version,
+                    reason_code=VerificationDecisionReason.OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION,
+                    requires_human_review=True,
+                    grace_expires_at=None,
+                    source_id=observation.source_id,
+                    lookup_purpose=observation.lookup_purpose,
+                    outcome=observation.outcome,
+                )
+
             # All positive recheck criteria satisfied
             return VerificationDecisionPlan(
                 resource_type=RegistryResourceType.PROFESSIONAL,
@@ -665,13 +683,13 @@ def evaluate_professional_observation(
                     lookup_purpose=observation.lookup_purpose,
                     outcome=observation.outcome,
                 )
-            # Later non-outage failure during active grace -> lifecycle semantic gap
+            # Later non-outage failure during active grace -> cancel grace and fail closed
             return VerificationDecisionPlan(
                 resource_type=RegistryResourceType.PROFESSIONAL,
-                disposition=VerificationDecisionDisposition.LIFECYCLE_SEMANTIC_GAP,
-                candidate_command=None,
+                disposition=VerificationDecisionDisposition.SYSTEM_FAIL_CLOSED_AND_REVIEW,
+                candidate_command=ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE,
                 expected_resource_version=context.current_version,
-                reason_code=VerificationDecisionReason.RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE,
+                reason_code=VerificationDecisionReason.RECHECK_GRACE_CANCELLED,
                 requires_human_review=True,
                 grace_expires_at=None,
                 source_id=observation.source_id,
@@ -931,6 +949,20 @@ def evaluate_facility_observation(
                     candidate_command=None,
                     expected_resource_version=context.current_version,
                     reason_code=VerificationDecisionReason.IDENTITY_BINDING_NOT_MATCHED,
+                    requires_human_review=True,
+                    grace_expires_at=None,
+                    source_id=observation.source_id,
+                    lookup_purpose=observation.lookup_purpose,
+                    outcome=observation.outcome,
+                )
+
+            if context.open_human_review_required:
+                return VerificationDecisionPlan(
+                    resource_type=RegistryResourceType.FACILITY,
+                    disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                    candidate_command=None,
+                    expected_resource_version=context.current_version,
+                    reason_code=VerificationDecisionReason.OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION,
                     requires_human_review=True,
                     grace_expires_at=None,
                     source_id=observation.source_id,

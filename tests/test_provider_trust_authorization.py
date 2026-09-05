@@ -130,11 +130,20 @@ def test_permission_vocabulary_is_closed_and_nonclinical():
 
 def test_phase_3c_command_mapping_is_server_owned_and_exhaustive():
     assert professional_command_permission(ProfessionalTransitionCommand.SUBMIT) is None
+    # CANCEL_RECHECK_GRACE is system-actor-only — human reviewers must never issue it
+    with pytest.raises(ValueError):
+        professional_command_permission(
+            ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE
+        )
+    _system_only = {
+        ProfessionalTransitionCommand.SUBMIT,
+        ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE,
+    }
     assert all(
         professional_command_permission(command)
         is TrustManagementPermission.PROFESSIONAL_REVIEW
         for command in ProfessionalTransitionCommand
-        if command is not ProfessionalTransitionCommand.SUBMIT
+        if command not in _system_only
     )
     assert all(
         facility_command_permission(command)

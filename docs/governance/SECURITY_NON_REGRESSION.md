@@ -52,7 +52,7 @@ The system minimises data and observability, uses durable idempotency, distingui
 | SEC-015 | Human review/risk | Confidence-only automation can promote unsafe fields to clinical truth. | High-risk or uncertain fields require adjudication; explicit risk rules; no AI diagnosis, rule-out, invented history, or silent replacement of source. | `app/ai/auto_approval.py`; `scoring_engine.py`; review routes | AI scoring, auto-approval, tampered payload, medical validation tests | Enforced | 2026-07-27 |
 | SEC-016 | Device lifecycle | Wrong-patient, excess, or revoked device keys could approve. | Key belongs to authenticated patient; device maximum enforced; revoked keys cannot approve; rotation/revocation audited; push registration is not cryptographic enrollment. | `biometric_registry.py`; device routes/models | device key, biometric registry, consent QA tests | Enforced | 2026-07-27 |
 | SEC-017 | Auth/session binding | Client identity/hospital or ambiguous credentials can elevate access; MFA can be replayed. | Provider and hospital resolve server-side; one canonical credential source; privileged MFA binds action/session; lifetime and revocation enforced. | auth dependencies/routes; `provider_auth_service.py`; MFA routes | auth, provider schema/password, MFA replay/integration tests | Enforced | 2026-07-27 |
-| SEC-018 | Migration safety | Multiple heads, unsafe stamping, type drift, automatic API-startup migration, and manual schema fixes create unreproducible production state. | One head; forward-only fixes; explicit schemas; ORM/migration agreement; fresh and previous-head gates; never stamp past failure or manually create required tables. API containers never run migrations during startup; approved deployments use a dedicated release task that verifies the exact single repository and database head. | `alembic/versions`; `Dockerfile`; `scripts/container_start.sh`; `scripts/run_pilot_migrations.py`; current head `20260904_verification_evidence` | migration graph, migration-specific tests, and deployment-startup regression tests; disposable PostgreSQL upgrade gates | Enforced locally; disposable PostgreSQL fresh upgrade, previous-head upgrade, downgrade, re-upgrade, constraint probes, and PostgreSQL marker suite remain required. Deployment-environment migration qualification remains required. | 2026-09-04 |
+| SEC-018 | Migration safety | Multiple heads, unsafe stamping, type drift, automatic API-startup migration, and manual schema fixes create unreproducible production state. | One head; forward-only fixes; explicit schemas; ORM/migration agreement; fresh and previous-head gates; never stamp past failure or manually create required tables. API containers never run migrations during startup; approved deployments use a dedicated release task that verifies the exact single repository and database head. | `alembic/versions`; `Dockerfile`; `scripts/container_start.sh`; `scripts/run_pilot_migrations.py`; current head `20260905_verification_application` | migration graph, migration-specific tests, and deployment-startup regression tests; disposable PostgreSQL upgrade gates | Enforced locally; disposable PostgreSQL fresh upgrade, previous-head upgrade, downgrade, re-upgrade, constraint probes, and PostgreSQL marker suite remain required. Deployment-environment migration qualification remains required. | 2026-09-05 |
 | SEC-019 | Health/readiness | Conflated liveness/readiness can restart healthy processes or admit unsafe traffic. | Liveness and readiness differ; dependency loss does not falsify liveness; readiness includes DB, Redis, outbox worker, dead/stalled work, and audit health without sensitive details. | `app/main.py`; health routes/services | trusted-host, health, audit-outbox/runtime tests | Partially enforced | 2026-07-27 |
 | SEC-020 | Physical device | Unit/API mocks were mistaken for end-to-end consent evidence. | FCM delivery, biometric approval, device P-256 signing, expiry, emergency, and revocation need real-device evidence before pilot. | Expo app, push service, physical preflight scripts | physical-device checklist/report and live evidence | Validation pending for each release candidate | 2026-07-27 |
 | SEC-021 | Patient transparency | Self-access and multi-stage audit events produced blank/duplicate patient cards. | Projection permits only final successful provider access, excludes self access/actor patient, deduplicates operations, resolves immutable IDs with explicit fallbacks, paginates filtered events. | `patient_record_routes.py`; `AccessHistoryScreen.tsx` | `test_access_history.py`; patient screen tests; physical refresh evidence | Enforced | 2026-07-27 |
@@ -80,6 +80,7 @@ The system minimises data and observability, uses durable idempotency, distingui
 | SEC-047 | Verification evidence and facility trust schema foundations | External registry responses, raw HTML/payloads, tokens, or automated verification runs could be forged, mutated, or conflated with clinical authority; facility verification lacked lifecycle parity with professional trust; evidence rows could be deleted or updated to conceal verification histories or adverse signals. | Pure append-only verification evidence persistence (`ProviderTrustVerificationEvidence`) enforced by PostgreSQL trigger (`ERRCODE = '55000'`); resource target XOR check constraint (`professional_verification_id` XOR `facility_verification_id`); strict closed enums for origin, lookup purpose, outcome, and identity binding result; server observations require non-empty adapter version and safe 64-character SHA-256 evidence digest; raw HTTP responses and external tokens strictly prohibited from storage; facility verification aligned with professional trust schema (authority code, normalized registration number, validity dates, grace expiry, recheck fields, authoritative adverse signal, previous valid boolean) while facility grace remains disabled; manual reviewer attestation, server registry observation, system automation, and clinical authority strictly decoupled; foreign keys enforced with `ON DELETE RESTRICT`. | `app/models/provider.py`; `alembic/versions/20260904_verification_evidence.py` | `tests/test_provider_verification_evidence_models.py`; `tests/integration/test_provider_verification_evidence_postgres.py` | Enforced locally on disposable PostgreSQL 16; external registry adapters, live delivery, and regulatory certification deferred | 2026-09-04 |
 | SEC-048 | Registry adapter contract and normalized observation boundary | External registry lookup requests, raw responses, or test adapters could leak provider credentials, manufacture trusted provider identity, retain raw HTML/tokens, conflate observation data with clinical authority, or bypass provenance checks. | Pure, fail-closed registry adapter boundary (`RegistryAdapter`); server-owned source descriptor (`RegistrySourceDescriptor`) with required non-empty `source_id` and `adapter_version`; closed resource type vocabulary (`PROFESSIONAL`, `FACILITY`); immutable request contracts (`ProfessionalLookupRequest`, `FacilityLookupRequest`) rejecting authority/session/credential/PII fields; immutable observation result (`RegistryObservation`) matching 5B evidence schema; closed outcome and identity binding vocabularies; strict separation of transient availability (`SOURCE_UNAVAILABLE`) from client auth (`SOURCE_AUTHENTICATION_FAILURE`) and integrity (`SOURCE_INTEGRITY_FAILURE`) failures; strict response-integrity digest calculation (lowercase SHA-256); raw response payload and credential retention strictly prohibited; orchestrator provenance validation (`validate_observation_provenance`) enforcing source ID, adapter version, and resource type matching; synthetic test adapter only (`SyntheticRegistryAdapter`); zero database writes, zero lifecycle mutations, zero system authority, and zero clinical capability changes. | `app/services/provider_verification_registry.py` | `tests/test_provider_verification_registry.py` | Enforced locally via pure unit and architectural AST guards; no live registry, network, or statutory compliance claimed | 2026-09-04 |
 | SEC-049 | Registry observation decision policy and automation eligibility freeze | Evaluating external registry observations or source failures could automatically mutate provider verification states, grant unauthorized clinical authority, fabricate reviewer credentials or system actor identities, bypass human gates on initial verification, grant unauthorized grace periods, or extend grace indefinitely upon repeated outages. | Pure decision-policy layer (`app/services/provider_verification_decision_policy.py`) implementing permanent authority separation: `REGISTRY OBSERVATION != DECISION POLICY != AUTOMATION ELIGIBILITY != SYSTEM EXECUTION AUTHORITY != LIFECYCLE MUTATION != CLINICAL AUTHORITY`; initial verification permanently human-gated (`INITIAL_VERIFICATION_HUMAN_GATE_REQUIRED`); frozen static automation command allowlists (`COMPLETE_RECHECK`, `MARK_RECHECK_DUE` for professional; `COMPLETE_RECHECK`, `MARK_RECHECK_REQUIRED` for facility); positive recheck strictly requires established server source continuity, registration identity match, `MATCHED` identity binding, no active authoritative adverse signals, and registration validity; maximum 24h grace period granted strictly on first `SOURCE_UNAVAILABLE` for currently `VERIFIED` professional with established server source and valid unexpired registration, bounded by registration expiry; repeated outages preserve existing grace without extension; non-outage failures and adverse findings never receive grace; active-grace cancellation semantic gap explicitly preserved as `LIFECYCLE_SEMANTIC_GAP` (`RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE`); facility grace permanently disabled; terminal and suspended states non-resurrectable; zero database transactions, zero DB sessions, zero HTTP clients, zero system credentials, zero MFA fabrication, zero reviewer ID fabrication, and zero clinical eligibility modifications; enforced by pure unit tests and AST architectural isolation. | `app/services/provider_verification_decision_policy.py` | `tests/test_provider_verification_decision_policy.py` | Enforced locally via pure unit and architectural AST guards; zero DB/network/runtime mutations | 2026-09-05 |
+| SEC-050 | Verification application hardening — system actor confinement and review queue integrity | A mutable global kill switch, an unconstrained system actor string, a missing observation envelope freshness check, an unbounded set of lifecycle commands available to the system actor, or a review work schema without explicit human-review intent could allow automation to act outside its authorized lifecycle boundary, commit arbitrary lifecycle mutations without human review, silently suppress adverse signals, or allow stale registry observations to drive trust decisions. | (1) Namespaced system actor frozen as the module-level constant `SYSTEM_AUTOMATION_ACTOR_ID = "system:registry_verification_automation"` — no runtime override, no client control. (2) Kill switch (`automation_enabled: bool | Callable[[], bool]`) is injected into `ProviderVerificationApplicationService.__init__` without mutable global state; disabled by default. (3) Composite PostgreSQL FK `server_provenance_evidence_id` binds `professional_verification` and `facility_verification` rows to their authoritative `provider_trust_verification_evidence` record via named constraints `fk_professional_verification_server_provenance` and `fk_facility_verification_server_provenance`, with unique composite binding constraints `uq_evidence_professional_binding` / `uq_evidence_facility_binding`; schema enforced in migration `20260905_verification_application`. (4) Review work queue table `provider_trust_verification_review_work` records `status`, `disposition`, `reason_code`, `resolved_at`, and `resolved_by_actor_id` but deliberately omits `target_type`/`target_id` columns — the FK to the verification row is the only allowed target binding. (5) `_ALLOWED_SYSTEM_COMMANDS` frozen dict: PROFESSIONAL type may only issue `{COMPLETE_RECHECK, CANCEL_RECHECK_GRACE}`; FACILITY type may only issue `{COMPLETE_RECHECK, MARK_RECHECK_REQUIRED}`; any other candidate command triggers `LIFECYCLE_SEMANTIC_GAP` disposition with `SYSTEM_ACTOR_PROVENANCE_GAP` reason code and mandatory human review without lifecycle mutation. (6) Observation envelope freshness gate: `_MAX_ENVELOPE_AGE_SECONDS = 900` (15 minutes); `invoked_at` or `observed_at` older than 15 minutes before `moment` immediately raises `VerificationApplicationError("ENVELOPE_STALE")`. (7) `CANCEL_RECHECK_GRACE` is permanently excluded from `professional_command_permission` (raises `ValueError`); it is a system-actor-only command that must never be authorized for human reviewers. (8) HTTP route surface remains frozen at exactly 26 POST endpoints under `/api/v2/provider-trust`; no new routes were added in Phase 5E. | `app/services/provider_verification_application.py`; `app/services/provider_trust_authorization.py`; `alembic/versions/20260905_verification_application.py` | `tests/integration/test_provider_verification_application_postgres.py` (23/23); `tests/integration/test_provider_verification_evidence_postgres.py` (16/16); `tests/test_provider_trust_authorization.py` (all passed); `tests/test_provider_verification_decision_policy.py` (37/37); `tests/test_provider_trust_lifecycle_policy.py` (220/220); `tests/test_migration_graph.py` (24/24) | Enforced locally on disposable PostgreSQL 16; 23+16+37+220+24+all remaining Gate-30 suites passed. Zero new HTTP routes. Kill switch injection verified. Composite FK migration qualified. External registry adapters, live delivery, and regulatory certification deferred. | 2026-09-05 |
 
 ### Provider clinical-trust boundary (Slices 1, 2, 3A through 3F)
 
@@ -572,6 +573,89 @@ Slice 5 Phase 5D implements the pure decision-policy layer that evaluates a vali
 
 10. **AST-Enforced Purity and Isolation**:
     - Structural AST checks verify that `provider_verification_decision_policy.py` contains zero imports of database sessions, ORM models, SQL engines, HTTP/network clients, Celery/scheduler tasks, authentication routes, or clinical eligibility services.
+
+#### SEC-050: Atomic Verification Application and System Execution Authority (Slice 5 Phase 5E)
+
+```text
+REGISTRY LOOKUP INVOCATION + OBSERVATION
+!= ENVELOPE STRUCTURAL LINEAGE
+!= DECISION POLICY EVALUATION
+!= SOURCE AUTOMATION POLICY
+!= SYSTEM EXECUTION AUTHORITY
+!= LIFECYCLE MUTATION
+!= TRANSACTIONAL OUTBOX / AUDIT
+!= CLINICAL AUTHORITY
+```
+
+Slice 5 Phase 5E implements the atomic transactional application boundary and system execution authority for provider trust verification:
+
+1. **Permanent Authority Separation**:
+   - `ProviderVerificationApplicationService` is the sole authorized service orchestrating automated verification application.
+   - Automated observations never directly grant clinical access or mutate provider authority outside the governed lifecycle state machine.
+   - Pure separation of concerns:
+     ```text
+     REGISTRY LOOKUP INVOCATION + OBSERVATION
+     != ENVELOPE STRUCTURAL LINEAGE
+     != DECISION POLICY EVALUATION
+     != SOURCE AUTOMATION POLICY
+     != SYSTEM EXECUTION AUTHORITY
+     != LIFECYCLE MUTATION
+     != TRANSACTIONAL OUTBOX / AUDIT
+     != CLINICAL AUTHORITY
+     ```
+
+2. **Envelope Structural Lineage (`ValidatedRegistryLookupEnvelope`)**:
+   - Resolves the `OBSERVATION_REQUEST_BINDING_GAP`.
+   - Binds a specific `RegistryLookupInvocation` to a validated `RegistryObservation`.
+   - Enforces strict structural invariant checks:
+     - `invocation.resource_type == observation.resource_type`
+     - `invocation.request.lookup_purpose == observation.lookup_purpose`
+     - `invocation.invoked_at <= observation.observed_at`
+   - Prevents unlinked or synthesized observation pairs from being applied.
+
+3. **Source Automation Policy and Emergency Kill-Switch**:
+   - Managed via `SourceAutomationPolicyRegistry` with explicit per-source configuration (`automation_enabled`, `allowed_binding_methods`).
+   - Default deny: any unregistered source or disallowed binding method fails closed to `HUMAN_REVIEW_REQUIRED`.
+   - Global emergency kill-switch (`enable_automation(False)`) immediately disables all automated lifecycle transitions across all sources, safely routing observations to human review work items without mutating provider lifecycle states.
+
+4. **Governed Same-State Grace Cancellation (`CANCEL_RECHECK_GRACE`)**:
+   - Resolves the `RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE` gap.
+   - When an adverse finding or non-outage failure occurs during an active grace period on a `RECHECK_DUE` professional, the system executes `CANCEL_RECHECK_GRACE`:
+     - Target remains in `RECHECK_DUE` without premature terminal revocation.
+     - Clears `grace_expires_at` to `None`.
+     - Sets `recheck_failure_reason = "REVIEW_REQUIRED"`.
+     - Increments target resource version count via optimistic locking.
+     - Automatically creates an `OPEN` record in `provider_trust_verification_review_work`.
+     - Emits canonical audit event `PROVIDER_RECHECK_GRACE_CANCELLED`.
+   - `CANCEL_RECHECK_GRACE` is strictly system-automated; human reviewers cannot invoke it.
+
+5. **Human Reviewer ID Preservation Invariant**:
+   - Resolves the `SYSTEM_ACTOR_PROVENANCE_GAP`.
+   - `reviewer_id` on verification records is human-only provenance. The application boundary never manufactures dummy strings (`'system'`, `'registry_worker'`) or fake provider identities.
+   - Automated recheck transitions preserve the existing human `target.reviewer_id`. If `reviewer_id` is missing (`None`), automation fails closed to `HUMAN_REVIEW_REQUIRED`.
+   - System automation operates under `SystemAutomationActor` (`actor_id = "00000000-0000-0000-0000-000000000001"`, `role = "SYSTEM_AUTOMATION"`), structurally separated from human reviewer identity.
+
+6. **Explicit Server Provenance FK Linking**:
+   - `ProfessionalVerification` and `FacilityVerification` maintain `server_provenance_evidence_id` foreign key columns referencing `ProviderTrustVerificationEvidence.id` (`ON DELETE RESTRICT`).
+   - Automated lifecycle transitions atomically update `server_provenance_evidence_id` to point to the newly inserted immutable evidence record.
+   - Manual human review actions clear `server_provenance_evidence_id` to `None`, preserving clear distinction between human and automated verification lineage.
+
+7. **Verification Review Work Queue (`ProviderTrustVerificationReviewWork`)**:
+   - Dedicated table for human review items resulting from automated verification.
+   - Enforces database check constraints:
+     - `status IN ('OPEN', 'RESOLVED')`
+     - `target_type IN ('PROFESSIONAL', 'FACILITY')`
+     - Non-empty, trimmed `reason_code`
+     - Resolution integrity: `OPEN` items cannot have `resolved_at` or `resolved_by_actor_id`; `RESOLVED` items must have both.
+   - Uniqueness constraint `uq_verification_review_work_evidence` guarantees exactly one review item per evidence record.
+   - Any active `OPEN` review work item for a target resource immediately blocks positive automated recheck (`OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION`).
+
+8. **Transactional Atomicity and Outbox Auditing**:
+   - Single atomic transaction encapsulates target row lock (`with_for_update`), identity and version validation, decision policy evaluation, immutable evidence insertion, review work staging, lifecycle transition execution, audit event generation (`PROVIDER_TRUST_VERIFICATION_OBSERVATION_RECORDED`, `PROVIDER_TRUST_VERIFICATION_REVIEW_REQUIRED`, `PROVIDER_RECHECK_GRACE_CANCELLED`), and durable idempotency recording (`IdempotencyRecord`).
+
+9. **Zero HTTP Routes & Single Migration Head**:
+   - Strict route freeze: zero new HTTP routes added. Route inventory remains locked at exactly 26 POST endpoints under `/api/v2/provider-trust`.
+   - Sole migration head: `20260905_verification_application` descending linearly from `20260904_verification_evidence`.
 
 
 ### Patient onboarding profile and legal-acceptance boundary (1B.1)

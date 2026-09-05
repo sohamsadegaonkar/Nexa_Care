@@ -494,8 +494,8 @@ def test_professional_verified_non_outage_failures_never_receive_grace() -> None
 # ---------------------------------------------------------------------------
 
 
-def test_active_grace_non_outage_failure_returns_semantic_gap() -> None:
-    """During active grace, a later non-outage failure is a LIFECYCLE_SEMANTIC_GAP."""
+def test_active_grace_non_outage_failure_cancels_grace() -> None:
+    """During active grace, a later non-outage failure cancels grace and fails closed with review."""
     req = ProfessionalLookupRequest(
         registration_authority_code="TEST_PROF_AUTH",
         registration_number_normalized="REG1001",
@@ -521,12 +521,12 @@ def test_active_grace_non_outage_failure_returns_semantic_gap() -> None:
     plan = evaluate_professional_observation(
         observation=obs_fail, request=req, context=context, now=now
     )
-    assert plan.disposition == VerificationDecisionDisposition.LIFECYCLE_SEMANTIC_GAP
-    assert plan.candidate_command is None
     assert (
-        plan.reason_code
-        == VerificationDecisionReason.RECHECK_GRACE_CANCELLATION_NOT_EXPRESSIBLE
+        plan.disposition
+        == VerificationDecisionDisposition.SYSTEM_FAIL_CLOSED_AND_REVIEW
     )
+    assert plan.candidate_command == ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE
+    assert plan.reason_code == VerificationDecisionReason.RECHECK_GRACE_CANCELLED
     assert plan.requires_human_review is True
 
 
@@ -869,6 +869,7 @@ def test_static_automation_candidate_command_allowlist() -> None:
     allowed_prof_commands = {
         ProfessionalTransitionCommand.MARK_RECHECK_DUE,
         ProfessionalTransitionCommand.COMPLETE_RECHECK,
+        ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE,
     }
     allowed_facility_commands = {
         FacilityTransitionCommand.MARK_RECHECK_REQUIRED,
@@ -1074,6 +1075,7 @@ def test_canonical_lifecycle_vocabularies() -> None:
         "RESTORE",
         "MARK_RECHECK_DUE",
         "COMPLETE_RECHECK",
+        "CANCEL_RECHECK_GRACE",
         "MARK_STALE",
         "REVOKE",
         "EXPIRE",
@@ -1836,3 +1838,73 @@ def test_observation_request_binding_gap_constant() -> None:
     assert "registration authority code" in OBSERVATION_REQUEST_BINDING_GAP
     assert "Phase 5E" in OBSERVATION_REQUEST_BINDING_GAP
     assert "structural invocation lineage" in OBSERVATION_REQUEST_BINDING_GAP
+
+
+def test_open_human_review_blocks_positive_professional_recheck() -> None:
+    """Open human review required blocks positive professional automation."""
+    req = ProfessionalLookupRequest(
+        registration_authority_code="TEST_PROF_AUTH",
+        registration_number_normalized="REG1001",
+        lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+    )
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)
+    context = ProfessionalVerificationContext(
+        current_status=ProfessionalVerificationStatus.RECHECK_DUE,
+        current_version=3,
+        registration_authority_code="TEST_PROF_AUTH",
+        registration_number_normalized="REG1001",
+        registration_valid_until=now + timedelta(days=90),
+        previous_verification_valid=True,
+        server_provenance_established=True,
+        established_server_source_id="TEST_SOURCE_ALPHA",
+        open_human_review_required=True,
+    )
+    obs = _make_prof_obs(
+        outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+        source_id="TEST_SOURCE_ALPHA",
+        binding=VerificationIdentityBindingResult.MATCHED,
+    )
+    plan = evaluate_professional_observation(
+        observation=obs, request=req, context=context, now=now
+    )
+    assert plan.disposition == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
+    assert plan.candidate_command is None
+    assert (
+        plan.reason_code
+        == VerificationDecisionReason.OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION
+    )
+    assert plan.requires_human_review is True
+
+
+def test_open_human_review_blocks_positive_facility_recheck() -> None:
+    """Open human review required blocks positive facility automation."""
+    req = FacilityLookupRequest(
+        registration_authority_code="TEST_FAC_AUTH",
+        registration_number_normalized="FAC1001",
+        lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+    )
+    now = datetime(2026, 9, 4, 12, 0, 0, tzinfo=timezone.utc)
+    context = FacilityVerificationContext(
+        current_status=FacilityVerificationStatus.RECHECK_REQUIRED,
+        current_version=2,
+        registration_authority_code="TEST_FAC_AUTH",
+        registration_number_normalized="FAC1001",
+        server_provenance_established=True,
+        established_server_source_id="TEST_SOURCE_ALPHA",
+        open_human_review_required=True,
+    )
+    obs = _make_facility_obs(
+        outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+        source_id="TEST_SOURCE_ALPHA",
+        binding=VerificationIdentityBindingResult.MATCHED,
+    )
+    plan = evaluate_facility_observation(
+        observation=obs, request=req, context=context, now=now
+    )
+    assert plan.disposition == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED
+    assert plan.candidate_command is None
+    assert (
+        plan.reason_code
+        == VerificationDecisionReason.OPEN_HUMAN_REVIEW_BLOCKS_AUTOMATION
+    )
+    assert plan.requires_human_review is True

@@ -48,7 +48,7 @@ import app.services.provider_trust_lifecycle_application as lifecycle_applicatio
 
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
-HEAD = "20260904_verification_evidence"
+HEAD = "20260905_verification_application"
 
 
 def _url() -> str:
@@ -141,7 +141,9 @@ async def _trusted_reviewer(db, facility_id, now, permissions):
                 ProviderTrustPermissionGrant(
                     provider_id=provider_id,
                     permission=permission,
-                    scope_type="GLOBAL" if permission == "PROFESSIONAL_REVIEW" else "FACILITY",
+                    scope_type="GLOBAL"
+                    if permission == "PROFESSIONAL_REVIEW"
+                    else "FACILITY",
                     facility_id=(
                         None if permission == "PROFESSIONAL_REVIEW" else facility_id
                     ),
@@ -421,7 +423,9 @@ async def test_same_key_concurrent_replay_has_one_transition_and_one_audit(monke
         await engine.dispose()
 
 
-async def test_professional_reviewers_at_one_version_linearize_to_one_decision(monkeypatch):
+async def test_professional_reviewers_at_one_version_linearize_to_one_decision(
+    monkeypatch,
+):
     url = _url()
     monkeypatch.setenv("TEST_DATABASE_URL", url)
     await asyncio.to_thread(command.upgrade, _config(url), HEAD)
@@ -429,7 +433,11 @@ async def test_professional_reviewers_at_one_version_linearize_to_one_decision(m
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         now = datetime.now(timezone.utc)
-        facility_id, subject_id, verification_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        facility_id, subject_id, verification_id = (
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+        )
         async with factory() as db:
             db.add(
                 HospitalRegistry(
@@ -521,7 +529,11 @@ async def test_revoked_grant_cannot_authorize_a_subsequent_locked_transition(
     factory = async_sessionmaker(engine, expire_on_commit=False)
     try:
         now = datetime.now(timezone.utc)
-        facility_id, subject_id, verification_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+        facility_id, subject_id, verification_id = (
+            uuid.uuid4(),
+            uuid.uuid4(),
+            uuid.uuid4(),
+        )
         async with factory() as db:
             db.add(
                 HospitalRegistry(
@@ -762,7 +774,9 @@ async def test_grant_revocation_race_linearizes_revocation_before_transition(
         await engine.dispose()
 
 
-async def test_facility_and_affiliation_versions_linearize_without_role_mutation(monkeypatch):
+async def test_facility_and_affiliation_versions_linearize_without_role_mutation(
+    monkeypatch,
+):
     url = _url()
     monkeypatch.setenv("TEST_DATABASE_URL", url)
     await asyncio.to_thread(command.upgrade, _config(url), HEAD)
@@ -817,7 +831,9 @@ async def test_facility_and_affiliation_versions_linearize_without_role_mutation
 
         async def facility_attempt(command_value, facts, key):
             async with factory() as db:
-                return await ProviderTrustLifecycleApplicationService(db).apply_facility(
+                return await ProviderTrustLifecycleApplicationService(
+                    db
+                ).apply_facility(
                     actor_id=reviewer_id,
                     authentication=_auth(reviewer_id, now),
                     resource_id=facility_verification_id,
@@ -1025,7 +1041,9 @@ async def test_each_lifecycle_suspension_immediately_denies_clinical_eligibility
                 idempotency_key="phase3e-professional-suspend-0001",
                 now=now,
             )
-        assert (await evaluate()).denial_code is ClinicalEligibilityDenialCode.PROFESSIONAL_SUSPENDED
+        assert (
+            await evaluate()
+        ).denial_code is ClinicalEligibilityDenialCode.PROFESSIONAL_SUSPENDED
         async with factory() as db:
             await ProviderTrustLifecycleApplicationService(db).apply_professional(
                 actor_id=reviewer_id,
@@ -1047,7 +1065,9 @@ async def test_each_lifecycle_suspension_immediately_denies_clinical_eligibility
                 idempotency_key="phase3e-facility-suspend-0001",
                 now=now,
             )
-        assert (await evaluate()).denial_code is ClinicalEligibilityDenialCode.FACILITY_SUSPENDED
+        assert (
+            await evaluate()
+        ).denial_code is ClinicalEligibilityDenialCode.FACILITY_SUSPENDED
         async with factory() as db:
             await ProviderTrustLifecycleApplicationService(db).apply_facility(
                 actor_id=reviewer_id,
@@ -1073,7 +1093,9 @@ async def test_each_lifecycle_suspension_immediately_denies_clinical_eligibility
                 idempotency_key="phase3e-affiliation-suspend-0001",
                 now=now,
             )
-        assert (await evaluate()).denial_code is ClinicalEligibilityDenialCode.AFFILIATION_SUSPENDED
+        assert (
+            await evaluate()
+        ).denial_code is ClinicalEligibilityDenialCode.AFFILIATION_SUSPENDED
         async with factory() as db:
             affiliation = await db.get(ProviderHospitalAffiliation, affiliation_id)
             assert affiliation.roles == ["clinician"]

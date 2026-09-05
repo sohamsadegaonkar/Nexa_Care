@@ -69,7 +69,7 @@ from app.services.provider_trust_root_governance import (
 from scripts.governance_trust_root import run_governance
 
 pytestmark = [pytest.mark.postgres, pytest.mark.asyncio]
-HEAD = "20260904_verification_evidence"
+HEAD = "20260905_verification_application"
 
 
 def _url() -> str:

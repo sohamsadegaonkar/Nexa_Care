@@ -13,7 +13,7 @@ from alembic.config import Config
 from alembic.script import ScriptDirectory
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_HEAD = "20260904_verification_evidence"
+EXPECTED_HEAD = "20260905_verification_application"
 ALLOWED_ENVIRONMENTS = frozenset({"pilot", "staging", "production"})
 CURRENT_REVISION = re.compile(r"(?m)^\s*([0-9]{8}_[a-z0-9_]+)(?:\s+\(head\))?\s*$")
 

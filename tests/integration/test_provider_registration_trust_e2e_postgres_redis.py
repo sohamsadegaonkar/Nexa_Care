@@ -72,7 +72,7 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260904_verification_evidence"
+HEAD = "20260905_verification_application"
 _USER_AGENT = "Nexa-Slice3G-Qualification-Agent/1.0"
 _HMAC_SECRET = "synthetic-secret-for-provider-qualification-hmac-32bytes"
 

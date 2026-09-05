@@ -56,8 +56,11 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260904_verification_evidence"
-PREVIOUS_HEAD = "20260903_trust_authorization"
+HEAD = "20260905_verification_application"
+PREVIOUS_HEAD = "20260904_verification_evidence"
+PREV_PREV_HEAD = (
+    "20260903_trust_authorization"  # pre-evidence; used by test_16 downgrade
+)
 _DB_NAME = "nexa_qual_slice5_evidence"
 
 
@@ -886,12 +889,12 @@ async def test_15_facility_recheck_required_clinical_eligibility_denial(
 
 
 async def test_16_migration_downgrade_and_reupgrade(session_factory):
-    """Test clean downgrade to 20260903_trust_authorization and re-upgrade to HEAD."""
+    """Test clean downgrade to 20260903_trust_authorization (pre-evidence) and re-upgrade to 20260904_verification_evidence."""
     db_url = _get_db_url()
     cfg = _config(db_url)
 
-    # Downgrade to PREVIOUS_HEAD
-    await asyncio.to_thread(command.downgrade, cfg, PREVIOUS_HEAD)
+    # Downgrade past the evidence migration to PREV_PREV_HEAD
+    await asyncio.to_thread(command.downgrade, cfg, PREV_PREV_HEAD)
 
     # Verify table and trigger no longer exist
     async with session_factory() as db:
@@ -979,8 +982,8 @@ async def test_16_migration_downgrade_and_reupgrade(session_factory):
         )
         await db.commit()
 
-    # Re-upgrade to HEAD (20260904_verification_evidence)
-    await asyncio.to_thread(command.upgrade, cfg, HEAD)
+    # Re-upgrade to PREVIOUS_HEAD (20260904_verification_evidence) to verify evidence migration
+    await asyncio.to_thread(command.upgrade, cfg, PREVIOUS_HEAD)
 
     # Verify table and trigger exist again, rows survive intact, and ZERO evidence rows backfilled
     async with session_factory() as db:

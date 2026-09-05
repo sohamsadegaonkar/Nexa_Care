@@ -16,6 +16,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -122,6 +123,21 @@ class VerificationIdentityBindingResult(str, enum.Enum):
     MATCHED = "MATCHED"
     MISMATCHED = "MISMATCHED"
     AMBIGUOUS = "AMBIGUOUS"
+
+
+class VerificationReviewWorkStatus(str, enum.Enum):
+    """Work item status for manual verification review queue."""
+
+    OPEN = "OPEN"
+    RESOLVED = "RESOLVED"
+
+
+class VerificationReviewWorkDisposition(str, enum.Enum):
+    """Governed disposition for verification review work queue items."""
+
+    HUMAN_REVIEW_REQUIRED = "HUMAN_REVIEW_REQUIRED"
+    SYSTEM_FAIL_CLOSED_AND_REVIEW = "SYSTEM_FAIL_CLOSED_AND_REVIEW"
+    LIFECYCLE_SEMANTIC_GAP = "LIFECYCLE_SEMANTIC_GAP"
 
 
 class HospitalRegistry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -539,6 +555,10 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     decision_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    server_provenance_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
     # The lifecycle policy emits the next generation; it does not apply it yet.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
@@ -547,7 +567,14 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     evidence: Mapped[list["ProviderTrustVerificationEvidence"]] = relationship(
         back_populates="professional_verification",
+        foreign_keys="ProviderTrustVerificationEvidence.professional_verification_id",
         passive_deletes="all",
+    )
+    server_provenance_evidence: Mapped["ProviderTrustVerificationEvidence | None"] = (
+        relationship(
+            foreign_keys="[ProfessionalVerification.server_provenance_evidence_id, ProfessionalVerification.id]",
+            primaryjoin="and_(ProfessionalVerification.server_provenance_evidence_id == ProviderTrustVerificationEvidence.id, ProfessionalVerification.id == ProviderTrustVerificationEvidence.professional_verification_id)",
+        )
     )
 
     __table_args__ = (
@@ -556,8 +583,21 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "registration_number_normalized",
             name="uq_professional_verification_authority_registration",
         ),
+        ForeignKeyConstraint(
+            ["server_provenance_evidence_id", "id"],
+            [
+                "provider_trust_verification_evidence.id",
+                "provider_trust_verification_evidence.professional_verification_id",
+            ],
+            name="fk_professional_verification_server_provenance",
+            ondelete="RESTRICT",
+        ),
         Index("ix_professional_verification_status", "status"),
         Index("ix_professional_verification_provider_id", "provider_id"),
+        Index(
+            "ix_professional_verification_server_provenance_evidence_id",
+            "server_provenance_evidence_id",
+        ),
         CheckConstraint(
             "status IN ('NOT_SUBMITTED', 'PENDING_REVIEW', 'VERIFIED', "
             "'RECHECK_DUE', 'VERIFICATION_STALE', 'SUSPENDED', 'REJECTED', "
@@ -627,18 +667,42 @@ class FacilityVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     )
     reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     decision_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    server_provenance_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
     # Stored generation only; transactional compare-and-swap is Phase 3E.
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     facility: Mapped[HospitalRegistry] = relationship(back_populates="verification")
     evidence: Mapped[list["ProviderTrustVerificationEvidence"]] = relationship(
         back_populates="facility_verification",
+        foreign_keys="ProviderTrustVerificationEvidence.facility_verification_id",
         passive_deletes="all",
+    )
+    server_provenance_evidence: Mapped["ProviderTrustVerificationEvidence | None"] = (
+        relationship(
+            foreign_keys="[FacilityVerification.server_provenance_evidence_id, FacilityVerification.id]",
+            primaryjoin="and_(FacilityVerification.server_provenance_evidence_id == ProviderTrustVerificationEvidence.id, FacilityVerification.id == ProviderTrustVerificationEvidence.facility_verification_id)",
+        )
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["server_provenance_evidence_id", "id"],
+            [
+                "provider_trust_verification_evidence.id",
+                "provider_trust_verification_evidence.facility_verification_id",
+            ],
+            name="fk_facility_verification_server_provenance",
+            ondelete="RESTRICT",
+        ),
         Index("ix_facility_verification_status", "status"),
         Index("ix_facility_verification_facility_id", "facility_id"),
+        Index(
+            "ix_facility_verification_server_provenance_evidence_id",
+            "server_provenance_evidence_id",
+        ),
         Index(
             "ix_facility_verification_registration",
             "registration_authority_code",
@@ -720,10 +784,17 @@ class ProviderTrustVerificationEvidence(Base, UUIDPrimaryKeyMixin):
     )
 
     professional_verification: Mapped[ProfessionalVerification | None] = relationship(
-        back_populates="evidence"
+        back_populates="evidence",
+        foreign_keys=[professional_verification_id],
     )
     facility_verification: Mapped[FacilityVerification | None] = relationship(
-        back_populates="evidence"
+        back_populates="evidence",
+        foreign_keys=[facility_verification_id],
+    )
+    review_work: Mapped["ProviderTrustVerificationReviewWork | None"] = relationship(
+        back_populates="evidence",
+        uselist=False,
+        passive_deletes="all",
     )
 
     __table_args__ = (
@@ -772,6 +843,16 @@ class ProviderTrustVerificationEvidence(Base, UUIDPrimaryKeyMixin):
             "length(trim(source_id)) > 0",
             name="ck_provider_trust_verification_evidence_source_id_non_empty",
         ),
+        UniqueConstraint(
+            "id",
+            "professional_verification_id",
+            name="uq_evidence_professional_binding",
+        ),
+        UniqueConstraint(
+            "id",
+            "facility_verification_id",
+            name="uq_evidence_facility_binding",
+        ),
         Index(
             "ix_provider_trust_verification_evidence_prof_id",
             "professional_verification_id",
@@ -783,4 +864,58 @@ class ProviderTrustVerificationEvidence(Base, UUIDPrimaryKeyMixin):
         Index("ix_provider_trust_verification_evidence_source_id", "source_id"),
         Index("ix_provider_trust_verification_evidence_observed_at", "observed_at"),
         Index("ix_provider_trust_verification_evidence_outcome", "outcome"),
+    )
+
+
+class ProviderTrustVerificationReviewWork(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Governed manual-review work queue item created when automated verification
+
+    fails closed, requires human review, or encounters ambiguous/adverse registry findings.
+    One review work item is bound to exactly one verification evidence row.
+    """
+
+    __tablename__ = "provider_trust_verification_review_work"
+
+    evidence_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_trust_verification_evidence.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    disposition: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationReviewWorkStatus.OPEN.value,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolved_by_actor_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    evidence: Mapped[ProviderTrustVerificationEvidence] = relationship(
+        back_populates="review_work"
+    )
+
+    __table_args__ = (
+        Index("ix_provider_trust_verification_review_work_status", "status"),
+        Index("ix_provider_trust_verification_review_work_evidence_id", "evidence_id"),
+        CheckConstraint(
+            "status IN ('OPEN', 'RESOLVED')",
+            name="chk_review_work_status",
+        ),
+        CheckConstraint(
+            "disposition IN ('HUMAN_REVIEW_REQUIRED', 'SYSTEM_FAIL_CLOSED_AND_REVIEW', 'LIFECYCLE_SEMANTIC_GAP')",
+            name="chk_review_work_disposition",
+        ),
+        CheckConstraint(
+            "length(trim(reason_code)) > 0",
+            name="chk_review_work_reason_code_non_empty",
+        ),
+        CheckConstraint(
+            "(status = 'OPEN' AND resolved_at IS NULL AND resolved_by_actor_id IS NULL) "
+            "OR (status = 'RESOLVED' AND resolved_at IS NOT NULL AND resolved_by_actor_id IS NOT NULL)",
+            name="chk_review_work_resolution_integrity",
+        ),
     )

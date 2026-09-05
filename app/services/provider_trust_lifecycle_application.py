@@ -26,6 +26,10 @@ from app.models.provider import (
     ProviderHospitalAffiliation,
     ProviderIdentity,
     ProviderTrustPermissionGrant,
+    ProviderTrustVerificationEvidence,
+    VerificationEvidenceOrigin,
+    VerificationEvidenceOutcome,
+    VerificationIdentityBindingResult,
 )
 from app.security.audit_context import AuditContext, AuditDomain
 from app.services.audit_outbox import enqueue_audit_event
@@ -77,6 +81,28 @@ _IDEMPOTENCY_COMPLETE = text("""
     SET response_status = 200, response_payload = CAST(:payload AS JSONB), resulting_resource_version = :version
     WHERE tenant_id = :tenant_id AND operation = :operation AND idempotency_key = :key
 """)
+
+
+_LINK_PROVENANCE_COMMANDS = {
+    "professional": {
+        ProfessionalTransitionCommand.VERIFY,
+        ProfessionalTransitionCommand.COMPLETE_RECHECK,
+        ProfessionalTransitionCommand.RESTORE,
+    },
+    "facility": {
+        FacilityTransitionCommand.VERIFY,
+        FacilityTransitionCommand.COMPLETE_RECHECK,
+        FacilityTransitionCommand.RESTORE,
+    },
+}
+_PRESERVE_PROVENANCE_COMMANDS = {
+    "professional": {
+        ProfessionalTransitionCommand.MARK_RECHECK_DUE,
+    },
+    "facility": {
+        FacilityTransitionCommand.MARK_RECHECK_REQUIRED,
+    },
+}
 
 
 class ProviderTrustLifecycleApplicationError(RuntimeError):
@@ -153,7 +179,10 @@ class ProviderTrustLifecycleApplicationService:
         idempotency_key: str,
         now: datetime | None = None,
         route_recheck_no_grace: bool = False,
+        server_provenance_evidence_id: UUID | None = None,
     ) -> ProviderTrustLifecycleResult:
+        if command is ProfessionalTransitionCommand.CANCEL_RECHECK_GRACE:
+            raise ProviderTrustLifecycleApplicationError("COMMAND_DISALLOWED")
         return await self._apply(
             "professional",
             actor_id,
@@ -165,6 +194,7 @@ class ProviderTrustLifecycleApplicationService:
             idempotency_key,
             now,
             route_recheck_no_grace=route_recheck_no_grace,
+            server_provenance_evidence_id=server_provenance_evidence_id,
         )
 
     async def apply_facility(
@@ -178,6 +208,7 @@ class ProviderTrustLifecycleApplicationService:
         expected_version: int,
         idempotency_key: str,
         now: datetime | None = None,
+        server_provenance_evidence_id: UUID | None = None,
     ) -> ProviderTrustLifecycleResult:
         return await self._apply(
             "facility",
@@ -189,6 +220,7 @@ class ProviderTrustLifecycleApplicationService:
             expected_version,
             idempotency_key,
             now,
+            server_provenance_evidence_id=server_provenance_evidence_id,
         )
 
     async def apply_affiliation(
@@ -228,6 +260,7 @@ class ProviderTrustLifecycleApplicationService:
         now: datetime | None,
         *,
         route_recheck_no_grace: bool = False,
+        server_provenance_evidence_id: UUID | None = None,
     ) -> ProviderTrustLifecycleResult:
         try:
             return await self._apply_transaction(
@@ -241,6 +274,7 @@ class ProviderTrustLifecycleApplicationService:
                 idempotency_key,
                 now,
                 route_recheck_no_grace=route_recheck_no_grace,
+                server_provenance_evidence_id=server_provenance_evidence_id,
             )
         except ProviderTrustLifecycleApplicationError:
             raise
@@ -266,6 +300,7 @@ class ProviderTrustLifecycleApplicationService:
         now: datetime | None,
         *,
         route_recheck_no_grace: bool = False,
+        server_provenance_evidence_id: UUID | None = None,
     ) -> ProviderTrustLifecycleResult:
         try:
             key = validate_idempotency_key(idempotency_key)
@@ -373,6 +408,13 @@ class ProviderTrustLifecycleApplicationService:
                     "TRANSACTION_INTEGRITY_FAILURE"
                 )
             self._apply_plan(lifecycle_type, target, plan)
+            await self._bind_server_provenance(
+                lifecycle_type,
+                command,
+                target,
+                server_provenance_evidence_id,
+                plan.expected_version,
+            )
             result = ProviderTrustLifecycleResult(
                 resource_id=resource_id,
                 lifecycle_type=lifecycle_type,
@@ -432,6 +474,90 @@ class ProviderTrustLifecycleApplicationService:
                     "TRANSACTION_INTEGRITY_FAILURE"
                 )
             return result
+
+    async def _bind_server_provenance(
+        self,
+        lifecycle_type: str,
+        command: Enum,
+        target: Any,
+        server_provenance_evidence_id: UUID | None,
+        expected_version: int,
+    ) -> None:
+        if lifecycle_type not in _LINK_PROVENANCE_COMMANDS:
+            if server_provenance_evidence_id is not None:
+                raise ProviderTrustLifecycleApplicationError("INVALID_REQUEST")
+            return
+
+        if command in _LINK_PROVENANCE_COMMANDS[lifecycle_type]:
+            if server_provenance_evidence_id is not None:
+                evidence = (
+                    await self.db.execute(
+                        select(ProviderTrustVerificationEvidence)
+                        .where(
+                            ProviderTrustVerificationEvidence.id
+                            == server_provenance_evidence_id
+                        )
+                        .with_for_update()
+                    )
+                ).scalar_one_or_none()
+                if evidence is None:
+                    raise ProviderTrustLifecycleApplicationError("RESOURCE_NOT_FOUND")
+
+                target_matches = (
+                    (
+                        evidence.professional_verification_id == target.id
+                        and evidence.facility_verification_id is None
+                    )
+                    if lifecycle_type == "professional"
+                    else (
+                        evidence.facility_verification_id == target.id
+                        and evidence.professional_verification_id is None
+                    )
+                )
+
+                origin_val = (
+                    evidence.origin.value
+                    if hasattr(evidence.origin, "value")
+                    else str(evidence.origin)
+                )
+                outcome_val = (
+                    evidence.outcome.value
+                    if hasattr(evidence.outcome, "value")
+                    else str(evidence.outcome)
+                )
+                binding_val = (
+                    evidence.identity_binding_result.value
+                    if hasattr(evidence.identity_binding_result, "value")
+                    else str(evidence.identity_binding_result)
+                )
+
+                if (
+                    not target_matches
+                    or origin_val
+                    != VerificationEvidenceOrigin.SERVER_REGISTRY_OBSERVATION.value
+                    or outcome_val != VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value
+                    or binding_val != VerificationIdentityBindingResult.MATCHED.value
+                    or evidence.observed_resource_version != expected_version
+                    or not (evidence.source_id and evidence.source_id.strip())
+                    or not (
+                        evidence.adapter_version and evidence.adapter_version.strip()
+                    )
+                ):
+                    raise ProviderTrustLifecycleApplicationError(
+                        "EVIDENCE_BINDING_MISMATCH"
+                    )
+
+                target.server_provenance_evidence_id = server_provenance_evidence_id
+            else:
+                target.server_provenance_evidence_id = None
+        elif command in _PRESERVE_PROVENANCE_COMMANDS[lifecycle_type]:
+            if server_provenance_evidence_id is not None:
+                raise ProviderTrustLifecycleApplicationError("INVALID_REQUEST")
+            # Preserve target.server_provenance_evidence_id unchanged
+        else:
+            if server_provenance_evidence_id is not None:
+                raise ProviderTrustLifecycleApplicationError("INVALID_REQUEST")
+            target.server_provenance_evidence_id = None
 
     async def _lock_target(self, kind: str, resource_id: UUID):
         model = {
