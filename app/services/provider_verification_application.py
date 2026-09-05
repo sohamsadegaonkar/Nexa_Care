@@ -24,7 +24,7 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -187,6 +187,7 @@ class SourceAutomationPolicy:
     approved_adapter_version: str | None = None
     allowed_binding_methods: frozenset[str] = frozenset({"REGISTRY_MATCH"})
     automation_enabled: bool = False
+    recheck_interval_seconds: int | None = None
 
     def __post_init__(self) -> None:
         if not self.source_id or not self.source_id.strip():
@@ -211,6 +212,14 @@ class SourceAutomationPolicy:
             if not self.allowed_binding_methods:
                 raise ValueError(
                     "automation_enabled requires non-empty allowed_binding_methods"
+                )
+            if (
+                self.recheck_interval_seconds is None
+                or not isinstance(self.recheck_interval_seconds, int)
+                or self.recheck_interval_seconds <= 0
+            ):
+                raise ValueError(
+                    "automation_enabled requires positive recheck_interval_seconds"
                 )
 
 
@@ -254,6 +263,28 @@ class SourceAutomationPolicyRegistry:
                     continue
                 return p
         return SourceAutomationPolicy(source_id=source_id, automation_enabled=False)
+
+    def get_unique_automation_policy_for_authority(
+        self,
+        *,
+        resource_type: RegistryResourceType,
+        registration_authority_code: str,
+    ) -> SourceAutomationPolicy | None:
+        """Return the one enabled server policy for an authority, else fail closed.
+
+        Scheduling has no client-selected source.  Multiple enabled sources for
+        the same target authority are ambiguous unless a future server-owned
+        precedence policy explicitly resolves them, so this method deliberately
+        returns ``None`` for zero *and* multiple matches.
+        """
+        matches = [
+            policy
+            for policy in self._policies
+            if policy.automation_enabled
+            and policy.resource_type == resource_type
+            and policy.registration_authority_code == registration_authority_code
+        ]
+        return matches[0] if len(matches) == 1 else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -460,14 +491,12 @@ class ProviderVerificationApplicationService:
                     inv.resource_type == RegistryResourceType.FACILITY
                     and linked_evidence.facility_verification_id == target.id
                 )
-                source_id_valid = (
-                    isinstance(linked_evidence.source_id, str)
-                    and bool(linked_evidence.source_id.strip())
+                source_id_valid = isinstance(linked_evidence.source_id, str) and bool(
+                    linked_evidence.source_id.strip()
                 )
-                adapter_version_valid = (
-                    isinstance(linked_evidence.adapter_version, str)
-                    and bool(linked_evidence.adapter_version.strip())
-                )
+                adapter_version_valid = isinstance(
+                    linked_evidence.adapter_version, str
+                ) and bool(linked_evidence.adapter_version.strip())
                 if not (
                     target_matches
                     and linked_evidence.origin
@@ -652,6 +681,7 @@ class ProviderVerificationApplicationService:
                     evidence.id,
                     moment,
                     grace_expires_at=decision.grace_expires_at,
+                    source_policy=source_policy,
                 )
                 lifecycle_mutated = True
 
@@ -1022,10 +1052,16 @@ class ProviderVerificationApplicationService:
         now: datetime,
         *,
         grace_expires_at: datetime | None,
+        source_policy: SourceAutomationPolicy | None = None,
     ) -> None:
         resource_type = invocation.resource_type
         if resource_type == RegistryResourceType.PROFESSIONAL:
             if command == ProfessionalTransitionCommand.COMPLETE_RECHECK:
+                next_review_at: datetime | None = None
+                if source_policy and source_policy.recheck_interval_seconds is not None:
+                    next_review_at = observation.observed_at + timedelta(
+                        seconds=source_policy.recheck_interval_seconds
+                    )
                 facts = ProfessionalTransitionFacts(
                     registration_authority_code=target.registration_authority_code,
                     registration_number_normalized=target.registration_number_normalized,
@@ -1044,7 +1080,7 @@ class ProviderVerificationApplicationService:
                     reviewer_id=target.reviewer_id,
                     recheck_attempted_at=observation.observed_at,
                     previous_verification_valid=True,
-                    next_review_at=None,
+                    next_review_at=next_review_at,
                 )
                 plan = plan_professional_transition(
                     target.status, command, facts, now, current_version=target.version
@@ -1097,6 +1133,11 @@ class ProviderVerificationApplicationService:
 
         elif resource_type == RegistryResourceType.FACILITY:
             if command == FacilityTransitionCommand.COMPLETE_RECHECK:
+                next_review_at = None
+                if source_policy and source_policy.recheck_interval_seconds is not None:
+                    next_review_at = observation.observed_at + timedelta(
+                        seconds=source_policy.recheck_interval_seconds
+                    )
                 facts = FacilityTransitionFacts(
                     verification_method="REGISTRY_ADAPTER",
                     verification_source=observation.source_id,
@@ -1104,7 +1145,7 @@ class ProviderVerificationApplicationService:
                         observation, invocation, target
                     ),
                     reviewer_id=target.reviewer_id,
-                    next_review_at=None,
+                    next_review_at=next_review_at,
                 )
                 plan = plan_facility_transition(
                     target.status, command, facts, now, current_version=target.version

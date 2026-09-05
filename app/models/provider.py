@@ -23,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -138,6 +139,18 @@ class VerificationReviewWorkDisposition(str, enum.Enum):
     HUMAN_REVIEW_REQUIRED = "HUMAN_REVIEW_REQUIRED"
     SYSTEM_FAIL_CLOSED_AND_REVIEW = "SYSTEM_FAIL_CLOSED_AND_REVIEW"
     LIFECYCLE_SEMANTIC_GAP = "LIFECYCLE_SEMANTIC_GAP"
+
+
+class VerificationWorkStatus(str, enum.Enum):
+    """Lifecycle status of a provider verification work item."""
+
+    PENDING = "PENDING"
+    CLAIMED = "CLAIMED"
+    COMPLETED = "COMPLETED"
+    EXHAUSTED = "EXHAUSTED"
+    CANCELLED_STALE = "CANCELLED_STALE"
+    CANCELLED_POLICY = "CANCELLED_POLICY"
+    FAILED_TERMINAL = "FAILED_TERMINAL"
 
 
 class HospitalRegistry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
@@ -917,5 +930,147 @@ class ProviderTrustVerificationReviewWork(Base, UUIDPrimaryKeyMixin, TimestampMi
             "(status = 'OPEN' AND resolved_at IS NULL AND resolved_by_actor_id IS NULL) "
             "OR (status = 'RESOLVED' AND resolved_at IS NOT NULL AND resolved_by_actor_id IS NOT NULL)",
             name="chk_review_work_resolution_integrity",
+        ),
+    )
+
+
+class ProviderVerificationWork(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Durable work item for automated external registry verification.
+
+    Maintains execution state, leases, retries, and result linkage for
+    asynchronous background verification tasks.
+    """
+
+    __tablename__ = "provider_verification_work"
+
+    professional_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professional_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    facility_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("facility_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    lookup_purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    adapter_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_authority_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_number_normalized: Mapped[str] = mapped_column(
+        String(128), nullable=False
+    )
+    expected_resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    scheduler_reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationWorkStatus.PENDING.value,
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_trust_verification_evidence.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    professional_verification: Mapped[ProfessionalVerification | None] = relationship(
+        foreign_keys=[professional_verification_id],
+    )
+    facility_verification: Mapped[FacilityVerification | None] = relationship(
+        foreign_keys=[facility_verification_id],
+    )
+    result_evidence: Mapped[ProviderTrustVerificationEvidence | None] = relationship(
+        foreign_keys=[result_evidence_id],
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(professional_verification_id IS NOT NULL AND facility_verification_id IS NULL) "
+            "OR (professional_verification_id IS NULL AND facility_verification_id IS NOT NULL)",
+            name="ck_pvw_resource_target_xor",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'CLAIMED', 'COMPLETED', 'EXHAUSTED', "
+            "'CANCELLED_STALE', 'CANCELLED_POLICY', 'FAILED_TERMINAL')",
+            name="ck_pvw_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0 AND max_attempts >= 1",
+            name="ck_pvw_attempts",
+        ),
+        CheckConstraint(
+            "length(trim(source_id)) > 0",
+            name="ck_pvw_source_id_non_empty",
+        ),
+        CheckConstraint(
+            "length(trim(adapter_version)) > 0",
+            name="ck_pvw_adapter_version_non_empty",
+        ),
+        CheckConstraint(
+            "expected_resource_version >= 1",
+            name="ck_pvw_expected_version_positive",
+        ),
+        Index(
+            "uq_prof_active_verification_work",
+            "professional_verification_id",
+            "lookup_purpose",
+            "source_id",
+            "expected_resource_version",
+            unique=True,
+            postgresql_where=text(
+                "professional_verification_id IS NOT NULL AND status IN ('PENDING', 'CLAIMED')"
+            ),
+        ),
+        Index(
+            "uq_fac_active_verification_work",
+            "facility_verification_id",
+            "lookup_purpose",
+            "source_id",
+            "expected_resource_version",
+            unique=True,
+            postgresql_where=text(
+                "facility_verification_id IS NOT NULL AND status IN ('PENDING', 'CLAIMED')"
+            ),
+        ),
+        Index(
+            "ix_provider_verification_work_status_next_attempt",
+            "status",
+            "next_attempt_at",
+            "priority",
+        ),
+        Index(
+            "ix_provider_verification_work_prof_id",
+            "professional_verification_id",
+        ),
+        Index(
+            "ix_provider_verification_work_fac_id",
+            "facility_verification_id",
+        ),
+        Index(
+            "ix_provider_verification_work_lease_expires",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_provider_verification_work_result_evidence",
+            "result_evidence_id",
         ),
     )

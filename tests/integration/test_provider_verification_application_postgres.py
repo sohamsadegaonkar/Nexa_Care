@@ -103,7 +103,9 @@ def _get_db_url() -> str:
         if db_url and "nexa_qual_" in db_url:
             url = db_url
         elif db_url and "nexa_qual_" not in db_url:
-            pytest.skip("No disposable nexa_qual_ database configured in TEST_DATABASE_URL")
+            pytest.skip(
+                "No disposable nexa_qual_ database configured in TEST_DATABASE_URL"
+            )
         else:
             url = f"postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/{_DB_NAME}"
     if "127.0.0.1" not in url and "localhost" not in url:
@@ -172,6 +174,7 @@ def _make_prof_policy(
     adapter_version: str = "1.0.0",
     binding_methods: frozenset[str] = frozenset({"REGISTRY_MATCH"}),
     automation_enabled: bool = True,
+    recheck_interval_seconds: int = 2592000,
 ) -> SourceAutomationPolicy:
     return SourceAutomationPolicy(
         source_id=source_id,
@@ -180,6 +183,7 @@ def _make_prof_policy(
         approved_adapter_version=adapter_version,
         allowed_binding_methods=binding_methods,
         automation_enabled=automation_enabled,
+        recheck_interval_seconds=recheck_interval_seconds,
     )
 
 
@@ -189,6 +193,7 @@ def _make_fac_policy(
     adapter_version: str = "1.0.0",
     binding_methods: frozenset[str] = frozenset({"REGISTRY_MATCH"}),
     automation_enabled: bool = True,
+    recheck_interval_seconds: int = 2592000,
 ) -> SourceAutomationPolicy:
     return SourceAutomationPolicy(
         source_id=source_id,
@@ -197,6 +202,7 @@ def _make_fac_policy(
         approved_adapter_version=adapter_version,
         allowed_binding_methods=binding_methods,
         automation_enabled=automation_enabled,
+        recheck_interval_seconds=recheck_interval_seconds,
     )
 
 
@@ -3273,6 +3279,7 @@ async def test_source_policy_qualification_predicates(session_factory):
             approved_adapter_version="1.0.0",
             allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
             automation_enabled=True,
+            recheck_interval_seconds=2592000,
         )
         r2 = await _exec(bad_res_policy, _make_prof_obs(observed_at=now))
         assert (
@@ -3288,6 +3295,7 @@ async def test_source_policy_qualification_predicates(session_factory):
             approved_adapter_version="1.0.0",
             allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
             automation_enabled=True,
+            recheck_interval_seconds=2592000,
         )
         r3 = await _exec(bad_auth_policy, _make_prof_obs(observed_at=now))
         assert (
@@ -3303,6 +3311,7 @@ async def test_source_policy_qualification_predicates(session_factory):
             approved_adapter_version="2.0.0",
             allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
             automation_enabled=True,
+            recheck_interval_seconds=2592000,
         )
         r4 = await _exec(bad_ver_policy, _make_prof_obs(observed_at=now))
         assert (

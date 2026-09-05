@@ -13,6 +13,7 @@ LIFECYCLE_REVISION = "20260903_trust_lifecycle"
 AUTHORIZATION_REVISION = "20260903_trust_authorization"
 EVIDENCE_REVISION = "20260904_verification_evidence"
 APPLICATION_REVISION = "20260905_verification_application"
+SCHEDULER_REVISION = "20260906_verification_scheduler"
 
 
 def _source() -> str:
@@ -37,7 +38,7 @@ def test_provider_trust_migration_is_current_single_head() -> None:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == [APPLICATION_REVISION]
+    assert scripts.get_heads() == [SCHEDULER_REVISION]
     assert scripts.get_revision(REVISION).down_revision == "20260830_provider_trust"
     assert (
         scripts.get_revision(LIFECYCLE_REVISION).down_revision
@@ -49,8 +50,9 @@ def test_provider_trust_migration_is_current_single_head() -> None:
     assert (
         scripts.get_revision(EVIDENCE_REVISION).down_revision == AUTHORIZATION_REVISION
     )
+    assert scripts.get_revision(APPLICATION_REVISION).down_revision == EVIDENCE_REVISION
     assert (
-        scripts.get_revision(APPLICATION_REVISION).down_revision == EVIDENCE_REVISION
+        scripts.get_revision(SCHEDULER_REVISION).down_revision == APPLICATION_REVISION
     )
 
 

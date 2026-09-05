@@ -98,6 +98,7 @@ def test_source_automation_policy_matrix_matching() -> None:
             approved_adapter_version="1.2.0",
             allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
             automation_enabled=True,
+            recheck_interval_seconds=86400 * 30,
         )
     )
 
@@ -292,6 +293,29 @@ def test_source_automation_policy_default_deny() -> None:
             approved_adapter_version="1.0.0",
             allowed_binding_methods=frozenset(),
             automation_enabled=True,
+            recheck_interval_seconds=86400 * 30,
+        )
+
+    with pytest.raises(ValueError, match="recheck_interval_seconds"):
+        SourceAutomationPolicy(
+            source_id="SRC_PROF_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="MED_COUNCIL",
+            approved_adapter_version="1.0.0",
+            allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
+            automation_enabled=True,
+            recheck_interval_seconds=None,
+        )
+
+    with pytest.raises(ValueError, match="recheck_interval_seconds"):
+        SourceAutomationPolicy(
+            source_id="SRC_PROF_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="MED_COUNCIL",
+            approved_adapter_version="1.0.0",
+            allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
+            automation_enabled=True,
+            recheck_interval_seconds=0,
         )
 
     # Custom registration with all required fields
@@ -302,6 +326,7 @@ def test_source_automation_policy_default_deny() -> None:
             registration_authority_code="MED_COUNCIL",
             approved_adapter_version="1.0.0",
             automation_enabled=True,
+            recheck_interval_seconds=86400 * 30,
             allowed_binding_methods=frozenset({"REGISTRY_MATCH", "TOKEN_MATCH"}),
         )
     )
