@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+import logging
 from uuid import uuid4
 
 import pytest
@@ -305,12 +306,13 @@ async def test_step_up_principal_ip_rotation_allowed_with_warning(caplog):
         "app.core.dependencies.resolve_provider_session_context",
         AsyncMock(return_value=session_data),
     ):
-        principal = await get_provider_step_up_principal(request=req, credentials=creds)
-        assert principal.provider_id == pid
-        assert any(
-            "SESSION_IP_ROTATION_DETECTED" in record.message
-            for record in caplog.records
-        )
+        with caplog.at_level(logging.WARNING, logger="nexa_logger"):
+            principal = await get_provider_step_up_principal(request=req, credentials=creds)
+            assert principal.provider_id == pid
+            assert any(
+                "SESSION_IP_ROTATION_DETECTED" in record.message
+                for record in caplog.records
+            )
 
 
 # ---------------------------------------------------------------------------

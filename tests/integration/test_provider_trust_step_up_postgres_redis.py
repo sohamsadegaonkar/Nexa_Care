@@ -77,10 +77,17 @@ _CLIENT_IP = "127.0.0.1"
 
 
 def _get_db_url() -> str:
-    url = os.getenv("TEST_DATABASE_URL") or os.getenv(
-        "DATABASE_URL",
-        "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/nexa_qual_step_up_4d",
-    )
+    test_url = os.getenv("TEST_DATABASE_URL")
+    if test_url:
+        url = test_url
+    else:
+        db_url = os.getenv("DATABASE_URL")
+        if db_url and "nexa_qual_" in db_url:
+            url = db_url
+        elif db_url and "nexa_qual_" not in db_url:
+            pytest.skip("No disposable nexa_qual_ database configured in TEST_DATABASE_URL")
+        else:
+            url = "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/nexa_qual_step_up_4d"
     if "127.0.0.1" not in url and "localhost" not in url:
         pytest.fail("Database URL must be loopback-only")
     if "nexa_qual_" not in url:

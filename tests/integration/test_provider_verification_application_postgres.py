@@ -27,7 +27,7 @@ import pytest
 import pytest_asyncio
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
@@ -60,26 +60,26 @@ from app.services.clinical_eligibility import (
     ClinicalEligibilityService,
     InteractiveClinicalAuthentication,
 )
+from app.services.provider_trust_lifecycle import (
+    ProfessionalTransitionCommand,
+)
 from app.services.provider_verification_application import (
+    FacilityLookupRequest,
+    ProfessionalLookupRequest,
     ProviderVerificationApplicationResult,
     ProviderVerificationApplicationService,
     RegistryLookupInvocation,
+    RegistryObservation,
+    RegistryResourceType,
     SourceAutomationPolicy,
     SourceAutomationPolicyRegistry,
     ValidatedRegistryLookupEnvelope,
     VerificationApplicationError,
 )
-from app.services.provider_trust_lifecycle import ProfessionalTransitionCommand
 from app.services.provider_verification_decision_policy import (
     VerificationDecisionDisposition,
     VerificationDecisionPlan,
     VerificationDecisionReason,
-)
-from app.services.provider_verification_registry import (
-    FacilityLookupRequest,
-    ProfessionalLookupRequest,
-    RegistryObservation,
-    RegistryResourceType,
 )
 
 
@@ -95,10 +95,17 @@ _DB_NAME = "nexa_qual_slice5_app"
 
 
 def _get_db_url() -> str:
-    url = os.getenv("TEST_DATABASE_URL") or os.getenv(
-        "DATABASE_URL",
-        f"postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/{_DB_NAME}",
-    )
+    test_url = os.getenv("TEST_DATABASE_URL")
+    if test_url:
+        url = test_url
+    else:
+        db_url = os.getenv("DATABASE_URL")
+        if db_url and "nexa_qual_" in db_url:
+            url = db_url
+        elif db_url and "nexa_qual_" not in db_url:
+            pytest.skip("No disposable nexa_qual_ database configured in TEST_DATABASE_URL")
+        else:
+            url = f"postgresql+asyncpg://nexa:nexa_test@127.0.0.1:55439/{_DB_NAME}"
     if "127.0.0.1" not in url and "localhost" not in url:
         pytest.fail("Database URL must be loopback-only")
     if "nexa_qual_" not in url:
@@ -222,6 +229,7 @@ async def _seed_provider_and_verification(
     seed_server_provenance: bool = True,
     established_source_id: str = "QUAL_SOURCE_01",
     server_provenance_outcome: VerificationEvidenceOutcome = VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+    server_provenance_adapter_version: str | None = "1.0.0",
 ) -> tuple[HospitalRegistry, ProviderIdentity, ProfessionalVerification]:
     now = datetime.now(timezone.utc)
     fac_id = uuid.uuid4()
@@ -307,7 +315,7 @@ async def _seed_provider_and_verification(
             professional_verification_id=verif_id,
             origin=VerificationEvidenceOrigin.SERVER_REGISTRY_OBSERVATION.value,
             source_id=established_source_id,
-            adapter_version="1.0.0",
+            adapter_version=server_provenance_adapter_version,
             observed_at=now - timedelta(days=180),
             lookup_purpose=VerificationEvidenceLookupPurpose.INITIAL_VERIFICATION.value,
             outcome=server_provenance_outcome.value,
@@ -3546,6 +3554,219 @@ async def test_server_provenance_integrity_failure_on_corrupt_linked_evidence(
             await svc.apply_verification_observation(
                 envelope=ValidatedRegistryLookupEnvelope(inv, obs)
             )
+
+
+@pytest.mark.parametrize(
+    "case_label,corrupt_source_id,corrupt_adapter_version,constraint_to_drop,constraint_readd_sql",
+    [
+        (
+            "blank_source_id",
+            "   ",
+            "1.0.0",
+            "ck_provider_trust_verification_evidence_source_id_non_empty",
+            "ALTER TABLE provider_trust_verification_evidence ADD CONSTRAINT ck_provider_trust_verification_evidence_source_id_non_empty CHECK (length(trim(source_id)) > 0)",
+        ),
+        (
+            "null_adapter_version",
+            "QUAL_SOURCE_01",
+            None,
+            "ck_provider_trust_verification_evidence_adapter_version_origin",
+            "ALTER TABLE provider_trust_verification_evidence ADD CONSTRAINT ck_provider_trust_verification_evidence_adapter_version_origin CHECK ((origin = 'SERVER_REGISTRY_OBSERVATION' AND adapter_version IS NOT NULL AND length(trim(adapter_version)) > 0) OR (origin = 'MANUAL_REVIEWER_ATTESTATION'))",
+        ),
+        (
+            "blank_adapter_version",
+            "QUAL_SOURCE_01",
+            "   ",
+            "ck_provider_trust_verification_evidence_adapter_version_origin",
+            "ALTER TABLE provider_trust_verification_evidence ADD CONSTRAINT ck_provider_trust_verification_evidence_adapter_version_origin CHECK ((origin = 'SERVER_REGISTRY_OBSERVATION' AND adapter_version IS NOT NULL AND length(trim(adapter_version)) > 0) OR (origin = 'MANUAL_REVIEWER_ATTESTATION'))",
+        ),
+    ],
+)
+async def test_linked_anchor_rejection_for_malformed_provenance(
+    session_factory,
+    case_label,
+    corrupt_source_id,
+    corrupt_adapter_version,
+    constraint_to_drop,
+    constraint_readd_sql,
+):
+    """Prove TRANSACTION_INTEGRITY_FAILURE on malformed linked provenance anchor with zero mutations or side-effects."""
+    async with session_factory() as session:
+        # Drop constraint temporarily to permit seeding corrupt anchor
+        await session.execute(
+            text(
+                f"ALTER TABLE provider_trust_verification_evidence DROP CONSTRAINT IF EXISTS {constraint_to_drop}"
+            )
+        )
+        await session.commit()
+
+        v_id = None
+        anchor_ev_id = None
+        try:
+            now = datetime.now(timezone.utc)
+            _, _, verif = await _seed_provider_and_verification(
+                session,
+                status=ProfessionalVerificationStatus.VERIFIED,
+                established_source_id=corrupt_source_id,
+                server_provenance_adapter_version=corrupt_adapter_version,
+                reviewer_id="human-reviewer-123",
+            )
+            v_id = verif.id
+            v_reg = verif.registration_number_normalized
+            anchor_ev_id = verif.server_provenance_evidence_id
+            await session.commit()
+
+            # Target has server_provenance_evidence_id
+            assert anchor_ev_id is not None
+
+            # Capture baseline counts before application attempt
+            ev_count_before = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(ProviderTrustVerificationEvidence)
+                    .where(
+                        ProviderTrustVerificationEvidence.professional_verification_id
+                        == v_id
+                    )
+                )
+            ).scalar_one()
+            assert ev_count_before == 1
+
+            rw_count_before = (
+                await session.execute(
+                    select(func.count()).select_from(
+                        ProviderTrustVerificationReviewWork
+                    )
+                )
+            ).scalar_one()
+
+            idemp_key = f"provider-verification:professional:{uuid.uuid4()}"
+
+            audit_count_before = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM public.audit_outbox WHERE event_type LIKE 'PROVIDER_%'"
+                    )
+                )
+            ).scalar_one()
+
+            policy_reg = SourceAutomationPolicyRegistry()
+            policy_reg.register(_make_prof_policy())
+            svc = ProviderVerificationApplicationService(
+                session, source_policies=policy_reg, automation_enabled=True
+            )
+
+            req = ProfessionalLookupRequest(
+                registration_authority_code="MAHA_MED_COUNCIL",
+                registration_number_normalized=v_reg,
+                lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            )
+            inv = RegistryLookupInvocation(
+                resource_id=v_id,
+                resource_type=RegistryResourceType.PROFESSIONAL,
+                expected_version=1,
+                request=req,
+                invoked_at=now - timedelta(minutes=5),
+            )
+            obs = _make_prof_obs(observed_at=now)
+
+            # Application raises TRANSACTION_INTEGRITY_FAILURE
+            with pytest.raises(
+                VerificationApplicationError, match="TRANSACTION_INTEGRITY_FAILURE"
+            ):
+                await svc.apply_verification_observation(
+                    envelope=ValidatedRegistryLookupEnvelope(inv, obs),
+                    idempotency_key=idemp_key,
+                )
+
+            # Re-query verification record to prove ZERO lifecycle mutation
+            refreshed = (
+                await session.execute(
+                    select(ProfessionalVerification).where(
+                        ProfessionalVerification.id == v_id
+                    )
+                )
+            ).scalar_one()
+            assert refreshed.status == ProfessionalVerificationStatus.VERIFIED.value
+            assert refreshed.version == 1
+            assert refreshed.reviewer_id == "human-reviewer-123"
+            assert refreshed.server_provenance_evidence_id == anchor_ev_id
+
+            # Zero new evidence
+            ev_count_after = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(ProviderTrustVerificationEvidence)
+                    .where(
+                        ProviderTrustVerificationEvidence.professional_verification_id
+                        == v_id
+                    )
+                )
+            ).scalar_one()
+            assert ev_count_after == ev_count_before
+
+            # Zero review work
+            rw_count_after = (
+                await session.execute(
+                    select(func.count()).select_from(
+                        ProviderTrustVerificationReviewWork
+                    )
+                )
+            ).scalar_one()
+            assert rw_count_after == rw_count_before
+
+            # Zero completed idempotency response
+            idemp_row = (
+                await session.execute(
+                    text(
+                        "SELECT idempotency_key FROM public.mutation_idempotency WHERE idempotency_key = :k"
+                    ),
+                    {"k": idemp_key},
+                )
+            ).first()
+            assert idemp_row is None
+
+            # Zero lifecycle audit caused by the rejected application
+            audit_count_after = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM public.audit_outbox WHERE event_type LIKE 'PROVIDER_%'"
+                    )
+                )
+            ).scalar_one()
+            assert audit_count_after == audit_count_before
+
+        finally:
+            await session.rollback()
+            if v_id is not None:
+                await session.execute(
+                    text(
+                        "UPDATE professional_verification SET server_provenance_evidence_id = NULL WHERE id = :id"
+                    ),
+                    {"id": v_id},
+                )
+                await session.execute(
+                    text(
+                        "ALTER TABLE provider_trust_verification_evidence DISABLE TRIGGER trg_provider_trust_verification_evidence_immutable"
+                    )
+                )
+                await session.execute(
+                    text(
+                        "DELETE FROM provider_trust_verification_evidence WHERE professional_verification_id = :id"
+                    ),
+                    {"id": v_id},
+                )
+                await session.execute(
+                    text(
+                        "ALTER TABLE provider_trust_verification_evidence ENABLE TRIGGER trg_provider_trust_verification_evidence_immutable"
+                    )
+                )
+                await session.execute(
+                    text("DELETE FROM professional_verification WHERE id = :id"),
+                    {"id": v_id},
+                )
+            await session.execute(text(constraint_readd_sql))
+            await session.commit()
 
 
 @pytest.mark.parametrize(

@@ -1113,126 +1113,131 @@ def main() -> int:
         manifest = args.manifest
     # The CLI owns stdout/stderr in aggregate mode; provider event logs would
     # violate the single-JSON-object output contract.
-    logging.getLogger("nexa_logger").disabled = True
+    logger = logging.getLogger("nexa_logger")
+    original_disabled = logger.disabled
+    logger.disabled = True
     try:
-        result = asyncio.run(
-            run(
-                documents,
-                manifest,
-                region=args.region,
-                timeout=args.timeout,
-                attempts=args.attempts,
-                debug=args.debug,
-                capture_sanitized_replay=args.capture_sanitized_replay,
-                replay_sanitized=args.replay_sanitized,
-            )
-        )
-    except Exception as exc:  # manifest/config boundary before per-document execution
-        if args.debug:
-            safe = RuntimeError(INTERNAL_ERROR_CODE)
-            traceback.print_exception(type(safe), safe, exc.__traceback__)
-        result = {
-            "benchmark_valid": False,
-            "metrics_valid": False,
-            "attempted_documents": 0,
-            "successful_documents": 0,
-            "failed_documents": 0,
-            "expected_field_occurrences": 0,
-            "actual_field_occurrences": 0,
-            "matched_field_occurrences": 0,
-            "evidence_occurrences": 0,
-            "semantic_candidate_occurrences": 0,
-            "supporting_evidence_occurrences": 0,
-            "duplicate_provenance_occurrences": 0,
-            "unmatched_semantic_candidates": 0,
-            "unmatched_expected_occurrences": 0,
-            "evidence_occurrences_by_source_type": {},
-            "semantic_candidate_count": 0,
-            "exact_match_count": 0,
-            "unmatched_expected_count": 0,
-            "unmatched_candidate_count": 0,
-            "duplicate_provenance_count": 0,
-            "page_present_count": 0,
-            "page_missing_count": 0,
-            "page_present_by_source_type": {},
-            "page_missing_count_by_source_type": {},
-            "exact_matches_by_canonical_field": {},
-            "unmatched_expected_by_canonical_field": {},
-            "unmatched_candidates_by_canonical_field": {},
-            "identity_cases_correct": 0,
-            "identity_cases_incorrect": 0,
-            "identity_incorrect_case_indexes": [],
-            "identity_outcome_counts": _identity_outcome_counts(Counter()),
-            "identity_state_counts": _identity_state_counts(Counter()),
-            "identity_metrics": _identity_metrics(Counter()),
-            "identity_case_decisions": [],
-            "unmatched_expected_case_indexes_by_canonical_field": {},
-            "unmatched_candidate_case_indexes_by_canonical_field": {},
-            "unmatched_candidate_support_signatures": {},
-            "source_text_match_count_by_source_category": {},
-            "source_text_mismatch_count_by_source_category": {},
-            "identity_failure_reason_counts_by_canonical_field": {},
-            "unmatched_pair_diagnostics": [],
-            "unmatched_query_candidate_diagnostics": [],
-            "query_only_candidate_count_by_canonical_field": {},
-            "identity_failure_diagnostics": [],
-            "semantic_occurrence_match_count": 0,
-            "semantic_occurrence_precision": None,
-            "semantic_occurrence_recall": None,
-            "semantic_raw_exact_count": 0,
-            "semantic_raw_exact_rate": None,
-            "semantic_matches_added_beyond_exact": 0,
-            "semantic_unmatched_expected_count": 0,
-            "semantic_unmatched_candidate_count": 0,
-            "semantic_matches_added_by_canonical_field": {},
-            "routing_eligible_candidate_count": 0,
-            "routing_ineligible_candidate_count": 0,
-            "routing_ineligible_count_by_reason": {},
-            "routing_ineligible_count_by_canonical_field": {},
-            "routing_ineligible_case_indexes_by_canonical_field": {},
-            "routing_exact_match_count": 0,
-            "routing_exact_occurrence_precision": None,
-            "routing_exact_occurrence_recall": None,
-            "routing_semantic_match_count": 0,
-            "routing_semantic_occurrence_precision": None,
-            "routing_semantic_occurrence_recall": None,
-            "provider_error_counts": {INTERNAL_ERROR_CODE: 1},
-            "metrics": {
-                "successful_document_rate": None,
-                "unexpected_provider_failure_rate": None,
-                **_empty_accuracy_metrics(),
-            },
-            "gate_results": {},
-            "provider_mode": (
-                "sanitized_replay" if args.replay_sanitized is not None else "live"
-            ),
-            "live_provider_calls": 0 if args.replay_sanitized is not None else 0,
-        }
-        if args.replay_sanitized is not None:
-            try:
-                fixture_version = json.loads(manifest.read_text(encoding="utf-8")).get(
-                    "query_registry_version"
+        try:
+            result = asyncio.run(
+                run(
+                    documents,
+                    manifest,
+                    region=args.region,
+                    timeout=args.timeout,
+                    attempts=args.attempts,
+                    debug=args.debug,
+                    capture_sanitized_replay=args.capture_sanitized_replay,
+                    replay_sanitized=args.replay_sanitized,
                 )
-            except (OSError, json.JSONDecodeError):
-                fixture_version = None
-            result["query_registry"] = {
-                "production_version": TEXTRACT_PILOT_QUERY_SET_VERSION,
-                "fixture_version": fixture_version,
-                "matches_current": False,
-                "failure_code": "SANITIZED_QUERY_REGISTRY_DRIFT",
+            )
+        except Exception as exc:  # manifest/config boundary before per-document execution
+            if args.debug:
+                safe = RuntimeError(INTERNAL_ERROR_CODE)
+                traceback.print_exception(type(safe), safe, exc.__traceback__)
+            result = {
+                "benchmark_valid": False,
+                "metrics_valid": False,
+                "attempted_documents": 0,
+                "successful_documents": 0,
+                "failed_documents": 0,
+                "expected_field_occurrences": 0,
+                "actual_field_occurrences": 0,
+                "matched_field_occurrences": 0,
+                "evidence_occurrences": 0,
+                "semantic_candidate_occurrences": 0,
+                "supporting_evidence_occurrences": 0,
+                "duplicate_provenance_occurrences": 0,
+                "unmatched_semantic_candidates": 0,
+                "unmatched_expected_occurrences": 0,
+                "evidence_occurrences_by_source_type": {},
+                "semantic_candidate_count": 0,
+                "exact_match_count": 0,
+                "unmatched_expected_count": 0,
+                "unmatched_candidate_count": 0,
+                "duplicate_provenance_count": 0,
+                "page_present_count": 0,
+                "page_missing_count": 0,
+                "page_present_by_source_type": {},
+                "page_missing_count_by_source_type": {},
+                "exact_matches_by_canonical_field": {},
+                "unmatched_expected_by_canonical_field": {},
+                "unmatched_candidates_by_canonical_field": {},
+                "identity_cases_correct": 0,
+                "identity_cases_incorrect": 0,
+                "identity_incorrect_case_indexes": [],
+                "identity_outcome_counts": _identity_outcome_counts(Counter()),
+                "identity_state_counts": _identity_state_counts(Counter()),
+                "identity_metrics": _identity_metrics(Counter()),
+                "identity_case_decisions": [],
+                "unmatched_expected_case_indexes_by_canonical_field": {},
+                "unmatched_candidate_case_indexes_by_canonical_field": {},
+                "unmatched_candidate_support_signatures": {},
+                "source_text_match_count_by_source_category": {},
+                "source_text_mismatch_count_by_source_category": {},
+                "identity_failure_reason_counts_by_canonical_field": {},
+                "unmatched_pair_diagnostics": [],
+                "unmatched_query_candidate_diagnostics": [],
+                "query_only_candidate_count_by_canonical_field": {},
+                "identity_failure_diagnostics": [],
+                "semantic_occurrence_match_count": 0,
+                "semantic_occurrence_precision": None,
+                "semantic_occurrence_recall": None,
+                "semantic_raw_exact_count": 0,
+                "semantic_raw_exact_rate": None,
+                "semantic_matches_added_beyond_exact": 0,
+                "semantic_unmatched_expected_count": 0,
+                "semantic_unmatched_candidate_count": 0,
+                "semantic_matches_added_by_canonical_field": {},
+                "routing_eligible_candidate_count": 0,
+                "routing_ineligible_candidate_count": 0,
+                "routing_ineligible_count_by_reason": {},
+                "routing_ineligible_count_by_canonical_field": {},
+                "routing_ineligible_case_indexes_by_canonical_field": {},
+                "routing_exact_match_count": 0,
+                "routing_exact_occurrence_precision": None,
+                "routing_exact_occurrence_recall": None,
+                "routing_semantic_match_count": 0,
+                "routing_semantic_occurrence_precision": None,
+                "routing_semantic_occurrence_recall": None,
+                "provider_error_counts": {INTERNAL_ERROR_CODE: 1},
+                "metrics": {
+                    "successful_document_rate": None,
+                    "unexpected_provider_failure_rate": None,
+                    **_empty_accuracy_metrics(),
+                },
+                "gate_results": {},
+                "provider_mode": (
+                    "sanitized_replay" if args.replay_sanitized is not None else "live"
+                ),
+                "live_provider_calls": 0 if args.replay_sanitized is not None else 0,
             }
-    if "failure_classification" not in result and args.replay_sanitized is None:
-        result["failure_classification"] = FailureClassificationAccumulator().result(
-            expected_field_occurrences=0,
-            exact_match_count=0,
-            semantic_match_count=0,
-            semantic_candidate_count=0,
-            evidence_occurrences=0,
-            routing_eligible_count=0,
-            routing_ineligible_count=0,
-        )
-    print(json.dumps(result, sort_keys=True))
-    return benchmark_exit_code(result)
+            if args.replay_sanitized is not None:
+                try:
+                    fixture_version = json.loads(manifest.read_text(encoding="utf-8")).get(
+                        "query_registry_version"
+                    )
+                except (OSError, json.JSONDecodeError):
+                    fixture_version = None
+                result["query_registry"] = {
+                    "production_version": TEXTRACT_PILOT_QUERY_SET_VERSION,
+                    "fixture_version": fixture_version,
+                    "matches_current": False,
+                    "failure_code": "SANITIZED_QUERY_REGISTRY_DRIFT",
+                }
+        if "failure_classification" not in result and args.replay_sanitized is None:
+            result["failure_classification"] = FailureClassificationAccumulator().result(
+                expected_field_occurrences=0,
+                exact_match_count=0,
+                semantic_match_count=0,
+                semantic_candidate_count=0,
+                evidence_occurrences=0,
+                routing_eligible_count=0,
+                routing_ineligible_count=0,
+            )
+        print(json.dumps(result, sort_keys=True))
+        return benchmark_exit_code(result)
+    finally:
+        logger.disabled = original_disabled
 
 
 if __name__ == "__main__":

@@ -460,6 +460,14 @@ class ProviderVerificationApplicationService:
                     inv.resource_type == RegistryResourceType.FACILITY
                     and linked_evidence.facility_verification_id == target.id
                 )
+                source_id_valid = (
+                    isinstance(linked_evidence.source_id, str)
+                    and bool(linked_evidence.source_id.strip())
+                )
+                adapter_version_valid = (
+                    isinstance(linked_evidence.adapter_version, str)
+                    and bool(linked_evidence.adapter_version.strip())
+                )
                 if not (
                     target_matches
                     and linked_evidence.origin
@@ -468,11 +476,13 @@ class ProviderVerificationApplicationService:
                     == VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value
                     and linked_evidence.identity_binding_result
                     == VerificationIdentityBindingResult.MATCHED.value
+                    and source_id_valid
+                    and adapter_version_valid
                 ):
                     raise VerificationApplicationError("TRANSACTION_INTEGRITY_FAILURE")
 
                 server_provenance_established = True
-                established_server_source_id = linked_evidence.source_id
+                established_server_source_id = linked_evidence.source_id.strip()
 
             # 8. Check source automation policy & kill switch
             source_policy = self.source_policies.get_policy(

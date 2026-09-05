@@ -142,7 +142,7 @@ def test_session_principal_derives_actor_only_from_server_session() -> None:
             {
                 **_session(),
                 "mfa_verified_at": (
-                    datetime.now(timezone.utc) + timedelta(minutes=1)
+                    datetime.now(timezone.utc) + timedelta(days=1)
                 ).isoformat(),
             },
             428,
