@@ -262,15 +262,54 @@ def test_source_automation_policy_default_deny() -> None:
     assert policy.source_id == "UNKNOWN_SOURCE"
     assert policy.automation_enabled is False
 
-    # Custom registration
+    # Validation errors when automation_enabled=True without required fields
+    with pytest.raises(ValueError, match="resource_type"):
+        SourceAutomationPolicy(
+            source_id="SRC_PROF_01",
+            automation_enabled=True,
+        )
+
+    with pytest.raises(ValueError, match="registration_authority_code"):
+        SourceAutomationPolicy(
+            source_id="SRC_PROF_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            automation_enabled=True,
+        )
+
+    with pytest.raises(ValueError, match="approved_adapter_version"):
+        SourceAutomationPolicy(
+            source_id="SRC_PROF_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="MED_COUNCIL",
+            automation_enabled=True,
+        )
+
+    with pytest.raises(ValueError, match="allowed_binding_methods"):
+        SourceAutomationPolicy(
+            source_id="SRC_PROF_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="MED_COUNCIL",
+            approved_adapter_version="1.0.0",
+            allowed_binding_methods=frozenset(),
+            automation_enabled=True,
+        )
+
+    # Custom registration with all required fields
     registry.register(
         SourceAutomationPolicy(
             source_id="SRC_PROF_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="MED_COUNCIL",
+            approved_adapter_version="1.0.0",
             automation_enabled=True,
             allowed_binding_methods=frozenset({"REGISTRY_MATCH", "TOKEN_MATCH"}),
         )
     )
-    p = registry.get_policy("SRC_PROF_01")
+    p = registry.get_policy(
+        "SRC_PROF_01",
+        resource_type=RegistryResourceType.PROFESSIONAL,
+        registration_authority_code="MED_COUNCIL",
+    )
     assert p.automation_enabled is True
     assert "TOKEN_MATCH" in p.allowed_binding_methods
 

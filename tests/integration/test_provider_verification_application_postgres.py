@@ -61,6 +61,7 @@ from app.services.clinical_eligibility import (
     InteractiveClinicalAuthentication,
 )
 from app.services.provider_verification_application import (
+    ProviderVerificationApplicationResult,
     ProviderVerificationApplicationService,
     RegistryLookupInvocation,
     SourceAutomationPolicy,
@@ -158,6 +159,40 @@ async def session_factory():
     await engine.dispose()
 
 
+def _make_prof_policy(
+    source_id: str = "QUAL_SOURCE_01",
+    authority: str = "MAHA_MED_COUNCIL",
+    adapter_version: str = "1.0.0",
+    binding_methods: frozenset[str] = frozenset({"REGISTRY_MATCH"}),
+    automation_enabled: bool = True,
+) -> SourceAutomationPolicy:
+    return SourceAutomationPolicy(
+        source_id=source_id,
+        resource_type=RegistryResourceType.PROFESSIONAL,
+        registration_authority_code=authority,
+        approved_adapter_version=adapter_version,
+        allowed_binding_methods=binding_methods,
+        automation_enabled=automation_enabled,
+    )
+
+
+def _make_fac_policy(
+    source_id: str = "QUAL_SOURCE_01",
+    authority: str = "ROHINI",
+    adapter_version: str = "1.0.0",
+    binding_methods: frozenset[str] = frozenset({"REGISTRY_MATCH"}),
+    automation_enabled: bool = True,
+) -> SourceAutomationPolicy:
+    return SourceAutomationPolicy(
+        source_id=source_id,
+        resource_type=RegistryResourceType.FACILITY,
+        registration_authority_code=authority,
+        approved_adapter_version=adapter_version,
+        allowed_binding_methods=binding_methods,
+        automation_enabled=automation_enabled,
+    )
+
+
 def _make_prof_obs(
     *,
     outcome: VerificationEvidenceOutcome = VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
@@ -186,6 +221,7 @@ async def _seed_provider_and_verification(
     recheck_failure_reason: str | None = "SOURCE_UNAVAILABLE",
     seed_server_provenance: bool = True,
     established_source_id: str = "QUAL_SOURCE_01",
+    server_provenance_outcome: VerificationEvidenceOutcome = VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
 ) -> tuple[HospitalRegistry, ProviderIdentity, ProfessionalVerification]:
     now = datetime.now(timezone.utc)
     fac_id = uuid.uuid4()
@@ -274,7 +310,9 @@ async def _seed_provider_and_verification(
             adapter_version="1.0.0",
             observed_at=now - timedelta(days=180),
             lookup_purpose=VerificationEvidenceLookupPurpose.INITIAL_VERIFICATION.value,
-            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value,
+            outcome=server_provenance_outcome.value,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED.value,
+            binding_method="REGISTRY_MATCH",
             observed_resource_version=1,
         )
         session.add(prev_ev)
@@ -358,6 +396,8 @@ async def _seed_facility_and_verification(
             observed_at=now - timedelta(days=180),
             lookup_purpose=VerificationEvidenceLookupPurpose.INITIAL_VERIFICATION.value,
             outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED.value,
+            binding_method="REGISTRY_MATCH",
             observed_resource_version=1,
         )
         session.add(prev_ev)
@@ -591,13 +631,7 @@ async def test_positive_recheck_automation_flow(session_factory):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-                allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -683,12 +717,7 @@ async def test_fail_closed_grace_cancellation_flow(session_factory):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -719,8 +748,11 @@ async def test_fail_closed_grace_cancellation_flow(session_factory):
         assert refreshed.status == ProfessionalVerificationStatus.RECHECK_DUE.value
         assert refreshed.version == 2
         assert refreshed.grace_expires_at is None
-        assert refreshed.recheck_failure_reason == "SOURCE_RESPONSE_INVALID"
-        assert refreshed.server_provenance_evidence_id == result.evidence_id
+        assert refreshed.recheck_failure_reason == "REVIEW_REQUIRED"
+        assert (
+            refreshed.server_provenance_evidence_id
+            == verif.server_provenance_evidence_id
+        )
 
         # Verify review work row in DB
         work = (
@@ -789,12 +821,7 @@ async def test_open_review_work_blocks_positive_automation(session_factory):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -857,12 +884,7 @@ async def test_missing_reviewer_id_blocks_automation(session_factory):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -942,7 +964,7 @@ async def test_kill_switch_and_source_policy_deny(session_factory):
         )
         assert (
             result1.reason_code
-            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED.value
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
         )
         assert result1.lifecycle_mutated is False
         assert result1.review_work_id is not None
@@ -965,12 +987,7 @@ async def test_kill_switch_and_source_policy_deny(session_factory):
         envelope2 = ValidatedRegistryLookupEnvelope(invocation=inv2, observation=obs)
 
         enabled_policy_registry = SourceAutomationPolicyRegistry()
-        enabled_policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        enabled_policy_registry.register(_make_prof_policy())
         svc_kill_switch = ProviderVerificationApplicationService(
             session,
             source_policies=enabled_policy_registry,
@@ -986,7 +1003,7 @@ async def test_kill_switch_and_source_policy_deny(session_factory):
         )
         assert (
             result2.reason_code
-            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED.value
+            == VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED.value
         )
         assert result2.lifecycle_mutated is False
 
@@ -1022,7 +1039,7 @@ async def test_kill_switch_and_source_policy_deny(session_factory):
         )
         assert (
             result3.reason_code
-            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED.value
+            == VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED.value
         )
         assert result3.lifecycle_mutated is False
 
@@ -1057,12 +1074,7 @@ async def test_optimistic_concurrency_conflict(session_factory):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc1 = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -1117,12 +1129,7 @@ async def test_idempotency_replay_and_conflict(session_factory):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -1428,12 +1435,7 @@ async def test_observation_only_transactions(session_factory):
         await session.commit()
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
         )
@@ -1680,9 +1682,7 @@ async def test_verified_professional_adverse_observation_marks_recheck_due_witho
             observation=observation,
         )
         policies = SourceAutomationPolicyRegistry()
-        policies.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policies.register(_make_prof_policy())
         result = await ProviderVerificationApplicationService(
             session,
             source_policies=policies,
@@ -1794,9 +1794,7 @@ async def test_manual_review_purpose_review_work_disposition(session_factory):
             observation=observation,
         )
         policies = SourceAutomationPolicyRegistry()
-        policies.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policies.register(_make_prof_policy())
         result = await ProviderVerificationApplicationService(
             session,
             source_policies=policies,
@@ -1887,9 +1885,7 @@ async def test_lifecycle_semantic_gap_review_work_disposition(session_factory):
             observation=observation,
         )
         policies = SourceAutomationPolicyRegistry()
-        policies.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policies.register(_make_prof_policy())
         svc = ProviderVerificationApplicationService(
             session,
             source_policies=policies,
@@ -1997,9 +1993,7 @@ async def test_policy_semantic_gap_review_work_disposition(session_factory):
             observation=observation,
         )
         policies = SourceAutomationPolicyRegistry()
-        policies.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policies.register(_make_prof_policy())
         svc = ProviderVerificationApplicationService(
             session,
             source_policies=policies,
@@ -2111,9 +2105,7 @@ async def test_ordinary_recheck_outage_bounded_grace_and_no_extension(session_fa
         env1 = ValidatedRegistryLookupEnvelope(invocation=inv1, observation=obs1)
 
         policies = SourceAutomationPolicyRegistry()
-        policies.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policies.register(_make_prof_policy())
         svc = ProviderVerificationApplicationService(
             session, source_policies=policies, automation_enabled=True
         )
@@ -2218,15 +2210,7 @@ async def test_facility_qualification_flow(session_factory):
     """Exhaustive qualification of Facility verification automation flow."""
     async with session_factory() as session:
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                resource_type="FACILITY",
-                registration_authority_code="ROHINI",
-                automation_enabled=True,
-                allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
-            )
-        )
+        policy_registry.register(_make_fac_policy())
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
         )
@@ -2541,12 +2525,7 @@ async def test_clinical_denial_proof(session_factory, cancellation_outcome):
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(
-                source_id="QUAL_SOURCE_01",
-                automation_enabled=True,
-            )
-        )
+        policy_registry.register(_make_prof_policy())
 
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
@@ -2678,9 +2657,7 @@ async def test_rollback_atomicity_via_failure_injection(
         envelope = ValidatedRegistryLookupEnvelope(invocation=inv, observation=obs)
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policy_registry.register(_make_prof_policy())
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
         )
@@ -2868,9 +2845,7 @@ async def test_concurrency_matrix_and_terminal_resurrection_prohibition(
         )
 
         policy_registry = SourceAutomationPolicyRegistry()
-        policy_registry.register(
-            SourceAutomationPolicy(source_id="QUAL_SOURCE_01", automation_enabled=True)
-        )
+        policy_registry.register(_make_prof_policy())
         svc = ProviderVerificationApplicationService(
             session, source_policies=policy_registry, automation_enabled=True
         )
@@ -3090,3 +3065,1316 @@ async def test_three_path_migration_qualification():
         res = await conn.execute(text("SELECT version_num FROM alembic_version"))
         assert res.scalar() == HEAD
     await engine3.dispose()
+
+
+# ===========================================================================
+# 18. Explicit Phase-5E Post-Commit Hardening Tests
+# ===========================================================================
+
+
+async def test_universal_kill_switch_blocks_all_mutations(session_factory):
+    """Prove global kill switch blocks positive, adverse, cancellation, and facility machine mutations."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        policy_reg.register(_make_fac_policy())
+
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=False
+        )
+
+        # 1. Blocks positive COMPLETE_RECHECK
+        _, _, v1 = await _seed_provider_and_verification(session)
+        await session.commit()
+        req1 = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v1.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv1 = RegistryLookupInvocation(
+            resource_id=v1.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req1,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs1 = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE, observed_at=now
+        )
+        res1 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv1, obs1)
+        )
+        assert (
+            res1.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res1.reason_code
+            == VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED.value
+        )
+        assert res1.lifecycle_mutated is False
+
+        # 2. Blocks adverse MARK_RECHECK_DUE
+        _, _, v2 = await _seed_provider_and_verification(
+            session, status=ProfessionalVerificationStatus.VERIFIED
+        )
+        await session.commit()
+        req2 = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v2.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv2 = RegistryLookupInvocation(
+            resource_id=v2.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req2,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs2 = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE, observed_at=now
+        )
+        res2 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv2, obs2)
+        )
+        assert (
+            res2.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res2.reason_code
+            == VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED.value
+        )
+        assert res2.lifecycle_mutated is False
+
+        # 3. Blocks CANCEL_RECHECK_GRACE
+        _, _, v3 = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.RECHECK_DUE,
+            grace_expires_at=now + timedelta(hours=10),
+        )
+        await session.commit()
+        req3 = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v3.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv3 = RegistryLookupInvocation(
+            resource_id=v3.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req3,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs3 = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID, observed_at=now
+        )
+        res3 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv3, obs3), now=now
+        )
+        assert (
+            res3.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res3.reason_code
+            == VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED.value
+        )
+        assert res3.lifecycle_mutated is False
+
+        # 4. Blocks Facility MARK_RECHECK_REQUIRED
+        _, fv = await _seed_facility_and_verification(
+            session, status=FacilityVerificationStatus.VERIFIED
+        )
+        await session.commit()
+        req4 = FacilityLookupRequest(
+            registration_authority_code="ROHINI",
+            registration_number_normalized=fv.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv4 = RegistryLookupInvocation(
+            resource_id=fv.id,
+            resource_type=RegistryResourceType.FACILITY,
+            expected_version=1,
+            request=req4,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs4 = _make_fac_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE, observed_at=now
+        )
+        res4 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv4, obs4)
+        )
+        assert (
+            res4.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res4.reason_code
+            == VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED.value
+        )
+        assert res4.lifecycle_mutated is False
+
+
+async def test_source_policy_qualification_predicates(session_factory):
+    """Prove all policy qualification predicates fail closed to SOURCE_AUTOMATION_POLICY_DENIED."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+
+        async def _exec(
+            policy: SourceAutomationPolicy | None, obs: RegistryObservation
+        ) -> ProviderVerificationApplicationResult:
+            _, _, v = await _seed_provider_and_verification(session)
+            await session.commit()
+            req = ProfessionalLookupRequest(
+                registration_authority_code="MAHA_MED_COUNCIL",
+                registration_number_normalized=v.registration_number_normalized,
+                lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            )
+            reg = SourceAutomationPolicyRegistry()
+            if policy:
+                reg.register(policy)
+            service = ProviderVerificationApplicationService(
+                session, source_policies=reg, automation_enabled=True
+            )
+            inv = RegistryLookupInvocation(
+                resource_id=v.id,
+                resource_type=RegistryResourceType.PROFESSIONAL,
+                expected_version=1,
+                request=req,
+                invoked_at=now - timedelta(minutes=5),
+            )
+            return await service.apply_verification_observation(
+                envelope=ValidatedRegistryLookupEnvelope(inv, obs)
+            )
+
+        # 1. Unregistered source
+        obs_base = _make_prof_obs(source_id="QUAL_SOURCE_01", observed_at=now)
+        r1 = await _exec(None, obs_base)
+        assert (
+            r1.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+
+        # 2. Resource type mismatch in policy
+        bad_res_policy = SourceAutomationPolicy(
+            source_id="QUAL_SOURCE_01",
+            resource_type=RegistryResourceType.FACILITY,
+            registration_authority_code="MAHA_MED_COUNCIL",
+            approved_adapter_version="1.0.0",
+            allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
+            automation_enabled=True,
+        )
+        r2 = await _exec(bad_res_policy, _make_prof_obs(observed_at=now))
+        assert (
+            r2.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+
+        # 3. Authority code mismatch in policy
+        bad_auth_policy = SourceAutomationPolicy(
+            source_id="QUAL_SOURCE_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="OTHER_COUNCIL",
+            approved_adapter_version="1.0.0",
+            allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
+            automation_enabled=True,
+        )
+        r3 = await _exec(bad_auth_policy, _make_prof_obs(observed_at=now))
+        assert (
+            r3.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+
+        # 4. Adapter version mismatch
+        bad_ver_policy = SourceAutomationPolicy(
+            source_id="QUAL_SOURCE_01",
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            registration_authority_code="MAHA_MED_COUNCIL",
+            approved_adapter_version="2.0.0",
+            allowed_binding_methods=frozenset({"REGISTRY_MATCH"}),
+            automation_enabled=True,
+        )
+        r4 = await _exec(bad_ver_policy, _make_prof_obs(observed_at=now))
+        assert (
+            r4.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+
+        # 5. Missing binding_method on observation
+        obs_no_binding = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method=None,
+        )
+        r5 = await _exec(_make_prof_policy(), obs_no_binding)
+        assert (
+            r5.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+
+        # 6. Unapproved binding method on observation
+        obs_unapproved_binding = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method="UNAPPROVED_METHOD",
+        )
+        r6 = await _exec(_make_prof_policy(), obs_unapproved_binding)
+        assert (
+            r6.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+
+
+async def test_provenance_anchor_preservation_and_update(session_factory):
+    """Prove anchor updated only on COMPLETE_RECHECK, preserved on all adverse/cancellation."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        # 1. Professional VERIFIED receives adverse CONFIRMED_INACTIVE -> MARK_RECHECK_DUE preserves anchor
+        _, _, v_adv = await _seed_provider_and_verification(
+            session, status=ProfessionalVerificationStatus.VERIFIED
+        )
+        orig_anchor = v_adv.server_provenance_evidence_id
+        await session.commit()
+
+        req = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v_adv.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv = RegistryLookupInvocation(
+            resource_id=v_adv.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE, observed_at=now
+        )
+        res = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv, obs)
+        )
+        assert res.applied_command == "MARK_RECHECK_DUE"
+        assert res.lifecycle_mutated is True
+
+        refreshed = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v_adv.id
+                )
+            )
+        ).scalar_one()
+        assert refreshed.server_provenance_evidence_id == orig_anchor
+
+        # 2. Professional in active grace receives non-outage failure -> CANCEL_RECHECK_GRACE preserves anchor
+        _, _, v_grace = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.RECHECK_DUE,
+            grace_expires_at=now + timedelta(hours=12),
+        )
+        orig_grace_anchor = v_grace.server_provenance_evidence_id
+        await session.commit()
+
+        req_grace = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v_grace.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv_grace = RegistryLookupInvocation(
+            resource_id=v_grace.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req_grace,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_grace = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID, observed_at=now
+        )
+        res_grace = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv_grace, obs_grace), now=now
+        )
+        assert res_grace.applied_command == "CANCEL_RECHECK_GRACE"
+        assert res_grace.lifecycle_mutated is True
+
+        refreshed_grace = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v_grace.id
+                )
+            )
+        ).scalar_one()
+        assert refreshed_grace.server_provenance_evidence_id == orig_grace_anchor
+
+        # 3. Professional RECHECK_DUE receives CONFIRMED_ACTIVE -> COMPLETE_RECHECK updates anchor
+        _, _, v_recheck = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.RECHECK_DUE,
+            grace_expires_at=now + timedelta(hours=12),
+        )
+        orig_recheck_anchor = v_recheck.server_provenance_evidence_id
+        await session.commit()
+
+        req_pos = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v_recheck.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv_pos = RegistryLookupInvocation(
+            resource_id=v_recheck.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req_pos,
+            invoked_at=now - timedelta(minutes=2),
+        )
+        obs_pos = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE, observed_at=now
+        )
+        res_pos = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv_pos, obs_pos)
+        )
+        assert res_pos.applied_command == "COMPLETE_RECHECK"
+        assert res_pos.lifecycle_mutated is True
+
+        refreshed_pos = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v_recheck.id
+                )
+            )
+        ).scalar_one()
+        assert refreshed_pos.server_provenance_evidence_id == res_pos.evidence_id
+        assert refreshed_pos.server_provenance_evidence_id != orig_recheck_anchor
+
+
+async def test_server_provenance_derived_strictly_from_linked_evidence(session_factory):
+    """Prove server continuity is derived by querying the linked evidence row, not projection source."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        _, _, verif = await _seed_provider_and_verification(
+            session, established_source_id="GENUINE_SOURCE"
+        )
+        # Manually alter free-form target.verification_source to demonstrate it is ignored
+        verif.verification_source = "FABRICATED_SOURCE"
+        await session.commit()
+
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy(source_id="GENUINE_SOURCE"))
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        req = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=verif.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv = RegistryLookupInvocation(
+            resource_id=verif.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        # Observation from GENUINE_SOURCE matches linked evidence source_id
+        obs = _make_prof_obs(
+            source_id="GENUINE_SOURCE",
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            observed_at=now,
+        )
+        res = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv, obs)
+        )
+        assert (
+            res.decision_disposition
+            == VerificationDecisionDisposition.SYSTEM_TRANSITION_CANDIDATE.value
+        )
+        assert res.applied_command == "COMPLETE_RECHECK"
+
+
+async def test_server_provenance_integrity_failure_on_corrupt_linked_evidence(
+    session_factory,
+):
+    """If server_provenance_evidence_id points to corrupt or missing evidence, TRANSACTION_INTEGRITY_FAILURE is raised."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        _, _, verif = await _seed_provider_and_verification(
+            session,
+            server_provenance_outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE,
+        )
+        await session.commit()
+
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        req = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=verif.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv = RegistryLookupInvocation(
+            resource_id=verif.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs = _make_prof_obs(observed_at=now)
+        with pytest.raises(
+            VerificationApplicationError, match="TRANSACTION_INTEGRITY_FAILURE"
+        ):
+            await svc.apply_verification_observation(
+                envelope=ValidatedRegistryLookupEnvelope(inv, obs)
+            )
+
+
+@pytest.mark.parametrize(
+    "outcome,expected_failure_reason,expect_adverse_signal",
+    [
+        (
+            VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID,
+            "SOURCE_RESPONSE_INVALID",
+            False,
+        ),
+        (VerificationEvidenceOutcome.NOT_FOUND, "SOURCE_NOT_FOUND", True),
+        (VerificationEvidenceOutcome.CONFIRMED_INACTIVE, "REVIEW_REQUIRED", True),
+        (VerificationEvidenceOutcome.IDENTITY_MISMATCH, "REVIEW_REQUIRED", True),
+        (
+            VerificationEvidenceOutcome.SOURCE_AUTHENTICATION_FAILURE,
+            "REVIEW_REQUIRED",
+            False,
+        ),
+        (
+            VerificationEvidenceOutcome.SOURCE_INTEGRITY_FAILURE,
+            "REVIEW_REQUIRED",
+            False,
+        ),
+        (VerificationEvidenceOutcome.AMBIGUOUS, "REVIEW_REQUIRED", False),
+        (VerificationEvidenceOutcome.REVIEW_REQUIRED, "REVIEW_REQUIRED", False),
+    ],
+)
+async def test_cancellation_failure_reason_and_adverse_signal_mappings(
+    session_factory, outcome, expected_failure_reason, expect_adverse_signal
+):
+    """Prove exact cancellation failure reason and authoritative adverse signal mappings."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        _, _, verif = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.RECHECK_DUE,
+            grace_expires_at=now + timedelta(hours=12),
+        )
+        await session.commit()
+
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        req = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=verif.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv = RegistryLookupInvocation(
+            resource_id=verif.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_time = now - timedelta(minutes=1)
+        obs = _make_prof_obs(outcome=outcome, observed_at=obs_time)
+        res = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv, obs), now=now
+        )
+
+        assert res.applied_command == "CANCEL_RECHECK_GRACE"
+        refreshed = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == verif.id
+                )
+            )
+        ).scalar_one()
+        assert refreshed.recheck_failure_reason == expected_failure_reason
+        if expect_adverse_signal:
+            assert refreshed.authoritative_adverse_signal_at == obs_time
+        else:
+            assert refreshed.authoritative_adverse_signal_at is None
+
+
+async def test_platform_audit_partition_and_metadata(session_factory):
+    """Prove Professional uses platform:platform and Facility uses hospital:{facility_id}:platform."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        policy_reg.register(_make_fac_policy())
+
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        # 1. Professional
+        _, _, prof = await _seed_provider_and_verification(session)
+        await session.commit()
+        req_p = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=prof.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv_p = RegistryLookupInvocation(
+            resource_id=prof.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req_p,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_p = _make_prof_obs(observed_at=now)
+        res_p = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv_p, obs_p)
+        )
+
+        p_outbox = (
+            await session.execute(
+                text(
+                    "SELECT chain_partition, payload FROM public.audit_outbox WHERE idempotency_key = :k"
+                ),
+                {"k": f"evidence-obs:{res_p.evidence_id}"},
+            )
+        ).first()
+        assert p_outbox is not None
+        assert p_outbox.chain_partition == "platform:platform"
+        p_meta = (
+            p_outbox.payload["metadata"]
+            if isinstance(p_outbox.payload, dict)
+            else json.loads(p_outbox.payload)["metadata"]
+        )
+        assert p_meta["actor_type"] == "SYSTEM_AUTOMATION"
+        assert p_meta["execution_mode"] == "SYSTEM_AUTOMATION"
+        assert p_meta["resource_type"] == "PROFESSIONAL"
+        assert p_meta["target_id"] == str(prof.id)
+        assert p_meta["evidence_id"] == str(res_p.evidence_id)
+        assert p_meta["source_id"] == "QUAL_SOURCE_01"
+        assert p_meta["adapter_version"] == "1.0.0"
+
+        # 2. Facility
+        _, fac = await _seed_facility_and_verification(
+            session, status=FacilityVerificationStatus.RECHECK_REQUIRED
+        )
+        await session.commit()
+        req_f = FacilityLookupRequest(
+            registration_authority_code="ROHINI",
+            registration_number_normalized=fac.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv_f = RegistryLookupInvocation(
+            resource_id=fac.id,
+            resource_type=RegistryResourceType.FACILITY,
+            expected_version=1,
+            request=req_f,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_f = _make_fac_obs(observed_at=now)
+        res_f = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv_f, obs_f)
+        )
+
+        f_outbox = (
+            await session.execute(
+                text(
+                    "SELECT chain_partition, payload FROM public.audit_outbox WHERE idempotency_key = :k"
+                ),
+                {"k": f"evidence-obs:{res_f.evidence_id}"},
+            )
+        ).first()
+        assert f_outbox is not None
+        assert f_outbox.chain_partition == f"hospital:{fac.facility_id}:platform"
+        f_meta = (
+            f_outbox.payload["metadata"]
+            if isinstance(f_outbox.payload, dict)
+            else json.loads(f_outbox.payload)["metadata"]
+        )
+        assert f_meta["resource_type"] == "FACILITY"
+        assert f_meta["target_id"] == str(fac.id)
+
+
+async def test_server_owned_idempotency_key_derivation(session_factory):
+    """Prove omitting idempotency_key derives deterministic server-owned key and permits replay."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        _, _, prof = await _seed_provider_and_verification(session)
+        await session.commit()
+
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        req = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=prof.registration_number_normalized,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv = RegistryLookupInvocation(
+            resource_id=prof.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req,
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs = _make_prof_obs(observed_at=now)
+        env = ValidatedRegistryLookupEnvelope(inv, obs)
+
+        # First call with idempotency_key=None
+        res1 = await svc.apply_verification_observation(
+            envelope=env, idempotency_key=None
+        )
+        assert res1.idempotent_replay is False
+
+        # Verify idempotency key in public.mutation_idempotency matches expected derivation
+        expected_key = f"provider-verification:professional:{inv.invocation_id}"
+        row = (
+            await session.execute(
+                text(
+                    "SELECT idempotency_key, response_status FROM public.mutation_idempotency WHERE idempotency_key = :k"
+                ),
+                {"k": expected_key},
+            )
+        ).first()
+        assert row is not None
+        assert row.response_status == 200
+
+        # Second call with idempotency_key=None replays identical result
+        res2 = await svc.apply_verification_observation(
+            envelope=env, idempotency_key=None
+        )
+        assert res2.idempotent_replay is True
+        assert res2.evidence_id == res1.evidence_id
+        assert res2.resulting_version == res1.resulting_version
+
+
+async def test_verification_reference_resolution_priority(session_factory):
+    """Prove verification reference resolution order: source_record_reference -> external_transaction_id -> invocation_id."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        # Case 1: source_record_reference present
+        _, _, v1 = await _seed_provider_and_verification(session)
+        await session.commit()
+        inv1 = RegistryLookupInvocation(
+            resource_id=v1.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v1.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs1 = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method="REGISTRY_MATCH",
+            source_record_reference="AUTH_RECORD_999",
+            external_transaction_id="TX_12345",
+        )
+        res1 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv1, obs1)
+        )
+        assert res1.applied_command == "COMPLETE_RECHECK"
+        ref1 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v1.id
+                )
+            )
+        ).scalar_one()
+        assert ref1.verification_reference == "AUTH_RECORD_999"
+        assert ref1.verification_method == "REGISTRY_ADAPTER"
+
+        # Case 2: source_record_reference None, external_transaction_id present
+        _, _, v2 = await _seed_provider_and_verification(session)
+        await session.commit()
+        inv2 = RegistryLookupInvocation(
+            resource_id=v2.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v2.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs2 = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method="REGISTRY_MATCH",
+            source_record_reference=None,
+            external_transaction_id="TX_12345",
+        )
+        _ = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv2, obs2)
+        )
+        ref2 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v2.id
+                )
+            )
+        ).scalar_one()
+        assert ref2.verification_reference == "TX_12345"
+
+        # Case 3: both None -> invocation:{invocation_id}
+        _, _, v3 = await _seed_provider_and_verification(session)
+        await session.commit()
+        inv3 = RegistryLookupInvocation(
+            resource_id=v3.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v3.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs3 = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method="REGISTRY_MATCH",
+            source_record_reference=None,
+            external_transaction_id=None,
+        )
+        _ = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv3, obs3)
+        )
+        ref3 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v3.id
+                )
+            )
+        ).scalar_one()
+        assert ref3.verification_reference == f"invocation:{inv3.invocation_id}"
+
+
+async def test_reviewer_provenance_scope_matrix(session_factory):
+    """Prove reviewer_id is required only for COMPLETE_RECHECK; fail-closed mutations execute without reviewer_id."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        policy_reg.register(_make_fac_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        # 1. Professional COMPLETE_RECHECK + missing reviewer => HUMAN_REVIEW_REQUIRED, no mutation
+        _, _, v_pos_no_rev = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.RECHECK_DUE,
+            reviewer_id=None,
+            grace_expires_at=now + timedelta(hours=12),
+        )
+        await session.commit()
+        inv1 = RegistryLookupInvocation(
+            resource_id=v_pos_no_rev.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v_pos_no_rev.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs1 = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE, observed_at=now
+        )
+        res1 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv1, obs1)
+        )
+        assert (
+            res1.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res1.reason_code
+            == VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED.value
+        )
+        assert res1.lifecycle_mutated is False
+        ref1 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v_pos_no_rev.id
+                )
+            )
+        ).scalar_one()
+        assert ref1.status == ProfessionalVerificationStatus.RECHECK_DUE.value
+        assert ref1.version == 1
+
+        # 2. Professional MARK_RECHECK_DUE + missing reviewer => mutation allowed!
+        _, _, v_due_no_rev = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.VERIFIED,
+            reviewer_id=None,
+        )
+        await session.commit()
+        inv2 = RegistryLookupInvocation(
+            resource_id=v_due_no_rev.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v_due_no_rev.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs2 = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE, observed_at=now
+        )
+        res2 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv2, obs2)
+        )
+        assert res2.applied_command == "MARK_RECHECK_DUE"
+        assert res2.lifecycle_mutated is True
+        ref2 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v_due_no_rev.id
+                )
+            )
+        ).scalar_one()
+        assert ref2.status == ProfessionalVerificationStatus.RECHECK_DUE.value
+        assert ref2.version == 2
+        assert ref2.reviewer_id is None
+
+        # 3. Professional CANCEL_RECHECK_GRACE + missing reviewer => mutation allowed!
+        _, _, v_cancel_no_rev = await _seed_provider_and_verification(
+            session,
+            status=ProfessionalVerificationStatus.RECHECK_DUE,
+            reviewer_id=None,
+            grace_expires_at=now + timedelta(hours=12),
+        )
+        await session.commit()
+        inv3 = RegistryLookupInvocation(
+            resource_id=v_cancel_no_rev.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v_cancel_no_rev.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs3 = _make_prof_obs(
+            outcome=VerificationEvidenceOutcome.SOURCE_RESPONSE_INVALID,
+            observed_at=now,
+        )
+        res3 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv3, obs3), now=now
+        )
+        assert res3.applied_command == "CANCEL_RECHECK_GRACE"
+        assert res3.lifecycle_mutated is True
+        ref3 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v_cancel_no_rev.id
+                )
+            )
+        ).scalar_one()
+        assert ref3.status == ProfessionalVerificationStatus.RECHECK_DUE.value
+        assert ref3.grace_expires_at is None
+        assert ref3.version == 2
+        assert ref3.reviewer_id is None
+
+        # 4. Facility MARK_RECHECK_REQUIRED + missing reviewer => mutation allowed!
+        _, f_no_rev = await _seed_facility_and_verification(
+            session,
+            status=FacilityVerificationStatus.VERIFIED,
+            reviewer_id=None,
+        )
+        await session.commit()
+        inv4 = RegistryLookupInvocation(
+            resource_id=f_no_rev.id,
+            resource_type=RegistryResourceType.FACILITY,
+            expected_version=1,
+            request=FacilityLookupRequest(
+                "ROHINI",
+                f_no_rev.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs4 = _make_fac_obs(
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE, observed_at=now
+        )
+        res4 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv4, obs4)
+        )
+        assert res4.applied_command == "MARK_RECHECK_REQUIRED"
+        assert res4.lifecycle_mutated is True
+        ref4 = (
+            await session.execute(
+                select(FacilityVerification).where(
+                    FacilityVerification.id == f_no_rev.id
+                )
+            )
+        ).scalar_one()
+        assert ref4.status == FacilityVerificationStatus.RECHECK_REQUIRED.value
+        assert ref4.version == 2
+        assert ref4.reviewer_id is None
+
+
+async def test_binding_method_qualification_is_disposition_aware(session_factory):
+    """Positive COMPLETE_RECHECK requires valid binding_method; adverse fail-close does NOT require binding_method."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        # 1. Qualified positive COMPLETE_RECHECK with null binding_method => no mutation + OPEN review
+        _, _, v1 = await _seed_provider_and_verification(
+            session, status=ProfessionalVerificationStatus.RECHECK_DUE
+        )
+        await session.commit()
+        inv1 = RegistryLookupInvocation(
+            resource_id=v1.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v1.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_null_binding = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method=None,
+        )
+        res1 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv1, obs_null_binding)
+        )
+        assert (
+            res1.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res1.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+        assert res1.lifecycle_mutated is False
+        assert res1.review_work_id is not None
+
+        # 2. Qualified positive COMPLETE_RECHECK with unapproved binding_method => no mutation + OPEN review
+        _, _, v2 = await _seed_provider_and_verification(
+            session, status=ProfessionalVerificationStatus.RECHECK_DUE
+        )
+        await session.commit()
+        inv2 = RegistryLookupInvocation(
+            resource_id=v2.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v2.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_unapproved_binding = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method="UNAPPROVED_BIOMETRIC",
+        )
+        res2 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv2, obs_unapproved_binding)
+        )
+        assert (
+            res2.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res2.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+        assert res2.lifecycle_mutated is False
+        assert res2.review_work_id is not None
+
+        # 3. Qualified adverse fail-close with null binding_method => authorized fail-closed mutation (MARK_RECHECK_DUE)
+        _, _, v3 = await _seed_provider_and_verification(
+            session, status=ProfessionalVerificationStatus.VERIFIED
+        )
+        await session.commit()
+        inv3 = RegistryLookupInvocation(
+            resource_id=v3.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v3.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_adverse_null_binding = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method=None,
+        )
+        res3 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv3, obs_adverse_null_binding)
+        )
+        assert res3.applied_command == "MARK_RECHECK_DUE"
+        assert res3.lifecycle_mutated is True
+        assert res3.review_work_id is not None
+        ref3 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v3.id
+                )
+            )
+        ).scalar_one()
+        assert ref3.status == ProfessionalVerificationStatus.RECHECK_DUE.value
+        assert ref3.version == 2
+
+        # 4. Unqualified source/adapter/authority on adverse fail-close => OPEN review, zero mutation
+        _, _, v4 = await _seed_provider_and_verification(
+            session, status=ProfessionalVerificationStatus.VERIFIED
+        )
+        await session.commit()
+        inv4 = RegistryLookupInvocation(
+            resource_id=v4.id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=ProfessionalLookupRequest(
+                "MAHA_MED_COUNCIL",
+                v4.registration_number_normalized,
+                VerificationEvidenceLookupPurpose.RECHECK,
+            ),
+            invoked_at=now - timedelta(minutes=5),
+        )
+        obs_bad_adapter = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="2.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_INACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method=None,
+        )
+        res4 = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(inv4, obs_bad_adapter)
+        )
+        assert (
+            res4.decision_disposition
+            == VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED.value
+        )
+        assert (
+            res4.reason_code
+            == VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED.value
+        )
+        assert res4.lifecycle_mutated is False
+        assert res4.review_work_id is not None
+        ref4 = (
+            await session.execute(
+                select(ProfessionalVerification).where(
+                    ProfessionalVerification.id == v4.id
+                )
+            )
+        ).scalar_one()
+        assert ref4.status == ProfessionalVerificationStatus.VERIFIED.value
+        assert ref4.version == 1
+
+
+async def test_canonical_envelope_idempotency_binding_conflicts(session_factory):
+    """Prove canonical hash binds request and observation parameters; modifications under same idempotency key trigger conflict."""
+    async with session_factory() as session:
+        now = datetime.now(timezone.utc)
+        policy_reg = SourceAutomationPolicyRegistry()
+        policy_reg.register(_make_prof_policy())
+        svc = ProviderVerificationApplicationService(
+            session, source_policies=policy_reg, automation_enabled=True
+        )
+
+        _, _, v = await _seed_provider_and_verification(session)
+        v_id = v.id
+        v_reg = v.registration_number_normalized
+        await session.commit()
+
+        stable_invocation_id = uuid.uuid4()
+        stable_invoked_at = now - timedelta(minutes=5)
+        fixed_key = f"provider-verification:professional:{stable_invocation_id}"
+
+        base_req = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized=v_reg,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        base_inv = RegistryLookupInvocation(
+            invocation_id=stable_invocation_id,
+            resource_id=v_id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=base_req,
+            invoked_at=stable_invoked_at,
+        )
+        base_obs = _make_prof_obs(observed_at=now)
+
+        # Baseline execution
+        res = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(base_inv, base_obs),
+            idempotency_key=fixed_key,
+        )
+        assert res.idempotent_replay is False
+
+        # 1. Exact same logical invocation => deterministic replay
+        res_replay = await svc.apply_verification_observation(
+            envelope=ValidatedRegistryLookupEnvelope(base_inv, base_obs),
+            idempotency_key=fixed_key,
+        )
+        assert res_replay.idempotent_replay is True
+        assert res_replay.evidence_id == res.evidence_id
+
+        # 2. Authority change under same idempotency key => IDEMPOTENCY_CONFLICT
+        req_diff_auth = ProfessionalLookupRequest(
+            registration_authority_code="OTHER_COUNCIL",
+            registration_number_normalized=v_reg,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv_diff_auth = RegistryLookupInvocation(
+            invocation_id=stable_invocation_id,
+            resource_id=v_id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req_diff_auth,
+            invoked_at=stable_invoked_at,
+        )
+        with pytest.raises(VerificationApplicationError, match="IDEMPOTENCY_CONFLICT"):
+            await svc.apply_verification_observation(
+                envelope=ValidatedRegistryLookupEnvelope(inv_diff_auth, base_obs),
+                idempotency_key=fixed_key,
+            )
+
+        # 3. Registration number change under same idempotency key => IDEMPOTENCY_CONFLICT
+        req_diff_num = ProfessionalLookupRequest(
+            registration_authority_code="MAHA_MED_COUNCIL",
+            registration_number_normalized="MMC99999",
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+        )
+        inv_diff_num = RegistryLookupInvocation(
+            invocation_id=stable_invocation_id,
+            resource_id=v_id,
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            expected_version=1,
+            request=req_diff_num,
+            invoked_at=stable_invoked_at,
+        )
+        with pytest.raises(VerificationApplicationError, match="IDEMPOTENCY_CONFLICT"):
+            await svc.apply_verification_observation(
+                envelope=ValidatedRegistryLookupEnvelope(inv_diff_num, base_obs),
+                idempotency_key=fixed_key,
+            )
+
+        # 4. Binding method change under same idempotency key => IDEMPOTENCY_CONFLICT
+        obs_diff_method = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MATCHED,
+            binding_method="OTHER_METHOD",
+        )
+        with pytest.raises(VerificationApplicationError, match="IDEMPOTENCY_CONFLICT"):
+            await svc.apply_verification_observation(
+                envelope=ValidatedRegistryLookupEnvelope(base_inv, obs_diff_method),
+                idempotency_key=fixed_key,
+            )
+
+        # 5. Binding result change under same idempotency key => IDEMPOTENCY_CONFLICT
+        obs_diff_result = RegistryObservation(
+            resource_type=RegistryResourceType.PROFESSIONAL,
+            source_id="QUAL_SOURCE_01",
+            adapter_version="1.0.0",
+            observed_at=now,
+            lookup_purpose=VerificationEvidenceLookupPurpose.RECHECK,
+            outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE,
+            identity_binding_result=VerificationIdentityBindingResult.MISMATCHED,
+            binding_method="REGISTRY_MATCH",
+        )
+        with pytest.raises(VerificationApplicationError, match="IDEMPOTENCY_CONFLICT"):
+            await svc.apply_verification_observation(
+                envelope=ValidatedRegistryLookupEnvelope(base_inv, obs_diff_result),
+                idempotency_key=fixed_key,
+            )

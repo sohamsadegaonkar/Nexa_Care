@@ -26,7 +26,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -39,9 +39,10 @@ from app.models.provider import (
     ProviderTrustVerificationEvidence,
     ProviderTrustVerificationReviewWork,
     VerificationEvidenceOrigin,
+    VerificationEvidenceOutcome,
+    VerificationIdentityBindingResult,
     VerificationReviewWorkStatus,
     VerificationSourceFailureReason,
-    VerificationEvidenceOutcome,
 )
 from app.observability.provider_trust_events import ProviderTrustAuditEvent
 from app.security.audit_context import AuditContext, AuditDomain
@@ -74,7 +75,7 @@ from app.services.provider_verification_registry import (
 
 SYSTEM_AUTOMATION_ACTOR_ID = "system:registry_verification_automation"
 _IDEMPOTENCY_TENANT = "platform-provider-trust"
-_OPERATION_NAME = "provider.trust.verification.apply.v1"
+_OPERATION_NAME = "provider.trust.verification.process.v1"
 
 _IDEMPOTENCY_SELECT = text("""
     SELECT request_hash, response_status, response_payload
@@ -134,6 +135,7 @@ class RegistryLookupInvocation:
     expected_version: int
     request: ProfessionalLookupRequest | FacilityLookupRequest
     invoked_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    invocation_id: UUID = field(default_factory=uuid4)
 
     def __post_init__(self) -> None:
         if not isinstance(self.resource_id, UUID):
@@ -143,6 +145,8 @@ class RegistryLookupInvocation:
         if not isinstance(self.expected_version, int) or self.expected_version < 1:
             raise VerificationApplicationError("INVALID_INVOCATION")
         if self.invoked_at.tzinfo is None:
+            raise VerificationApplicationError("INVALID_INVOCATION")
+        if not isinstance(self.invocation_id, UUID):
             raise VerificationApplicationError("INVALID_INVOCATION")
 
 
@@ -183,7 +187,31 @@ class SourceAutomationPolicy:
     approved_adapter_version: str | None = None
     allowed_binding_methods: frozenset[str] = frozenset({"REGISTRY_MATCH"})
     automation_enabled: bool = False
-    require_tls: bool = True
+
+    def __post_init__(self) -> None:
+        if not self.source_id or not self.source_id.strip():
+            raise ValueError("source_id must be non-empty")
+        if self.automation_enabled:
+            if not isinstance(self.resource_type, RegistryResourceType):
+                raise ValueError("automation_enabled requires explicit resource_type")
+            if (
+                not self.registration_authority_code
+                or not self.registration_authority_code.strip()
+            ):
+                raise ValueError(
+                    "automation_enabled requires explicit registration_authority_code"
+                )
+            if (
+                not self.approved_adapter_version
+                or not self.approved_adapter_version.strip()
+            ):
+                raise ValueError(
+                    "automation_enabled requires explicit approved_adapter_version"
+                )
+            if not self.allowed_binding_methods:
+                raise ValueError(
+                    "automation_enabled requires non-empty allowed_binding_methods"
+                )
 
 
 class SourceAutomationPolicyRegistry:
@@ -248,18 +276,65 @@ def _canonical_envelope_hash(
     envelope: ValidatedRegistryLookupEnvelope,
 ) -> str:
     """Deterministic hash of the envelope for idempotency verification."""
-    data = {
-        "resource_id": str(envelope.invocation.resource_id),
-        "resource_type": envelope.invocation.resource_type.value,
-        "expected_version": envelope.invocation.expected_version,
-        "source_id": envelope.observation.source_id,
-        "outcome": envelope.observation.outcome.value,
-        "digest": envelope.observation.response_digest,
-        "observed_at": envelope.observation.observed_at.isoformat(),
+    inv = envelope.invocation
+    obs = envelope.observation
+    req = inv.request
+
+    data: dict[str, Any] = {
+        "operation": _OPERATION_NAME,
+        "invocation_id": str(inv.invocation_id),
+        "invoked_at": inv.invoked_at.astimezone(timezone.utc).isoformat(),
+        "resource_id": str(inv.resource_id),
+        "resource_type": inv.resource_type.value,
+        "expected_version": inv.expected_version,
+        "request_registration_authority_code": req.registration_authority_code,
+        "request_registration_number_normalized": req.registration_number_normalized,
+        "request_lookup_purpose": req.lookup_purpose.value,
+        "observation_resource_type": obs.resource_type.value,
+        "observation_source_id": obs.source_id,
+        "observation_adapter_version": obs.adapter_version,
+        "observation_observed_at": obs.observed_at.astimezone(timezone.utc).isoformat(),
+        "observation_lookup_purpose": obs.lookup_purpose.value,
+        "observation_outcome": obs.outcome.value,
+        "observation_identity_binding_result": obs.identity_binding_result.value,
+        "observation_binding_method": obs.binding_method or "",
+        "observation_source_record_reference": obs.source_record_reference or "",
+        "observation_observed_valid_from": (
+            obs.observed_valid_from.astimezone(timezone.utc).isoformat()
+            if obs.observed_valid_from is not None
+            else ""
+        ),
+        "observation_observed_valid_until": (
+            obs.observed_valid_until.astimezone(timezone.utc).isoformat()
+            if obs.observed_valid_until is not None
+            else ""
+        ),
+        "observation_response_digest": obs.response_digest or "",
+        "observation_external_transaction_id": obs.external_transaction_id or "",
     }
+
     return hashlib.sha256(
-        json.dumps(data, sort_keys=True, separators=(",", ":")).encode()
+        json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
+
+
+def _resolve_verification_reference(
+    observation: RegistryObservation,
+    invocation: RegistryLookupInvocation,
+    target: Any,
+) -> str:
+    """Deterministically resolve verification reference without generic fabrication."""
+    if (
+        observation.source_record_reference
+        and observation.source_record_reference.strip()
+    ):
+        return observation.source_record_reference.strip()
+    if (
+        observation.external_transaction_id
+        and observation.external_transaction_id.strip()
+    ):
+        return observation.external_transaction_id.strip()
+    return f"invocation:{invocation.invocation_id}"
 
 
 class ProviderVerificationApplicationService:
@@ -284,12 +359,21 @@ class ProviderVerificationApplicationService:
     async def apply_verification_observation(
         self,
         envelope: ValidatedRegistryLookupEnvelope,
-        idempotency_key: str,
+        idempotency_key: str | None = None,
         now: datetime | None = None,
     ) -> ProviderVerificationApplicationResult:
         """Execute atomic verification observation application."""
+        inv = envelope.invocation
+        obs = envelope.observation
+        resource_id = inv.resource_id
+
+        raw_key = (
+            idempotency_key
+            if idempotency_key is not None
+            else f"provider-verification:{inv.resource_type.value.lower()}:{inv.invocation_id}"
+        )
         try:
-            key = validate_idempotency_key(idempotency_key)
+            key = validate_idempotency_key(raw_key)
         except ValueError as exc:
             raise VerificationApplicationError("INVALID_REQUEST") from exc
 
@@ -298,9 +382,6 @@ class ProviderVerificationApplicationService:
             raise VerificationApplicationError("INVALID_REQUEST")
 
         request_hash = _canonical_envelope_hash(envelope)
-        inv = envelope.invocation
-        obs = envelope.observation
-        resource_id = inv.resource_id
 
         tx_ctx = self.db.begin_nested() if self.db.in_transaction() else self.db.begin()
         async with tx_ctx:
@@ -360,105 +441,160 @@ class ProviderVerificationApplicationService:
             # 6. Check open human review queue work
             open_review = await self._has_open_review_work(inv.resource_type, target.id)
 
-            # 7. Check source automation policy & kill switch
+            # 7. Check server provenance from linked evidence
+            server_provenance_established = False
+            established_server_source_id: str | None = None
+
+            if target.server_provenance_evidence_id is not None:
+                linked_evidence = await self.db.get(
+                    ProviderTrustVerificationEvidence,
+                    target.server_provenance_evidence_id,
+                )
+                if linked_evidence is None:
+                    raise VerificationApplicationError("TRANSACTION_INTEGRITY_FAILURE")
+
+                target_matches = (
+                    inv.resource_type == RegistryResourceType.PROFESSIONAL
+                    and linked_evidence.professional_verification_id == target.id
+                ) or (
+                    inv.resource_type == RegistryResourceType.FACILITY
+                    and linked_evidence.facility_verification_id == target.id
+                )
+                if not (
+                    target_matches
+                    and linked_evidence.origin
+                    == VerificationEvidenceOrigin.SERVER_REGISTRY_OBSERVATION.value
+                    and linked_evidence.outcome
+                    == VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value
+                    and linked_evidence.identity_binding_result
+                    == VerificationIdentityBindingResult.MATCHED.value
+                ):
+                    raise VerificationApplicationError("TRANSACTION_INTEGRITY_FAILURE")
+
+                server_provenance_established = True
+                established_server_source_id = linked_evidence.source_id
+
+            # 8. Check source automation policy & kill switch
             source_policy = self.source_policies.get_policy(
                 obs.source_id,
                 resource_type=inv.resource_type,
                 registration_authority_code=target.registration_authority_code,
             )
             global_enabled = self._is_global_automation_enabled()
-            adapter_version_ok = (
-                source_policy.approved_adapter_version is None
-                or obs.adapter_version == source_policy.approved_adapter_version
+            base_source_policy_authorized = (
+                source_policy.automation_enabled is True
+                and source_policy.source_id == obs.source_id
+                and source_policy.resource_type == inv.resource_type
+                and source_policy.registration_authority_code
+                == target.registration_authority_code
+                and obs.adapter_version == source_policy.approved_adapter_version
             )
-            automation_allowed_by_policy = (
-                global_enabled
-                and source_policy.automation_enabled
-                and adapter_version_ok
-                and (
-                    obs.binding_method is None
-                    or obs.binding_method in source_policy.allowed_binding_methods
-                )
+            binding_method_authorized = (
+                obs.binding_method is not None
+                and bool(obs.binding_method.strip())
+                and obs.binding_method in source_policy.allowed_binding_methods
             )
 
-            # 8. Reconstruct Phase 5D decision context
+            # 9. Reconstruct Phase 5D decision context
             decision = self._evaluate_decision(
                 inv.resource_type,
                 target,
                 inv.request,
                 obs,
                 open_review=open_review,
+                server_provenance_established=server_provenance_established,
+                established_server_source_id=established_server_source_id,
                 now=moment,
             )
 
-            # If candidate command is outside system execution authority, fail closed to review with LIFECYCLE_SEMANTIC_GAP
-            if (
-                decision.candidate_command is not None
-                and decision.candidate_command
-                not in _ALLOWED_SYSTEM_COMMANDS.get(inv.resource_type, set())
-            ):
-                decision = VerificationDecisionPlan(
-                    resource_type=inv.resource_type,
-                    disposition=VerificationDecisionDisposition.LIFECYCLE_SEMANTIC_GAP,
-                    candidate_command=None,
-                    expected_resource_version=target.version,
-                    reason_code=VerificationDecisionReason.SYSTEM_ACTOR_PROVENANCE_GAP,
-                    requires_human_review=True,
-                    grace_expires_at=None,
-                    source_id=obs.source_id,
-                    lookup_purpose=obs.lookup_purpose,
-                    outcome=obs.outcome,
-                )
-
-            # If policy or kill-switch disallows automation, positive transition candidates fall closed to review
-            if (
-                decision.disposition
-                == VerificationDecisionDisposition.SYSTEM_TRANSITION_CANDIDATE
-                and not automation_allowed_by_policy
-            ):
-                decision = VerificationDecisionPlan(
-                    resource_type=inv.resource_type,
-                    disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
-                    candidate_command=None,
-                    expected_resource_version=target.version,
-                    reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
-                    requires_human_review=True,
-                    grace_expires_at=None,
-                    source_id=obs.source_id,
-                    lookup_purpose=obs.lookup_purpose,
-                    outcome=obs.outcome,
-                )
-
-            # Invariant: Reviewer ID preservation. If positive recheck candidate, target MUST have existing human reviewer_id.
-            if (
-                decision.disposition
-                == VerificationDecisionDisposition.SYSTEM_TRANSITION_CANDIDATE
-            ):
-                if not target.reviewer_id or not target.reviewer_id.strip():
+            # 10. Enforce system execution authority over candidate command
+            if decision.candidate_command is not None:
+                if decision.candidate_command not in _ALLOWED_SYSTEM_COMMANDS.get(
+                    inv.resource_type, set()
+                ):
                     decision = VerificationDecisionPlan(
                         resource_type=inv.resource_type,
-                        disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                        disposition=VerificationDecisionDisposition.LIFECYCLE_SEMANTIC_GAP,
                         candidate_command=None,
                         expected_resource_version=target.version,
-                        reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
+                        reason_code=VerificationDecisionReason.SYSTEM_ACTOR_PROVENANCE_GAP,
                         requires_human_review=True,
                         grace_expires_at=None,
                         source_id=obs.source_id,
                         lookup_purpose=obs.lookup_purpose,
                         outcome=obs.outcome,
                     )
+                elif not global_enabled:
+                    decision = VerificationDecisionPlan(
+                        resource_type=inv.resource_type,
+                        disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                        candidate_command=None,
+                        expected_resource_version=target.version,
+                        reason_code=VerificationDecisionReason.SYSTEM_AUTOMATION_DISABLED,
+                        requires_human_review=True,
+                        grace_expires_at=None,
+                        source_id=obs.source_id,
+                        lookup_purpose=obs.lookup_purpose,
+                        outcome=obs.outcome,
+                    )
+                elif not base_source_policy_authorized:
+                    decision = VerificationDecisionPlan(
+                        resource_type=inv.resource_type,
+                        disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                        candidate_command=None,
+                        expected_resource_version=target.version,
+                        reason_code=VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED,
+                        requires_human_review=True,
+                        grace_expires_at=None,
+                        source_id=obs.source_id,
+                        lookup_purpose=obs.lookup_purpose,
+                        outcome=obs.outcome,
+                    )
+                elif decision.candidate_command in (
+                    ProfessionalTransitionCommand.COMPLETE_RECHECK,
+                    FacilityTransitionCommand.COMPLETE_RECHECK,
+                ):
+                    if not binding_method_authorized:
+                        decision = VerificationDecisionPlan(
+                            resource_type=inv.resource_type,
+                            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                            candidate_command=None,
+                            expected_resource_version=target.version,
+                            reason_code=VerificationDecisionReason.SOURCE_AUTOMATION_POLICY_DENIED,
+                            requires_human_review=True,
+                            grace_expires_at=None,
+                            source_id=obs.source_id,
+                            lookup_purpose=obs.lookup_purpose,
+                            outcome=obs.outcome,
+                        )
+                    elif not target.reviewer_id or not target.reviewer_id.strip():
+                        decision = VerificationDecisionPlan(
+                            resource_type=inv.resource_type,
+                            disposition=VerificationDecisionDisposition.HUMAN_REVIEW_REQUIRED,
+                            candidate_command=None,
+                            expected_resource_version=target.version,
+                            reason_code=VerificationDecisionReason.MANUAL_REVIEW_PURPOSE_HUMAN_REQUIRED,
+                            requires_human_review=True,
+                            grace_expires_at=None,
+                            source_id=obs.source_id,
+                            lookup_purpose=obs.lookup_purpose,
+                            outcome=obs.outcome,
+                        )
 
-            # 9. Insert immutable verification evidence row
+            # 11. Insert immutable verification evidence row
             evidence = self._insert_evidence(
                 inv.resource_type, target.id, obs, target.version
             )
             self.db.add(evidence)
             await self.db.flush()
 
-            audit_context = AuditContext.for_tenant(
-                tenant_id=_IDEMPOTENCY_TENANT,
-                domain=AuditDomain.CONSENT,
-            )
+            if inv.resource_type == RegistryResourceType.PROFESSIONAL:
+                audit_context = AuditContext.platform(domain=AuditDomain.PLATFORM)
+            else:
+                audit_context = AuditContext.for_hospital(
+                    hospital_id=str(target.facility_id),
+                    domain=AuditDomain.PLATFORM,
+                )
 
             # Audit evidence observation recorded
             evidence_audit_key = f"evidence-obs:{evidence.id}"
@@ -471,17 +607,22 @@ class ProviderVerificationApplicationService:
                 target_id=str(evidence.id),
                 patient_id=None,
                 metadata={
-                    "resource_type": inv.resource_type.value,
-                    "target_id": str(target.id),
-                    "source_id": obs.source_id,
-                    "outcome": obs.outcome.value,
-                    "disposition": decision.disposition.value,
                     "actor_type": "SYSTEM_AUTOMATION",
                     "execution_mode": "SYSTEM_AUTOMATION",
+                    "resource_type": inv.resource_type.value,
+                    "target_id": str(target.id),
+                    "evidence_id": str(evidence.id),
+                    "invocation_id": str(inv.invocation_id),
+                    "source_id": obs.source_id,
+                    "adapter_version": obs.adapter_version,
+                    "lookup_purpose": obs.lookup_purpose.value,
+                    "outcome": obs.outcome.value,
+                    "disposition": decision.disposition.value,
+                    "reason_code": decision.reason_code.value,
                 },
             )
 
-            # 10. Execute disposition
+            # 12. Execute disposition
             review_work_id: UUID | None = None
             applied_command: str | None = None
             lifecycle_mutated = False
@@ -494,7 +635,7 @@ class ProviderVerificationApplicationService:
                 # Apply positive lifecycle mutation
                 applied_command = decision.candidate_command.value
                 self._apply_candidate_transition(
-                    inv.resource_type,
+                    inv,
                     target,
                     decision.candidate_command,
                     obs,
@@ -522,6 +663,7 @@ class ProviderVerificationApplicationService:
                         "command": applied_command,
                         "resource_type": inv.resource_type.value,
                         "evidence_id": str(evidence.id),
+                        "invocation_id": str(inv.invocation_id),
                         "source_id": obs.source_id,
                         "adapter_version": obs.adapter_version,
                         "lookup_purpose": obs.lookup_purpose.value,
@@ -541,10 +683,10 @@ class ProviderVerificationApplicationService:
                 decision.disposition
                 == VerificationDecisionDisposition.SYSTEM_FAIL_CLOSED_AND_REVIEW
             ):
-                # MARK_RECHECK_DUE or CANCEL_RECHECK_GRACE.
+                # MARK_RECHECK_DUE or CANCEL_RECHECK_GRACE or MARK_RECHECK_REQUIRED.
                 applied_command = decision.candidate_command.value
                 self._apply_candidate_transition(
-                    inv.resource_type,
+                    inv,
                     target,
                     decision.candidate_command,
                     obs,
@@ -588,6 +730,7 @@ class ProviderVerificationApplicationService:
                         "command": applied_command,
                         "resource_type": inv.resource_type.value,
                         "evidence_id": str(evidence.id),
+                        "invocation_id": str(inv.invocation_id),
                         "source_id": obs.source_id,
                         "adapter_version": obs.adapter_version,
                         "lookup_purpose": obs.lookup_purpose.value,
@@ -618,6 +761,7 @@ class ProviderVerificationApplicationService:
                         "target_type": inv.resource_type.value,
                         "target_id": str(target.id),
                         "evidence_id": str(evidence.id),
+                        "invocation_id": str(inv.invocation_id),
                         "actor_type": "SYSTEM_AUTOMATION",
                         "execution_mode": "SYSTEM_AUTOMATION",
                     },
@@ -650,12 +794,13 @@ class ProviderVerificationApplicationService:
                         "target_type": inv.resource_type.value,
                         "target_id": str(target.id),
                         "evidence_id": str(evidence.id),
+                        "invocation_id": str(inv.invocation_id),
                         "actor_type": "SYSTEM_AUTOMATION",
                         "execution_mode": "SYSTEM_AUTOMATION",
                     },
                 )
 
-            # 11. Complete idempotency
+            # 13. Complete idempotency
             result = ProviderVerificationApplicationResult(
                 resource_id=resource_id,
                 resource_type=inv.resource_type.value,
@@ -760,6 +905,8 @@ class ProviderVerificationApplicationService:
         request: Any,
         observation: RegistryObservation,
         open_review: bool,
+        server_provenance_established: bool,
+        established_server_source_id: str | None,
         now: datetime,
     ) -> VerificationDecisionPlan:
         if resource_type == RegistryResourceType.PROFESSIONAL:
@@ -777,9 +924,8 @@ class ProviderVerificationApplicationService:
                     else None
                 ),
                 authoritative_adverse_signal_at=target.authoritative_adverse_signal_at,
-                server_provenance_established=target.server_provenance_evidence_id
-                is not None,
-                established_server_source_id=target.verification_source,
+                server_provenance_established=server_provenance_established,
+                established_server_source_id=established_server_source_id,
                 open_human_review_required=open_review,
             )
             return evaluate_professional_observation(
@@ -791,9 +937,8 @@ class ProviderVerificationApplicationService:
                 current_version=target.version,
                 registration_authority_code=target.registration_authority_code,
                 registration_number_normalized=target.registration_number_normalized,
-                server_provenance_established=target.server_provenance_evidence_id
-                is not None,
-                established_server_source_id=target.verification_source,
+                server_provenance_established=server_provenance_established,
+                established_server_source_id=established_server_source_id,
                 open_human_review_required=open_review,
             )
             return evaluate_facility_observation(
@@ -839,11 +984,7 @@ class ProviderVerificationApplicationService:
         outcome_str = outcome.value if hasattr(outcome, "value") else str(outcome)
         if outcome_str == "NOT_FOUND":
             return VerificationSourceFailureReason.SOURCE_NOT_FOUND
-        if outcome_str in {
-            "SOURCE_RESPONSE_INVALID",
-            "SOURCE_AUTHENTICATION_FAILURE",
-            "SOURCE_INTEGRITY_FAILURE",
-        }:
+        if outcome_str == "SOURCE_RESPONSE_INVALID":
             return VerificationSourceFailureReason.SOURCE_RESPONSE_INVALID
         return VerificationSourceFailureReason.REVIEW_REQUIRED
 
@@ -863,7 +1004,7 @@ class ProviderVerificationApplicationService:
 
     def _apply_candidate_transition(
         self,
-        resource_type: RegistryResourceType,
+        invocation: RegistryLookupInvocation,
         target: Any,
         command: Any,
         observation: RegistryObservation,
@@ -872,22 +1013,20 @@ class ProviderVerificationApplicationService:
         *,
         grace_expires_at: datetime | None,
     ) -> None:
+        resource_type = invocation.resource_type
         if resource_type == RegistryResourceType.PROFESSIONAL:
             if command == ProfessionalTransitionCommand.COMPLETE_RECHECK:
                 facts = ProfessionalTransitionFacts(
                     registration_authority_code=target.registration_authority_code,
                     registration_number_normalized=target.registration_number_normalized,
-                    verification_method=observation.binding_method
-                    or target.verification_method
-                    or "REGISTRY_MATCH",
+                    verification_method="REGISTRY_ADAPTER",
                     verification_source=observation.source_id,
-                    verification_reference=observation.source_record_reference
-                    or target.verification_reference
-                    or "REGISTRY_RECORD",
+                    verification_reference=_resolve_verification_reference(
+                        observation, invocation, target
+                    ),
                     identity_binding_method=observation.binding_method
-                    or target.identity_binding_method
                     or "REGISTRY_MATCH",
-                    identity_binding_status=observation.identity_binding_result.value,
+                    identity_binding_status="MATCHED",
                     registration_valid_from=observation.observed_valid_from
                     or target.registration_valid_from,
                     registration_valid_until=observation.observed_valid_until
@@ -895,7 +1034,7 @@ class ProviderVerificationApplicationService:
                     reviewer_id=target.reviewer_id,
                     recheck_attempted_at=observation.observed_at,
                     previous_verification_valid=True,
-                    next_review_at=target.next_review_at,
+                    next_review_at=None,
                 )
                 plan = plan_professional_transition(
                     target.status, command, facts, now, current_version=target.version
@@ -943,21 +1082,19 @@ class ProviderVerificationApplicationService:
                 setattr(target, update.field, update.value)
             for field_name in plan.clears:
                 setattr(target, field_name, None)
-            if command != ProfessionalTransitionCommand.MARK_RECHECK_DUE:
+            if command == ProfessionalTransitionCommand.COMPLETE_RECHECK:
                 target.server_provenance_evidence_id = evidence_id
 
         elif resource_type == RegistryResourceType.FACILITY:
             if command == FacilityTransitionCommand.COMPLETE_RECHECK:
                 facts = FacilityTransitionFacts(
-                    verification_method=observation.binding_method
-                    or target.verification_method
-                    or "REGISTRY_MATCH",
+                    verification_method="REGISTRY_ADAPTER",
                     verification_source=observation.source_id,
-                    verification_reference=observation.source_record_reference
-                    or target.verification_reference
-                    or "REGISTRY_RECORD",
+                    verification_reference=_resolve_verification_reference(
+                        observation, invocation, target
+                    ),
                     reviewer_id=target.reviewer_id,
-                    next_review_at=target.next_review_at,
+                    next_review_at=None,
                 )
                 plan = plan_facility_transition(
                     target.status, command, facts, now, current_version=target.version
