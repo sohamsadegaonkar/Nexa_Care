@@ -1,15 +1,20 @@
 """Security tests — T-01: Forged ECDSA Signatures.
 
-Verifies that real P-256 signatures from wrong, revoked, or unenrolled device
-keys cannot satisfy patient consent authority. Device enrollment setup follows
-the authoritative current-patient-session route contract; relational device
-lifecycle behavior is separately qualified against PostgreSQL.
+Verifies that the SignedApprovalVerifier and consent approve-signed route
+reject:
+- Signatures from unenrolled key pairs
+- Signatures from revoked devices
+- Tampered decision payloads (signature doesn't match signed input)
+
+All tests use REAL P-256 ECDSA signatures — no bypasses.
+
+Threat model reference: docs/threat-model.md T-01
 """
 
 from __future__ import annotations
 
-import asyncio
 import base64
+import asyncio
 import hashlib
 import json
 import uuid
@@ -21,15 +26,14 @@ import pytest
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 
-from app.core.dependencies import (
-    AuthenticatedPatientSession,
-    get_current_patient_session,
-    get_scoped_session,
-)
+from app.core.dependencies import get_scoped_session
 from app.main import app
 from app.services.patient_discovery_service import PatientDiscoveryService
 from app.services.signed_approval_verifier import canonical_signed_approval_payload
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 
 def _generate_keypair():
@@ -95,65 +99,19 @@ def _mock_device_row(
 ):
     row = MagicMock()
     row.id = uuid.UUID(device_id)
-    row.device_id = uuid.UUID(device_id)
     row.patient_id = uuid.UUID(patient_id)
     row.device_public_key = der_bytes
     row.device_label = "Security Test Device"
     row.platform = "ios"
     row.status = status
     row.key_algorithm = "ECDSA-P256"
-    row.key_version = 1
     row.enrolled_at = datetime.now(timezone.utc)
     row.revoked_at = revoked_at
-    row.revocation_reason_code = "PATIENT_REQUEST" if revoked_at else None
     return row
 
 
 def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
     stack = ExitStack()
-
-    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
-
-    async def _current_patient_session():
-        return AuthenticatedPatientSession(
-            patient_id=patient_id,
-            patient=patient,
-            session_id="forged-signature-patient-session",
-            session_epoch=0,
-            supabase_user_id="forged-signature-patient-subject",
-        )
-
-    app.dependency_overrides[get_current_patient_session] = _current_patient_session
-    stack.callback(app.dependency_overrides.pop, get_current_patient_session, None)
-
-    async def _enroll_device_stub(
-        db,
-        *,
-        patient_id,
-        raw_public_key,
-        device_label,
-        platform,
-        actor_id,
-    ):
-        del db, actor_id
-        row = MagicMock()
-        row.id = uuid.uuid4()
-        row.device_id = uuid.uuid4()
-        row.patient_id = patient_id
-        row.device_public_key = raw_public_key
-        row.device_label = device_label
-        row.platform = platform
-        row.status = "active"
-        row.key_version = 1
-        row.enrolled_at = datetime.now(timezone.utc)
-        return row
-
-    stack.enter_context(
-        patch(
-            "app.api.v2.device_routes.enroll_patient_device_key",
-            new=AsyncMock(side_effect=_enroll_device_stub),
-        )
-    )
     stack.enter_context(
         patch(
             "app.api.v2.device_routes.claim_device_enrollment_token",
@@ -174,6 +132,7 @@ def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         )
     )
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
     stack.enter_context(
         patch.object(
             PatientDiscoveryService,
@@ -193,7 +152,6 @@ def _patch_stack(fake_redis, fake_sync_redis, patient_id: str):
             return_value=fake_redis,
         )
     )
-
     mock_supabase = MagicMock()
     mock_supabase.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = MagicMock(
         data=[]
@@ -252,6 +210,9 @@ def _active_discovery_handle(fake_redis, clinical_session, patient_id: str) -> s
     return handle.value
 
 
+# ── Fixtures ─────────────────────────────────────────────────────────────────
+
+
 @pytest.fixture
 def client():
     return DualModeTestClient(app)
@@ -272,6 +233,9 @@ def patient_id():
     return str(uuid.uuid4())
 
 
+# ── Test: Wrong keypair ──────────────────────────────────────────────────────
+
+
 def test_forged_signature_wrong_keypair(
     client,
     fake_redis,
@@ -280,8 +244,12 @@ def test_forged_signature_wrong_keypair(
     patient_id,
     real_clinical_session,
 ):
-    """A signature from a different private key is rejected."""
-    _, enrolled_der, enrolled_b64 = _generate_keypair()
+    """T-01a: A signature from an attacker-generated keypair is rejected (401).
+
+    The patient enrolled key A, but the attacker signs with key B.
+    The verifier tries all enrolled keys; none match → 401.
+    """
+    enrolled_private, enrolled_der, enrolled_b64 = _generate_keypair()
     attacker_private, _, _ = _generate_keypair()
     device_id = str(uuid.uuid4())
     provider_id = str(real_clinical_session.provider.id)
@@ -290,80 +258,95 @@ def test_forged_signature_wrong_keypair(
         return patient_id
 
     app.dependency_overrides[get_scoped_session] = _session_dep
-    try:
-        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
-            discovery_handle = _active_discovery_handle(
-                fake_redis, real_clinical_session, patient_id
-            )
-            device_row = _mock_device_row(device_id, patient_id, enrolled_der)
-            _reset_mock_db(mock_db)
-            enroll_resp = client.post(
-                "/api/v2/patient/devices/enroll",
-                json={
-                    "device_public_key": enrolled_b64,
-                    "device_label": "Sec Device",
-                    "platform": "ios",
-                    "device_enrollment_token": "e" * 43,
-                },
-            )
-            assert enroll_resp.status_code == 201
 
-            _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback(
-                [_db_result(scalar_one_or_none=device_row)]
-            )
-            req_resp = client.post(
-                "/api/v2/consent/request",
-                headers=real_clinical_session.headers,
-                json={
-                    "discovery_handle": discovery_handle,
-                    "purpose": "checkup",
-                    "scope": "clinical",
-                    "access_duration_seconds": 900,
-                },
-            )
-            assert req_resp.status_code == 201
-            request_id = req_resp.json()["request_id"]
-            challenge_nonce = req_resp.json()["challenge_nonce"]
-            challenge_data = json.loads(
-                fake_sync_redis.get(f"consent_request:{request_id}")
-            )
-            signing_input = _build_signing_input(
-                request_id=request_id,
-                patient_id=patient_id,
-                provider_id=provider_id,
-                challenge_nonce=challenge_nonce,
-                decision="approved",
-                scope="clinical",
-                purpose="checkup",
-                access_duration=challenge_data["access_duration"],
-                issued_at=challenge_data["created_at"],
-                expires_at=challenge_data["expires_at"],
-                device_id=device_id,
-            )
-            forged_sig = _sign(attacker_private, signing_input)
+    with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
+        # Enroll with key A
+        device_row = _mock_device_row(device_id, patient_id, enrolled_der)
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar=0),
+                _db_result(scalar_one_or_none=None),
+            ]
+        )
+        enroll_resp = client.post(
+            "/api/v2/patient/devices/enroll",
+            json={
+                "device_public_key": enrolled_b64,
+                "device_label": "Sec Device",
+                "platform": "ios",
+                "device_enrollment_token": "e" * 43,
+            },
+        )
+        assert enroll_resp.status_code == 201
 
-            _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback(
-                [
-                    _db_result(scalar_one_or_none=device_row),
-                    _db_result(scalars_all=[device_row]),
-                ]
-            )
-            resp = client.post(
-                "/api/v2/consent/approve-signed",
-                json={
-                    "request_id": request_id,
-                    "patient_id": patient_id,
-                    "decision": "approved",
-                    "challenge_nonce": challenge_nonce,
-                    "signature": forged_sig,
-                    "device_id": device_id,
-                },
-            )
-            assert resp.status_code == 401
-    finally:
-        app.dependency_overrides.pop(get_scoped_session, None)
+        # Request consent
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=device_row),
+            ]
+        )
+        req_resp = client.post(
+            "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
+            json={
+                "discovery_handle": discovery_handle,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
+        )
+        assert req_resp.status_code == 201
+        request_id = req_resp.json()["request_id"]
+        challenge_nonce = req_resp.json()["challenge_nonce"]
+
+        # Sign with ATTACKER key B
+        challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
+        challenge_data = json.loads(challenge_raw)
+        signing_input = _build_signing_input(
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
+            expires_at=challenge_data["expires_at"],
+            device_id=device_id,
+        )
+        forged_sig = _sign(attacker_private, signing_input)
+
+        # Submit — must be rejected
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=device_row),
+                _db_result(scalars_all=[device_row]),
+            ]
+        )
+        resp = client.post(
+            "/api/v2/consent/approve-signed",
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": forged_sig,
+                "device_id": device_id,
+            },
+        )
+        assert (
+            resp.status_code == 401
+        ), f"Forged signature from wrong keypair should be rejected (401), got {resp.status_code}"
+
+
+# ── Test: Revoked device ─────────────────────────────────────────────────────
 
 
 def test_forged_signature_revoked_device(
@@ -374,8 +357,12 @@ def test_forged_signature_revoked_device(
     patient_id,
     real_clinical_session,
 ):
-    """A cryptographically valid signature from a revoked device is rejected."""
-    private_key, der_bytes, _ = _generate_keypair()
+    """T-01b: A valid signature from a revoked device is rejected (401).
+
+    The device was previously enrolled but then revoked. The signature
+    is cryptographically valid but the key is no longer trusted.
+    """
+    private_key, der_bytes, der_b64 = _generate_keypair()
     device_id = str(uuid.uuid4())
     provider_id = str(real_clinical_session.provider.id)
 
@@ -383,83 +370,101 @@ def test_forged_signature_revoked_device(
         return patient_id
 
     app.dependency_overrides[get_scoped_session] = _session_dep
-    try:
-        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
-            discovery_handle = _active_discovery_handle(
-                fake_redis, real_clinical_session, patient_id
-            )
-            revoked_row = _mock_device_row(
-                device_id,
-                patient_id,
-                der_bytes,
-                status="revoked",
-                revoked_at=datetime.now(timezone.utc),
-            )
-            _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback(
-                [
-                    _db_result(
-                        scalar_one_or_none=_mock_device_row(
-                            device_id, patient_id, der_bytes, status="active"
-                        )
-                    )
-                ]
-            )
-            req_resp = client.post(
-                "/api/v2/consent/request",
-                headers=real_clinical_session.headers,
-                json={
-                    "discovery_handle": discovery_handle,
-                    "purpose": "checkup",
-                    "scope": "clinical",
-                    "access_duration_seconds": 900,
-                },
-            )
-            assert req_resp.status_code == 201
-            request_id = req_resp.json()["request_id"]
-            challenge_nonce = req_resp.json()["challenge_nonce"]
-            challenge_data = json.loads(
-                fake_sync_redis.get(f"consent_request:{request_id}")
-            )
-            signing_input = _build_signing_input(
-                request_id=request_id,
-                patient_id=patient_id,
-                provider_id=provider_id,
-                challenge_nonce=challenge_nonce,
-                decision="approved",
-                scope="clinical",
-                purpose="checkup",
-                access_duration=challenge_data["access_duration"],
-                issued_at=challenge_data["created_at"],
-                expires_at=challenge_data["expires_at"],
-                device_id=device_id,
-            )
-            real_sig = _sign(private_key, signing_input)
 
-            _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback(
-                [_db_result(scalar_one_or_none=revoked_row)]
-            )
-            resp = client.post(
-                "/api/v2/consent/approve-signed",
-                json={
-                    "request_id": request_id,
-                    "patient_id": patient_id,
-                    "decision": "approved",
-                    "challenge_nonce": challenge_nonce,
-                    "signature": real_sig,
-                    "device_id": device_id,
-                },
-            )
-            assert resp.status_code == 401
-    finally:
-        app.dependency_overrides.pop(get_scoped_session, None)
+    with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
+        # Mock a REVOKED device row
+        revoked_row = _mock_device_row(
+            device_id,
+            patient_id,
+            der_bytes,
+            status="revoked",
+            revoked_at=datetime.now(timezone.utc),
+        )
+
+        # Request consent — device is still "active" for the initial query
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(
+                    scalar_one_or_none=_mock_device_row(
+                        device_id, patient_id, der_bytes, status="active"
+                    )
+                ),
+            ]
+        )
+        req_resp = client.post(
+            "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
+            json={
+                "discovery_handle": discovery_handle,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
+        )
+        assert req_resp.status_code == 201
+        request_id = req_resp.json()["request_id"]
+        challenge_nonce = req_resp.json()["challenge_nonce"]
+
+        # Build valid signature
+        challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
+        challenge_data = json.loads(challenge_raw)
+        signing_input = _build_signing_input(
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
+            expires_at=challenge_data["expires_at"],
+            device_id=device_id,
+        )
+        real_sig = _sign(private_key, signing_input)
+
+        # Submit with revoked device — route handler checks revoked_at
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(
+                    scalar_one_or_none=revoked_row
+                ),  # device lookup in route → revoked
+            ]
+        )
+        resp = client.post(
+            "/api/v2/consent/approve-signed",
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": real_sig,
+                "device_id": device_id,
+            },
+        )
+        assert (
+            resp.status_code == 401
+        ), f"Valid signature from revoked device should be rejected (401), got {resp.status_code}"
+
+
+# ── Test: Timing side-channel ────────────────────────────────────────────────
 
 
 def test_forged_signature_timing_sidechannel():
+    """T-01c: SignedApprovalVerifier enforces minimum verification duration."""
     from app.services.signed_approval_verifier import _MIN_VERIFY_DURATION_SECONDS
 
-    assert _MIN_VERIFY_DURATION_SECONDS > 0
+    assert (
+        _MIN_VERIFY_DURATION_SECONDS > 0
+    ), "SignedApprovalVerifier must enforce a minimum verification duration to prevent timing attacks"
+
+
+# ── Test: Unenrolled key (verifier direct) ────────────────────────────────────
 
 
 def test_forged_signature_unenrolled_key_direct(
@@ -470,86 +475,103 @@ def test_forged_signature_unenrolled_key_direct(
     patient_id,
     real_clinical_session,
 ):
-    """A signature from a device ID not enrolled for the patient is rejected."""
-    attacker_private, _, _ = _generate_keypair()
+    """T-01d: Signature from a key that was never enrolled for the patient → 401.
+
+    The approve-signed handler looks up the device by ID. If the device
+    is not found for this patient, the request is rejected.
+    """
+    attacker_private, _, attacker_b64 = _generate_keypair()
     device_id = str(uuid.uuid4())
     provider_id = str(real_clinical_session.provider.id)
-    _, enrolled_der, enrolled_b64 = _generate_keypair()
 
     async def _session_dep():
         return patient_id
 
     app.dependency_overrides[get_scoped_session] = _session_dep
-    try:
-        with _patch_stack(fake_redis, fake_sync_redis, patient_id):
-            discovery_handle = _active_discovery_handle(
-                fake_redis, real_clinical_session, patient_id
-            )
-            enrolled_row = _mock_device_row(
-                str(uuid.uuid4()), patient_id, enrolled_der
-            )
-            _reset_mock_db(mock_db)
-            enroll_resp = client.post(
-                "/api/v2/patient/devices/enroll",
-                json={
-                    "device_public_key": enrolled_b64,
-                    "device_label": "Enrolled Device",
-                    "platform": "ios",
-                    "device_enrollment_token": "e" * 43,
-                },
-            )
-            assert enroll_resp.status_code == 201
 
-            _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback(
-                [_db_result(scalar_one_or_none=enrolled_row)]
-            )
-            req_resp = client.post(
-                "/api/v2/consent/request",
-                headers=real_clinical_session.headers,
-                json={
-                    "discovery_handle": discovery_handle,
-                    "purpose": "checkup",
-                    "scope": "clinical",
-                    "access_duration_seconds": 900,
-                },
-            )
-            assert req_resp.status_code == 201
-            request_id = req_resp.json()["request_id"]
-            challenge_nonce = req_resp.json()["challenge_nonce"]
-            challenge_data = json.loads(
-                fake_sync_redis.get(f"consent_request:{request_id}")
-            )
-            signing_input = _build_signing_input(
-                request_id=request_id,
-                patient_id=patient_id,
-                provider_id=provider_id,
-                challenge_nonce=challenge_nonce,
-                decision="approved",
-                scope="clinical",
-                purpose="checkup",
-                access_duration=challenge_data["access_duration"],
-                issued_at=challenge_data["created_at"],
-                expires_at=challenge_data["expires_at"],
-                device_id=device_id,
-            )
-            forged_sig = _sign(attacker_private, signing_input)
+    with _patch_stack(fake_redis, fake_sync_redis, patient_id):
+        discovery_handle = _active_discovery_handle(
+            fake_redis, real_clinical_session, patient_id
+        )
+        # Enroll with a DIFFERENT key
+        enrolled_private, enrolled_der, enrolled_b64 = _generate_keypair()
+        enrolled_row = _mock_device_row(str(uuid.uuid4()), patient_id, enrolled_der)
 
-            _reset_mock_db(mock_db)
-            mock_db.execute.side_effect = _side_effect_with_fallback(
-                [_db_result(scalar_one_or_none=None)]
-            )
-            resp = client.post(
-                "/api/v2/consent/approve-signed",
-                json={
-                    "request_id": request_id,
-                    "patient_id": patient_id,
-                    "decision": "approved",
-                    "challenge_nonce": challenge_nonce,
-                    "signature": forged_sig,
-                    "device_id": device_id,
-                },
-            )
-            assert resp.status_code == 401
-    finally:
-        app.dependency_overrides.pop(get_scoped_session, None)
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar=0),
+                _db_result(scalar_one_or_none=None),
+            ]
+        )
+        enroll_resp = client.post(
+            "/api/v2/patient/devices/enroll",
+            json={
+                "device_public_key": enrolled_b64,
+                "device_label": "Enrolled Device",
+                "platform": "ios",
+                "device_enrollment_token": "e" * 43,
+            },
+        )
+        assert enroll_resp.status_code == 201
+
+        # Request consent
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=enrolled_row),
+            ]
+        )
+        req_resp = client.post(
+            "/api/v2/consent/request",
+            headers=real_clinical_session.headers,
+            json={
+                "discovery_handle": discovery_handle,
+                "purpose": "checkup",
+                "scope": "clinical",
+                "access_duration_seconds": 900,
+            },
+        )
+        assert req_resp.status_code == 201
+        request_id = req_resp.json()["request_id"]
+        challenge_nonce = req_resp.json()["challenge_nonce"]
+
+        # Sign with UNENROLLED key
+        challenge_raw = fake_sync_redis.get(f"consent_request:{request_id}")
+        challenge_data = json.loads(challenge_raw)
+        signing_input = _build_signing_input(
+            request_id=request_id,
+            patient_id=patient_id,
+            provider_id=provider_id,
+            challenge_nonce=challenge_nonce,
+            decision="approved",
+            scope="clinical",
+            purpose="checkup",
+            access_duration=challenge_data["access_duration"],
+            issued_at=challenge_data["created_at"],
+            expires_at=challenge_data["expires_at"],
+            device_id=device_id,
+        )
+        forged_sig = _sign(attacker_private, signing_input)
+
+        # Device not found for this patient
+        _reset_mock_db(mock_db)
+        mock_db.execute.side_effect = _side_effect_with_fallback(
+            [
+                _db_result(scalar_one_or_none=None),  # device lookup → not found
+            ]
+        )
+        resp = client.post(
+            "/api/v2/consent/approve-signed",
+            json={
+                "request_id": request_id,
+                "patient_id": patient_id,
+                "decision": "approved",
+                "challenge_nonce": challenge_nonce,
+                "signature": forged_sig,
+                "device_id": device_id,
+            },
+        )
+        assert (
+            resp.status_code == 401
+        ), f"Unenrolled key signature should be rejected (401), got {resp.status_code}"

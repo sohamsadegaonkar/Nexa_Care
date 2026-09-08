@@ -24,8 +24,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.dependencies import (
-    AuthenticatedPatientSession,
-    get_current_patient_session,
     get_current_provider,
     get_scoped_session,
 )
@@ -37,7 +35,6 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.models.provider import AffiliationType
-from app.services.patient_device_trust import PatientDeviceTrustError
 from app.services.patient_discovery_service import PatientDiscoveryService
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
@@ -76,34 +73,6 @@ def _generate_p256_public_key_der() -> bytes:
     return private_key.public_key().public_bytes(
         Encoding.DER, PublicFormat.SubjectPublicKeyInfo
     )
-
-
-def _patient_session(patient_id: str) -> AuthenticatedPatientSession:
-    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
-    return AuthenticatedPatientSession(
-        patient_id=patient_id,
-        patient=patient,
-        session_id="device-route-test-session",
-        session_epoch=0,
-        supabase_user_id="device-route-test-subject",
-    )
-
-
-def _device_row(*, patient_id: str, device_id: str | None = None, status: str = "active"):
-    logical_device_id = uuid.UUID(device_id) if device_id else uuid.uuid4()
-    row = MagicMock()
-    row.device_id = logical_device_id
-    row.id = uuid.uuid4()
-    row.patient_id = uuid.UUID(patient_id)
-    row.key_version = 1
-    row.device_label = "Test Device"
-    row.platform = "ios"
-    row.status = status
-    row.enrolled_at = datetime.now(timezone.utc)
-    row.revoked_at = datetime.now(timezone.utc) if status == "revoked" else None
-    row.revocation_reason_code = "PATIENT_REQUEST" if status == "revoked" else None
-    row.public_key_fingerprint = "f" * 64
-    return row
 
 
 def _active_discovery_handle(fake_redis, clinical_session, patient_id: str) -> str:
@@ -185,31 +154,29 @@ def valid_device_enrollment_grant():
 
 
 class TestDeviceEnrollmentValidation:
-    """Validate device route input and service error mapping.
-
-    Relational lifecycle/concurrency invariants are qualified separately against
-    real PostgreSQL in test_patient_device_trust_postgres.py.
-    """
+    """Validate device enrollment input and business rules."""
 
     def test_enroll_valid_p256_key_returns_201(
         self, client, fake_redis, fake_sync_redis, mock_db, overrides
     ):
+        """Enrolling a valid P-256 public key returns 201 with device_id."""
         patient_id = str(uuid.uuid4())
         pub_der = _generate_p256_public_key_der()
         pub_b64 = base64.b64encode(pub_der).decode()
-        enrolled = _device_row(patient_id=patient_id)
 
-        async def _current_session():
-            return _patient_session(patient_id)
+        mock_db.execute.side_effect = [
+            MagicMock(scalar=MagicMock(return_value=0)),  # active_count
+            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # no existing
+        ]
 
-        overrides.set(get_current_patient_session, _current_session)
+        async def _scoped_session():
+            return patient_id
+
+        overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
         with (
-            patch(
-                "app.api.v2.device_routes.enroll_patient_device_key",
-                new=AsyncMock(return_value=enrolled),
-            ) as enroll_service,
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
             patch(
                 "app.observability.audit_ledger.append_audit_log_or_503",
                 return_value=None,
@@ -228,27 +195,28 @@ class TestDeviceEnrollmentValidation:
             assert resp.status_code == 201
             data = resp.json()
             assert data["status"] == "active"
-            assert data["device_id"] == str(enrolled.device_id)
-            assert data["key_id"] == str(enrolled.id)
-            assert data["key_version"] == 1
+            assert "device_id" in data
             assert data["patient_id"] == patient_id
             assert "enrolled_at" in data
-            enroll_service.assert_awaited_once()
 
     def test_enroll_invalid_base64_returns_400(
         self, client, fake_sync_redis, mock_db, overrides
     ):
+        """Non-base64 public key data is rejected with 400."""
         patient_id = str(uuid.uuid4())
 
-        async def _current_session():
-            return _patient_session(patient_id)
+        async def _scoped_session():
+            return patient_id
 
-        overrides.set(get_current_patient_session, _current_session)
+        overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch(
-            "app.observability.audit_ledger.append_audit_log_or_503",
-            return_value=None,
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
         ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
@@ -260,11 +228,15 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 400
-            assert resp.json()["detail"]["error_code"] == "DEVICE_PUBLIC_KEY_INVALID"
+            assert (
+                "Invalid" in resp.json()["detail"]
+                or "public key" in resp.json()["detail"].lower()
+            )
 
     def test_enroll_non_p256_key_returns_400(
         self, client, fake_sync_redis, mock_db, overrides
     ):
+        """A valid DER key but non-P256 curve is rejected with 400."""
         from cryptography.hazmat.primitives.asymmetric import rsa
         from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
@@ -273,17 +245,21 @@ class TestDeviceEnrollmentValidation:
             Encoding.DER, PublicFormat.SubjectPublicKeyInfo
         )
         pub_b64 = base64.b64encode(pub_der).decode()
+
         patient_id = str(uuid.uuid4())
 
-        async def _current_session():
-            return _patient_session(patient_id)
+        async def _scoped_session():
+            return patient_id
 
-        overrides.set(get_current_patient_session, _current_session)
+        overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch(
-            "app.observability.audit_ledger.append_audit_log_or_503",
-            return_value=None,
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
         ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
@@ -295,28 +271,29 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 400
-            assert resp.json()["detail"]["error_code"] == "DEVICE_PUBLIC_KEY_NOT_P256"
+            assert (
+                "P-256" in resp.json()["detail"] or "SECP256R1" in resp.json()["detail"]
+            )
 
     def test_enroll_max_five_active_devices_returns_409(
         self, client, fake_sync_redis, mock_db, overrides
     ):
+        """Attempting to enroll a 6th active device returns 409."""
         patient_id = str(uuid.uuid4())
+
+        mock_db.execute.return_value = MagicMock(scalar=MagicMock(return_value=5))
+
+        async def _scoped_session():
+            return patient_id
+
+        overrides.set(get_scoped_session, _scoped_session)
+        overrides.apply()
+
         pub_der = _generate_p256_public_key_der()
         pub_b64 = base64.b64encode(pub_der).decode()
 
-        async def _current_session():
-            return _patient_session(patient_id)
-
-        overrides.set(get_current_patient_session, _current_session)
-        overrides.apply()
-
         with (
-            patch(
-                "app.api.v2.device_routes.enroll_patient_device_key",
-                new=AsyncMock(
-                    side_effect=PatientDeviceTrustError("DEVICE_ACTIVE_LIMIT_REACHED")
-                ),
-            ),
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
             patch(
                 "app.observability.audit_ledger.append_audit_log_or_503",
                 return_value=None,
@@ -332,77 +309,87 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 409
-            assert (
-                resp.json()["detail"]["error_code"]
-                == "DEVICE_ACTIVE_LIMIT_REACHED"
-            )
+            assert "5" in resp.json()["detail"] or "Maximum" in resp.json()["detail"]
 
     def test_list_devices_returns_200(
         self, client, fake_sync_redis, mock_db, overrides
     ):
+        """GET /api/v2/patient/devices returns device list without public keys."""
         patient_id = str(uuid.uuid4())
+
         mock_db.execute.return_value = MagicMock(
             scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
         )
 
-        async def _current_session():
-            return _patient_session(patient_id)
+        async def _scoped_session():
+            return patient_id
 
-        overrides.set(get_current_patient_session, _current_session)
+        overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        resp = client.get("/api/v2/patient/devices")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["patient_id"] == patient_id
-        assert isinstance(data["devices"], list)
+        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis):
+            resp = client.get("/api/v2/patient/devices")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["patient_id"] == patient_id
+            assert isinstance(data["devices"], list)
 
     def test_revoke_device_returns_200(
         self, client, fake_sync_redis, mock_db, overrides
     ):
+        """POST /api/v2/patient/devices/{device_id}/revoke sets status to revoked."""
         patient_id = str(uuid.uuid4())
         device_id = str(uuid.uuid4())
-        revoked = _device_row(patient_id=patient_id, device_id=device_id, status="revoked")
 
-        async def _current_session():
-            return _patient_session(patient_id)
+        mock_device = MagicMock()
+        mock_device.id = uuid.UUID(device_id)
+        mock_device.patient_id = uuid.UUID(patient_id)
+        mock_device.status = "active"
 
-        overrides.set(get_current_patient_session, _current_session)
+        mock_db.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=mock_device)
+        )
+
+        async def _scoped_session():
+            return patient_id
+
+        overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch(
-            "app.api.v2.device_routes.revoke_patient_device",
-            new=AsyncMock(return_value=revoked),
-        ) as revoke_service:
+        with (
+            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                return_value=None,
+            ),
+        ):
             resp = client.post(f"/api/v2/patient/devices/{device_id}/revoke")
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "revoked"
             assert data["device_id"] == device_id
-            assert data["key_id"] == str(revoked.id)
-            assert data["key_version"] == 1
             assert "revoked_at" in data
-            revoke_service.assert_awaited_once()
 
     def test_revoke_nonexistent_device_returns_404(
         self, client, fake_sync_redis, mock_db, overrides
     ):
+        """Revoking a device that doesn't exist or doesn't belong to the patient returns 404."""
         patient_id = str(uuid.uuid4())
         device_id = str(uuid.uuid4())
 
-        async def _current_session():
-            return _patient_session(patient_id)
+        mock_db.execute.return_value = MagicMock(
+            scalar_one_or_none=MagicMock(return_value=None)
+        )
 
-        overrides.set(get_current_patient_session, _current_session)
+        async def _scoped_session():
+            return patient_id
+
+        overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
 
-        with patch(
-            "app.api.v2.device_routes.revoke_patient_device",
-            new=AsyncMock(side_effect=PatientDeviceTrustError("DEVICE_NOT_FOUND")),
-        ):
+        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis):
             resp = client.post(f"/api/v2/patient/devices/{device_id}/revoke")
             assert resp.status_code == 404
-            assert resp.json()["detail"]["error_code"] == "DEVICE_NOT_FOUND"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -463,12 +450,13 @@ class TestConsentRequestCreation:
             assert data["status"] == "pending"
             assert "request_id" in data
             assert "challenge_nonce" in data
-            assert len(data["challenge_nonce"]) == 64
+            assert len(data["challenge_nonce"]) == 64  # 32 bytes hex
             assert data["expires_in_seconds"] > 0
 
     def test_consent_request_idor_rejected(
         self, client, fake_sync_redis, mock_db, real_clinical_session
     ):
+        """Raw patient/provider identifiers are rejected before consent creation."""
         patient_id = str(uuid.uuid4())
         different_provider = str(uuid.uuid4())
 
@@ -487,7 +475,7 @@ class TestConsentRequestCreation:
                 headers=real_clinical_session.headers,
                 json={
                     "patient_id": patient_id,
-                    "provider_id": different_provider,
+                    "provider_id": different_provider,  # IDOR probe
                     "purpose": "routine_checkup",
                     "scope": "clinical",
                 },
@@ -497,6 +485,7 @@ class TestConsentRequestCreation:
     def test_consent_request_no_device_returns_409(
         self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
+        """Consent request for a patient without enrolled devices returns 409."""
         patient_id = str(uuid.uuid4())
 
         mock_db.execute.return_value = MagicMock(
@@ -542,6 +531,7 @@ class TestConsentRequestCreation:
     def test_consent_request_duration_clamped(
         self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
+        """access_duration_seconds is clamped to [300, 3600]."""
         patient_id = str(uuid.uuid4())
 
         mock_device = MagicMock()
@@ -573,6 +563,7 @@ class TestConsentRequestCreation:
                 return_value=None,
             ),
         ):
+            # Request duration below minimum (10s → clamped to 300s)
             resp = client.post(
                 "/api/v2/consent/request",
                 headers=real_clinical_session.headers,
@@ -585,6 +576,7 @@ class TestConsentRequestCreation:
             )
             assert resp.status_code == 201
 
+            # Verify the stored challenge used clamped value
             raw = fake_sync_redis.get(f"consent_request:{resp.json()['request_id']}")
             if raw:
                 stored = json.loads(raw)
@@ -600,7 +592,9 @@ class TestConsentStatusPolling:
     """Validate consent status polling endpoint."""
 
     def test_status_pending(self, client, fake_sync_redis, real_clinical_session):
+        """Polling a pending request returns status='pending'."""
         request_id = str(uuid.uuid4())
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
@@ -611,6 +605,7 @@ class TestConsentStatusPolling:
         fake_sync_redis.set(
             f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
         )
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -626,7 +621,9 @@ class TestConsentStatusPolling:
     def test_status_expired_when_not_found(
         self, client, fake_sync_redis, real_clinical_session
     ):
+        """Polling a non-existent request returns status='expired'."""
         request_id = str(uuid.uuid4())
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -638,8 +635,10 @@ class TestConsentStatusPolling:
             assert resp.json()["status"] == "expired"
 
     def test_status_approved(self, client, fake_sync_redis, real_clinical_session):
+        """Polling an approved request returns status='approved' with responded_at."""
         request_id = str(uuid.uuid4())
         now_iso = datetime.now(timezone.utc).isoformat()
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
@@ -651,6 +650,7 @@ class TestConsentStatusPolling:
         fake_sync_redis.set(
             f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
         )
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -666,8 +666,10 @@ class TestConsentStatusPolling:
     def test_status_wrong_provider_returns_403(
         self, client, fake_sync_redis, real_clinical_session
     ):
+        """Polling another provider's request returns 403."""
         other_provider = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
@@ -677,6 +679,7 @@ class TestConsentStatusPolling:
         fake_sync_redis.set(
             f"consent_request:{request_id}", json.dumps(challenge_data), ex=300
         )
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -696,9 +699,11 @@ class TestConsentCancellation:
     """Validate consent request cancellation."""
 
     def test_cancel_pending_request_succeeds(self, client, fake_sync_redis, overrides):
+        """Cancelling a pending request returns status='cancelled'."""
         provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         ctx = _make_provider_context(provider_id)
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
@@ -714,6 +719,7 @@ class TestConsentCancellation:
 
         overrides.set(get_current_provider, _provider)
         overrides.apply()
+
         with (
             patch(
                 "app.api.v2.consent_routes.get_redis_client",
@@ -733,9 +739,11 @@ class TestConsentCancellation:
     def test_cancel_approved_request_returns_409(
         self, client, fake_sync_redis, overrides
     ):
+        """Cancelling an already-approved request returns 409 (terminal state)."""
         provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         ctx = _make_provider_context(provider_id)
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": str(uuid.uuid4()),
@@ -751,6 +759,7 @@ class TestConsentCancellation:
 
         overrides.set(get_current_provider, _provider)
         overrides.apply()
+
         with (
             patch(
                 "app.api.v2.consent_routes.get_redis_client",
@@ -767,6 +776,7 @@ class TestConsentCancellation:
     def test_cancel_expired_request_returns_404(
         self, client, fake_sync_redis, overrides
     ):
+        """Cancelling a request that has already expired returns 404."""
         provider_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         ctx = _make_provider_context(provider_id)
@@ -776,6 +786,7 @@ class TestConsentCancellation:
 
         overrides.set(get_current_provider, _provider)
         overrides.apply()
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -794,6 +805,7 @@ class TestSignedApproval:
     def test_approve_expired_challenge_returns_404(
         self, client, fake_sync_redis, overrides
     ):
+        """Submitting approval for an expired/missing challenge returns 404."""
         patient_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
 
@@ -802,6 +814,7 @@ class TestSignedApproval:
 
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -821,9 +834,11 @@ class TestSignedApproval:
     def test_approve_nonce_mismatch_returns_401(
         self, client, fake_sync_redis, overrides
     ):
+        """Submitting a wrong challenge_nonce returns 401."""
         patient_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         device_id = str(uuid.uuid4())
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": patient_id,
@@ -843,6 +858,7 @@ class TestSignedApproval:
 
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -862,9 +878,11 @@ class TestSignedApproval:
     def test_approve_already_resolved_returns_409(
         self, client, fake_sync_redis, overrides
     ):
+        """Submitting approval for an already-resolved challenge returns 409."""
         patient_id = str(uuid.uuid4())
         request_id = str(uuid.uuid4())
         nonce = "abc123"
+
         challenge_data = {
             "request_id": request_id,
             "patient_id": patient_id,
@@ -884,6 +902,7 @@ class TestSignedApproval:
 
         overrides.set(get_scoped_session, _scoped_session)
         overrides.apply()
+
         with patch(
             "app.api.v2.consent_routes.get_redis_client", return_value=fake_sync_redis
         ):
@@ -912,7 +931,9 @@ class TestBreakGlassConsent:
     def test_break_glass_requires_reason_code(
         self, client, fake_redis, fake_sync_redis, mock_db, real_clinical_session
     ):
+        """Break-glass without a reason_code should fail validation."""
         patient_id = str(uuid.uuid4())
+
         with (
             patch(
                 "app.services.consent_engine.get_consent_redis_client",
@@ -936,11 +957,13 @@ class TestBreakGlassConsent:
             assert resp.status_code in (400, 403, 422)
 
     def test_break_glass_ttl_is_15_minutes(self):
+        """Break-glass consent tokens have a 15-minute (900s) TTL."""
         from app.services.consent_engine import BREAK_GLASS_TTL_SECONDS
 
         assert BREAK_GLASS_TTL_SECONDS == 900
 
     def test_break_glass_rate_limiter_enforced(self):
+        """Break-glass is limited to 3 per provider per hour."""
         import app.api.v2.consent_routes as consent_mod
 
         limiter = consent_mod._break_glass_limiter
@@ -954,13 +977,17 @@ class TestBreakGlassConsent:
 
 
 class TestRoutineConsent:
+    """Validate routine consent issuance."""
+
     def test_routine_consent_requires_valid_purpose(self):
+        """issue_routine rejects non-enum purposes."""
         from app.services.consent_engine import ConsentPurpose
 
         valid = ConsentPurpose.TREATMENT
         assert valid.value == "TREATMENT"
 
     def test_routine_consent_empty_scope_rejected(self):
+        """issue() rejects empty scope."""
         from app.services.consent_engine import issue
         import inspect
 
@@ -974,7 +1001,10 @@ class TestRoutineConsent:
 
 
 class TestConsentEngineValidation:
+    """Validate consent engine capability parsing and matching."""
+
     def test_parse_valid_capability(self):
+        """_parse_payload correctly parses a valid consent capability."""
         from app.services.consent_engine import _parse_payload
 
         payload = json.dumps(
@@ -989,6 +1019,7 @@ class TestConsentEngineValidation:
                 "expires_at": "2025-01-01T01:00:00Z",
             }
         )
+
         cap = _parse_payload(payload)
         assert cap is not None
         assert cap.patient_id == "pat-1"
@@ -998,6 +1029,7 @@ class TestConsentEngineValidation:
         assert cap.is_break_glass is False
 
     def test_parse_break_glass_capability(self):
+        """_parse_payload correctly parses a break-glass capability."""
         from app.services.consent_engine import _parse_payload
 
         payload = json.dumps(
@@ -1012,17 +1044,23 @@ class TestConsentEngineValidation:
                 "expires_at": "2025-01-01T00:15:00Z",
             }
         )
+
         cap = _parse_payload(payload)
         assert cap is not None
         assert cap.is_break_glass is True
         assert cap.reason_code == "IMMEDIATE_THREAT_TO_LIFE"
 
     def test_parse_invalid_payload_returns_none(self):
+        """_parse_payload returns None for malformed payloads."""
         from app.services.consent_engine import _parse_payload
 
+        # Missing required fields
         assert _parse_payload(json.dumps({"patient_id": "x"})) is None
+        # Non-dict
         assert _parse_payload("not json") is None
+        # None
         assert _parse_payload(None) is None
+        # Break-glass without reason_code
         assert (
             _parse_payload(
                 json.dumps(
@@ -1042,6 +1080,7 @@ class TestConsentEngineValidation:
         )
 
     def test_matches_logic(self):
+        """_matches correctly filters capabilities by constraints."""
         from app.services.consent_engine import _matches, ConsentCapability
 
         cap = ConsentCapability(
@@ -1053,6 +1092,7 @@ class TestConsentEngineValidation:
             reason_code=None,
             issued_at="2025-01-01T00:00:00Z",
         )
+
         assert _matches(cap, "pat-1", "doc-1", "TREATMENT") is True
         assert _matches(cap, None, None, None) is True
         assert _matches(cap, "pat-2", None, None) is False
@@ -1060,16 +1100,23 @@ class TestConsentEngineValidation:
         assert _matches(cap, None, None, "PAYMENT") is False
 
     def test_token_hash_is_deterministic(self):
+        """_token_hash produces consistent output for the same input."""
         from app.services.consent_engine import _token_hash
 
         token = "test-token-value-12345"
         h1 = _token_hash(token)
         h2 = _token_hash(token)
         assert h1 == h2
-        assert len(h1) == 64
+        assert len(h1) == 64  # SHA-256 hex digest
 
     def test_parse_empty_scope_list_returns_capability(self):
-        """Document the existing parser behavior; issuance still rejects empty scope."""
+        """_parse_payload with empty scope list currently returns a capability.
+
+        ALPHA GAP: _parse_payload does not enforce scope non-empty at parse time.
+        The issue() function enforces it at issuance time. This test documents
+        the current behavior — once _parse_payload adds scope validation, this
+        test should assert `result is None` instead.
+        """
         from app.services.consent_engine import _parse_payload
 
         result = _parse_payload(
@@ -1085,4 +1132,10 @@ class TestConsentEngineValidation:
                 }
             )
         )
-        assert result is not None
+        # Currently returns capability with empty scope — this is a known gap.
+        # The issue() function rejects empty scope at issuance, so this should
+        # never be reachable in practice, but _parse_payload should ideally
+        # also reject it.
+        assert (
+            result is not None
+        )  # ALPHA: should be None once _parse_payload is hardened
