@@ -3,7 +3,7 @@
 The backend stores public keys only. A logical device has a stable server-owned
 ``device_id`` and one or more immutable key-version rows. Slice 6C establishes
 version 1 enrollment and terminal revocation semantics; Slice 6D adds normal
-key rotation using the same lineage fields.
+proof-of-possession key rotation using the same lineage fields.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.patient_device_keys import PatientDeviceKey, PatientDeviceKeyStatus
 from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.audit_outbox import enqueue_audit_event
+from app.services.patient_device_rotation import verify_device_rotation_signature
 
 MAX_ACTIVE_PATIENT_DEVICES = 5
 
@@ -39,6 +40,18 @@ class PatientDeviceTrustError(ValueError):
 class CanonicalPatientPublicKey:
     der: bytes
     fingerprint: str
+
+
+@dataclass(frozen=True, slots=True)
+class PatientDeviceRotationResult:
+    device_id: uuid.UUID
+    old_key_id: uuid.UUID
+    new_key_id: uuid.UUID
+    old_key_version: int
+    new_key_version: int
+    new_public_key_fingerprint: str
+    rotated_at: datetime
+    status: str
 
 
 def canonicalize_p256_public_key(raw_key: bytes) -> CanonicalPatientPublicKey:
@@ -83,6 +96,61 @@ async def _lock_patient_device_set(db: AsyncSession, patient_id: uuid.UUID) -> N
 
 def _audit_key(action: str, row_id: uuid.UUID) -> str:
     return f"patient-device:{action}:{row_id}"
+
+
+async def _historical_device_exists(
+    db: AsyncSession, *, patient_id: uuid.UUID, device_id: uuid.UUID
+) -> bool:
+    historical = await db.scalar(
+        select(PatientDeviceKey.id)
+        .where(
+            PatientDeviceKey.patient_id == patient_id,
+            PatientDeviceKey.device_id == device_id,
+        )
+        .limit(1)
+    )
+    return historical is not None
+
+
+async def get_active_patient_device_key(
+    db: AsyncSession, *, patient_id: uuid.UUID, device_id: uuid.UUID
+) -> PatientDeviceKey:
+    """Resolve the one active key version for a patient-owned logical device."""
+
+    row = await db.scalar(
+        select(PatientDeviceKey).where(
+            PatientDeviceKey.patient_id == patient_id,
+            PatientDeviceKey.device_id == device_id,
+            PatientDeviceKey.status == PatientDeviceKeyStatus.ACTIVE.value,
+            PatientDeviceKey.revoked_at.is_(None),
+        )
+    )
+    if row is not None:
+        return row
+    if await _historical_device_exists(db, patient_id=patient_id, device_id=device_id):
+        raise PatientDeviceTrustError("DEVICE_NOT_ACTIVE")
+    raise PatientDeviceTrustError("DEVICE_NOT_FOUND")
+
+
+async def assert_rotation_new_key_available(
+    db: AsyncSession, *, public_key_fingerprint: str
+) -> None:
+    """Fail early when proposed rotation key material already has ownership."""
+
+    existing = await db.scalar(
+        select(PatientDeviceKey).where(
+            PatientDeviceKey.public_key_fingerprint == public_key_fingerprint
+        )
+    )
+    if existing is None:
+        return
+    if existing.status in {
+        PatientDeviceKeyStatus.REVOKED.value,
+        PatientDeviceKeyStatus.REPLACED.value,
+        PatientDeviceKeyStatus.COMPROMISED.value,
+    }:
+        raise PatientDeviceTrustError("DEVICE_KEY_RESURRECTION_FORBIDDEN")
+    raise PatientDeviceTrustError("DEVICE_KEY_ALREADY_ENROLLED")
 
 
 async def enroll_patient_device_key(
@@ -165,6 +233,149 @@ async def enroll_patient_device_key(
         raise PatientDeviceTrustError("DEVICE_KEY_ALREADY_ENROLLED") from exc
 
 
+async def rotate_patient_device_key(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    device_id: uuid.UUID,
+    expected_key_version: int,
+    raw_new_public_key: bytes,
+    signing_payload: bytes,
+    signature_b64: str,
+    actor_id: str,
+) -> PatientDeviceRotationResult:
+    """Advance one logical device to the next immutable key version atomically.
+
+    The old active row is locked and must exactly match ``expected_key_version``.
+    Its public key verifies the rotation proof before any authority mutation.
+    The old row then becomes terminal ``replaced`` and the new active row is
+    linked bidirectionally in the same PostgreSQL transaction as both lifecycle
+    audit-outbox events.
+    """
+
+    canonical = canonicalize_p256_public_key(raw_new_public_key)
+    now = datetime.now(timezone.utc)
+    new_key_id = uuid.uuid4()
+
+    try:
+        async with db.begin():
+            await _lock_patient_device_set(db, patient_id)
+            old = await db.scalar(
+                select(PatientDeviceKey)
+                .where(
+                    PatientDeviceKey.patient_id == patient_id,
+                    PatientDeviceKey.device_id == device_id,
+                    PatientDeviceKey.status == PatientDeviceKeyStatus.ACTIVE.value,
+                    PatientDeviceKey.revoked_at.is_(None),
+                )
+                .with_for_update()
+            )
+            if old is None:
+                if await _historical_device_exists(
+                    db, patient_id=patient_id, device_id=device_id
+                ):
+                    raise PatientDeviceTrustError("DEVICE_NOT_ACTIVE")
+                raise PatientDeviceTrustError("DEVICE_NOT_FOUND")
+            if old.key_version != expected_key_version:
+                raise PatientDeviceTrustError("DEVICE_KEY_VERSION_STALE")
+            if not verify_device_rotation_signature(
+                public_key_der=old.device_public_key,
+                signing_payload=signing_payload,
+                signature_b64=signature_b64,
+            ):
+                raise PatientDeviceTrustError("DEVICE_ROTATION_SIGNATURE_INVALID")
+
+            existing = await db.scalar(
+                select(PatientDeviceKey).where(
+                    PatientDeviceKey.public_key_fingerprint == canonical.fingerprint
+                )
+            )
+            if existing is not None:
+                if existing.status in {
+                    PatientDeviceKeyStatus.REVOKED.value,
+                    PatientDeviceKeyStatus.REPLACED.value,
+                    PatientDeviceKeyStatus.COMPROMISED.value,
+                }:
+                    raise PatientDeviceTrustError("DEVICE_KEY_RESURRECTION_FORBIDDEN")
+                raise PatientDeviceTrustError("DEVICE_KEY_ALREADY_ENROLLED")
+
+            old_key_id = old.id
+            old_key_version = old.key_version
+            old.status = PatientDeviceKeyStatus.REPLACED.value
+            old.revoked_at = now
+            old.revocation_reason_code = "KEY_ROTATED"
+            old.revocation_actor = "patient_current_device"
+            # Flush the terminal transition first so the partial unique index
+            # permits the next active version without ever exposing two active
+            # versions outside this transaction.
+            await db.flush()
+
+            new = PatientDeviceKey(
+                id=new_key_id,
+                patient_id=patient_id,
+                device_id=device_id,
+                key_version=old_key_version + 1,
+                device_public_key=canonical.der,
+                public_key_fingerprint=canonical.fingerprint,
+                device_label=old.device_label,
+                platform=old.platform,
+                key_algorithm="ECDSA-P256",
+                status=PatientDeviceKeyStatus.ACTIVE.value,
+                enrolled_at=now,
+                revoked_at=None,
+                replaces_key_id=old_key_id,
+            )
+            db.add(new)
+            await db.flush()
+            old.replaced_by_key_id = new.id
+            await db.flush()
+
+            await enqueue_audit_event(
+                db,
+                audit_context=current_audit_context(AuditDomain.PLATFORM),
+                idempotency_key=_audit_key("rotation-replaced", old.id),
+                actor_id=actor_id,
+                event_type="DEVICE_KEY_REVOKED",
+                target_id=str(device_id),
+                patient_id=str(patient_id),
+                status="SUCCESS",
+                metadata={
+                    "operation": "device_key_rotation",
+                    "key_version": old_key_version,
+                    "reason_code": "KEY_ROTATED",
+                },
+            )
+            await enqueue_audit_event(
+                db,
+                audit_context=current_audit_context(AuditDomain.PLATFORM),
+                idempotency_key=_audit_key("rotation-enrolled", new.id),
+                actor_id=actor_id,
+                event_type="DEVICE_KEY_ENROLLED",
+                target_id=str(device_id),
+                patient_id=str(patient_id),
+                status="SUCCESS",
+                metadata={
+                    "operation": "device_key_rotation",
+                    "key_version": new.key_version,
+                    "replaces_key_version": old_key_version,
+                },
+            )
+
+        return PatientDeviceRotationResult(
+            device_id=device_id,
+            old_key_id=old_key_id,
+            new_key_id=new_key_id,
+            old_key_version=old_key_version,
+            new_key_version=old_key_version + 1,
+            new_public_key_fingerprint=canonical.fingerprint,
+            rotated_at=now,
+            status=PatientDeviceKeyStatus.ACTIVE.value,
+        )
+    except IntegrityError as exc:
+        await db.rollback()
+        raise PatientDeviceTrustError("DEVICE_KEY_ALREADY_ENROLLED") from exc
+
+
 async def revoke_patient_device(
     db: AsyncSession,
     *,
@@ -190,13 +401,9 @@ async def revoke_patient_device(
             .with_for_update()
         )
         if row is None:
-            historical = await db.scalar(
-                select(PatientDeviceKey).where(
-                    PatientDeviceKey.patient_id == patient_id,
-                    PatientDeviceKey.device_id == device_id,
-                )
-            )
-            if historical is None:
+            if not await _historical_device_exists(
+                db, patient_id=patient_id, device_id=device_id
+            ):
                 raise PatientDeviceTrustError("DEVICE_NOT_FOUND")
             raise PatientDeviceTrustError("DEVICE_NOT_ACTIVE")
 

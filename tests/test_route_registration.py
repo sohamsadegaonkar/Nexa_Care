@@ -126,6 +126,8 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/patient/devices/enroll"),
     ("GET", "/api/v2/patient/devices"),
     ("POST", "/api/v2/patient/devices/{device_id}/revoke"),
+    ("POST", "/api/v2/patient/devices/{device_id}/rotation/challenge"),
+    ("POST", "/api/v2/patient/devices/{device_id}/rotate"),
     ("POST", "/api/v2/consent/request"),
     ("POST", "/api/v2/consent/approve-signed"),
     ("POST", "/api/v2/consent/{request_id}/claim-access"),
