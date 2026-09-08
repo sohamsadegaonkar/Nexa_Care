@@ -297,22 +297,32 @@ def test_break_glass_capability_rejected_at_summary_endpoint(
 
 
 def test_patient_self_view_does_not_require_doctor_consent_token():
-    """Test 6: Patient accessing own record/devices via self-session does not require doctor consent token."""
-    from app.core.dependencies import get_scoped_session
-
-    app.dependency_overrides[get_scoped_session] = (
-        lambda: "11111111-1111-4111-8111-111111111111"
+    """Test 6: patient self-view uses authoritative current-session dependency."""
+    from app.core.dependencies import (
+        AuthenticatedPatientSession,
+        get_current_patient_session,
     )
-    try:
-        # Patient calls self-access endpoint (e.g. list devices) with only their session bearer token
-        res = client.get(
-            "/api/v2/patient/devices",
-            headers={"Authorization": "Bearer pat-101-session"},
+
+    patient_id = "11111111-1111-4111-8111-111111111111"
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+
+    async def _patient_session():
+        return AuthenticatedPatientSession(
+            patient_id=patient_id,
+            patient=patient,
+            session_id="patient-self-view-session",
+            session_epoch=0,
+            supabase_user_id="patient-self-view-subject",
         )
+
+    app.dependency_overrides[get_current_patient_session] = _patient_session
+    try:
+        # No clinician consent capability is supplied or required for patient-owned device state.
+        res = client.get("/api/v2/patient/devices")
         assert res.status_code == 200
-        assert res.json()["patient_id"] == "11111111-1111-4111-8111-111111111111"
+        assert res.json()["patient_id"] == patient_id
     finally:
-        app.dependency_overrides.pop(get_scoped_session, None)
+        app.dependency_overrides.pop(get_current_patient_session, None)
 
 
 def test_pipeline_commit_rejects_client_supplied_extracted_fields(

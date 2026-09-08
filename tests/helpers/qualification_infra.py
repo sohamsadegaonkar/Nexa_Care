@@ -76,11 +76,9 @@ def require_disposable_database_name(db_name: str) -> None:
             f"Destructive qualification operations are strictly restricted to databases "
             f"starting with '{_DISPOSABLE_PREFIX}', got: '{name}'"
         )
-    # Strictly disallow system or default database names even if prefixed creatively
     forbidden = {"postgres", "template0", "template1", "nexa", "nexa_ci"}
     if name.lower() in forbidden:
         raise ValueError(f"Targeting system database '{name}' is strictly prohibited")
-    # Disallow dangerous SQL characters
     if not re.match(r"^[a-zA-Z0-9_]+$", name):
         raise ValueError(f"Database name '{name}' contains illegal characters")
 
@@ -89,21 +87,15 @@ def _resolve_base_pg_url(base_url: str | None = None) -> str:
     """Resolve base PostgreSQL URL from argument or environment."""
     if base_url:
         return base_url
-
     test_url = os.getenv("TEST_DATABASE_URL")
     if test_url:
         return test_url
-
-    # Check if TEST_POSTGRES_ADMIN_URL is set
     admin_env = os.getenv("TEST_POSTGRES_ADMIN_URL")
     if admin_env:
         return admin_env
-
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         return db_url
-
-    # Local fallback
     return f"postgresql+asyncpg://nexa:nexa_test@127.0.0.1:{_DEFAULT_LOCAL_PG_PORT}/postgres"
 
 
@@ -112,7 +104,6 @@ def postgres_admin_url(base_url: str | None = None) -> str:
     raw = _resolve_base_pg_url(base_url)
     async_url = normalize_async_postgres_url(raw)
     require_loopback_postgres_url(async_url)
-
     parts = urlsplit(async_url)
     admin_parts = (parts.scheme, parts.netloc, "/postgres", parts.query, parts.fragment)
     return urlunsplit(admin_parts)
@@ -124,21 +115,16 @@ def postgres_database_url(db_name: str, base_url: str | None = None) -> str:
     raw = _resolve_base_pg_url(base_url)
     async_url = normalize_async_postgres_url(raw)
     require_loopback_postgres_url(async_url)
-
     parts = urlsplit(async_url)
     db_parts = (parts.scheme, parts.netloc, f"/{db_name}", parts.query, parts.fragment)
     return urlunsplit(db_parts)
 
 
 async def create_disposable_database(db_name: str, base_url: str | None = None) -> str:
-    """Safely drop and recreate a disposable qualification database on loopback.
-
-    Returns the async connection URL for the newly created database.
-    """
+    """Safely drop and recreate a disposable qualification database on loopback."""
     require_disposable_database_name(db_name)
     admin_url = postgres_admin_url(base_url)
     require_loopback_postgres_url(admin_url)
-
     engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
@@ -146,7 +132,6 @@ async def create_disposable_database(db_name: str, base_url: str | None = None) 
             await conn.execute(text(f"CREATE DATABASE {db_name}"))
     finally:
         await engine.dispose()
-
     return postgres_database_url(db_name, base_url)
 
 
@@ -155,7 +140,6 @@ async def drop_disposable_database(db_name: str, base_url: str | None = None) ->
     require_disposable_database_name(db_name)
     admin_url = postgres_admin_url(base_url)
     require_loopback_postgres_url(admin_url)
-
     engine = create_async_engine(admin_url, isolation_level="AUTOCOMMIT")
     try:
         async with engine.connect() as conn:
@@ -166,7 +150,7 @@ async def drop_disposable_database(db_name: str, base_url: str | None = None) ->
 
 def migrate_database_to_head(
     db_url: str,
-    target_head: str = "20260906_verification_scheduler",
+    target_head: str = "20260909_device_trust_lifecycle",
     alembic_ini_path: str = "alembic.ini",
 ) -> None:
     """Run Alembic upgrade to target head on the specified database URL."""
@@ -202,8 +186,7 @@ def require_loopback_redis_url(url: str) -> None:
     hostname = (parts.hostname or "").lower()
     if hostname not in _LOOPBACK_HOSTS:
         raise ValueError(
-            f"Redis qualification URL must target a loopback host ({_LOOPBACK_HOSTS}), "
-            f"got host: '{hostname}' in URL: '{url}'"
+            f"Redis URL must target a loopback host ({_LOOPBACK_HOSTS}), got '{hostname}'"
         )
 
 
@@ -221,7 +204,6 @@ def get_qualification_redis_url(base_url: str | None = None) -> str:
                 url = upstash
             else:
                 url = f"redis://127.0.0.1:{_DEFAULT_LOCAL_REDIS_PORT}/0"
-
     require_loopback_redis_url(url)
     return url
 
@@ -238,18 +220,7 @@ async def seed_qualification_provider_trust(
     user_agent: str = "NexaClinicalSecurityTest/1.0",
     client_ip: str = "127.0.0.1",
 ) -> dict[str, Any]:
-    """Seed authoritative provider, hospital, and affiliation trust models for qualification.
-
-    Creates (if not already present):
-    1. HospitalRegistry (active facility)
-    2. FacilityVerification (status=VERIFIED)
-    3. ProviderIdentity (status='active', is_active=True, email/phone verified)
-    4. ProviderCredential (is_active=True, mfa_enabled=True)
-    5. ProfessionalVerification (status=VERIFIED)
-    6. ProviderHospitalAffiliation (trust_status=ACTIVE, is_active=True, specified roles)
-
-    Optionally issues an active provider session token into Redis.
-    """
+    """Seed authoritative provider, hospital, and affiliation trust models for qualification."""
     from app.models.provider import (
         AffiliationTrustStatus,
         AffiliationType,
@@ -265,7 +236,6 @@ async def seed_qualification_provider_trust(
 
     if now is None:
         now = datetime.now(timezone.utc)
-
     resolved_facility_code = facility_code or f"QUAL-{hospital_id.hex[:10]}"
 
     hospital = await db.get(HospitalRegistry, hospital_id)

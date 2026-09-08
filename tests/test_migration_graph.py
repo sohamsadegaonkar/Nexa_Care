@@ -7,7 +7,7 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
-EXPECTED_HEAD = "20260906_verification_scheduler"
+EXPECTED_HEAD = "20260909_device_trust_lifecycle"
 
 
 def _scripts() -> ScriptDirectory:
@@ -85,9 +85,15 @@ def test_provider_verification_application_descends_from_verification_evidence()
 def test_provider_verification_scheduler_descends_from_verification_application() -> (
     None
 ):
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision("20260906_verification_scheduler")
     assert revision is not None
     assert revision.down_revision == "20260905_verification_application"
+
+
+def test_device_trust_lifecycle_descends_from_verification_scheduler() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260906_verification_scheduler"
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:
