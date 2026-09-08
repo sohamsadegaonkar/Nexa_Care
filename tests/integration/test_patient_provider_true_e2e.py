@@ -35,6 +35,7 @@ from app.core.security import encrypt_mfa_secret
 from app.main import app
 from app.models.nfc_card_registry import NFCCardRegistry
 from app.models.patient import Patient
+from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.patient_device_keys import PatientDeviceKey
 from app.models.patient_records import Vitals
 from app.models.provider import (
@@ -48,7 +49,7 @@ from app.models.provider import (
     ProviderIdentity,
 )
 from app.services.consent_engine import get_consent_redis_client
-from app.services.patient_auth_service import issue_patient_access_token
+from app.services.patient_auth_service import issue_patient_access_session
 from app.services.provider_auth_service import hash_provider_password
 from app.services.signed_approval_verifier import canonical_signed_approval_payload
 from tests.helpers.qualification_infra import (
@@ -109,6 +110,7 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
     password = "E2E-disposable-password-123!"
     totp_secret = pyotp.random_base32()
     suffix = uuid.uuid4().hex
+    patient_subject = f"e2e-patient-{suffix}"
     card_uid = f"E2E-{suffix[:20]}".upper()
 
     try:
@@ -135,6 +137,13 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
             patient = Patient(is_deleted=False)
             db.add(patient)
             await db.flush()
+
+            identity = PatientAuthIdentity(
+                patient_id=patient.patient_uuid,
+                provider="supabase",
+                provider_subject=patient_subject,
+            )
+            db.add(identity)
 
             card = NFCCardRegistry(
                 card_uid=card_uid,
@@ -165,6 +174,7 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
             return {
                 "private_key": private_key,
                 "patient_id": str(patient.patient_uuid),
+                "patient_subject": patient_subject,
                 "public_patient_id": patient.public_patient_id,
                 "device_id": str(device.id),
                 "card_uid": card_uid,
@@ -266,8 +276,8 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
     await redis.flushdb()
     graph = await _seed_graph(db_url)
     assert _PUBLIC_ID_RE.fullmatch(str(graph["public_patient_id"]))
-    patient_token, _ = issue_patient_access_token(
-        str(graph["patient_id"]), "e2e-patient-subject"
+    patient_token, _, _ = await issue_patient_access_session(
+        str(graph["patient_id"]), str(graph["patient_subject"])
     )
 
     engine = create_async_engine(db_url)
@@ -498,8 +508,8 @@ async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAcc
     await redis.flushdb()
     graph = await _seed_graph(db_url)
     assert _PUBLIC_ID_RE.fullmatch(str(graph["public_patient_id"]))
-    patient_token, _ = issue_patient_access_token(
-        str(graph["patient_id"]), "e2e-patient-subject"
+    patient_token, _, _ = await issue_patient_access_session(
+        str(graph["patient_id"]), str(graph["patient_subject"])
     )
 
     engine = create_async_engine(db_url)

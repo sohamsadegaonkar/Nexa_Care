@@ -312,7 +312,10 @@ def test_existing_account_new_attempt_is_rejected_not_logged_in() -> None:
                     side_effect=PatientRegistrationError("ACCOUNT_ALREADY_REGISTERED")
                 ),
             ),
-            patch("app.api.v2.auth_routes.issue_patient_access_token") as issue_access,
+            patch(
+                "app.api.v2.auth_routes.issue_patient_access_session",
+                new=AsyncMock(),
+            ) as issue_access,
             patch(
                 "app.api.v2.auth_routes.release_registration_attempt_claim",
                 new=AsyncMock(),
@@ -330,7 +333,7 @@ def test_existing_account_new_attempt_is_rejected_not_logged_in() -> None:
         app.dependency_overrides.pop(get_db_session, None)
     assert response.status_code == 403
     assert response.json()["detail"]["error_code"] == "ACCOUNT_ALREADY_REGISTERED"
-    issue_access.assert_not_called()
+    issue_access.assert_not_awaited()
 
 
 def test_same_finalized_attempt_recovers_after_device_redis_failure(

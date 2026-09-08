@@ -185,6 +185,10 @@ class TestAntiDriftGuardrails(unittest.TestCase):
         """AST guardrail: no backend patient-data route lacks require_consent dependency."""
         api_v2_dir = REPO_ROOT / "app" / "api" / "v2"
         offenders = []
+        patient_auth_controls = {
+            ("auth_routes.py", "/patient/logout"),
+            ("auth_routes.py", "/patient/logout-all"),
+        }
         for path in api_v2_dir.glob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for node in tree.body:
@@ -205,6 +209,8 @@ class TestAntiDriftGuardrails(unittest.TestCase):
                             ):
                                 if dec.args and isinstance(dec.args[0], ast.Constant):
                                     route_dec = dec.args[0].value
+                    if (path.name, route_dec) in patient_auth_controls:
+                        continue
                     if route_dec and (
                         "/patient/" in route_dec
                         or "/pipeline/" in route_dec

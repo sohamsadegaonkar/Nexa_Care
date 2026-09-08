@@ -77,6 +77,8 @@ def test_valid_patient_session_registers_push_token(monkeypatch):
     token, _ = issue_patient_access_token(
         patient_id,
         "123e4567-e89b-12d3-a456-426614174099",
+        session_id="push-session-authority-1234567890",
+        session_epoch=0,
     )
     result = MagicMock()
     result.scalars.return_value.all.return_value = []
@@ -85,11 +87,15 @@ def test_valid_patient_session_registers_push_token(monkeypatch):
     db.execute.return_value = result
     app.dependency_overrides[get_db_session] = lambda: db
     try:
-        response = client.post(
-            "/api/v2/push/register-token",
-            headers={"Authorization": f"Bearer {token}"},
-            json={"expo_push_token": "ExpoPushToken[current]", "platform": "android"},
-        )
+        with patch(
+            "app.core.dependencies._resolve_current_patient_session_claims",
+            new=AsyncMock(return_value=SimpleNamespace(patient_id=patient_id)),
+        ):
+            response = client.post(
+                "/api/v2/push/register-token",
+                headers={"Authorization": f"Bearer {token}"},
+                json={"expo_push_token": "ExpoPushToken[current]", "platform": "android"},
+            )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
         app.dependency_overrides.pop(get_scoped_session, None)

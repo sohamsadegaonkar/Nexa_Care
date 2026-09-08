@@ -34,7 +34,11 @@ from app.observability.audit_ledger import append_audit_log
 from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.audit_outbox import enqueue_audit_event
 from app.core.database import get_db_session, get_provider_contact_mutation_session
-from app.core.dependencies import get_current_provider
+from app.core.dependencies import (
+    AuthenticatedPatientSession,
+    get_current_patient_session,
+    get_current_provider,
+)
 from app.core.rate_limiter import (
     OtpRateLimitBackendUnavailable,
     OtpRateLimitExceeded,
@@ -73,8 +77,13 @@ from app.core.client_ip import resolve_client_ip
 from app.core.supabase import get_supabase_client
 from app.services.patient_auth_service import (
     issue_device_enrollment_token,
-    issue_patient_access_token,
+    issue_patient_access_session,
     normalize_indian_phone,
+)
+from app.services.patient_session_authority import (
+    PatientSessionAuthorityUnavailable,
+    revoke_all_patient_sessions,
+    revoke_patient_session,
 )
 from app.services.patient_registration_service import (
     PatientRegistrationError,
@@ -319,16 +328,89 @@ async def patient_otp_verify(
         )
 
     patient_id = str(patient.patient_uuid)
-    access_token, expires_at = issue_patient_access_token(
-        patient_id, str(supabase_user_id)
-    )
-    auth_session_id = hashlib.sha256(str(supabase_access_token).encode()).hexdigest()
-    enrollment_token = await issue_device_enrollment_token(patient_id, auth_session_id)
+    session_id: str | None = None
+    try:
+        access_token, expires_at, session_id = await issue_patient_access_session(
+            patient_id, str(supabase_user_id)
+        )
+        enrollment_token = await issue_device_enrollment_token(patient_id, session_id)
+    except PatientSessionAuthorityUnavailable as exc:
+        if session_id is not None:
+            try:
+                await revoke_patient_session(patient_id=patient_id, session_id=session_id)
+            except PatientSessionAuthorityUnavailable:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+
     return PatientOtpVerifyResponse(
         access_token=access_token,
         expires_at=expires_at,
         patient_id=patient_id,
         device_enrollment_token=enrollment_token,
+    )
+
+
+@router.post("/patient/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+async def patient_logout(
+    patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
+) -> None:
+    """Immediately revoke the exact current patient bearer session."""
+
+    try:
+        revoked = await revoke_patient_session(
+            patient_id=patient.patient_id, session_id=patient.session_id
+        )
+    except PatientSessionAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+    if not revoked:
+        raise HTTPException(status_code=401, detail="Patient session is no longer active")
+    await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
+        actor_uid=patient.patient_id,
+        event_type="PATIENT_SESSION_REVOKED",
+        target_id=patient.patient_id,
+        status="SUCCESS",
+        metadata={"scope": "current_session"},
+    )
+
+
+@router.post(
+    "/patient/logout-all", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
+async def patient_logout_all(
+    patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
+) -> None:
+    """Immediately invalidate all current patient sessions via session epoch."""
+
+    try:
+        new_epoch = await revoke_all_patient_sessions(patient.patient_id)
+    except PatientSessionAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+    await append_audit_log(
+        audit_context=current_audit_context(AuditDomain.AUTH),
+        actor_uid=patient.patient_id,
+        event_type="PATIENT_SESSIONS_REVOKED",
+        target_id=patient.patient_id,
+        status="SUCCESS",
+        metadata={"scope": "all_sessions", "session_epoch": new_epoch},
     )
 
 
@@ -525,19 +607,24 @@ async def patient_registration_otp_verify(
                     detail={"error_code": exc.code, "retryable": True},
                 ) from None
 
-    access_token, expires_at = issue_patient_access_token(
-        account.patient_id, account.provider_subject
-    )
-    auth_session_id = hashlib.sha256(
-        f"registration:{attempt.attempt_id}".encode("utf-8")
-    ).hexdigest()
+    session_id: str | None = None
     try:
+        access_token, expires_at, session_id = await issue_patient_access_session(
+            account.patient_id, account.provider_subject
+        )
         enrollment_token = await issue_device_enrollment_token(
-            account.patient_id, auth_session_id
+            account.patient_id, session_id
         )
     except Exception:
-        # The account is already safely committed.  A verified retry resumes
-        # from that durable state and attempts the transient capability again.
+        if session_id is not None:
+            try:
+                await revoke_patient_session(
+                    patient_id=account.patient_id, session_id=session_id
+                )
+            except PatientSessionAuthorityUnavailable:
+                pass
+        # The account is already safely committed. A verified retry resumes
+        # from that durable state and attempts the transient authority again.
         raise HTTPException(
             status_code=503,
             detail={

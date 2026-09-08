@@ -1,15 +1,10 @@
-"""Unit tests for strict patient-self JWT authentication dependency.
+"""Unit tests for strict current patient authentication.
 
-Verifies:
-- Missing / malformed JWT -> 401
-- Non-patient actor_type -> 401
-- sub / patient_id mismatch -> 401
-- Missing Patient row -> 401
-- Soft-deleted Patient row -> 401
-- Missing / revoked PatientAuthIdentity -> 401
-- Supabase subject mismatch -> 401
-- Valid JWT + DB state -> AuthenticatedPatient returned, audit tenant bound
-- IDOR resistance: client cannot override authenticated patient identity
+Verifies the complete runtime chain:
+- JWT transport and claims are valid.
+- A matching live Redis patient session exists.
+- Current Patient and PatientAuthIdentity state remains valid.
+- Audit tenant scope is bound only after the full chain succeeds.
 """
 
 from __future__ import annotations
@@ -18,7 +13,7 @@ import asyncio
 import contextvars
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -27,6 +22,10 @@ from app.core.dependencies import AuthenticatedPatient, get_current_patient
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
 from app.services.patient_auth_service import issue_patient_access_token
+from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
+
+SESSION_ID = "patient-self-session-1234567890"
+SESSION_EPOCH = 0
 
 
 async def _resolve_current_patient(*, authorization, db):
@@ -47,7 +46,6 @@ def _mock_db_with_patient_and_identity(
 
     async def _execute(stmt):
         mock_result = MagicMock()
-        # Inspect statement to return patient or identity
         stmt_str = str(stmt)
         if "FROM patients" in stmt_str or "patients.patient_uuid" in stmt_str:
             mock_result.scalar_one_or_none.return_value = patient
@@ -62,6 +60,28 @@ def _mock_db_with_patient_and_identity(
 
     db.execute = AsyncMock(side_effect=_execute)
     return db
+
+
+def _issue_session_token(patient_id: str, subject: str) -> str:
+    token, _ = issue_patient_access_token(
+        patient_id,
+        subject,
+        session_id=SESSION_ID,
+        session_epoch=SESSION_EPOCH,
+    )
+    return token
+
+
+def _live_session_authority():
+    return patch(
+        "app.core.dependencies.resolve_patient_session_authority",
+        new=AsyncMock(
+            return_value={
+                "status": "active",
+                "session_epoch": SESSION_EPOCH,
+            }
+        ),
+    )
 
 
 @pytest.mark.asyncio
@@ -114,12 +134,14 @@ async def test_wrong_actor_type_returns_401(monkeypatch):
     now = int(datetime.now(timezone.utc).timestamp())
     claims = {
         "sub": str(uuid.uuid4()),
-        "actor_type": "provider",  # wrong actor_type
+        "actor_type": "provider",
         "patient_id": str(uuid.uuid4()),
         "supabase_user_id": "sp_user_1",
         "auth_method": "phone_otp",
         "iat": now,
         "exp": now + 900,
+        "sid": SESSION_ID,
+        "session_epoch": SESSION_EPOCH,
     }
     token = jwt.encode(claims, _jwt_secret(), algorithm="HS256")
     db = AsyncMock()
@@ -140,11 +162,13 @@ async def test_sub_patient_id_mismatch_returns_401(monkeypatch):
     claims = {
         "sub": str(uuid.uuid4()),
         "actor_type": "patient",
-        "patient_id": str(uuid.uuid4()),  # different from sub
+        "patient_id": str(uuid.uuid4()),
         "supabase_user_id": "sp_user_1",
         "auth_method": "phone_otp",
         "iat": now,
         "exp": now + 900,
+        "sid": SESSION_ID,
+        "session_epoch": SESSION_EPOCH,
     }
     token = jwt.encode(claims, _jwt_secret(), algorithm="HS256")
     db = AsyncMock()
@@ -170,13 +194,58 @@ async def test_non_uuid_patient_id_returns_401(monkeypatch):
         "auth_method": "phone_otp",
         "iat": now,
         "exp": now + 900,
+        "sid": SESSION_ID,
+        "session_epoch": SESSION_EPOCH,
     }
     token = jwt.encode(claims, _jwt_secret(), algorithm="HS256")
     db = AsyncMock()
-    with pytest.raises(HTTPException) as exc_info:
+    with _live_session_authority(), pytest.raises(HTTPException) as exc_info:
         await _resolve_current_patient(authorization=f"Bearer {token}", db=db)
     assert exc_info.value.status_code == 401
     assert "Invalid patient identity" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_missing_live_session_rejects_valid_jwt_before_database(monkeypatch):
+    monkeypatch.setenv(
+        "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
+    )
+    token = _issue_session_token(str(uuid.uuid4()), "sp_user_1")
+    db = AsyncMock()
+    with (
+        patch(
+            "app.core.dependencies.resolve_patient_session_authority",
+            new=AsyncMock(return_value=None),
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await _resolve_current_patient(authorization=f"Bearer {token}", db=db)
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Patient session is no longer active"
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_session_authority_backend_failure_fails_closed(monkeypatch):
+    monkeypatch.setenv(
+        "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
+    )
+    token = _issue_session_token(str(uuid.uuid4()), "sp_user_1")
+    with (
+        patch(
+            "app.core.dependencies.resolve_patient_session_authority",
+            new=AsyncMock(
+                side_effect=PatientSessionAuthorityUnavailable("redis unavailable")
+            ),
+        ),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await _resolve_current_patient(authorization=f"Bearer {token}", db=AsyncMock())
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == {
+        "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+        "retryable": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -185,10 +254,9 @@ async def test_missing_patient_in_db_returns_401(monkeypatch):
         "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
     )
     pid = str(uuid.uuid4())
-    token, _ = issue_patient_access_token(pid, "sp_user_1")
-
+    token = _issue_session_token(pid, "sp_user_1")
     db = _mock_db_with_patient_and_identity(patient=None, identity=None)
-    with pytest.raises(HTTPException) as exc_info:
+    with _live_session_authority(), pytest.raises(HTTPException) as exc_info:
         await _resolve_current_patient(authorization=f"Bearer {token}", db=db)
     assert exc_info.value.status_code == 401
     assert "Patient account unavailable" in exc_info.value.detail
@@ -200,11 +268,10 @@ async def test_deleted_patient_in_db_returns_401(monkeypatch):
         "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
     )
     pid = uuid.uuid4()
-    token, _ = issue_patient_access_token(str(pid), "sp_user_1")
-
+    token = _issue_session_token(str(pid), "sp_user_1")
     patient = Patient(patient_uuid=pid, is_deleted=True)
     db = _mock_db_with_patient_and_identity(patient=patient, identity=None)
-    with pytest.raises(HTTPException) as exc_info:
+    with _live_session_authority(), pytest.raises(HTTPException) as exc_info:
         await _resolve_current_patient(authorization=f"Bearer {token}", db=db)
     assert exc_info.value.status_code == 401
     assert "Patient account unavailable" in exc_info.value.detail
@@ -216,11 +283,10 @@ async def test_missing_patient_auth_identity_returns_401(monkeypatch):
         "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
     )
     pid = uuid.uuid4()
-    token, _ = issue_patient_access_token(str(pid), "sp_user_1")
-
+    token = _issue_session_token(str(pid), "sp_user_1")
     patient = Patient(patient_uuid=pid, is_deleted=False)
     db = _mock_db_with_patient_and_identity(patient=patient, identity=None)
-    with pytest.raises(HTTPException) as exc_info:
+    with _live_session_authority(), pytest.raises(HTTPException) as exc_info:
         await _resolve_current_patient(authorization=f"Bearer {token}", db=db)
     assert exc_info.value.status_code == 401
     assert "Patient identity not verified" in exc_info.value.detail
@@ -234,8 +300,7 @@ async def test_valid_patient_jwt_resolves_authenticated_patient(monkeypatch):
         "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
     )
     pid = uuid.uuid4()
-    token, _ = issue_patient_access_token(str(pid), "sp_user_1")
-
+    token = _issue_session_token(str(pid), "sp_user_1")
     patient = Patient(patient_uuid=pid, is_deleted=False)
     identity = PatientAuthIdentity(
         patient_id=pid,
@@ -245,16 +310,15 @@ async def test_valid_patient_jwt_resolves_authenticated_patient(monkeypatch):
     )
     db = _mock_db_with_patient_and_identity(patient=patient, identity=identity)
 
-    dependency = get_current_patient(authorization=f"Bearer {token}", db=db)
-    auth = await dependency.__anext__()
-    assert isinstance(auth, AuthenticatedPatient)
-    assert auth.patient_id == str(pid)
-    assert auth.patient == patient
-
-    # Verify audit context bound to patient
-    audit_ctx = current_audit_context(AuditDomain.PATIENT_RECORD)
-    assert audit_ctx.tenant_id == str(pid)
-    await dependency.aclose()
+    with _live_session_authority():
+        dependency = get_current_patient(authorization=f"Bearer {token}", db=db)
+        auth = await dependency.__anext__()
+        assert isinstance(auth, AuthenticatedPatient)
+        assert auth.patient_id == str(pid)
+        assert auth.patient == patient
+        audit_ctx = current_audit_context(AuditDomain.PATIENT_RECORD)
+        assert audit_ctx.tenant_id == str(pid)
+        await dependency.aclose()
 
     assert current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id == "test-tenant"
 
@@ -274,7 +338,7 @@ async def test_patient_self_dependency_restores_prior_audit_scope_after_exceptio
         "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
     )
     pid = uuid.uuid4()
-    token, _ = issue_patient_access_token(str(pid), "sp_user_1")
+    token = _issue_session_token(str(pid), "sp_user_1")
     patient = Patient(patient_uuid=pid, is_deleted=False)
     identity = PatientAuthIdentity(
         patient_id=pid,
@@ -284,16 +348,17 @@ async def test_patient_self_dependency_restores_prior_audit_scope_after_exceptio
     )
     db = _mock_db_with_patient_and_identity(patient=patient, identity=identity)
     prior_token = bind_trusted_audit_hospital("prior-hospital")
-    dependency = get_current_patient(authorization=f"bearer {token}", db=db)
-    try:
-        auth = await dependency.__anext__()
-        assert auth.patient_id == str(pid)
-        assert current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id == str(pid)
-        await dependency.athrow(RuntimeError("route failure"))
-    except RuntimeError as exc:
-        assert str(exc) == "route failure"
-    finally:
-        await dependency.aclose()
+    with _live_session_authority():
+        dependency = get_current_patient(authorization=f"bearer {token}", db=db)
+        try:
+            auth = await dependency.__anext__()
+            assert auth.patient_id == str(pid)
+            assert current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id == str(pid)
+            await dependency.athrow(RuntimeError("route failure"))
+        except RuntimeError as exc:
+            assert str(exc) == "route failure"
+        finally:
+            await dependency.aclose()
 
     restored = current_audit_context(AuditDomain.PATIENT_RECORD)
     assert restored.hospital_id == "prior-hospital"
@@ -310,28 +375,30 @@ async def test_patient_self_dependency_does_not_leave_scope_between_requests(
         "PATIENT_JWT_SECRET", "test-secret-at-least-32-chars-long-here!!"
     )
     patient_ids = [uuid.uuid4(), uuid.uuid4()]
-    for index, pid in enumerate(patient_ids):
-        token, _ = issue_patient_access_token(str(pid), f"sp_user_{index}")
-        db = _mock_db_with_patient_and_identity(
-            patient=Patient(patient_uuid=pid, is_deleted=False),
-            identity=PatientAuthIdentity(
-                patient_id=pid,
-                provider="supabase",
-                provider_subject=f"sp_user_{index}",
-                revoked_at=None,
-            ),
-        )
-        dependency = get_current_patient(authorization=f"Bearer {token}", db=db)
-        try:
-            await dependency.__anext__()
-            assert current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id == str(
-                pid
+    with _live_session_authority():
+        for index, pid in enumerate(patient_ids):
+            token = _issue_session_token(str(pid), f"sp_user_{index}")
+            db = _mock_db_with_patient_and_identity(
+                patient=Patient(patient_uuid=pid, is_deleted=False),
+                identity=PatientAuthIdentity(
+                    patient_id=pid,
+                    provider="supabase",
+                    provider_subject=f"sp_user_{index}",
+                    revoked_at=None,
+                ),
             )
-        finally:
-            await dependency.aclose()
-        assert (
-            current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id == "test-tenant"
-        )
+            dependency = get_current_patient(authorization=f"Bearer {token}", db=db)
+            try:
+                await dependency.__anext__()
+                assert current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id == str(
+                    pid
+                )
+            finally:
+                await dependency.aclose()
+            assert (
+                current_audit_context(AuditDomain.PATIENT_RECORD).tenant_id
+                == "test-tenant"
+            )
 
 
 @pytest.mark.asyncio

@@ -85,16 +85,19 @@ class TestGetScopedSession(unittest.TestCase):
         self.assertEqual(mock_audit.call_args.kwargs["status"], "INVALID_OR_EXPIRED")
         mock_bind_tenant.assert_not_called()
 
+    @patch("app.core.dependencies._resolve_current_patient_session_claims")
     @patch("app.core.dependencies.decode_patient_access_token")
     @patch("app.core.dependencies.bind_trusted_audit_tenant")
-    def test_patient_jwt_binds_and_returns_patient_id(
-        self, mock_bind_tenant, mock_decode
+    def test_patient_jwt_binds_and_returns_current_patient_id(
+        self, mock_bind_tenant, mock_decode, mock_resolve
     ):
         mock_decode.return_value = {"patient_id": "patient-jwt-123"}
+        mock_resolve.return_value = SimpleNamespace(patient_id="patient-jwt-123")
 
         result = run(get_scoped_session(authorization="Bearer patient-token"))
 
         self.assertEqual(result, "patient-jwt-123")
+        mock_resolve.assert_awaited_once()
         mock_bind_tenant.assert_called_once_with("patient-jwt-123")
 
     @patch("app.core.dependencies.validate_session_context")
