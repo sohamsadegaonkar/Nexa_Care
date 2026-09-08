@@ -22,7 +22,7 @@ from tests.helpers.qualification_infra import (  # noqa: E402
 )
 
 SHARED_DB_NAME = "nexa_qual_ci_shared"
-HEAD = "20260906_verification_scheduler"
+HEAD = "20260909_device_trust_lifecycle"
 
 
 def main() -> int:
