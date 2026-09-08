@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import datetime
 from enum import Enum
@@ -32,13 +33,28 @@ class PatientDeviceKeyStatus(str, Enum):
     COMPROMISED = "compromised"
 
 
+def _fingerprint_default(context) -> str:
+    """Compatibility default for trusted ORM fixtures/internal construction.
+
+    Production enrollment canonicalizes the P-256 SubjectPublicKeyInfo DER at
+    the service boundary before constructing this model. This default keeps
+    trusted direct ORM construction deterministic while the DB global unique
+    fingerprint remains the ultimate ownership guard.
+    """
+
+    raw = context.get_current_parameters().get("device_public_key")
+    if not isinstance(raw, (bytes, bytearray)):
+        raise ValueError("device_public_key is required for fingerprinting")
+    return hashlib.sha256(bytes(raw)).hexdigest()
+
+
 class PatientDeviceKey(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """One immutable public-key version within a logical patient device.
 
     ``device_id`` is the stable server-owned logical device identity. ``id`` is
-    the immutable key-version row identity. Only canonical P-256 public keys are
-    stored server-side; patient private keys are never stored here or elsewhere
-    on the backend.
+    the immutable key-version row identity. Only public keys are stored
+    server-side; patient private keys are never stored here or elsewhere on the
+    backend.
     """
 
     __tablename__ = "patient_device_keys"
@@ -46,10 +62,14 @@ class PatientDeviceKey(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     patient_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), nullable=False, index=True
     )
-    device_id: Mapped[uuid.UUID] = mapped_column(PG_UUID(as_uuid=True), nullable=False)
-    key_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    device_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=False, default=uuid.uuid4
+    )
+    key_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     device_public_key: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
-    public_key_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    public_key_fingerprint: Mapped[str] = mapped_column(
+        String(64), nullable=False, default=_fingerprint_default
+    )
     device_label: Mapped[str | None] = mapped_column(String(100), nullable=True)
     platform: Mapped[str] = mapped_column(String(20), nullable=False)
     key_algorithm: Mapped[str] = mapped_column(
@@ -95,8 +115,11 @@ class PatientDeviceKey(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "(status IN ('revoked', 'replaced', 'compromised') AND revoked_at IS NOT NULL)",
             name="ck_patient_device_key_terminal_revoked_at",
         ),
+        # Portable metadata-level shape check. The Alembic migration installs
+        # the stricter PostgreSQL hexadecimal regex constraint.
         CheckConstraint(
-            "public_key_fingerprint ~ '^[0-9a-f]{64}$'",
+            "length(public_key_fingerprint) = 64 AND "
+            "public_key_fingerprint = lower(public_key_fingerprint)",
             name="ck_patient_device_key_fingerprint_format",
         ),
         CheckConstraint(
