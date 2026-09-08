@@ -2,11 +2,10 @@
 
 Two distinct trust models live in this module — do not conflate them:
 
-- get_scoped_session(): PATIENT-level trust. Resolves masked_internal_id
-  from a biometric handshake session bound at handshake time (see
-  crypto_engine.py). Proves "this caller is currently authenticated AS
-  this specific patient." Never accepts the id from a URL, query string,
-  or body — that was the IDOR this dependency exists to close.
+- get_scoped_session(): PATIENT-level trust. Patient phone-OTP JWTs must
+  resolve to current Redis-backed patient-session authority and current
+  PostgreSQL patient/identity state. Legacy biometric handshake sessions
+  retain their existing server-scoped fallback path.
 
 - get_provider_context(): PROVIDER-level trust. Authenticates an
   individual clinician via ``provider_credential`` (password hash or
@@ -33,7 +32,7 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import NamedTuple
+from typing import Any, NamedTuple
 from uuid import UUID
 
 from fastapi import Depends, Header, HTTPException, Request
@@ -65,6 +64,10 @@ from app.services.clinical_eligibility import (
 from app.security.clinical_policy import CLINICAL_CONTACT_ASSURANCE_POLICY
 from app.services.auth_service import validate_session_context
 from app.services.patient_auth_service import decode_patient_access_token
+from app.services.patient_session_authority import (
+    PatientSessionAuthorityUnavailable,
+    resolve_patient_session_authority,
+)
 from app.services.consent_engine import (
     ConsentEngineUnavailable,
     validate as validate_consent_capability,
@@ -91,61 +94,65 @@ class AuthenticatedPatient(NamedTuple):
     patient: Patient
 
 
-async def get_current_patient(
-    authorization: str | None = Header(default=None),
-    db: AsyncSession = Depends(get_db_session),
-) -> AsyncGenerator[AuthenticatedPatient, None]:
-    """Strict patient-self JWT dependency for ``/api/v2/patient/me/*`` routes.
+class AuthenticatedPatientSession(NamedTuple):
+    """Current patient identity plus its live server-side session authority."""
 
-    Accepts ONLY a patient phone-OTP JWT.  No biometric/session fallback.
-    Validates the full identity chain:
-    1. Valid JWT with actor_type=patient, auth_method=phone_otp, sub==patient_id.
-    2. Patient row exists in DB and is not soft-deleted.
-    3. Active PatientAuthIdentity links JWT's supabase_user_id to the patient.
+    patient_id: str
+    patient: Patient
+    session_id: str
+    session_epoch: int
+    supabase_user_id: str
 
-    Binds audit tenant ONLY after authoritative DB validation.
-    No body/path/query/header patient ID may override this identity.
-    """
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing authorization token")
 
-    scheme, separator, credential = authorization.partition(" ")
-    if (
-        scheme.lower() != "bearer"
-        or separator != " "
-        or not credential
-        or credential != credential.strip()
-    ):
-        raise HTTPException(status_code=401, detail="Invalid authorization scheme")
+async def _resolve_current_patient_session_claims(
+    claims: dict[str, Any], db: AsyncSession
+) -> AuthenticatedPatientSession:
+    """Resolve cryptographic JWT claims through live Redis and PostgreSQL state."""
 
-    claims = decode_patient_access_token(credential)
-    if not claims:
-        raise HTTPException(status_code=401, detail="Invalid or expired patient token")
+    try:
+        session = await resolve_patient_session_authority(claims)
+    except PatientSessionAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+    if session is None:
+        raise HTTPException(status_code=401, detail="Patient session is no longer active")
 
     patient_id = claims.get("patient_id")
     supabase_user_id = claims.get("supabase_user_id")
+    session_id = claims.get("sid")
+    session_epoch = claims.get("session_epoch")
+    if (
+        not isinstance(supabase_user_id, str)
+        or not supabase_user_id
+        or not isinstance(session_id, str)
+        or not isinstance(session_epoch, int)
+        or isinstance(session_epoch, bool)
+    ):
+        raise HTTPException(status_code=401, detail="Invalid patient session identity")
 
-    # Validate patient_id is a valid UUID
     try:
         pid = UUID(str(patient_id))
     except (ValueError, TypeError):
-        raise HTTPException(status_code=401, detail="Invalid patient identity")
+        raise HTTPException(status_code=401, detail="Invalid patient identity") from None
 
-    # Load patient — reject if missing or soft-deleted
     patient_row = (
         await db.execute(select(Patient).where(Patient.patient_uuid == pid))
     ).scalar_one_or_none()
     if patient_row is None or patient_row.is_deleted:
         raise HTTPException(status_code=401, detail="Patient account unavailable")
 
-    # Validate PatientAuthIdentity linkage
     identity = (
         await db.execute(
             select(PatientAuthIdentity).where(
                 and_(
                     PatientAuthIdentity.patient_id == pid,
                     PatientAuthIdentity.provider == "supabase",
-                    PatientAuthIdentity.provider_subject == str(supabase_user_id),
+                    PatientAuthIdentity.provider_subject == supabase_user_id,
                     PatientAuthIdentity.revoked_at.is_(None),
                 )
             )
@@ -154,16 +161,80 @@ async def get_current_patient(
     if identity is None:
         raise HTTPException(status_code=401, detail="Patient identity not verified")
 
-    # Bind audit tenant AFTER authoritative validation and restore the exact
-    # prior ContextVar state when FastAPI completes the request dependency.
-    audit_scope_token = bind_trusted_audit_tenant(str(pid))
+    return AuthenticatedPatientSession(
+        patient_id=str(pid),
+        patient=patient_row,
+        session_id=session_id,
+        session_epoch=session_epoch,
+        supabase_user_id=supabase_user_id,
+    )
+
+
+def _decode_patient_bearer(authorization: str | None) -> dict[str, Any]:
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing authorization token")
+    scheme, separator, credential = authorization.partition(" ")
+    if (
+        scheme.lower() != "bearer"
+        or separator != " "
+        or not credential
+        or credential != credential.strip()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid authorization scheme")
+    claims = decode_patient_access_token(credential)
+    if not claims:
+        raise HTTPException(status_code=401, detail="Invalid or expired patient token")
+    return claims
+
+
+async def get_current_patient(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db_session),
+) -> AsyncGenerator[AuthenticatedPatient, None]:
+    """Strict current patient dependency for ``/api/v2/patient/me/*`` routes.
+
+    A valid JWT is necessary but not sufficient. The JWT must also resolve to
+    current server-side patient-session authority and current PostgreSQL patient
+    plus PatientAuthIdentity state. No biometric/session fallback is accepted.
+    """
+
+    claims = _decode_patient_bearer(authorization)
+    principal = await _resolve_current_patient_session_claims(claims, db)
+    audit_scope_token = bind_trusted_audit_tenant(principal.patient_id)
     try:
-        yield AuthenticatedPatient(patient_id=str(pid), patient=patient_row)
+        yield AuthenticatedPatient(
+            patient_id=principal.patient_id, patient=principal.patient
+        )
     finally:
         reset_trusted_audit_scope(audit_scope_token)
 
 
-async def get_scoped_session(authorization: str | None = Header(default=None)) -> str:
+async def get_current_patient_session(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db_session),
+) -> AsyncGenerator[AuthenticatedPatientSession, None]:
+    """Return the exact live patient session for logout/session-bound actions."""
+
+    claims = _decode_patient_bearer(authorization)
+    principal = await _resolve_current_patient_session_claims(claims, db)
+    audit_scope_token = bind_trusted_audit_tenant(principal.patient_id)
+    try:
+        yield principal
+    finally:
+        reset_trusted_audit_scope(audit_scope_token)
+
+
+async def get_scoped_session(
+    authorization: str | None = Header(default=None),
+    db: AsyncSession = Depends(get_db_session),
+) -> str:
+    """Resolve current patient authority, retaining legacy handshake fallback.
+
+    Patient JWTs never fall through to the legacy session path: once a token is
+    recognized as a patient JWT, its live Redis session and current DB identity
+    state must validate or the request is rejected.
+    """
+
     if not authorization:
         await append_audit_log(
             audit_context=current_audit_context(AuditDomain.AUTH),
@@ -176,9 +247,9 @@ async def get_scoped_session(authorization: str | None = Header(default=None)) -
 
     patient_claims = decode_patient_access_token(authorization)
     if patient_claims:
-        patient_id = str(patient_claims["patient_id"])
-        bind_trusted_audit_tenant(patient_id)
-        return patient_id
+        principal = await _resolve_current_patient_session_claims(patient_claims, db)
+        bind_trusted_audit_tenant(principal.patient_id)
+        return principal.patient_id
 
     session_context = await validate_session_context(authorization)
     if not session_context:
@@ -511,7 +582,7 @@ async def get_provider_trust_route_principal(
     ):
         raise HTTPException(
             status_code=428, detail={"error_code": "MFA_SESSION_ASSURANCE_REQUIRED"}
-        )
+        ) from None
     user_agent = request.headers.get("user-agent")
     stored_ua_hash = session.get("ua_hash", "")
     current_ua_hash = hash_user_agent(user_agent)
