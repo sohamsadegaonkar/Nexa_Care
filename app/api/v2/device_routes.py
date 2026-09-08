@@ -1,43 +1,35 @@
-"""Device enrollment routes for Nexa Care V2 (Workstream 2).
+"""Patient cryptographic-device trust routes.
 
-Manages patient enrolled hardware cryptographic public keys (ECDSA P-256).
-Never stores private keys server-side.
+Only canonical ECDSA P-256 public keys are accepted. Patient private keys are
+never uploaded or stored by the backend.
 """
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
-
 import base64
-import hashlib
-import logging
 import uuid
-from datetime import datetime, timezone
 
-from cryptography.exceptions import UnsupportedAlgorithm
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import (
-    AuthenticatedPatientSession,
-    get_current_patient_session,
-    get_scoped_session,
-)
+from app.core.dependencies import AuthenticatedPatientSession, get_current_patient_session
 from app.models.patient_device_keys import PatientDeviceKey
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.patient_auth_service import (
     claim_device_enrollment_token,
     finalize_device_enrollment_token,
-    release_device_enrollment_claim,
+)
+from app.services.patient_device_trust import (
+    PatientDeviceTrustError,
+    canonicalize_p256_public_key,
+    enroll_patient_device_key,
+    revoke_patient_device,
 )
 from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
-
-logger = logging.getLogger("nexa_logger")
 
 router = APIRouter(prefix="/api/v2/patient/devices", tags=["devices"])
 
@@ -56,6 +48,8 @@ class DeviceEnrollRequest(BaseModel):
 
 class DeviceEnrollResponse(BaseModel):
     device_id: str
+    key_id: str
+    key_version: int
     status: str
     patient_id: str
     enrolled_at: str
@@ -63,16 +57,45 @@ class DeviceEnrollResponse(BaseModel):
 
 class EnrolledDeviceInfo(BaseModel):
     device_id: str
+    key_id: str
+    key_version: int
     device_label: str | None
     platform: str
     status: str
     enrolled_at: str
+    revoked_at: str | None = None
+    revocation_reason_code: str | None = None
     public_key_fingerprint: str
 
 
 class EnrolledDevicesListResponse(BaseModel):
     patient_id: str
     devices: list[EnrolledDeviceInfo]
+
+
+class DeviceRevokeResponse(BaseModel):
+    device_id: str
+    key_id: str
+    key_version: int
+    status: str
+    revoked_at: str
+
+
+def _http_for_device_error(exc: PatientDeviceTrustError) -> HTTPException:
+    if exc.code in {"DEVICE_PUBLIC_KEY_INVALID", "DEVICE_PUBLIC_KEY_NOT_P256"}:
+        return HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": exc.code},
+        )
+    if exc.code == "DEVICE_NOT_FOUND":
+        return HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error_code": exc.code},
+        )
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"error_code": exc.code},
+    )
 
 
 @router.post(
@@ -83,41 +106,29 @@ async def enroll_device(
     patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Enroll a P-256 key using a grant from this exact current patient session."""
+    """Enroll version 1 of a logical device from this exact current session."""
+
     patient_id = patient.patient_id
     try:
         raw_key = base64.b64decode(payload.device_public_key, validate=True)
-        pub_key = serialization.load_der_public_key(raw_key)
-    except (ValueError, UnsupportedAlgorithm, Exception) as exc:
+        # Validate before consuming the one-time enrollment grant. The service
+        # canonicalizes again at its persistence boundary by design.
+        canonicalize_p256_public_key(raw_key)
+    except (ValueError, PatientDeviceTrustError) as exc:
+        code = (
+            exc.code
+            if isinstance(exc, PatientDeviceTrustError)
+            else "DEVICE_PUBLIC_KEY_INVALID"
+        )
         await append_audit_log_or_503(
             audit_context=current_audit_context(AuditDomain.PLATFORM),
             actor_uid=patient_id,
-            event_type="DEVICE_KEY_ENROLLED",
+            event_type="DEVICE_KEY_ENROLLMENT_DENIED",
             target_id=patient_id,
-            status="FAILED",
-            metadata={"reason": "invalid_public_key_format"},
+            status="DENIED",
+            metadata={"reason_code": code},
         )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid DER public key encoding or unsupported key format.",
-        ) from exc
-
-    if not (
-        isinstance(pub_key, ec.EllipticCurvePublicKey)
-        and isinstance(pub_key.curve, ec.SECP256R1)
-    ):
-        await append_audit_log_or_503(
-            audit_context=current_audit_context(AuditDomain.PLATFORM),
-            actor_uid=patient_id,
-            event_type="DEVICE_KEY_ENROLLED",
-            target_id=patient_id,
-            status="FAILED",
-            metadata={"reason": "non_p256_curve"},
-        )
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Public key must be an ECDSA P-256 (SECP256R1) key.",
-        )
+        raise _http_for_device_error(PatientDeviceTrustError(code)) from exc
 
     try:
         pid_uuid = uuid.UUID(patient_id)
@@ -125,31 +136,6 @@ async def enroll_device(
         raise HTTPException(
             status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
         ) from exc
-
-    # Check active device limit (max 5 active devices per patient).
-    # Slice 6C will replace this application-level check with serialized DB-safe
-    # lifecycle enforcement; 6B is limited to patient-session authority.
-    stmt_count = select(func.count(PatientDeviceKey.id)).where(
-        PatientDeviceKey.patient_id == pid_uuid,
-        PatientDeviceKey.status == "active",
-    )
-    result_count = await db.execute(stmt_count)
-    active_count = result_count.scalar() or 0
-    if active_count >= 5:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Maximum of 5 active devices reached for this patient.",
-        )
-
-    # Check if this exact key is already enrolled. Revoked-key resurrection is
-    # an audited Slice-6C defect and is intentionally not silently redesigned here.
-    stmt_existing = select(PatientDeviceKey).where(
-        PatientDeviceKey.patient_id == pid_uuid,
-        PatientDeviceKey.device_public_key == raw_key,
-    )
-    res_existing = await db.execute(stmt_existing)
-    existing = res_existing.scalar_one_or_none()
-    now = datetime.now(timezone.utc)
 
     try:
         claim_id = await claim_device_enrollment_token(
@@ -166,40 +152,13 @@ async def enroll_device(
     if claim_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid, expired, or session-mismatched device enrollment token.",
+            detail={"error_code": "DEVICE_ENROLLMENT_GRANT_INVALID"},
         )
 
-    try:
-        if existing:
-            existing.status = "active"
-            existing.device_label = payload.device_label
-            existing.platform = payload.platform
-            existing.revoked_at = None
-            device_id = str(existing.id)
-        else:
-            new_key = PatientDeviceKey(
-                patient_id=pid_uuid,
-                device_public_key=raw_key,
-                device_label=payload.device_label,
-                platform=payload.platform,
-                key_algorithm="ECDSA-P256",
-                status="active",
-                enrolled_at=now,
-            )
-            db.add(new_key)
-            await db.flush()
-            device_id = str(new_key.id or uuid.uuid4())
-
-        await db.commit()
-    except Exception:
-        try:
-            await release_device_enrollment_claim(
-                payload.device_enrollment_token, claim_id
-            )
-        except PatientSessionAuthorityUnavailable:
-            pass
-        raise
-
+    # Consume Redis authority before creating durable DB authority. This ordering
+    # intentionally prefers a consumed grant + no device on a later DB failure
+    # over a committed device + unfinalized Redis grant. Slice 6G qualifies the
+    # remaining cross-store retry behavior under injected failures.
     try:
         finalized = await finalize_device_enrollment_token(
             payload.device_enrollment_token, claim_id
@@ -215,23 +174,41 @@ async def enroll_device(
     if not finalized:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Device enrollment token was already consumed.",
+            detail={"error_code": "DEVICE_ENROLLMENT_GRANT_ALREADY_CONSUMED"},
         )
 
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PLATFORM),
-        actor_uid=patient_id,
-        event_type="DEVICE_KEY_ENROLLED",
-        target_id=device_id,
-        status="SUCCESS",
-        metadata={"platform": payload.platform, "device_label": payload.device_label},
-    )
+    try:
+        row = await enroll_patient_device_key(
+            db,
+            patient_id=pid_uuid,
+            raw_public_key=raw_key,
+            device_label=payload.device_label,
+            platform=payload.platform,
+            actor_id=patient_id,
+        )
+    except PatientDeviceTrustError as exc:
+        if exc.code in {
+            "DEVICE_KEY_RESURRECTION_FORBIDDEN",
+            "DEVICE_KEY_ALREADY_ENROLLED",
+            "DEVICE_ACTIVE_LIMIT_REACHED",
+        }:
+            await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.PLATFORM),
+                actor_uid=patient_id,
+                event_type="DEVICE_KEY_ENROLLMENT_DENIED",
+                target_id=patient_id,
+                status="DENIED",
+                metadata={"reason_code": exc.code},
+            )
+        raise _http_for_device_error(exc) from exc
 
     return DeviceEnrollResponse(
-        device_id=device_id,
-        status="active",
+        device_id=str(row.device_id),
+        key_id=str(row.id),
+        key_version=row.key_version,
+        status=row.status,
         patient_id=patient_id,
-        enrolled_at=now.isoformat(),
+        enrolled_at=row.enrolled_at.isoformat(),
     )
 
 
@@ -239,10 +216,12 @@ async def enroll_device(
     "", status_code=status.HTTP_200_OK, response_model=EnrolledDevicesListResponse
 )
 async def list_devices(
-    patient_id: str = Depends(get_scoped_session),
+    patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """List active enrolled devices for a patient. Never returns raw public keys."""
+    """List this patient's device/key lifecycle without exposing raw keys."""
+
+    patient_id = patient.patient_id
     try:
         pid_uuid = uuid.UUID(patient_id)
     except ValueError as exc:
@@ -250,34 +229,36 @@ async def list_devices(
             status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
         ) from exc
 
-    stmt = (
-        select(PatientDeviceKey)
-        .where(
-            PatientDeviceKey.patient_id == pid_uuid,
+    rows = (
+        (
+            await db.execute(
+                select(PatientDeviceKey)
+                .where(PatientDeviceKey.patient_id == pid_uuid)
+                .order_by(
+                    PatientDeviceKey.enrolled_at.desc(),
+                    PatientDeviceKey.key_version.desc(),
+                )
+            )
         )
-        .order_by(PatientDeviceKey.enrolled_at.desc())
+        .scalars()
+        .all()
     )
-    res = await db.execute(stmt)
-    rows = res.scalars().all()
-
     devices = [
         EnrolledDeviceInfo(
-            device_id=str(row.id),
+            device_id=str(row.device_id),
+            key_id=str(row.id),
+            key_version=row.key_version,
             device_label=row.device_label,
             platform=row.platform,
             status=row.status,
             enrolled_at=row.enrolled_at.isoformat(),
-            public_key_fingerprint=hashlib.sha256(row.device_public_key).hexdigest(),
+            revoked_at=row.revoked_at.isoformat() if row.revoked_at else None,
+            revocation_reason_code=row.revocation_reason_code,
+            public_key_fingerprint=row.public_key_fingerprint,
         )
         for row in rows
     ]
     return EnrolledDevicesListResponse(patient_id=patient_id, devices=devices)
-
-
-class DeviceRevokeResponse(BaseModel):
-    device_id: str
-    status: str
-    revoked_at: str
 
 
 @router.post(
@@ -287,50 +268,36 @@ class DeviceRevokeResponse(BaseModel):
 )
 async def revoke_device(
     device_id: str,
-    patient_id: str = Depends(get_scoped_session),
+    patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Immediately revoke a patient hardware device key."""
+    """Terminally revoke the current key of one logical patient device."""
+
+    patient_id = patient.patient_id
     try:
         pid_uuid = uuid.UUID(patient_id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
-        ) from exc
-
-    try:
         dev_uuid = uuid.UUID(device_id)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid device_id UUID"
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error_code": "INVALID_DEVICE_ID"},
         ) from exc
 
-    stmt = select(PatientDeviceKey).where(
-        PatientDeviceKey.id == dev_uuid,
-        PatientDeviceKey.patient_id == pid_uuid,
-    )
-    res = await db.execute(stmt)
-    device = res.scalar_one_or_none()
-    if not device:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Device key not found"
+    try:
+        row = await revoke_patient_device(
+            db,
+            patient_id=pid_uuid,
+            device_id=dev_uuid,
+            actor_id=patient_id,
         )
+    except PatientDeviceTrustError as exc:
+        raise _http_for_device_error(exc) from exc
 
-    now = datetime.now(timezone.utc)
-    device.status = "revoked"
-    device.revoked_at = now
-    await db.commit()
-
-    await append_audit_log_or_503(
-        audit_context=current_audit_context(AuditDomain.PLATFORM),
-        actor_uid=patient_id,
-        event_type="DEVICE_KEY_REVOKED",
-        target_id=device_id,
-        status="SUCCESS",
-    )
-
+    assert row.revoked_at is not None
     return DeviceRevokeResponse(
-        device_id=device_id,
-        status="revoked",
-        revoked_at=now.isoformat(),
+        device_id=str(row.device_id),
+        key_id=str(row.id),
+        key_version=row.key_version,
+        status=row.status,
+        revoked_at=row.revoked_at.isoformat(),
     )
