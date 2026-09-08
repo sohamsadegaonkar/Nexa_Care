@@ -17,7 +17,9 @@ creation, revocation, epoch invalidation, and DB identity revalidation.
 from __future__ import annotations
 
 import inspect
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import Depends, Header
@@ -88,3 +90,26 @@ def _bridge_legacy_scoped_patient_override(request):
             app.dependency_overrides.pop(get_current_patient_session, None)
         else:
             app.dependency_overrides[get_current_patient_session] = previous
+
+
+@pytest.fixture(autouse=True)
+def _isolate_legacy_registration_retry_from_new_session_store(request):
+    """Keep the legacy retry test focused on enrollment-grant recovery semantics."""
+
+    if request.node.name != "test_same_finalized_attempt_recovers_after_device_redis_failure":
+        yield
+        return
+
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
+    issue = AsyncMock(
+        side_effect=[
+            ("patient-token-1", expires_at, "test-registration-session-1"),
+            ("patient-token-2", expires_at, "test-registration-session-2"),
+        ]
+    )
+    revoke = AsyncMock(return_value=True)
+    with (
+        patch("app.api.v2.auth_routes.issue_patient_access_session", new=issue),
+        patch("app.api.v2.auth_routes.revoke_patient_session", new=revoke),
+    ):
+        yield
