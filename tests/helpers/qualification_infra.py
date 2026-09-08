@@ -186,7 +186,7 @@ def require_loopback_redis_url(url: str) -> None:
     hostname = (parts.hostname or "").lower()
     if hostname not in _LOOPBACK_HOSTS:
         raise ValueError(
-            f"Redis URL must target loopback ({_LOOPBACK_HOSTS}), got '{hostname}'"
+            f"Redis URL must target a loopback host ({_LOOPBACK_HOSTS}), got '{hostname}'"
         )
 
 
