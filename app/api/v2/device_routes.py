@@ -17,19 +17,22 @@ from datetime import datetime, timezone
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
-from app.core.dependencies import get_scoped_session
+from app.core.dependencies import (
+    AuthenticatedPatientSession,
+    get_current_patient_session,
+    get_scoped_session,
+)
 from app.models.patient_device_keys import PatientDeviceKey
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.patient_auth_service import (
     claim_device_enrollment_token,
     finalize_device_enrollment_token,
-    patient_session_id_from_token,
     release_device_enrollment_claim,
 )
 from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
@@ -77,11 +80,11 @@ class EnrolledDevicesListResponse(BaseModel):
 )
 async def enroll_device(
     payload: DeviceEnrollRequest,
-    authorization: str | None = Header(default=None),
-    patient_id: str = Depends(get_scoped_session),
+    patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Enroll a P-256 key using a grant from this exact current patient session."""
+    patient_id = patient.patient_id
     try:
         raw_key = base64.b64decode(payload.device_public_key, validate=True)
         pub_key = serialization.load_der_public_key(raw_key)
@@ -148,15 +151,9 @@ async def enroll_device(
     existing = res_existing.scalar_one_or_none()
     now = datetime.now(timezone.utc)
 
-    current_session_id = patient_session_id_from_token(authorization)
-    if current_session_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Current patient session is required for device enrollment.",
-        )
     try:
         claim_id = await claim_device_enrollment_token(
-            payload.device_enrollment_token, patient_id, current_session_id
+            payload.device_enrollment_token, patient_id, patient.session_id
         )
     except PatientSessionAuthorityUnavailable as exc:
         raise HTTPException(
