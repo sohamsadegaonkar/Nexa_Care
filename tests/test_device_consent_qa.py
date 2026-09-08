@@ -24,6 +24,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.dependencies import (
+    AuthenticatedPatientSession,
+    get_current_patient_session,
     get_current_provider,
     get_scoped_session,
 )
@@ -35,6 +37,7 @@ from app.models.provider_context import (
     ProviderIdentityContext,
 )
 from app.models.provider import AffiliationType
+from app.services.patient_device_trust import PatientDeviceTrustError
 from app.services.patient_discovery_service import PatientDiscoveryService
 from tests.conftest import DualModeTestClient, FakeRedis, FakeSyncRedis
 
@@ -91,6 +94,29 @@ def _active_discovery_handle(fake_redis, clinical_session, patient_id: str) -> s
     )
     assert asyncio.run(service.activate_handle(raw_handle=handle.value))
     return handle.value
+
+
+def _patient_session(patient_id: str) -> AuthenticatedPatientSession:
+    patient = MagicMock(patient_uuid=uuid.UUID(patient_id), is_deleted=False)
+    return AuthenticatedPatientSession(
+        patient_id=patient_id,
+        patient=patient,
+        session_id="qa-current-session",
+        session_epoch=1,
+        supabase_user_id="qa-supabase-user",
+    )
+
+
+def _set_patient_session(overrides, patient_id: str) -> None:
+    async def _current_session():
+        return _patient_session(patient_id)
+
+    async def _scoped_session():
+        return patient_id
+
+    overrides.set(get_current_patient_session, _current_session)
+    overrides.set(get_scoped_session, _scoped_session)
+    overrides.apply()
 
 
 @pytest.fixture
@@ -163,25 +189,21 @@ class TestDeviceEnrollmentValidation:
         patient_id = str(uuid.uuid4())
         pub_der = _generate_p256_public_key_der()
         pub_b64 = base64.b64encode(pub_der).decode()
+        device_id = uuid.uuid4()
+        key_id = uuid.uuid4()
+        row = MagicMock(
+            device_id=device_id,
+            id=key_id,
+            key_version=1,
+            status="active",
+            enrolled_at=datetime.now(timezone.utc),
+        )
+        _set_patient_session(overrides, patient_id)
 
-        mock_db.execute.side_effect = [
-            MagicMock(scalar=MagicMock(return_value=0)),  # active_count
-            MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # no existing
-        ]
-
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
-        with (
-            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
-            patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
-                return_value=None,
-            ),
-        ):
+        with patch(
+            "app.api.v2.device_routes.enroll_patient_device_key",
+            new=AsyncMock(return_value=row),
+        ) as enroll:
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
                 json={
@@ -195,28 +217,23 @@ class TestDeviceEnrollmentValidation:
             assert resp.status_code == 201
             data = resp.json()
             assert data["status"] == "active"
-            assert "device_id" in data
+            assert data["device_id"] == str(device_id)
+            assert data["key_id"] == str(key_id)
+            assert data["key_version"] == 1
             assert data["patient_id"] == patient_id
             assert "enrolled_at" in data
+            enroll.assert_awaited_once()
 
     def test_enroll_invalid_base64_returns_400(
         self, client, fake_sync_redis, mock_db, overrides
     ):
         """Non-base64 public key data is rejected with 400."""
         patient_id = str(uuid.uuid4())
+        _set_patient_session(overrides, patient_id)
 
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
-        with (
-            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
-            patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
-                return_value=None,
-            ),
+        with patch(
+            "app.api.v2.device_routes.append_audit_log_or_503",
+            new=AsyncMock(return_value=None),
         ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
@@ -228,10 +245,7 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 400
-            assert (
-                "Invalid" in resp.json()["detail"]
-                or "public key" in resp.json()["detail"].lower()
-            )
+            assert resp.json()["detail"]["error_code"] == "DEVICE_PUBLIC_KEY_INVALID"
 
     def test_enroll_non_p256_key_returns_400(
         self, client, fake_sync_redis, mock_db, overrides
@@ -245,21 +259,12 @@ class TestDeviceEnrollmentValidation:
             Encoding.DER, PublicFormat.SubjectPublicKeyInfo
         )
         pub_b64 = base64.b64encode(pub_der).decode()
-
         patient_id = str(uuid.uuid4())
+        _set_patient_session(overrides, patient_id)
 
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
-        with (
-            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
-            patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
-                return_value=None,
-            ),
+        with patch(
+            "app.api.v2.device_routes.append_audit_log_or_503",
+            new=AsyncMock(return_value=None),
         ):
             resp = client.post(
                 "/api/v2/patient/devices/enroll",
@@ -271,32 +276,27 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 400
-            assert (
-                "P-256" in resp.json()["detail"] or "SECP256R1" in resp.json()["detail"]
-            )
+            assert resp.json()["detail"]["error_code"] == "DEVICE_PUBLIC_KEY_NOT_P256"
 
     def test_enroll_max_five_active_devices_returns_409(
         self, client, fake_sync_redis, mock_db, overrides
     ):
         """Attempting to enroll a 6th active device returns 409."""
         patient_id = str(uuid.uuid4())
-
-        mock_db.execute.return_value = MagicMock(scalar=MagicMock(return_value=5))
-
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
+        _set_patient_session(overrides, patient_id)
         pub_der = _generate_p256_public_key_der()
         pub_b64 = base64.b64encode(pub_der).decode()
 
         with (
-            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
             patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
-                return_value=None,
+                "app.api.v2.device_routes.enroll_patient_device_key",
+                new=AsyncMock(
+                    side_effect=PatientDeviceTrustError("DEVICE_ACTIVE_LIMIT_REACHED")
+                ),
+            ),
+            patch(
+                "app.api.v2.device_routes.append_audit_log_or_503",
+                new=AsyncMock(return_value=None),
             ),
         ):
             resp = client.post(
@@ -309,87 +309,69 @@ class TestDeviceEnrollmentValidation:
                 },
             )
             assert resp.status_code == 409
-            assert "5" in resp.json()["detail"] or "Maximum" in resp.json()["detail"]
+            assert resp.json()["detail"]["error_code"] == "DEVICE_ACTIVE_LIMIT_REACHED"
 
     def test_list_devices_returns_200(
         self, client, fake_sync_redis, mock_db, overrides
     ):
         """GET /api/v2/patient/devices returns device list without public keys."""
         patient_id = str(uuid.uuid4())
-
         mock_db.execute.return_value = MagicMock(
             scalars=MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
         )
+        _set_patient_session(overrides, patient_id)
 
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis):
-            resp = client.get("/api/v2/patient/devices")
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["patient_id"] == patient_id
-            assert isinstance(data["devices"], list)
+        resp = client.get("/api/v2/patient/devices")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["patient_id"] == patient_id
+        assert isinstance(data["devices"], list)
 
     def test_revoke_device_returns_200(
         self, client, fake_sync_redis, mock_db, overrides
     ):
         """POST /api/v2/patient/devices/{device_id}/revoke sets status to revoked."""
         patient_id = str(uuid.uuid4())
-        device_id = str(uuid.uuid4())
-
-        mock_device = MagicMock()
-        mock_device.id = uuid.UUID(device_id)
-        mock_device.patient_id = uuid.UUID(patient_id)
-        mock_device.status = "active"
-
-        mock_db.execute.return_value = MagicMock(
-            scalar_one_or_none=MagicMock(return_value=mock_device)
+        device_id = uuid.uuid4()
+        key_id = uuid.uuid4()
+        row = MagicMock(
+            device_id=device_id,
+            id=key_id,
+            key_version=1,
+            status="revoked",
+            revoked_at=datetime.now(timezone.utc),
         )
+        _set_patient_session(overrides, patient_id)
 
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
-        with (
-            patch("app.core.redis.get_redis_client", return_value=fake_sync_redis),
-            patch(
-                "app.observability.audit_ledger.append_audit_log_or_503",
-                return_value=None,
-            ),
-        ):
+        with patch(
+            "app.api.v2.device_routes.revoke_patient_device",
+            new=AsyncMock(return_value=row),
+        ) as revoke:
             resp = client.post(f"/api/v2/patient/devices/{device_id}/revoke")
             assert resp.status_code == 200
             data = resp.json()
             assert data["status"] == "revoked"
-            assert data["device_id"] == device_id
+            assert data["device_id"] == str(device_id)
+            assert data["key_id"] == str(key_id)
+            assert data["key_version"] == 1
             assert "revoked_at" in data
+            revoke.assert_awaited_once()
 
     def test_revoke_nonexistent_device_returns_404(
         self, client, fake_sync_redis, mock_db, overrides
     ):
         """Revoking a device that doesn't exist or doesn't belong to the patient returns 404."""
         patient_id = str(uuid.uuid4())
-        device_id = str(uuid.uuid4())
+        device_id = uuid.uuid4()
+        _set_patient_session(overrides, patient_id)
 
-        mock_db.execute.return_value = MagicMock(
-            scalar_one_or_none=MagicMock(return_value=None)
-        )
-
-        async def _scoped_session():
-            return patient_id
-
-        overrides.set(get_scoped_session, _scoped_session)
-        overrides.apply()
-
-        with patch("app.core.redis.get_redis_client", return_value=fake_sync_redis):
+        with patch(
+            "app.api.v2.device_routes.revoke_patient_device",
+            new=AsyncMock(side_effect=PatientDeviceTrustError("DEVICE_NOT_FOUND")),
+        ):
             resp = client.post(f"/api/v2/patient/devices/{device_id}/revoke")
             assert resp.status_code == 404
+            assert resp.json()["detail"]["error_code"] == "DEVICE_NOT_FOUND"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -475,7 +457,7 @@ class TestConsentRequestCreation:
                 headers=real_clinical_session.headers,
                 json={
                     "patient_id": patient_id,
-                    "provider_id": different_provider,  # IDOR probe
+                    "provider_id": different_provider,
                     "purpose": "routine_checkup",
                     "scope": "clinical",
                 },
@@ -563,7 +545,6 @@ class TestConsentRequestCreation:
                 return_value=None,
             ),
         ):
-            # Request duration below minimum (10s → clamped to 300s)
             resp = client.post(
                 "/api/v2/consent/request",
                 headers=real_clinical_session.headers,
@@ -576,7 +557,6 @@ class TestConsentRequestCreation:
             )
             assert resp.status_code == 201
 
-            # Verify the stored challenge used clamped value
             raw = fake_sync_redis.get(f"consent_request:{resp.json()['request_id']}")
             if raw:
                 stored = json.loads(raw)
@@ -1054,13 +1034,9 @@ class TestConsentEngineValidation:
         """_parse_payload returns None for malformed payloads."""
         from app.services.consent_engine import _parse_payload
 
-        # Missing required fields
         assert _parse_payload(json.dumps({"patient_id": "x"})) is None
-        # Non-dict
         assert _parse_payload("not json") is None
-        # None
         assert _parse_payload(None) is None
-        # Break-glass without reason_code
         assert (
             _parse_payload(
                 json.dumps(
@@ -1132,10 +1108,4 @@ class TestConsentEngineValidation:
                 }
             )
         )
-        # Currently returns capability with empty scope — this is a known gap.
-        # The issue() function rejects empty scope at issuance, so this should
-        # never be reachable in practice, but _parse_payload should ideally
-        # also reject it.
-        assert (
-            result is not None
-        )  # ALPHA: should be None once _parse_payload is hardened
+        assert result is not None
