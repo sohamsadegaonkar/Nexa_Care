@@ -7,7 +7,8 @@ from alembic.script import ScriptDirectory
 ROOT = Path(__file__).resolve().parents[1]
 REVISION = "20260903_trust_authorization"
 APPLICATION_REVISION = "20260905_verification_application"
-HEAD_REVISION = "20260906_verification_scheduler"
+SCHEDULER_REVISION = "20260906_verification_scheduler"
+HEAD_REVISION = "20260909_device_trust_lifecycle"
 
 
 def test_trust_authorization_migration_is_single_head_and_forward_only() -> None:
@@ -22,11 +23,13 @@ def test_trust_authorization_migration_is_single_head_and_forward_only() -> None
         app_revision is not None
         and app_revision.down_revision == "20260904_verification_evidence"
     )
-    head_revision = scripts.get_revision(HEAD_REVISION)
+    scheduler_revision = scripts.get_revision(SCHEDULER_REVISION)
     assert (
-        head_revision is not None
-        and head_revision.down_revision == APPLICATION_REVISION
+        scheduler_revision is not None
+        and scheduler_revision.down_revision == APPLICATION_REVISION
     )
+    head_revision = scripts.get_revision(HEAD_REVISION)
+    assert head_revision is not None and head_revision.down_revision == SCHEDULER_REVISION
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (
         "provider_trust_permission_grant",
