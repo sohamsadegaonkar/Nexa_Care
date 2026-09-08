@@ -78,7 +78,6 @@ from app.core.supabase import get_supabase_client
 from app.services.patient_auth_service import (
     issue_device_enrollment_token,
     issue_patient_access_session,
-    issue_patient_access_token,
     normalize_indian_phone,
 )
 from app.services.patient_session_authority import (
