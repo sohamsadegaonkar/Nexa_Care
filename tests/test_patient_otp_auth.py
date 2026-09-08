@@ -20,9 +20,12 @@ from app.services.patient_auth_service import (
     issue_patient_access_token,
     normalize_indian_phone,
 )
+from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
 
 client = TestClient(app)
 JWT_SECRET = "patient-test-secret-that-is-at-least-32-characters"
+SESSION_A = "session-a-authority-1234567890"
+SESSION_B = "session-b-authority-1234567890"
 
 
 class FakeRedis:
@@ -99,26 +102,46 @@ def test_expired_patient_jwt_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_enrollment_token_scope_binding_expiry_and_replay() -> None:
+async def test_enrollment_token_scope_session_binding_expiry_and_replay() -> None:
     redis = FakeRedis()
-    with patch(
-        "app.services.patient_auth_service.get_redis_client", return_value=redis
+    active_session = AsyncMock(return_value={"status": "active"})
+    with (
+        patch(
+            "app.services.patient_auth_service.get_redis_client", return_value=redis
+        ),
+        patch(
+            "app.services.patient_auth_service.resolve_patient_session_id",
+            new=active_session,
+        ),
     ):
-        token = await issue_device_enrollment_token("patient-1", "auth-session-1")
+        token = await issue_device_enrollment_token("patient-1", SESSION_A)
         stored = next(
             value for key, value in redis.values.items() if "claim" not in key
         )
-        assert json.loads(stored)["scope"] == "device_enrollment"
-        assert await claim_device_enrollment_token(token, "patient-2") is None
+        stored_payload = json.loads(stored)
+        assert stored_payload["scope"] == "device_enrollment"
+        assert stored_payload["auth_session_id"] == SESSION_A
 
-        claim = await claim_device_enrollment_token(token, "patient-1")
+        assert (
+            await claim_device_enrollment_token(token, "patient-2", SESSION_A) is None
+        )
+        assert (
+            await claim_device_enrollment_token(token, "patient-1", SESSION_B) is None
+        )
+        assert await claim_device_enrollment_token(token, "patient-1", None) is None
+
+        claim = await claim_device_enrollment_token(token, "patient-1", SESSION_A)
         assert claim is not None
         assert await finalize_device_enrollment_token(token, claim)
-        assert await claim_device_enrollment_token(token, "patient-1") is None
+        assert (
+            await claim_device_enrollment_token(token, "patient-1", SESSION_A) is None
+        )
 
-        expired = await issue_device_enrollment_token("patient-1", "auth-session-2")
+        expired = await issue_device_enrollment_token("patient-1", SESSION_B)
         redis.values.clear()
-        assert await claim_device_enrollment_token(expired, "patient-1") is None
+        assert (
+            await claim_device_enrollment_token(expired, "patient-1", SESSION_B) is None
+        )
 
 
 def _allow_rate_limits():
@@ -183,8 +206,67 @@ def test_otp_send_unknown_phone_remains_generic() -> None:
     assert "registered" in response.json()["message"]
 
 
-def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_successful_otp_verification_creates_live_session_before_enrollment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("PATIENT_JWT_SECRET", JWT_SECRET)
+    patient = SimpleNamespace(patient_uuid=UUID("123e4567-e89b-12d3-a456-426614174001"))
+    identity = SimpleNamespace(patient_id=patient.patient_uuid, revoked_at=None)
+    db = AsyncMock()
+    db.scalar.side_effect = [identity, patient]
+    app.dependency_overrides[get_db_session] = lambda: db
+    auth = MagicMock()
+    auth.verify_otp.return_value = SimpleNamespace(
+        user=SimpleNamespace(phone="+918000000001", id="supabase-user-1"),
+        session=SimpleNamespace(access_token="supabase-session-token"),
+    )
+    access_token, expires_at = issue_patient_access_token(
+        str(patient.patient_uuid),
+        "supabase-user-1",
+        session_id=SESSION_A,
+        session_epoch=0,
+    )
+    issue_session = AsyncMock(return_value=(access_token, expires_at, SESSION_A))
+    issue_enrollment = AsyncMock(return_value="enroll-token")
+    try:
+        with (
+            _allow_rate_limits(),
+            patch(
+                "app.api.v2.auth_routes.get_supabase_client",
+                return_value=SimpleNamespace(auth=auth),
+            ),
+            patch(
+                "app.api.v2.auth_routes.issue_patient_access_session",
+                new=issue_session,
+            ),
+            patch(
+                "app.api.v2.auth_routes.issue_device_enrollment_token",
+                new=issue_enrollment,
+            ),
+        ):
+            response = client.post(
+                "/api/v2/auth/otp/verify",
+                json={"phone": "8000000001", "otp": "123456"},
+            )
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["patient_id"] == str(patient.patient_uuid)
+    assert body["device_enrollment_token"] == "enroll-token"
+    claims = decode_patient_access_token(body["access_token"])
+    assert claims is not None
+    assert claims["patient_id"] == body["patient_id"]
+    assert claims["sid"] == SESSION_A
+    assert claims["session_epoch"] == 0
+    issue_session.assert_awaited_once_with(str(patient.patient_uuid), "supabase-user-1")
+    issue_enrollment.assert_awaited_once_with(str(patient.patient_uuid), SESSION_A)
+    compiled_queries = " ".join(str(call.args[0]) for call in db.scalar.call_args_list)
+    assert "patient_auth_identities.provider_subject" in compiled_queries
+    assert "WHERE patients.phone" not in compiled_queries
+
+
+def test_otp_verification_fails_closed_when_session_authority_is_unavailable() -> None:
     patient = SimpleNamespace(patient_uuid=UUID("123e4567-e89b-12d3-a456-426614174001"))
     identity = SimpleNamespace(patient_id=patient.patient_uuid, revoked_at=None)
     db = AsyncMock()
@@ -203,8 +285,10 @@ def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
                 return_value=SimpleNamespace(auth=auth),
             ),
             patch(
-                "app.api.v2.auth_routes.issue_device_enrollment_token",
-                new=AsyncMock(return_value="enroll-token"),
+                "app.api.v2.auth_routes.issue_patient_access_session",
+                new=AsyncMock(
+                    side_effect=PatientSessionAuthorityUnavailable("redis down")
+                ),
             ),
         ):
             response = client.post(
@@ -213,17 +297,11 @@ def test_successful_otp_verification(monkeypatch: pytest.MonkeyPatch) -> None:
             )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["patient_id"] == str(patient.patient_uuid)
-    assert body["device_enrollment_token"] == "enroll-token"
-    assert (
-        decode_patient_access_token(body["access_token"])["patient_id"]
-        == body["patient_id"]
-    )
-    compiled_queries = " ".join(str(call.args[0]) for call in db.scalar.call_args_list)
-    assert "patient_auth_identities.provider_subject" in compiled_queries
-    assert "WHERE patients.phone" not in compiled_queries
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+        "retryable": True,
+    }
 
 
 @pytest.mark.parametrize("status_code", [400, 401])
@@ -336,5 +414,7 @@ def test_otp_paths_are_in_openapi_and_provider_mfa_remains_registered() -> None:
     paths = app.openapi()["paths"]
     assert "/api/v2/auth/otp/send" in paths
     assert "/api/v2/auth/otp/verify" in paths
+    assert "/api/v2/auth/patient/logout" in paths
+    assert "/api/v2/auth/patient/logout-all" in paths
     assert "/api/v2/auth/login" in paths
     assert "/api/v2/auth/mfa/verify" in paths
