@@ -1,8 +1,10 @@
 # Slice 6D — Device Key Rotation
 
-Status: **implementation in qualification**
+Status: **qualified for merge, final documentation-head CI required**
 
 Baseline: post-Slice-6C `main` at `3906fe0dc68d81e16dd0dd7066be6e73b32fd7e8`.
+
+Qualified implementation head: `1dc28e05049ef9f616bb11064534af7bd8a884e9`.
 
 ## Security invariant
 
@@ -40,6 +42,8 @@ Challenge issuance revalidates the exact live patient session in Redis. Challeng
 
 A missing, replayed, expired, wrong-patient, wrong-session, wrong-device, wrong-version, wrong-operation, or wrong-new-key challenge fails closed. Redis/session-authority failure returns an availability failure; there is no JWT-only rotation fallback.
 
+For a wrong patient/session tuple, the live-session check may deny earlier as `DEVICE_ROTATION_SESSION_INACTIVE` before challenge-binding comparison. That is intentionally stronger fail-closed ordering, not a fallback.
+
 ## Transactional version advance
 
 `rotate_patient_device_key()` acquires the same per-patient PostgreSQL advisory transaction lock used by enrollment. It then:
@@ -73,7 +77,22 @@ The rotate route consumes the one-time Redis challenge **before** the durable Po
 
 This is fail-closed behavior, not distributed ACID. Exact retry/idempotency/partial-failure qualification across Redis and PostgreSQL is assigned to Slice 6G.
 
-## Qualification targets
+## Qualification evidence
+
+GitHub Actions on qualified implementation head `1dc28e05049ef9f616bb11064534af7bd8a884e9`:
+
+- Backend CI #278, run `34281302903`: **SUCCESS**.
+  - Ruff: **SUCCESS**, `All checks passed!`.
+  - Partition A — Quality & Pure Unit: **3609 passed, 377 deselected**, JUnit failures/errors/skips `0/0/0`.
+  - Partition B — PostgreSQL Qualification: **266 passed, 3720 deselected**, JUnit failures/errors/skips `0/0/0`; disposable PostgreSQL migrated to `20260909_device_trust_lifecycle`.
+  - Partition C — PostgreSQL + Redis Qualification: **111 passed, 3875 deselected**, JUnit failures/errors/skips `0/0/0`; real PostgreSQL + Redis qualification.
+- Frontend CI #227, run `34281302856`: **SUCCESS**.
+- Pull-request review threads: **none**.
+- Submitted pull-request reviews: **none**.
+
+The first CI attempt correctly rejected two incomplete test contracts: the route registry had not yet listed the two intentional rotation endpoints, and one cross-patient Redis test required only a later binding-mismatch denial even though the runtime already denied the invalid patient/session tuple earlier as inactive. Those tests were corrected without weakening production authority. The qualified head above is the corrected implementation.
+
+### Adversarial coverage
 
 Pure-unit qualification covers:
 
@@ -121,3 +140,7 @@ Slice 6D also does not claim:
 - physical-device qualification (6I).
 
 `expo-secure-store` or backend P-256 validation is not hardware attestation.
+
+## Final merge gate
+
+The governance attestation itself changes the branch head. This documentation-only final head must pass Backend A/B/C with zero skips and Frontend CI before the PR is marked ready and merged. No security requirement is waived because the change is documentation-only.
