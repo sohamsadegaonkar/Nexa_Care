@@ -1,6 +1,6 @@
 # Slice 6C — Device Trust Schema + Enrollment Hardening
 
-Status: **qualification in progress**
+Status: **qualified on implementation head `800183b86911155de4c87cebf864d6ca93020ae7`; final documentation-head CI remains a merge gate**
 
 Baseline: post-Slice-6B `main` at `008b1f2fb1f18e5458208a6000f5a218955a1e66`.
 
@@ -56,7 +56,7 @@ This deliberately prefers `grant consumed, no device` if PostgreSQL later fails.
 
 ## Revocation
 
-Device list and revoke routes now require the strict current patient-session dependency rather than the legacy scoped-session fallback.
+Device list and revoke routes require the strict current patient-session dependency rather than the legacy scoped-session fallback.
 
 Revocation targets the server-owned logical `device_id`, rechecks patient ownership in PostgreSQL, locks the active row, and transitions it terminally to `revoked` with `revoked_at`, reason code, and actor context. Another patient cannot revoke the device. A terminal row is not reactivated by the service.
 
@@ -80,9 +80,21 @@ Denied invalid/duplicate/resurrection/limit enrollments use the existing `DEVICE
 - cross-patient revoke denial;
 - database rejection of an invalid terminal-to-active direct mutation.
 
-The repository migration graph, CI shared-database migrator, pilot migration runner, and qualification-infrastructure default head are advanced to the new single head.
+The repository migration graph, CI shared-database migrator, pilot migration runner, qualification-infrastructure default head, and older Slice-4 disposable qualification database are advanced to the new single head without weakening the offline root-governance schema guard.
 
-Final GitHub Actions evidence will be recorded in the PR only after the final code/test head is green across Ruff, A, B, C, and Frontend CI.
+## GitHub Actions qualification evidence
+
+Implementation head: `800183b86911155de4c87cebf864d6ca93020ae7`.
+
+Backend CI #267, run `34278142657`, completed successfully with all three qualification partitions and their zero-skip gates green:
+
+- **Partition A — Quality & Pure Unit:** Ruff `All checks passed!`; `3598 passed, 361 deselected, 212 warnings in 40.42s`; JUnit failures `0`, errors `0`, skipped `0`.
+- **Partition B — PostgreSQL Qualification:** migrated the disposable shared database to `20260909_device_trust_lifecycle`; `259 passed, 3700 deselected, 12 warnings in 69.39s`; JUnit failures `0`, errors `0`, skipped `0`.
+- **Partition C — PostgreSQL + Redis Qualification:** migrated through `20260909_device_trust_lifecycle`; `102 passed, 3857 deselected, 20 warnings in 56.37s`; JUnit failures `0`, errors `0`, skipped `0`.
+
+Frontend CI #216, run `34278142666`, also completed successfully on the same implementation head.
+
+The documentation attestation commit is intentionally required to pass the same current-head CI gates before PR #13 may be merged. That final documentation-head recheck is a merge gate, not a new security claim; the merge record and PR evidence identify its resulting SHA and workflow outcomes.
 
 ## Explicit non-claims
 
