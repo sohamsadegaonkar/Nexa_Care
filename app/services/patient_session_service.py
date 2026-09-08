@@ -59,6 +59,7 @@ async def _maybe_await(value):
 def _record_from_claims(claims: dict[str, Any]) -> PatientSession | None:
     patient_id = claims.get("patient_id")
     subject = claims.get("sub")
+    actor_type = claims.get("actor_type")
     supabase_user_id = claims.get("supabase_user_id")
     auth_method = claims.get("auth_method")
     jti = claims.get("jti")
@@ -69,6 +70,7 @@ def _record_from_claims(claims: dict[str, Any]) -> PatientSession | None:
         not isinstance(patient_id, str)
         or not patient_id
         or subject != patient_id
+        or actor_type != "patient"
         or not isinstance(supabase_user_id, str)
         or not supabase_user_id
         or auth_method != "phone_otp"
@@ -205,7 +207,10 @@ async def validate_patient_session(claims: dict[str, Any]) -> PatientSession | N
         if not isinstance(actual, str) or not secrets.compare_digest(actual, expected):
             return None
 
-    if stored.get("issued_at") != record.issued_at or stored.get("expires_at") != record.expires_at:
+    if (
+        stored.get("issued_at") != record.issued_at
+        or stored.get("expires_at") != record.expires_at
+    ):
         return None
 
     return record
