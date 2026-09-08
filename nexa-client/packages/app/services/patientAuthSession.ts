@@ -1,6 +1,6 @@
 import * as SecureStore from 'expo-secure-store'
 import { useSyncExternalStore } from 'react'
-import { setAuthTokenProvider } from '../utils/apiClient'
+import { apiClient, setAuthTokenProvider } from '../utils/apiClient'
 
 export const PATIENT_ACCESS_TOKEN_STORAGE_KEY = 'nexa_patient_access_token_v1'
 export const DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY = 'nexa_device_enrollment_token_v1'
@@ -75,6 +75,27 @@ async function deletePersistedSession(): Promise<void> {
     SecureStore.deleteItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY),
     SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY),
   ])
+}
+
+async function revokeCurrentServerSession(): Promise<void> {
+  if (!accessToken) return
+  try {
+    await apiClient.post('/api/v2/auth/patient/logout')
+  } catch (error) {
+    // A 401 means the server no longer recognizes this session, which is
+    // already the desired logout state. Other failures must not be reported
+    // as successful logout because clearing the only local token would remove
+    // our ability to retry immediate server-side revocation.
+    if (
+      error &&
+      typeof error === 'object' &&
+      'status' in error &&
+      (error as { status?: unknown }).status === 401
+    ) {
+      return
+    }
+    throw error
+  }
 }
 
 export function configurePatientAuthTokenProvider(): void {
@@ -158,6 +179,9 @@ export async function storePatientAuthSession(
 export async function clearPatientAuthSession(
   reason: 'logout' | 'expired' = 'logout'
 ): Promise<void> {
+  if (reason === 'logout') {
+    await revokeCurrentServerSession()
+  }
   accessToken = null
   await deletePersistedSession()
   publish({
