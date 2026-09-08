@@ -111,8 +111,6 @@ async def enroll_device(
     patient_id = patient.patient_id
     try:
         raw_key = base64.b64decode(payload.device_public_key, validate=True)
-        # Validate before consuming the one-time enrollment grant. The service
-        # canonicalizes again at its persistence boundary by design.
         canonicalize_p256_public_key(raw_key)
     except (ValueError, PatientDeviceTrustError) as exc:
         code = (
@@ -123,7 +121,7 @@ async def enroll_device(
         await append_audit_log_or_503(
             audit_context=current_audit_context(AuditDomain.PLATFORM),
             actor_uid=patient_id,
-            event_type="DEVICE_KEY_ENROLLMENT_DENIED",
+            event_type="DEVICE_KEY_ENROLLED",
             target_id=patient_id,
             status="DENIED",
             metadata={"reason_code": code},
@@ -195,7 +193,7 @@ async def enroll_device(
             await append_audit_log_or_503(
                 audit_context=current_audit_context(AuditDomain.PLATFORM),
                 actor_uid=patient_id,
-                event_type="DEVICE_KEY_ENROLLMENT_DENIED",
+                event_type="DEVICE_KEY_ENROLLED",
                 target_id=patient_id,
                 status="DENIED",
                 metadata={"reason_code": exc.code},
