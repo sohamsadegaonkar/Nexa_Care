@@ -203,7 +203,14 @@ async def test_rotation_challenge_rejects_cross_binding_fields(
                 await consume_device_rotation_challenge(
                     challenge_nonce=challenge.nonce, **attempted
                 )
-            assert exc_info.value.code == "DEVICE_ROTATION_BINDING_MISMATCH"
+            expected_codes = {"DEVICE_ROTATION_BINDING_MISMATCH"}
+            if field == "patient_id":
+                # The exact live-session check intentionally runs before the
+                # challenge binding comparison. A wrong patient/session tuple
+                # may therefore be rejected even earlier as inactive, which is
+                # at least as fail-closed as the later binding mismatch.
+                expected_codes.add("DEVICE_ROTATION_SESSION_INACTIVE")
+            assert exc_info.value.code in expected_codes
         finally:
             await _cleanup(
                 real_redis,
