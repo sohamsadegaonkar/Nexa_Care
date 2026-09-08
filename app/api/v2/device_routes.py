@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ec
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,8 +29,10 @@ from app.observability.audit_ledger import append_audit_log_or_503
 from app.services.patient_auth_service import (
     claim_device_enrollment_token,
     finalize_device_enrollment_token,
+    patient_session_id_from_token,
     release_device_enrollment_claim,
 )
+from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
 
 logger = logging.getLogger("nexa_logger")
 
@@ -75,10 +77,11 @@ class EnrolledDevicesListResponse(BaseModel):
 )
 async def enroll_device(
     payload: DeviceEnrollRequest,
+    authorization: str | None = Header(default=None),
     patient_id: str = Depends(get_scoped_session),
     db: AsyncSession = Depends(get_db_session),
 ):
-    """Enroll a mobile device public key (ECDSA P-256) for biometric consent signing."""
+    """Enroll a P-256 key using a grant from this exact current patient session."""
     try:
         raw_key = base64.b64decode(payload.device_public_key, validate=True)
         pub_key = serialization.load_der_public_key(raw_key)
@@ -120,7 +123,9 @@ async def enroll_device(
             status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
         ) from exc
 
-    # Check active device limit (max 5 active devices per patient)
+    # Check active device limit (max 5 active devices per patient).
+    # Slice 6C will replace this application-level check with serialized DB-safe
+    # lifecycle enforcement; 6B is limited to patient-session authority.
     stmt_count = select(func.count(PatientDeviceKey.id)).where(
         PatientDeviceKey.patient_id == pid_uuid,
         PatientDeviceKey.status == "active",
@@ -133,7 +138,8 @@ async def enroll_device(
             detail="Maximum of 5 active devices reached for this patient.",
         )
 
-    # Check if this exact key is already enrolled
+    # Check if this exact key is already enrolled. Revoked-key resurrection is
+    # an audited Slice-6C defect and is intentionally not silently redesigned here.
     stmt_existing = select(PatientDeviceKey).where(
         PatientDeviceKey.patient_id == pid_uuid,
         PatientDeviceKey.device_public_key == raw_key,
@@ -141,13 +147,29 @@ async def enroll_device(
     res_existing = await db.execute(stmt_existing)
     existing = res_existing.scalar_one_or_none()
     now = datetime.now(timezone.utc)
-    claim_id = await claim_device_enrollment_token(
-        payload.device_enrollment_token, patient_id
-    )
+
+    current_session_id = patient_session_id_from_token(authorization)
+    if current_session_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current patient session is required for device enrollment.",
+        )
+    try:
+        claim_id = await claim_device_enrollment_token(
+            payload.device_enrollment_token, patient_id, current_session_id
+        )
+    except PatientSessionAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
     if claim_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired device enrollment token.",
+            detail="Invalid, expired, or session-mismatched device enrollment token.",
         )
 
     try:
@@ -173,12 +195,27 @@ async def enroll_device(
 
         await db.commit()
     except Exception:
-        await release_device_enrollment_claim(payload.device_enrollment_token, claim_id)
+        try:
+            await release_device_enrollment_claim(
+                payload.device_enrollment_token, claim_id
+            )
+        except PatientSessionAuthorityUnavailable:
+            pass
         raise
 
-    if not await finalize_device_enrollment_token(
-        payload.device_enrollment_token, claim_id
-    ):
+    try:
+        finalized = await finalize_device_enrollment_token(
+            payload.device_enrollment_token, claim_id
+        )
+    except PatientSessionAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+    if not finalized:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="Device enrollment token was already consumed.",
