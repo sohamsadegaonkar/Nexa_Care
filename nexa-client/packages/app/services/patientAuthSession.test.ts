@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   storage: new Map<string, string>(),
   tokenProvider: null as null | (() => string | null),
+  apiPost: vi.fn(),
 }))
 
 vi.mock('expo-secure-store', () => ({
@@ -17,6 +18,9 @@ vi.mock('expo-secure-store', () => ({
 }))
 
 vi.mock('../utils/apiClient', () => ({
+  apiClient: {
+    post: mocks.apiPost,
+  },
   setAuthTokenProvider: vi.fn((provider: () => string | null) => {
     mocks.tokenProvider = provider
   }),
@@ -43,6 +47,8 @@ describe('patient authentication lifecycle', () => {
   beforeEach(() => {
     mocks.storage.clear()
     mocks.tokenProvider = null
+    mocks.apiPost.mockReset()
+    mocks.apiPost.mockResolvedValue({ data: undefined })
   })
 
   it('starts hydrating and becomes unauthenticated without persisted credentials', async () => {
@@ -93,14 +99,46 @@ describe('patient authentication lifecycle', () => {
     expect(mocks.tokenProvider?.()).toBe(token)
   })
 
-  it('clears the provider and persisted session on logout or expiry', async () => {
+  it('revokes the server session before clearing local credentials on logout', async () => {
+    const session = await loadSession()
+    const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)
+    await session.storePatientAuthSession(token, 'enrollment-token')
+    mocks.apiPost.mockImplementationOnce(async () => {
+      expect(mocks.tokenProvider?.()).toBe(token)
+      return { data: undefined }
+    })
+
+    await session.clearPatientAuthSession('logout')
+
+    expect(mocks.apiPost).toHaveBeenCalledOnce()
+    expect(mocks.apiPost).toHaveBeenCalledWith('/api/v2/auth/patient/logout')
+    expect(session.getPatientAuthSnapshot().status).toBe('unauthenticated')
+    expect(mocks.tokenProvider?.()).toBeNull()
+    expect(mocks.storage.size).toBe(0)
+  })
+
+  it('does not claim logout success when server revocation is unavailable', async () => {
+    const session = await loadSession()
+    const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)
+    await session.storePatientAuthSession(token, 'enrollment-token')
+    mocks.apiPost.mockRejectedValueOnce(new Error('network unavailable'))
+
+    await expect(session.clearPatientAuthSession('logout')).rejects.toThrow('network unavailable')
+
+    expect(session.getPatientAuthSnapshot().status).toBe('authenticated')
+    expect(mocks.tokenProvider?.()).toBe(token)
+    expect(mocks.storage.get(session.PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe(token)
+  })
+
+  it('clears locally on expiry without calling the logout endpoint', async () => {
     const session = await loadSession()
     const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)
     await session.storePatientAuthSession(token, 'enrollment-token')
 
-    await session.clearPatientAuthSession('logout')
+    await session.clearPatientAuthSession('expired')
 
-    expect(session.getPatientAuthSnapshot().status).toBe('unauthenticated')
+    expect(mocks.apiPost).not.toHaveBeenCalled()
+    expect(session.getPatientAuthSnapshot().status).toBe('expired')
     expect(mocks.tokenProvider?.()).toBeNull()
     expect(mocks.storage.size).toBe(0)
   })
