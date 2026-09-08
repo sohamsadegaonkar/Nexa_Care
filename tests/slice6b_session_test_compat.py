@@ -12,6 +12,11 @@ wraps that synthetic patient id in an ``AuthenticatedPatientSession``. When no s
 override exists, it delegates to the real strict dependency, preserving all normal
 6B authority behavior. Dedicated 6B tests separately qualify live Redis session
 creation, revocation, epoch invalidation, and DB identity revalidation.
+
+Security note: this plugin is loaded by pytest before ``tests/conftest.py``. It must
+not import ``app.main`` at module import time, because conftest establishes the
+restricted test ``TRUSTED_HOSTS`` value before creating the FastAPI app. The app is
+therefore imported lazily inside the fixture.
 """
 
 from __future__ import annotations
@@ -31,7 +36,6 @@ from app.core.dependencies import (
     get_current_patient_session,
     get_scoped_session,
 )
-from app.main import app
 
 _LEGACY_SESSION_HARNESS_FILES = {
     "test_device_consent.py",
@@ -52,6 +56,9 @@ def _bridge_legacy_scoped_patient_override(request):
     if request.node.path.name not in _LEGACY_SESSION_HARNESS_FILES:
         yield
         return
+
+    # Import only after tests/conftest.py has established test environment.
+    from app.main import app
 
     previous = app.dependency_overrides.get(get_current_patient_session)
 
