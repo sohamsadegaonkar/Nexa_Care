@@ -18,25 +18,36 @@ jobs:
         with:
           ref: slice-6e-lost-device-account-recovery
           fetch-depth: 0
-      - name: Make patient login device authority explicit
+      - name: Apply Slice 6E authority compatibility patch
         shell: bash
         run: |
           python - <<'PY'
           from pathlib import Path
 
-          path = Path('app/api/v2/auth_routes.py')
-          source = path.read_text()
+          def patch_file(path_name: str, replacements: list[tuple[str, str]]) -> None:
+              path = Path(path_name)
+              source = path.read_text()
+              for old, new in replacements:
+                  count = source.count(old)
+                  if count != 1:
+                      raise SystemExit(
+                          f'{path_name}: anchor count={count} for {old[:100]!r}'
+                      )
+                  source = source.replace(old, new, 1)
+              path.write_text(source)
 
-          replacements = [
-              (
-                  '''class PatientOtpVerifyResponse(BaseModel):
+          patch_file(
+              'app/api/v2/auth_routes.py',
+              [
+                  (
+                      '''class PatientOtpVerifyResponse(BaseModel):
               access_token: str
               token_type: str = "bearer"
               expires_at: datetime
               patient_id: str
               device_enrollment_token: str
           ''',
-                  '''class PatientOtpVerifyResponse(BaseModel):
+                      '''class PatientOtpVerifyResponse(BaseModel):
               access_token: str
               token_type: str = "bearer"
               expires_at: datetime
@@ -44,106 +55,389 @@ jobs:
               device_enrollment_token: str | None = None
               device_authority_state: str
           ''',
-              ),
-              (
-                  '''async def _enforce_otp_limits(request: Request, phone: str) -> None:
-              ip = _client_ip_from_request(request) or "unknown"
-              action = request.url.path.rsplit("/", 1)[-1]
-              try:
-                  await _otp_rate_limiter.check(action=action, ip=ip, normalized_phone=phone)
-              except OtpRateLimitExceeded:
-                  raise HTTPException(
-                      status_code=429, detail="Too many OTP requests. Please try again later."
-                  )
-              except OtpRateLimitBackendUnavailable:
-                  raise HTTPException(
-                      status_code=503, detail="OTP service is temporarily unavailable."
-                  )
+                  ),
+                  (
+                      '''
+          @router.post("/otp/send", response_model=PatientOtpSendResponse)
           ''',
-                  '''async def _enforce_otp_limits(request: Request, phone: str) -> None:
-              ip = _client_ip_from_request(request) or "unknown"
-              action = request.url.path.rsplit("/", 1)[-1]
-              try:
-                  await _otp_rate_limiter.check(action=action, ip=ip, normalized_phone=phone)
-              except OtpRateLimitExceeded:
-                  raise HTTPException(
-                      status_code=429, detail="Too many OTP requests. Please try again later."
-                  )
-              except OtpRateLimitBackendUnavailable:
-                  raise HTTPException(
-                      status_code=503, detail="OTP service is temporarily unavailable."
-                  )
-          
-          
+                      '''
           async def _patient_device_login_authority(
               db: AsyncSession, *, patient_id: str, session_id: str
           ) -> tuple[str | None, str]:
-              """Separate account authentication from bootstrap device authority."""
+              """Keep account authentication separate from bootstrap device authority."""
               from app.services.patient_device_recovery_transactions import (
                   patient_has_device_history,
               )
-          
+
               if await patient_has_device_history(db, patient_id=UUID(patient_id)):
                   return None, "existing_device_required"
               token = await issue_device_enrollment_token(patient_id, session_id)
               return token, "bootstrap_enrollment"
+
+
+          @router.post("/otp/send", response_model=PatientOtpSendResponse)
           ''',
-              ),
-              (
-                  '''        enrollment_token = await issue_device_enrollment_token(patient_id, session_id)
+                  ),
+                  (
+                      '''        enrollment_token = await issue_device_enrollment_token(patient_id, session_id)
           ''',
-                  '''        enrollment_token, device_authority_state = await _patient_device_login_authority(
+                      '''        enrollment_token, device_authority_state = await _patient_device_login_authority(
               db, patient_id=patient_id, session_id=session_id
           )
           ''',
-              ),
-              (
-                  '''        device_enrollment_token=enrollment_token,
-              )
+                  ),
+                  (
+                      '''        patient_id=patient_id,
+              device_enrollment_token=enrollment_token,
+          )
           
           
           @router.post("/patient/logout"''',
-                  '''        device_enrollment_token=enrollment_token,
+                      '''        patient_id=patient_id,
+              device_enrollment_token=enrollment_token,
               device_authority_state=device_authority_state,
           )
           
           
           @router.post("/patient/logout"''',
-              ),
-              (
-                  '''        enrollment_token = await issue_device_enrollment_token(
+                  ),
+                  (
+                      '''        enrollment_token = await issue_device_enrollment_token(
               account.patient_id, session_id
           )
           ''',
-                  '''        enrollment_token, device_authority_state = await _patient_device_login_authority(
+                      '''        enrollment_token, device_authority_state = await _patient_device_login_authority(
               db, patient_id=account.patient_id, session_id=session_id
           )
           ''',
-              ),
-              (
-                  '''        patient_id=account.patient_id,
+                  ),
+                  (
+                      '''        patient_id=account.patient_id,
               device_enrollment_token=enrollment_token,
           )
           ''',
-                  '''        patient_id=account.patient_id,
+                      '''        patient_id=account.patient_id,
               device_enrollment_token=enrollment_token,
               device_authority_state=device_authority_state,
           )
           ''',
-              ),
-          ]
+                  ),
+              ],
+          )
 
-          for old, new in replacements:
-              if source.count(old) != 1:
-                  raise SystemExit(f'auth authority patch anchor count={source.count(old)} for: {old[:80]!r}')
-              source = source.replace(old, new, 1)
+          for path_name in (
+              'tests/integration/test_consent_flow_qa.py',
+              'tests/security/test_forged_signature.py',
+          ):
+              patch_file(
+                  path_name,
+                  [
+                      (
+                          '''    stack = ExitStack()
+              stack.enter_context(
+                  patch(
+                      "app.api.v2.device_routes.claim_device_enrollment_token",
+          ''',
+                          '''    stack = ExitStack()
+              stack.enter_context(
+                  patch(
+                      "app.api.v2.device_routes.patient_has_device_history",
+                      new=AsyncMock(return_value=False),
+                  )
+              )
+              stack.enter_context(
+                  patch(
+                      "app.api.v2.device_routes.claim_device_enrollment_token",
+          ''',
+                      )
+                  ],
+              )
 
-          path.write_text(source)
+          patch_file(
+              'tests/test_device_consent.py',
+              [
+                  (
+                      '''        with (
+                  patch(
+                      "app.api.v2.device_routes.claim_device_enrollment_token",
+          ''',
+                      '''        with (
+                  patch(
+                      "app.api.v2.device_routes.patient_has_device_history",
+                      new=AsyncMock(return_value=False),
+                  ),
+                  patch(
+                      "app.api.v2.device_routes.claim_device_enrollment_token",
+          ''',
+                  )
+              ],
+          )
+
+          patch_file(
+              'tests/test_device_consent_qa.py',
+              [
+                  (
+                      '''    with (
+                  patch(
+                      "app.api.v2.device_routes.claim_device_enrollment_token",
+                      new=AsyncMock(return_value="claim-1"),
+                  ),
+          ''',
+                      '''    with (
+                  patch(
+                      "app.api.v2.device_routes.patient_has_device_history",
+                      new=AsyncMock(return_value=False),
+                  ),
+                  patch(
+                      "app.api.v2.device_routes.claim_device_enrollment_token",
+                      new=AsyncMock(return_value="claim-1"),
+                  ),
+          ''',
+                  )
+              ],
+          )
+
+          patch_file(
+              'tests/test_patient_otp_auth.py',
+              [
+                  (
+                      '''            patch(
+                      "app.api.v2.auth_routes.issue_device_enrollment_token",
+                      new=issue_enrollment,
+                  ),
+          ''',
+                      '''            patch(
+                      "app.api.v2.auth_routes.issue_device_enrollment_token",
+                      new=issue_enrollment,
+                  ),
+                  patch(
+                      "app.services.patient_device_recovery_transactions.patient_has_device_history",
+                      new=AsyncMock(return_value=False),
+                  ),
+          ''',
+                  ),
+                  (
+                      '''    assert body["device_enrollment_token"] == "enroll-token"
+          ''',
+                      '''    assert body["device_enrollment_token"] == "enroll-token"
+              assert body["device_authority_state"] == "bootstrap_enrollment"
+          ''',
+                  ),
+                  (
+                      '''
+          def test_otp_verification_fails_closed_when_session_authority_is_unavailable() -> None:
+          ''',
+                      '''
+          @pytest.mark.asyncio
+          async def test_existing_device_history_does_not_mint_bootstrap_authority() -> None:
+              from app.api.v2 import auth_routes
+
+              issue_enrollment = AsyncMock(return_value="must-not-be-issued")
+              with (
+                  patch(
+                      "app.services.patient_device_recovery_transactions.patient_has_device_history",
+                      new=AsyncMock(return_value=True),
+                  ),
+                  patch(
+                      "app.api.v2.auth_routes.issue_device_enrollment_token",
+                      new=issue_enrollment,
+                  ),
+              ):
+                  enrollment_token, authority_state = await auth_routes._patient_device_login_authority(
+                      AsyncMock(),
+                      patient_id="123e4567-e89b-12d3-a456-426614174001",
+                      session_id=SESSION_A,
+                  )
+              assert enrollment_token is None
+              assert authority_state == "existing_device_required"
+              issue_enrollment.assert_not_awaited()
+
+
+          def test_otp_verification_fails_closed_when_session_authority_is_unavailable() -> None:
+          ''',
+                  ),
+              ],
+          )
+
+          patch_file(
+              'tests/test_patient_registration.py',
+              [
+                  (
+                      '''            patch("app.api.v2.auth_routes.issue_device_enrollment_token", new=enroll),
+          ''',
+                      '''            patch("app.api.v2.auth_routes.issue_device_enrollment_token", new=enroll),
+                  patch(
+                      "app.services.patient_device_recovery_transactions.patient_has_device_history",
+                      new=AsyncMock(return_value=False),
+                  ),
+          ''',
+                  )
+              ],
+          )
+
+          patch_file(
+              'nexa-client/packages/app/services/patientOtp.ts',
+              [
+                  (
+                      '''  device_enrollment_token: string
+          ''',
+                      '''  device_enrollment_token: string | null
+              device_authority_state: 'bootstrap_enrollment' | 'existing_device_required'
+          ''',
+                  )
+              ],
+          )
+
+          patch_file(
+              'nexa-client/packages/app/services/patientAuthSession.ts',
+              [
+                  (
+                      '''  enrollmentToken: string
+          ''',
+                      '''  enrollmentToken: string | null
+          ''',
+                  ),
+                  (
+                      '''    await Promise.all([
+                SecureStore.setItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY, token, {
+                  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+                }),
+                SecureStore.setItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, enrollmentToken, {
+                  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+                }),
+              ])
+          ''',
+                      '''    await SecureStore.setItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY, token, {
+                keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+              })
+              if (enrollmentToken) {
+                await SecureStore.setItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, enrollmentToken, {
+                  keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+                })
+              } else {
+                await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
+              }
+          ''',
+                  ),
+              ],
+          )
+
+          patch_file(
+              'nexa-client/packages/app/services/currentDeviceEnrollment.ts',
+              [
+                  (
+                      '''async function enrollInstallation(
+              metadata: LocalInstallationMetadata,
+              options: EnsureCurrentDeviceOptions
+          ): Promise<EnrollDeviceResponse> {
+          ''',
+                      '''async function enrollInstallation(
+              metadata: LocalInstallationMetadata,
+              options: EnsureCurrentDeviceOptions,
+              hasDeviceHistory: boolean
+          ): Promise<EnrollDeviceResponse> {
+          ''',
+                  ),
+                  (
+                      '''    if (!enrollmentToken) {
+                throw new CurrentDeviceError(
+                  'Secure this device by signing in with a fresh OTP.',
+                  'REAUTH_REQUIRED',
+                  401
+                )
+              }
+          ''',
+                      '''    if (!enrollmentToken) {
+                if (hasDeviceHistory) {
+                  throw new CurrentDeviceError(
+                    'This installation is not a current trusted device. Authorize it from a trusted device, or use account recovery if all trusted devices are lost.',
+                    'RECOVERY_REQUIRED',
+                    409
+                  )
+                }
+                throw new CurrentDeviceError(
+                  'Secure this device by signing in with a fresh OTP.',
+                  'REAUTH_REQUIRED',
+                  401
+                )
+              }
+          ''',
+                  ),
+                  (
+                      '''    const enrollment = await enrollInstallation(metadata, options)
+          ''',
+                      '''    const enrollment = await enrollInstallation(metadata, options, server.devices.length > 0)
+          ''',
+                  ),
+              ],
+          )
+
+          patch_file(
+              'nexa-client/packages/app/services/currentDeviceEnrollment.test.ts',
+              [
+                  (
+                      '''  it('does not mistake another active patient device for this installation', async () => {
+              mocks.serverDevices = [{ device_id: 'old-installation', status: 'active' }]
+              const { ensureCurrentDeviceEnrollment } = await service()
+              await ensureCurrentDeviceEnrollment()
+              expect(mocks.enroll).toHaveBeenCalledOnce()
+            })
+          ''',
+                      '''  it('requires trusted-device authorization or recovery when another device history exists', async () => {
+              mocks.serverDevices = [{ device_id: 'old-installation', status: 'active' }]
+              mocks.enrollmentToken = null
+              const { ensureCurrentDeviceEnrollment } = await service()
+              await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
+                code: 'RECOVERY_REQUIRED',
+                status: 409,
+              })
+              expect(mocks.enroll).not.toHaveBeenCalled()
+            })
+          ''',
+                  )
+              ],
+          )
+
+          patch_file(
+              'nexa-client/packages/app/services/patientAuthSession.test.ts',
+              [
+                  (
+                      '''  it('revokes the server session before clearing local credentials on logout', async () => {
+          ''',
+                      '''  it('stores account authentication without retaining a stale bootstrap grant', async () => {
+              const session = await loadSession()
+              const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)
+              mocks.storage.set(session.DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, 'stale-bootstrap-token')
+
+              await session.storePatientAuthSession(token, null)
+
+              expect(mocks.storage.get(session.PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe(token)
+              expect(mocks.storage.has(session.DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)).toBe(false)
+              expect(session.getPatientAuthSnapshot().status).toBe('authenticated')
+            })
+
+              it('revokes the server session before clearing local credentials on logout', async () => {
+          ''',
+                  )
+              ],
+          )
           PY
           rm .github/workflows/one-shot-6e-auth-authority.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/api/v2/auth_routes.py .github/workflows/one-shot-6e-auth-authority.yml
+          git add app/api/v2/auth_routes.py \
+            tests/integration/test_consent_flow_qa.py \
+            tests/security/test_forged_signature.py \
+            tests/test_device_consent.py \
+            tests/test_device_consent_qa.py \
+            tests/test_patient_otp_auth.py \
+            tests/test_patient_registration.py \
+            nexa-client/packages/app/services/patientOtp.ts \
+            nexa-client/packages/app/services/patientAuthSession.ts \
+            nexa-client/packages/app/services/currentDeviceEnrollment.ts \
+            nexa-client/packages/app/services/currentDeviceEnrollment.test.ts \
+            nexa-client/packages/app/services/patientAuthSession.test.ts \
+            .github/workflows/one-shot-6e-auth-authority.yml
           git diff --cached --check
-          git commit -m "feat(auth): separate login from existing device authority"
+          git commit -m "feat(recovery): enforce account and device authority split"
           git push origin HEAD:slice-6e-lost-device-account-recovery
