@@ -1,12 +1,8 @@
-"""Redis-backed fixed-window rate limiter for FastAPI routes.
+"""Redis-backed fixed-window rate limiting for FastAPI routes.
 
-Uses a single Redis counter per key with a TTL equal to the window. This
-is shared across all workers, so the limit is global, not per-process.
-
-On Redis failure we fail OPEN and log a warning. This prevents a Redis
-outage from becoming a total login lockout, but it does remove rate
-limiting during that window. Accept that trade-off explicitly, or
-replace with a fail-closed limiter if your threat model demands it.
+All security rate-limit paths fail closed when Redis enforcement is unavailable.
+A dependency outage therefore cannot silently turn authentication, break-glass,
+or consent throttling off.
 """
 
 import logging
@@ -21,6 +17,7 @@ from fastapi import HTTPException, Request, status
 
 from app.core.config import get_redis_config
 from app.core.client_ip import resolve_client_ip
+from app.observability.safe_exceptions import log_safe_exception
 
 logger = logging.getLogger("nexa_logger")
 
@@ -31,6 +28,10 @@ class OtpRateLimitBackendUnavailable(RuntimeError):
 
 class OtpRateLimitExceeded(RuntimeError):
     """Raised when one OTP throttle bucket exceeds its limit."""
+
+
+class RateLimitBackendUnavailable(RuntimeError):
+    """Raised when generic route throttling cannot be enforced safely."""
 
 
 _ATOMIC_FIXED_WINDOW_SCRIPT = """
@@ -153,14 +154,7 @@ def client_ip_key(request: Request) -> str:
 
 
 class RateLimiter:
-    """Redis fixed-window counter rate limiter.
-
-    Attributes:
-        max_requests: maximum allowed requests per window.
-        window_seconds: window duration in seconds.
-        key_func: function Request -> str used to bucket requests.
-        resource_name: short identifier for logs/metrics.
-    """
+    """Atomic, shared, fail-closed Redis fixed-window route limiter."""
 
     def __init__(
         self,
@@ -181,34 +175,59 @@ class RateLimiter:
         return f"{self._prefix}:{self.resource_name}:{identifier}"
 
     async def is_allowed(self, identifier: str) -> bool:
-        redis_async = _import_redis()
+        redis_client = None
+        owns_client = False
         try:
             if self._redis_client is not None:
                 redis_client = self._redis_client
             else:
+                redis_async = _import_redis()
                 cfg = get_redis_config()
                 redis_client = redis_async.from_url(cfg.url, decode_responses=True)
+                owns_client = True
             key = self._key(identifier)
             count, _ttl = await atomic_fixed_window(
                 redis_client, key, self.window_seconds
             )
-            if self._redis_client is None:
-                await redis_client.close()
             return count <= self.max_requests
         except Exception as exc:
-            logger.warning(
-                f"Rate limiter Redis failure for {self.resource_name}: {exc}. "
-                "Allowing request (fail-open)."
+            log_safe_exception(
+                logger,
+                logging.ERROR,
+                "rate_limiter_backend_unavailable",
+                exc,
+                subsystem="redis",
+                operation="rate_limit_check",
+                fields={"resource": self.resource_name},
             )
-            return True
+            raise RateLimitBackendUnavailable(
+                "Rate limit enforcement unavailable"
+            ) from exc
+        finally:
+            if owns_client and redis_client is not None:
+                try:
+                    await redis_client.close()
+                except Exception as exc:
+                    log_safe_exception(
+                        logger,
+                        logging.WARNING,
+                        "rate_limiter_redis_close_failed",
+                        exc,
+                        subsystem="redis",
+                        operation="rate_limit_client_close",
+                        fields={"resource": self.resource_name},
+                    )
 
     async def __call__(self, request: Request, provider_id: str | None = None) -> None:
-        if provider_id:
-            identifier = provider_id
-        else:
-            identifier = self.key_func(request)
-
-        if not await self.is_allowed(identifier):
+        identifier = provider_id or self.key_func(request)
+        try:
+            allowed = await self.is_allowed(identifier)
+        except RateLimitBackendUnavailable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Rate limit enforcement unavailable",
+            ) from exc
+        if not allowed:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail="Too many requests. Please try again later.",
@@ -235,13 +254,7 @@ class ConcurrentPushLimiter:
         return redis_async.from_url(cfg.url, decode_responses=True)
 
     async def check_and_acquire(self, patient_id: str, provider_id: str) -> None:
-        """Atomically acquire the per-patient pending push lock and rate-limit.
-
-        The concurrency lock uses Redis ``SET key value NX EX`` so two workers
-        cannot both observe an empty lock and then create duplicate pending
-        requests. This limiter preserves the route's existing Redis-outage
-        behavior: concurrency/rate limiting fail open if Redis is unavailable.
-        """
+        """Atomically acquire the pending-push lock and fail closed on Redis loss."""
         redis = None
         concurrent_key = f"nexa:push_concurrent:{patient_id}"
         lock_acquired = False
@@ -258,7 +271,6 @@ class ConcurrentPushLimiter:
                 )
             lock_acquired = True
 
-            # Provider: 10 per 5 min
             provider_count = await redis.incr(provider_rate_key)
             if provider_count == 1:
                 await redis.expire(provider_rate_key, 300)
@@ -270,7 +282,6 @@ class ConcurrentPushLimiter:
                     detail="Rate limit exceeded for provider",
                 )
 
-            # Patient: 5 per hour
             patient_count = await redis.incr(patient_rate_key)
             if patient_count == 1:
                 await redis.expire(patient_rate_key, 3600)

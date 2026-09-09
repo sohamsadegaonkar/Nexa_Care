@@ -438,11 +438,11 @@ class TestNexaCareLifecycle(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["status"], "ok")
-        self.assertEqual(data["redis"], "ok")
-        self.assertEqual(data["postgres"], "ok")
-        self.assertEqual(data["audit_outbox_worker"], "ok")
-        self.assertEqual(data["audit_outbox_dead_letter_backlog"], "0")
-        self.assertEqual(data["audit_outbox_expired_lease_count"], "0")
+        self.assertEqual(data["checks"]["redis"], "ok")
+        self.assertEqual(data["checks"]["postgres"], "ok")
+        self.assertEqual(data["checks"]["audit_outbox"], "ok")
+        self.assertEqual(data["checks"]["workers"], "ok")
+        self.assertNotIn("details", data)
 
     # ── Lane A: provider auth (register / enroll-biometric) ─────────────
 

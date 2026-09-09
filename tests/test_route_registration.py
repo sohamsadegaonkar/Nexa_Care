@@ -52,6 +52,9 @@ from app.main import app
 #      never added: merge-challenge auth (auth_routes.py), break-glass
 #      revoke (consent_routes.py), consent validation (consent_routes.py),
 #      and cryptographic erasure (patient_routes.py).
+#   3. Slice 8A intentionally added two protected operational GET routes:
+#      /ops/health and /metrics. They are hidden from OpenAPI and protected by
+#      the independent operations token in production-like environments.
 #
 # If this file goes red again: don't just delete the offending entries to
 # make it pass. Confirm with whoever owns the route in question whether the
@@ -224,6 +227,9 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/provider-trust/permissions/{grant_id}/revoke"),
     ("GET", "/healthz"),
     ("GET", "/health"),
+    # Slice 8A: intentionally protected operational surfaces.
+    ("GET", "/ops/health"),
+    ("GET", "/metrics"),
     # FastAPI auto-generates these documentation routes
     ("GET", "/docs"),
     ("GET", "/redoc"),

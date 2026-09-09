@@ -1,113 +1,143 @@
 # Pilot security operations
 
-## Approved Milestone 6 qualification shape
+## Approved qualification shape
 
-The doctor frontend is deployed on Vercel and reaches the API through its
-same-origin `/api` rewrite. The backend is a continuously running Amazon ECS
-Fargate service in `ap-south-1` with `desiredCount=1`. Autoscaling,
-serverless/scale-to-zero hosting, and multiple API workers are disabled during
-focused qualification. Use a dedicated Supabase PostgreSQL database and a
-dedicated TLS Redis/Upstash instance.
+The doctor frontend reaches a continuously running Amazon ECS Fargate backend in
+`ap-south-1`; focused qualification keeps `desiredCount=1`. Use only dedicated
+synthetic PostgreSQL and TLS Redis/Upstash instances. Real patient PHI is
+prohibited.
 
-Do not deploy, restart, replace, or scale the ECS service while a focused
-document extraction is active. Only synthetic identities and documents are
-allowed; real patient PHI is prohibited.
+Do not deploy, restart, replace, or scale the service while a focused document
+extraction is active.
 
 ## Redis reliability policy
 
 | Control | Policy | Unavailable behavior |
 | --- | --- | --- |
-| Consent challenge, signed approval, replay nonce, capability claim | Security-critical | Fail closed with `503`; never issue or accept access |
-| Provider login target/IP throttles, MFA, patient OTP, NFC, policy mutation | Credential/security-critical | Fail closed with `503`; operator alert required |
-| General read-route abuse limiting | Abuse reduction | Fail open only with structured degraded telemetry; authorization and consent still apply |
-| Push delivery notification | Availability-sensitive | Record delivery failure; approval remains pending and can be polled |
-| Audit ledger writes for grants, reads, review, and commit | Security-critical | Fail closed; do not complete the protected operation |
+| Consent, replay nonce, capability claim | Security-critical | Fail closed with `503` |
+| Provider login/MFA, patient OTP, break-glass and generic route throttles | Security-critical | Fail closed with `503` |
+| Push concurrency/rate limiting | Security-critical | Fail closed with `503` |
+| Push notification delivery | Availability-sensitive | Record delivery failure; approval remains pending |
+| Audit ledger/outbox | Security-critical | Protected operation/qualification fails closed |
 
-All asynchronous request paths use `redis.asyncio`. Atomic counters and consent
-resolution use Lua so increment/TTL and status/nonce transitions cannot split.
-`PUSH_STATUS_TRANSPORT=poll` is mandatory for this qualification.
+All security throttles are Redis-backed and shared across workers. A Redis
+outage must never silently disable a rate limit. `PUSH_STATUS_TRANSPORT=poll`
+is mandatory for the pilot contract.
 
 ## Reverse proxy and browser security
 
-Set `TRUSTED_PROXY_NETWORKS` to only the private CIDRs of the final load
-balancer/proxies that directly connect to the task. Set `FORWARDED_ALLOW_IPS`
-to only those direct proxy addresses or CIDRs. Wildcards, `0.0.0.0/0`, and
-`::/0` are prohibited. Uvicorn proxy-header processing is enabled only when
-`FORWARDED_ALLOW_IPS` is explicit.
-
-Set `TRUSTED_HOSTS` to the deployed API host and
-`CORS_ALLOWED_ORIGINS` to explicit HTTPS doctor-frontend origins. The Vercel
-same-origin API rewrite is preferred so secure provider cookies and the CSRF
-double-submit flow remain first-party in the browser.
+Set `TRUSTED_PROXY_NETWORKS` and `FORWARDED_ALLOW_IPS` only to the final direct
+proxy/load-balancer addresses or CIDRs. Wildcards, `0.0.0.0/0`, and `::/0` are
+prohibited. Set `TRUSTED_HOSTS` to explicit deployed API hosts and
+`CORS_ALLOWED_ORIGINS` to explicit HTTPS doctor origins.
 
 ## Required qualification configuration
 
-- `ENVIRONMENT=pilot` (or the separately controlled `staging`/`production` mode)
+- `ENVIRONMENT=pilot` (or separately controlled staging/production)
 - `DOCUMENT_EXTRACTION_PROVIDER=aws_textract`
 - `DOCUMENT_AI_AWS_REGION=ap-south-1`
 - no `DOCUMENT_AI_API_URL` or `DOCUMENT_AI_API_KEY`
-- `DOCUMENT_STORAGE_PROVIDER=s3`, with bucket, `ap-south-1` region, storage KMS
-  key, and client-side storage encryption secret
-- `ENCRYPTION_BACKEND=kms`, `AWS_REGION=ap-south-1`, shared `KMS_KEY_ID`, and
+- bounded provider/job/reconciliation retry settings
+- `MAX_UPLOAD_BYTES=20971520` or lower
+- `DOCUMENT_STORAGE_PROVIDER=s3`, bucket in `ap-south-1`, storage KMS key, and
+  independent client-side storage encryption key
+- `ENCRYPTION_BACKEND=kms`, `AWS_REGION=ap-south-1`, `KMS_KEY_ID`, and
   `AWS_PATIENT_SPECIFIC_KMS_KEYS=false`
 - dedicated `DATABASE_URL` and TLS `UPSTASH_REDIS_URL`
-- `TRUSTED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `TRUSTED_PROXY_NETWORKS`, and
-  `FORWARDED_ALLOW_IPS` restricted as described above
-- Supabase, OTP/login HMAC, handshake, MFA, PII, patient-JWT, and storage
-  encryption secrets supplied through managed secret references
+- explicit trusted hosts, HTTPS CORS origins, trusted proxies and forwarded IPs
+- independent Supabase, handshake, MFA, PII, patient JWT, OTP HMAC, provider
+  registration HMAC, provider contact-assurance HMAC, document-storage, and
+  `OPERATIONS_AUTH_TOKEN` secrets supplied through managed secret references
+- `DATABASE_ECHO_SQL=false` and `AUTO_COMMIT=false`
 
 Static `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
-configuration is prohibited. Application AWS access must come from the ECS task
-IAM role through the normal SDK credential chain.
+environment variables are prohibited. Runtime AWS access comes only from the ECS
+task role.
 
-Before deployment, run the static check in the same environment contract:
+Before deployment run:
 
 ```text
 python scripts/check_pilot_environment.py
 ```
 
-Use `--live-aws` only from the intended task identity to check the configured
-KMS keys and S3 bucket metadata. It does not submit content to Textract.
+From the intended task identity, `--live-aws` additionally checks configured KMS
+keys and the S3 encryption/public-block/versioning posture. These checks are
+read-only.
 
-## Migration, health, and routing gates
+## Startup, migration and dependency gates
 
-Database migration is a separate one-time ECS release task or controlled
-operator command. It must set `MIGRATION_DATABASE_URL` and run:
+Database migration remains a separate one-time release task with
+`MIGRATION_DATABASE_URL`:
 
 ```text
 python scripts/run_pilot_migrations.py
 ```
 
-The repository and database must both resolve to the single Alembic head
-`20260909_device_trust_lifecycle`. API container startup never runs migrations
-and must not be used to stamp or downgrade a database.
+The current exact repository migration head is
+`20260909_device_trust_lifecycle`. The migration task upgrades and verifies that
+exact single repository head. API containers never run migrations. In a
+production-like runtime, API startup then independently refuses to start unless:
 
-`GET /healthz` is the dependency-free liveness probe for the container and load
-balancer. `GET /health` is the deployment readiness gate and must report healthy
-PostgreSQL, Redis, and audit-outbox worker/backlog state before traffic is
-enabled.
+1. static production configuration is valid;
+2. PostgreSQL is reachable;
+3. `alembic_version` exactly equals the repository head;
+4. Redis is reachable;
+5. both configured KMS keys are enabled for encrypt/decrypt;
+6. the S3 bucket is reachable, uses default SSE-KMS, has all four public-access
+   block controls enabled, and has versioning enabled.
 
-Runtime `AUTO_COMMIT` remains disabled. `SOURCE_ONLY` and `QUARANTINE` are the
-only accepted automated routing lanes. Clinical commitment requires the
-existing explicit clinician adjudication boundary.
+The checks occur before background workers start, so a stale schema or unusable
+security dependency cannot produce a partially alive task.
+
+## Health, metrics and background workers
+
+- `GET /healthz` — dependency-free public liveness only.
+- `GET /health` — public coarse readiness. It exposes status classes, not
+  exception names, URLs, credentials, bucket/key IDs, or outbox counts.
+- `GET /ops/health` — detailed aggregate operational readiness. Requires
+  `X-Nexa-Operations-Token` in production-like environments and includes the
+  live AWS metadata recheck.
+- `GET /metrics` — Prometheus exposition. Protected by the same operations
+  token in production-like environments.
+
+The audit-outbox, failure-quarantine and optional provider-reconciliation loops
+run under supervisors. An unexpected top-level worker exit is logged with
+sanitized metadata and restarted with bounded exponential backoff. Shutdown
+signals and joins each worker independently; one failed worker cleanup cannot
+skip cleanup of the others.
+
+## Logging and error response policy
+
+Application request logs are structured JSON. Client-supplied trace IDs are
+accepted only in a bounded hex format; otherwise the server generates one.
+Request logs use server-owned route templates rather than raw URL paths so path
+parameters are not emitted. General exception logging uses the safe-exception
+allow-list and does not serialize exception strings, traceback locals, database
+URLs, Redis URLs, AWS identifiers, tokens, or secrets.
 
 ## Exact rollback sequence
 
-1. Stop new qualification traffic.
-2. Stop uploads.
-3. Preserve database, S3, and audit evidence.
-4. Roll back the frontend deployment and backend image to the last qualified immutable versions.
-5. Do not automatically downgrade PostgreSQL; assess and apply only an approved forward fix.
-6. Invalidate provider/patient sessions and require fresh consent before resuming.
-7. Revoke task-role access only when containment is required.
+1. Stop new qualification traffic and uploads.
+2. Preserve PostgreSQL, S3 and audit evidence.
+3. Roll the frontend and ECS service back to the last qualified immutable
+   frontend version and backend image digest.
+4. Do **not** automatically downgrade PostgreSQL. Migrations may contain
+   forward-only safety changes; use an approved corrective forward revision
+   after impact review.
+5. Start the previous image only against a schema it is explicitly compatible
+   with; its startup revision gate must pass.
+6. Re-run `/healthz`, public `/health`, protected `/ops/health`, and relevant
+   synthetic smoke tests.
+7. Invalidate provider/patient sessions and require fresh consent before
+   resuming protected workflows.
+8. Revoke task-role access only when containment requires it.
 
-Never delete suspected clinical rows or source objects during rollback. Isolate
-and investigate them under the approved retention and audit rules.
+Never delete suspected clinical rows or source objects during rollback.
 
-## Document retention
+## Retention boundary
 
-Documents are client-side AES-GCM encrypted and S3 server-side KMS encrypted.
-Tenant/patient ownership is enforced on every adapter read/delete. Configure
-approved retention and legal-hold lifecycle rules on the bucket; application
-deletion removes only the authorized object and is idempotent. Database failures
-after upload trigger object cleanup.
+Documents remain client-side AES-GCM encrypted and S3 server-side KMS encrypted;
+tenant/patient ownership is enforced on every adapter read/delete. **Do not
+configure or change S3 lifecycle/retention rules until the repository's pending
+security/privacy/legal retention decision is approved.** Evidence preservation
+and legal-hold requirements take precedence over cleanup convenience.

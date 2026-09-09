@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
-"""Fail-closed Milestone 6 pilot configuration readiness check."""
+"""Fail-closed pilot configuration and read-only AWS readiness check."""
 
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import os
+import sys
 from collections.abc import Mapping
-from urllib.parse import urlsplit
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.core.production_runtime import validate_production_configuration  # noqa: E402
 
 EXPECTED_REGION = "ap-south-1"
 ALLOWED_ENVIRONMENTS = frozenset({"pilot", "staging", "production"})
-REQUIRED_SECRETS = (
-    "SUPABASE_URL",
-    "SUPABASE_KEY",
-    "HANDSHAKE_PEPPER_SECRET",
-    "MFA_ENCRYPTION_KEY",
-    "PII_ENCRYPTION_KEY",
-    "PATIENT_JWT_SECRET",
-    "OTP_RATE_LIMIT_HMAC_SECRET",
-)
 STATIC_AWS_CREDENTIALS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -58,132 +55,28 @@ def _parse_positive_number(
 
 
 def _parse_attempts(environment: Mapping[str, str], errors: list[str]) -> None:
-    name = "DOCUMENT_AI_MAX_ATTEMPTS"
-    raw = _require(environment, name, errors)
-    if not raw:
-        return
-    try:
-        value = int(raw)
-    except ValueError:
-        errors.append(f"{name}: must be an integer")
-        return
-    if not 1 <= value <= 5:
-        errors.append(f"{name}: must be between 1 and 5")
-
-
-def _hostname(value: str) -> str | None:
-    try:
-        return urlsplit(value).hostname
-    except ValueError:
-        return None
-
-
-def _is_loopback_host(host: str | None) -> bool:
-    if not host:
-        return True
-    normalized = host.rstrip(".").lower()
-    if normalized == "localhost" or normalized.endswith(".localhost"):
-        return True
-    try:
-        return ipaddress.ip_address(normalized).is_loopback
-    except ValueError:
-        return False
-
-
-def _validate_database(environment: Mapping[str, str], errors: list[str]) -> None:
-    value = _require(environment, "DATABASE_URL", errors)
-    if not value:
-        return
-    try:
-        parsed = urlsplit(value)
-        host = parsed.hostname
-    except ValueError:
-        parsed = None
-        host = None
-    if parsed is None or parsed.scheme not in {"postgresql", "postgresql+asyncpg"}:
-        errors.append("DATABASE_URL: must be a PostgreSQL URL")
-    if _is_loopback_host(host):
-        errors.append("DATABASE_URL: localhost and loopback hosts are forbidden")
-
-
-def _validate_redis(environment: Mapping[str, str], errors: list[str]) -> None:
-    value = _require(environment, "UPSTASH_REDIS_URL", errors)
-    if not value:
-        return
-    try:
-        parsed = urlsplit(value)
-        host = parsed.hostname
-    except ValueError:
-        parsed = None
-        host = None
-    if parsed is None or parsed.scheme != "rediss":
-        errors.append("UPSTASH_REDIS_URL: TLS rediss:// is required")
-    if _is_loopback_host(host):
-        errors.append("UPSTASH_REDIS_URL: localhost and loopback hosts are forbidden")
-
-
-def _validate_cors(environment: Mapping[str, str], errors: list[str]) -> None:
-    raw = _require(environment, "CORS_ALLOWED_ORIGINS", errors)
-    if not raw:
-        return
-    origins = [item.strip() for item in raw.split(",") if item.strip()]
-    if not origins:
-        errors.append("CORS_ALLOWED_ORIGINS: at least one HTTPS origin is required")
-        return
-    for origin in origins:
+    names = (
+        "DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS",
+        "DOCUMENT_AI_JOB_MAX_ATTEMPTS",
+        "DOCUMENT_AI_RECONCILIATION_MAX_ATTEMPTS",
+    )
+    for name in names:
+        raw = _require(environment, name, errors)
+        if not raw:
+            continue
         try:
-            parsed = urlsplit(origin)
-            valid = (
-                parsed.scheme == "https"
-                and bool(parsed.netloc)
-                and parsed.username is None
-                and parsed.password is None
-                and parsed.path in {"", "/"}
-                and not parsed.query
-                and not parsed.fragment
-                and "*" not in origin
-            )
+            value = int(raw)
         except ValueError:
-            valid = False
-        if not valid:
-            errors.append("CORS_ALLOWED_ORIGINS: only explicit HTTPS origins are allowed")
-            return
-
-
-def _validate_trusted_hosts(environment: Mapping[str, str], errors: list[str]) -> None:
-    raw = _require(environment, "TRUSTED_HOSTS", errors)
-    if not raw:
-        return
-    hosts = [item.strip() for item in raw.split(",") if item.strip()]
-    if not hosts or any("*" in host for host in hosts):
-        errors.append("TRUSTED_HOSTS: explicit hosts without wildcards are required")
-
-
-def _validate_networks(
-    environment: Mapping[str, str], name: str, errors: list[str]
-) -> None:
-    raw = _require(environment, name, errors)
-    if not raw:
-        return
-    entries = [item.strip() for item in raw.split(",") if item.strip()]
-    if not entries or any("*" in item for item in entries):
-        errors.append(f"{name}: explicit addresses or networks are required")
-        return
-    for entry in entries:
-        try:
-            network = ipaddress.ip_network(entry, strict=False)
-        except ValueError:
-            errors.append(f"{name}: contains an invalid address or network")
-            return
-        if network.prefixlen == 0:
-            errors.append(f"{name}: public wildcard networks are forbidden")
-            return
+            errors.append(f"{name}: must be an integer")
+            continue
+        if not 1 <= value <= 5:
+            errors.append(f"{name}: must be between 1 and 5")
 
 
 def validate_configuration(environment: Mapping[str, str]) -> list[str]:
     """Return safe validation errors containing names, never configured values."""
 
-    errors: list[str] = []
+    errors = list(validate_production_configuration(environment))
 
     if _value(environment, "ENVIRONMENT").lower() not in ALLOWED_ENVIRONMENTS:
         errors.append("ENVIRONMENT: must be pilot, staging, or production")
@@ -200,33 +93,15 @@ def validate_configuration(environment: Mapping[str, str]) -> list[str]:
 
     if _value(environment, "DOCUMENT_STORAGE_PROVIDER").lower() != "s3":
         errors.append("DOCUMENT_STORAGE_PROVIDER: s3 is required")
-    _require(environment, "DOCUMENT_STORAGE_S3_BUCKET", errors)
     if _value(environment, "DOCUMENT_STORAGE_S3_REGION") != EXPECTED_REGION:
         errors.append("DOCUMENT_STORAGE_S3_REGION: region must be ap-south-1")
-    _require(environment, "DOCUMENT_STORAGE_S3_KMS_KEY_ID", errors)
-    _require(environment, "DOCUMENT_STORAGE_ENCRYPTION_KEY", errors)
 
     if _value(environment, "ENCRYPTION_BACKEND").lower() != "kms":
         errors.append("ENCRYPTION_BACKEND: kms is required")
     if _value(environment, "AWS_REGION") != EXPECTED_REGION:
         errors.append("AWS_REGION: region must be ap-south-1")
-    _require(environment, "KMS_KEY_ID", errors)
     if _value(environment, "AWS_PATIENT_SPECIFIC_KMS_KEYS").lower() != "false":
         errors.append("AWS_PATIENT_SPECIFIC_KMS_KEYS: must be explicitly false")
-
-    for name in STATIC_AWS_CREDENTIALS:
-        if name in environment:
-            errors.append(f"{name}: static AWS credentials are forbidden")
-
-    _validate_database(environment, errors)
-    _validate_redis(environment, errors)
-    _validate_cors(environment, errors)
-    _validate_trusted_hosts(environment, errors)
-    _validate_networks(environment, "TRUSTED_PROXY_NETWORKS", errors)
-    _validate_networks(environment, "FORWARDED_ALLOW_IPS", errors)
-
-    for name in REQUIRED_SECRETS:
-        _require(environment, name, errors)
 
     if _value(environment, "PUSH_STATUS_TRANSPORT").lower() != "poll":
         errors.append("PUSH_STATUS_TRANSPORT: poll is required")
@@ -234,11 +109,11 @@ def validate_configuration(environment: Mapping[str, str]) -> list[str]:
     if auto_commit and auto_commit not in FALSE_VALUES:
         errors.append("AUTO_COMMIT: enabled or ambiguous settings are forbidden")
 
-    return errors
+    return list(dict.fromkeys(errors))
 
 
 def check_live_aws(environment: Mapping[str, str]) -> bool:
-    """Check only the configured AWS readiness metadata without printing it."""
+    """Read-only AWS readiness checks; never print configured identifiers."""
 
     try:
         import boto3
@@ -263,16 +138,45 @@ def check_live_aws(environment: Mapping[str, str]) -> bool:
             _value(environment, "DOCUMENT_STORAGE_S3_KMS_KEY_ID"),
         }
         for key_id in key_ids:
-            kms.describe_key(KeyId=key_id)
+            metadata = kms.describe_key(KeyId=key_id).get("KeyMetadata", {})
+            if (
+                metadata.get("KeyState") != "Enabled"
+                or metadata.get("KeyUsage") != "ENCRYPT_DECRYPT"
+            ):
+                raise RuntimeError("KMS key not ready")
 
-        session.client("s3", config=client_config).head_bucket(
-            Bucket=_value(environment, "DOCUMENT_STORAGE_S3_BUCKET")
+        s3 = session.client("s3", config=client_config)
+        bucket = _value(environment, "DOCUMENT_STORAGE_S3_BUCKET")
+        s3.head_bucket(Bucket=bucket)
+        encryption = s3.get_bucket_encryption(Bucket=bucket)
+        rules = encryption.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+        if not any(
+            isinstance(rule, dict)
+            and rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
+            == "aws:kms"
+            for rule in rules
+        ):
+            raise RuntimeError("S3 default encryption not ready")
+        public_block = s3.get_public_access_block(Bucket=bucket).get(
+            "PublicAccessBlockConfiguration", {}
         )
+        if not all(
+            public_block.get(name) is True
+            for name in (
+                "BlockPublicAcls",
+                "IgnorePublicAcls",
+                "BlockPublicPolicy",
+                "RestrictPublicBuckets",
+            )
+        ):
+            raise RuntimeError("S3 public access block not ready")
+        if s3.get_bucket_versioning(Bucket=bucket).get("Status") != "Enabled":
+            raise RuntimeError("S3 versioning not ready")
     except Exception as exc:
         print(f"ERROR: live AWS readiness check failed ({type(exc).__name__})")
         return False
 
-    print("PASS: AWS identity and configured KMS/S3 metadata are reachable")
+    print("PASS: AWS identity, KMS, and S3 security posture are reachable")
     return True
 
 
@@ -281,7 +185,7 @@ def main() -> int:
     parser.add_argument(
         "--live-aws",
         action="store_true",
-        help="also check task-role identity and configured KMS/S3 metadata",
+        help="also check task-role identity and configured KMS/S3 security metadata",
     )
     arguments = parser.parse_args()
 

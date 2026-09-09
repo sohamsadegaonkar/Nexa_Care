@@ -35,7 +35,7 @@ def test_rejects_repo_output(tmp_path: Path) -> None:
         generator.generate(args)
 
 
-def test_generates_strings_from_metadata_only(
+def test_generates_strings_from_read_only_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[str, ...]] = []
@@ -53,9 +53,35 @@ def test_generates_strings_from_metadata_only(
             }
         if action == "get-bucket-location":
             return {"LocationConstraint": region}
+        if action == "get-bucket-encryption":
+            return {
+                "ServerSideEncryptionConfiguration": {
+                    "Rules": [
+                        {
+                            "ApplyServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "aws:kms"
+                            }
+                        }
+                    ]
+                }
+            }
+        if action == "get-public-access-block":
+            return {
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": True,
+                    "IgnorePublicAcls": True,
+                    "BlockPublicPolicy": True,
+                    "RestrictPublicBuckets": True,
+                }
+            }
+        if action == "get-bucket-versioning":
+            return {"Status": "Enabled"}
         if action == "describe-key":
             return {
-                "KeyMetadata": {"KeyState": "Enabled", "KeyUsage": "ENCRYPT_DECRYPT"}
+                "KeyMetadata": {
+                    "KeyState": "Enabled",
+                    "KeyUsage": "ENCRYPT_DECRYPT",
+                }
             }
         return {}
 
@@ -69,17 +95,74 @@ def test_generates_strings_from_metadata_only(
 
 
 @pytest.mark.parametrize(
-    "response",
+    ("action", "response"),
     [
-        {"LocationConstraint": "wrong"},
-        {"imageDetails": []},
-        {"KeyMetadata": {"KeyState": "Disabled", "KeyUsage": "ENCRYPT_DECRYPT"}},
+        ("get-bucket-location", {"LocationConstraint": "wrong"}),
+        ("get-bucket-encryption", {"ServerSideEncryptionConfiguration": {"Rules": []}}),
+        (
+            "get-public-access-block",
+            {"PublicAccessBlockConfiguration": {"BlockPublicAcls": False}},
+        ),
+        ("get-bucket-versioning", {"Status": "Suspended"}),
+        (
+            "describe-key",
+            {"KeyMetadata": {"KeyState": "Disabled", "KeyUsage": "ENCRYPT_DECRYPT"}},
+        ),
     ],
 )
-def test_bad_metadata_fails_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: dict
+def test_bad_security_metadata_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    action: str,
+    response: dict,
 ) -> None:
-    monkeypatch.setattr(generator, "_aws", lambda *_args: response)
+    def fake(_profile, region, *command):
+        current = command[1]
+        if current == action:
+            return response
+        if current == "get-role":
+            return {"Role": {"Arn": "synthetic-role"}}
+        if current == "describe-images":
+            return {
+                "imageDetails": [
+                    {"imageDigest": "sha256:abc", "registryId": "synthetic"}
+                ]
+            }
+        if current == "get-bucket-location":
+            return {"LocationConstraint": region}
+        if current == "get-bucket-encryption":
+            return {
+                "ServerSideEncryptionConfiguration": {
+                    "Rules": [
+                        {
+                            "ApplyServerSideEncryptionByDefault": {
+                                "SSEAlgorithm": "aws:kms"
+                            }
+                        }
+                    ]
+                }
+            }
+        if current == "get-public-access-block":
+            return {
+                "PublicAccessBlockConfiguration": {
+                    "BlockPublicAcls": True,
+                    "IgnorePublicAcls": True,
+                    "BlockPublicPolicy": True,
+                    "RestrictPublicBuckets": True,
+                }
+            }
+        if current == "get-bucket-versioning":
+            return {"Status": "Enabled"}
+        if current == "describe-key":
+            return {
+                "KeyMetadata": {
+                    "KeyState": "Enabled",
+                    "KeyUsage": "ENCRYPT_DECRYPT",
+                }
+            }
+        return {}
+
+    monkeypatch.setattr(generator, "_aws", fake)
     with pytest.raises(RuntimeError):
         generator.generate(_args(tmp_path))
 
