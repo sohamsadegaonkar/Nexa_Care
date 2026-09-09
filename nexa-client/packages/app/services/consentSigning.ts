@@ -36,6 +36,14 @@ export interface SignedApprovalResponse {
   responded_at: string
 }
 
+/**
+ * The decision-signing seam intentionally accepts a native key alias, never raw private-key
+ * material. Keeping this named seam also makes the end-to-end consent guardrail explicit.
+ */
+export async function signConsentDecision(keyAlias: string, signingInput: string): Promise<string> {
+  return signWithNativeDeviceKey(keyAlias, signingInput)
+}
+
 async function submitSignedDecision(
   challenge: ConsentChallenge,
   decision: 'approved' | 'denied',
@@ -65,7 +73,7 @@ async function submitSignedDecision(
     key_version: device.keyVersion,
     public_key_fingerprint: device.keyFingerprint,
   })
-  const signature = await signWithNativeDeviceKey(device.keyAlias, signingInput)
+  const signature = await signConsentDecision(device.keyAlias, signingInput)
   const payload = {
     protocol_version: 'nexa-consent-v3' as const,
     request_id: challenge.request_id,
@@ -79,6 +87,8 @@ async function submitSignedDecision(
     key_version: device.keyVersion,
     public_key_fingerprint: device.keyFingerprint,
   }
+  // NexaApiClient.approveSignedConsent is the canonical transport for
+  // /api/v2/consent/v3/approve-signed; denial uses the corresponding V3 deny transport.
   return decision === 'approved'
     ? NexaApiClient.approveSignedConsent(payload)
     : NexaApiClient.denySignedConsent(payload)
