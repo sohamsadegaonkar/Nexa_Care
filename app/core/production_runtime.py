@@ -11,6 +11,7 @@ import asyncio
 import base64
 import ipaddress
 import os
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,7 +26,9 @@ from app.core.database import get_async_engine
 from app.core.redis import get_async_redis_client
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-PRODUCTION_LIKE_ENVIRONMENTS = frozenset({"staging", "preview", "pilot", "production"})
+PRODUCTION_LIKE_ENVIRONMENTS = frozenset(
+    {"staging", "preview", "pilot", "production"}
+)
 STATIC_AWS_CREDENTIALS = (
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
@@ -53,6 +56,9 @@ _MINIMUM_LENGTH_SECRETS = (
     "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET",
     "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET",
     "OPERATIONS_AUTH_TOKEN",
+)
+_PLACEHOLDER_SECRET_PATTERN = re.compile(
+    r"(?:<[^>]+>|change[-_ ]?me|replace(?:_with)?|generate|placeholder)", re.I
 )
 
 
@@ -136,6 +142,10 @@ def _valid_https_origin(value: str) -> bool:
         return False
 
 
+def _placeholder_secret(value: str) -> bool:
+    return bool(_PLACEHOLDER_SECRET_PATTERN.search(value))
+
+
 def validate_production_configuration(
     environment: Mapping[str, str],
 ) -> list[str]:
@@ -151,14 +161,29 @@ def validate_production_configuration(
         errors.append("ENVIRONMENT: production-like runtime required")
         return errors
 
+    configured_secrets: dict[str, str] = {}
     for name in _REQUIRED_PRODUCTION_SECRETS:
-        if not _value(environment, name):
+        value = _value(environment, name)
+        if not value:
             errors.append(f"{name}: required")
+            continue
+        configured_secrets[name] = value
+        if _placeholder_secret(value):
+            errors.append(f"{name}: placeholder value forbidden")
 
     for name in _MINIMUM_LENGTH_SECRETS:
         value = _value(environment, name)
         if value and len(value.encode("utf-8")) < MIN_SECRET_BYTES:
             errors.append(f"{name}: must be at least 32 bytes")
+
+    secret_owners: dict[str, str] = {}
+    reused_names: set[str] = set()
+    for name, value in configured_secrets.items():
+        previous = secret_owners.setdefault(value, name)
+        if previous != name:
+            reused_names.update({previous, name})
+    for name in sorted(reused_names):
+        errors.append(f"{name}: secret value must be independently generated")
 
     for name in ("MFA_ENCRYPTION_KEY", "PII_ENCRYPTION_KEY"):
         value = _value(environment, name)
@@ -181,13 +206,13 @@ def validate_production_configuration(
     else:
         try:
             parsed = urlsplit(database_url)
-            valid_database = parsed.scheme in {"postgresql", "postgresql+asyncpg"}
+            valid_database = parsed.scheme == "postgresql+asyncpg"
             database_host = parsed.hostname
         except ValueError:
             valid_database = False
             database_host = None
         if not valid_database:
-            errors.append("DATABASE_URL: PostgreSQL URL required")
+            errors.append("DATABASE_URL: postgresql+asyncpg URL required")
         if _is_loopback_host(database_host):
             errors.append("DATABASE_URL: loopback host forbidden")
 
@@ -254,12 +279,26 @@ def validate_production_configuration(
 
     if _value(environment, "PUSH_STATUS_TRANSPORT").lower() != "poll":
         errors.append("PUSH_STATUS_TRANSPORT: poll required")
-    if _value(environment, "DATABASE_ECHO_SQL").lower() not in {"", "false", "0", "no", "off"}:
+    if _value(environment, "DATABASE_ECHO_SQL").lower() not in {
+        "",
+        "false",
+        "0",
+        "no",
+        "off",
+    }:
         errors.append("DATABASE_ECHO_SQL: must be false")
-    if _value(environment, "AUTO_COMMIT").lower() not in {"", "false", "0", "no", "off"}:
+    if _value(environment, "AUTO_COMMIT").lower() not in {
+        "",
+        "false",
+        "0",
+        "no",
+        "off",
+    }:
         errors.append("AUTO_COMMIT: must be false")
 
-    raw_upload_limit = _value(environment, "MAX_UPLOAD_BYTES") or str(MAX_UPLOAD_BYTES_HARD_LIMIT)
+    raw_upload_limit = _value(environment, "MAX_UPLOAD_BYTES") or str(
+        MAX_UPLOAD_BYTES_HARD_LIMIT
+    )
     try:
         upload_limit = int(raw_upload_limit)
     except ValueError:
@@ -280,7 +319,10 @@ def get_operations_auth_token(
     values = os.environ if environment is None else environment
     token = _value(values, "OPERATIONS_AUTH_TOKEN")
     runtime = _runtime_environment(values)
-    if runtime in PRODUCTION_LIKE_ENVIRONMENTS and len(token.encode("utf-8")) < MIN_SECRET_BYTES:
+    if (
+        runtime in PRODUCTION_LIKE_ENVIRONMENTS
+        and len(token.encode("utf-8")) < MIN_SECRET_BYTES
+    ):
         raise RuntimePreflightError("OPERATIONS_AUTH_TOKEN_INVALID")
     return token or None
 
@@ -299,7 +341,9 @@ async def verify_database_runtime(engine: AsyncEngine) -> str:
     try:
         async with engine.connect() as connection:
             await connection.execute(text("SELECT 1"))
-            result = await connection.execute(text("SELECT version_num FROM alembic_version"))
+            result = await connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            )
             revisions = tuple(str(row[0]) for row in result.fetchall())
     except RuntimePreflightError:
         raise
@@ -341,7 +385,10 @@ def _verify_aws_runtime_sync(
             _value(environment, "DOCUMENT_STORAGE_S3_KMS_KEY_ID"),
         }:
             metadata = kms.describe_key(KeyId=key_id).get("KeyMetadata", {})
-            if metadata.get("KeyState") != "Enabled" or metadata.get("KeyUsage") != "ENCRYPT_DECRYPT":
+            if (
+                metadata.get("KeyState") != "Enabled"
+                or metadata.get("KeyUsage") != "ENCRYPT_DECRYPT"
+            ):
                 raise RuntimePreflightError("KMS_KEY_NOT_READY")
 
         s3 = session.client("s3", config=client_config)
@@ -350,7 +397,8 @@ def _verify_aws_runtime_sync(
         encryption = s3.get_bucket_encryption(Bucket=bucket)
         rules = encryption.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
         if not any(
-            rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm") == "aws:kms"
+            rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
+            == "aws:kms"
             for rule in rules
             if isinstance(rule, dict)
         ):
