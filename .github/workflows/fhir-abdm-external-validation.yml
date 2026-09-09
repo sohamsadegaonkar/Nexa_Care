@@ -9,12 +9,14 @@ on:
       - 'app/services/fhir_converter.py'
       - 'app/services/fhir_conformance.py'
       - 'scripts/generate_fhir_abdm_qualification_fixtures.py'
+      - 'scripts/validate_fhir_r4_bundle.py'
       - '.github/workflows/fhir-abdm-external-validation.yml'
   pull_request:
     paths:
       - 'app/services/fhir_converter.py'
       - 'app/services/fhir_conformance.py'
       - 'scripts/generate_fhir_abdm_qualification_fixtures.py'
+      - 'scripts/validate_fhir_r4_bundle.py'
       - '.github/workflows/fhir-abdm-external-validation.yml'
 
 permissions:
@@ -31,7 +33,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
