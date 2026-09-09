@@ -153,6 +153,25 @@ async def test_tampered_payload_fails_hash_recalculation():
 
 
 @pytest.mark.asyncio
+async def test_malformed_serialized_payload_fails_closed_and_marks_unhealthy():
+    rows = _build_healthy_chain(1)
+    rows[0]["details"] = "{not-json"
+    head = {
+        "head_event_id": rows[0]["audit_id"],
+        "head_hash": rows[0]["record_hash"],
+        "sequence_number": 1,
+        "is_healthy": True,
+    }
+    conn = FakeConnection(rows, head)
+
+    result = await verify_partition(conn, "global", dry_run=False)
+
+    assert result is not None
+    assert "invalid details payload" in result.reason
+    assert conn.marked_unhealthy == ["global"]
+
+
+@pytest.mark.asyncio
 async def test_sequence_discontinuity_fails():
     rows = _build_healthy_chain(3)
     rows[2]["sequence_number"] = 99
