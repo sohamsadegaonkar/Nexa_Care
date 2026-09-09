@@ -7,16 +7,22 @@ input for older data.
 
 The converter targets the declared Nexa base-R4 subset in
 ``app.services.fhir_conformance``. External implementation-guide or partner
-conformance is a separate qualification boundary.
+conformance is a separate qualification boundary. Where an external profile
+requires facts Nexa does not hold, this converter never fabricates them: profile-
+specific fields are emitted only when the source record carries authoritative
+values.
 """
 
 from __future__ import annotations
 
 import re
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 OBSERVATION_INTERPRETATION_SYSTEM = (
     "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
+)
+ALLERGY_CLINICAL_STATUS_SYSTEM = (
+    "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical"
 )
 UCUM_SYSTEM = "http://unitsofmeasure.org"
 
@@ -36,6 +42,7 @@ UCUM_UNIT_CODES = {
     "°C": "Cel",
 }
 _NUMERIC_VALUE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
+_ABDM_ALLERGY_CLINICAL_STATUSES = frozenset({"active", "inactive", "resolved"})
 
 
 def _string_items(value: object) -> list[str]:
@@ -62,7 +69,18 @@ def _condition(patient_id: str, diagnosis: str) -> dict:
     )
 
 
+def _valid_uuid_text(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        parsed = UUID(str(value))
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return str(parsed)
+
+
 def _medication_request(patient_id: str, medication: dict | str) -> dict:
+    requester_provider_id: str | None = None
     if isinstance(medication, dict):
         name = medication.get("name") or medication.get("text") or "Medication"
         dosage = " ".join(
@@ -71,6 +89,10 @@ def _medication_request(patient_id: str, medication: dict | str) -> dict:
             if part
         )
         authored_on = medication.get("prescribed_at")
+        requester_provider_id = _valid_uuid_text(
+            medication.get("requester_provider_id")
+            or medication.get("prescriber_provider_id")
+        )
     else:
         name = medication
         dosage = ""
@@ -92,6 +114,13 @@ def _medication_request(patient_id: str, medication: dict | str) -> dict:
         resource["dosageInstruction"] = [{"text": dosage}]
     if authored_on:
         resource["authoredOn"] = authored_on
+    # ABDM's MedicationRequest profile requires requester. Emit it only from an
+    # authoritative provider UUID supplied by the source record. The provider
+    # performing an export is never substituted for the original requester.
+    if requester_provider_id:
+        resource["requester"] = {
+            "reference": f"Practitioner/{requester_provider_id}"
+        }
     return _entry(resource)
 
 
@@ -164,19 +193,27 @@ def _observation(patient_id: str, record: dict) -> dict:
 def _allergy_intolerance(patient_id: str, allergy: dict) -> dict:
     """Export only allergy semantics represented authoritatively by Nexa.
 
-    The current ``Allergy`` row stores an allergen plus Nexa provenance/routing
-    metadata. It does not store FHIR lifecycle status, reaction manifestation, or
-    an authoritative clinical criticality assessment. Those elements therefore
-    remain absent until the source model can support them truthfully.
+    Workflow risk/severity metadata never becomes FHIR clinical criticality.
+    Lifecycle status is emitted only when the source explicitly provides a
+    recognized allergy clinical status; absence remains absence for legacy rows.
     """
 
-    return _entry(
-        {
-            "resourceType": "AllergyIntolerance",
-            "code": {"text": str(allergy.get("allergen") or "Allergy")},
-            "patient": {"reference": f"Patient/{patient_id}"},
+    resource = {
+        "resourceType": "AllergyIntolerance",
+        "code": {"text": str(allergy.get("allergen") or "Allergy")},
+        "patient": {"reference": f"Patient/{patient_id}"},
+    }
+    clinical_status = allergy.get("clinical_status")
+    if clinical_status in _ABDM_ALLERGY_CLINICAL_STATUSES:
+        resource["clinicalStatus"] = {
+            "coding": [
+                {
+                    "system": ALLERGY_CLINICAL_STATUS_SYSTEM,
+                    "code": clinical_status,
+                }
+            ]
         }
-    )
+    return _entry(resource)
 
 
 def generate_fhir_bundle(patient_id: str, clinical_records: list[dict]) -> dict:
