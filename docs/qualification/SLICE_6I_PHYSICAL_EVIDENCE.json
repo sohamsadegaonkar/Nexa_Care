@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "repository": "sohamsadegaonkar/Nexa_Care",
+  "baseline_git_sha": "9782d208f9330d9dcc4ba63af31d9a5bee7877db",
+  "execution_status": "BLOCKED_BY_PHYSICAL_PLATFORM",
+  "qualification_result": "NOT_RUN",
+  "synthetic_data_only": true,
+  "executed_at": null,
+  "device": null,
+  "native_key_attestation": null,
+  "tests": [
+    {"id": "6I-PHY-001-native-key-custody", "status": "BLOCKED"},
+    {"id": "6I-PHY-002-signed-consent-v3", "status": "BLOCKED"},
+    {"id": "6I-PHY-003-key-rotation", "status": "BLOCKED"},
+    {"id": "6I-PHY-004-trusted-device-revocation", "status": "BLOCKED"},
+    {"id": "6I-PHY-005-account-recovery", "status": "BLOCKED"},
+    {"id": "6I-PHY-006-session-logout", "status": "BLOCKED"},
+    {"id": "6I-PHY-007-fail-closed-network", "status": "BLOCKED"}
+  ],
+  "evidence_artifacts": [],
+  "audit_event_ids": []
+}
