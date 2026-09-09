@@ -2,7 +2,7 @@
 
 Status: **SOFTWARE / GOVERNANCE CANDIDATE — HUMAN RETENTION APPROVAL PENDING**
 
-Baseline `main`: `2a3bc69b1a6fb6f476bc073ccdee198b9a604f29`
+Qualification base `main`: `5f9f328ff41cd7b960767890181cb9e31da52fee`
 
 Branch: `slice-7e-operational-evidence`
 
@@ -41,7 +41,7 @@ partition genesis events can appear as global forks/orphans.
 
 Slice 7E replaces the historical implementation at that path with a compatibility
 wrapper into the canonical partition verifier. Older operator commands therefore
-fail safely into current behavior instead of running stale chain logic.
+fail safely into current behavior instead of running stale integrity logic.
 
 `scripts/run_integration_suite.sh` now invokes:
 
@@ -72,6 +72,12 @@ The evidence wrapper never changes `audit_chain_heads.is_healthy`; operational
 incident handling may intentionally run the canonical verifier without
 `--dry-run` when an authorized operator wants a verified integrity failure to
 quarantine a partition.
+
+The evidence entry point is directly executable from the repository root. An
+explicitly requested nonexistent partition fails closed as `PARTITION_NOT_FOUND`
+instead of being accepted as an empty healthy partition. Malformed serialized
+audit payloads are classified as `INVALID_PAYLOAD` integrity failures rather
+than escaping the verifier through an unclassified JSON-decoding exception.
 
 ## Operational snapshot boundary
 
@@ -149,6 +155,38 @@ has:
   lifecycle implementation;
 - no unresolved review finding that weakens audit integrity or manufactures
   retention approval.
+
+## Measured pre-attestation qualification evidence
+
+The code head `acf4047e29c2749259f77c5283e31d8ddfe49bb5` was tested through the
+pull-request synthetic merge `e5383da2102816f2ef568a137899b52bd80cc1d5` against
+qualification base `main` `5f9f328ff41cd7b960767890181cb9e31da52fee`.
+
+Backend CI #410 completed successfully:
+
+- Ruff: PASS;
+- Partition A: 3,647 executed, 0 failures, 0 errors, 0 skips;
+- Partition B: 272 executed, 0 failures, 0 errors, 0 skips;
+- Partition C: 124 executed, 0 failures, 0 errors, 0 skips.
+
+Frontend CI #359 completed successfully after a targeted Android rerun:
+
+- frontend tests / production build / workspace packages: PASS;
+- iOS native generation, CocoaPods installation, and source compilation: PASS;
+- Android native project generation and source compilation: PASS on rerun.
+
+The first Android attempt failed before Nexa source compilation because Android
+SDK tooling rejected the downloaded NDK `27.1.12297006` archive as corrupt
+(`Archive is not a ZIP archive` / unknown archive). No application-source compile
+error was reached. The same exact PR head was retried on a fresh hosted runner;
+the NDK/setup stage then completed and Android native source compilation passed.
+The workflow conclusion is therefore PASS without a code or dependency change
+being made to mask an infrastructure artifact failure.
+
+At the time this evidence was recorded, PR #24 had no submitted reviews and no
+inline review comments. This evidence commit changes the governance attestation,
+so it is **not itself merge evidence**. The resulting exact head must pass the
+same required backend and frontend workflows before merge.
 
 ## Remaining non-software gates
 
