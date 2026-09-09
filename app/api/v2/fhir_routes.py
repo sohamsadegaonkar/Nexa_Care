@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
-
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -14,16 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import require_active_consent, require_clinical_capability
-from app.security.provider_capabilities import ClinicalCapability
-from app.models.patient_records import (
-    Allergy,
-    LabResult,
-    Medication,
-    TimelineEvent,
-    Vitals,
-)
+from app.models.patient_records import Allergy, LabResult, Medication, Vitals
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.security.audit_context import AuditDomain, current_audit_context
+from app.security.provider_capabilities import ClinicalCapability
+from app.services.fhir_conformance import validate_fhir_r4_bundle
 from app.services.fhir_converter import generate_fhir_bundle
 
 router = APIRouter(prefix="/api/v2/fhir", tags=["fhir"])
@@ -57,7 +51,15 @@ def _common_provenance(row: object) -> dict:
 
 
 async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[dict]:
-    """Read current structured clinical rows for FHIR export."""
+    """Read authoritative structured clinical rows for FHIR export.
+
+    ``TimelineEvent`` is intentionally excluded. It is a mixed presentation log
+    for events such as vitals, labs, medication writes and pipeline activity, not
+    an authoritative diagnosis table. Free-text keyword matching must never mint
+    an active FHIR ``Condition``. Until Nexa has a dedicated structured diagnosis
+    model, Conditions are available only through the explicit legacy diagnoses
+    fallback when no structured clinical rows exist.
+    """
 
     pid = UUID(patient_id)
     vitals = await _scalars_all(
@@ -83,13 +85,6 @@ async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[d
         select(Allergy)
         .where(Allergy.patient_id == pid)
         .order_by(Allergy.severity.desc()),
-    )
-    timeline = await _scalars_all(
-        db,
-        select(TimelineEvent)
-        .where(TimelineEvent.patient_id == pid)
-        .order_by(TimelineEvent.occurred_at.desc())
-        .limit(50),
     )
 
     records: list[dict] = []
@@ -137,18 +132,6 @@ async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[d
         }
         for row in allergies
     )
-    records.extend(
-        {
-            "record_type": "timeline_diagnosis",
-            "summary": row.summary,
-            "occurred_at": row.occurred_at.isoformat(),
-        }
-        for row in timeline
-        if any(
-            term in row.summary.lower()
-            for term in ("diagnosis", "diabetes", "hypertension", "condition")
-        )
-    )
     return records
 
 
@@ -191,6 +174,15 @@ async def export_fhir_bundle(
     patient_id_text = str(patient_id)
     clinical_records = await _fetch_clinical_records(patient_id_text, db)
     bundle = generate_fhir_bundle(patient_id_text, clinical_records)
+    conformance = validate_fhir_r4_bundle(
+        bundle, expected_patient_id=patient_id_text
+    )
+    if not conformance["valid"]:
+        # Never expose row values or detailed validator diagnostics to callers.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="FHIR export failed internal conformance validation.",
+        )
     exported_at = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -209,6 +201,8 @@ async def export_fhir_bundle(
                 "source": "structured_patient_records"
                 if clinical_records and clinical_records[0].get("record_type")
                 else "legacy_nexa_clinical_fallback",
+                "fhir_contract": conformance["contract"],
+                "fhir_version": conformance["fhir_version"],
             },
             event_timestamp=exported_at,
         )

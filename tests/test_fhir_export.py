@@ -23,7 +23,13 @@ from app.models.provider_context import (
     ProviderContext,
     ProviderIdentityContext,
 )
-from app.models.patient_records import Allergy, LabResult, Medication, Vitals
+from app.models.patient_records import (
+    Allergy,
+    LabResult,
+    Medication,
+    TimelineEvent,
+    Vitals,
+)
 from app.security.provider_capabilities import ClinicalCapability
 from app.services.fhir_converter import generate_fhir_bundle
 
@@ -197,6 +203,17 @@ class TestFHIRStructuredExportRoute(unittest.TestCase):
                         risk_level="HIGH_RISK",
                     )
                 ],
+                # This mixed timeline text is deliberately not a diagnosis
+                # authority and must never be queried/promoted by FHIR export.
+                "timeline_events": [
+                    TimelineEvent(
+                        patient_id=self.patient_id,
+                        event_type="NOTE",
+                        occurred_at=now,
+                        source="manual",
+                        summary="No diabetes; screening discussion only",
+                    )
+                ],
             }
         )
 
@@ -232,6 +249,8 @@ class TestFHIRStructuredExportRoute(unittest.TestCase):
         self.assertIn("MedicationRequest", resource_types)
         self.assertIn("Observation", resource_types)
         self.assertIn("AllergyIntolerance", resource_types)
+        self.assertNotIn("Condition", resource_types)
+        self.assertFalse(any("timeline_events" in stmt for stmt in self.db.executed))
         self.assertFalse(any("nexa_clinical" in stmt for stmt in self.db.executed))
         mock_audit.assert_awaited_once()
         self.assertEqual(

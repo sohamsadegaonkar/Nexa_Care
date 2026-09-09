@@ -1,0 +1,46 @@
+{
+  "contract": "nexa-fhir-r4-base-v1",
+  "fhir_version": "4.0.1",
+  "bundle": {
+    "resource_type": "Bundle",
+    "profile": "http://hl7.org/fhir/StructureDefinition/Bundle",
+    "type": "collection"
+  },
+  "emitted_resources": [
+    {
+      "resource_type": "AllergyIntolerance",
+      "profile": "http://hl7.org/fhir/StructureDefinition/AllergyIntolerance"
+    },
+    {
+      "resource_type": "Condition",
+      "profile": "http://hl7.org/fhir/StructureDefinition/Condition"
+    },
+    {
+      "resource_type": "MedicationRequest",
+      "profile": "http://hl7.org/fhir/StructureDefinition/MedicationRequest"
+    },
+    {
+      "resource_type": "Observation",
+      "profile": "http://hl7.org/fhir/StructureDefinition/Observation"
+    }
+  ],
+  "patient_reference": {
+    "mode": "logical-external-reference",
+    "format": "Patient/{patient_uuid}",
+    "patient_resource_emitted": false
+  },
+  "terminology_boundary": {
+    "condition_clinical_status": "http://terminology.hl7.org/CodeSystem/condition-clinical",
+    "allergy_clinical_status": "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical",
+    "observation_interpretation": "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation",
+    "coded_quantity_units": "http://unitsofmeasure.org"
+  },
+  "provenance": {
+    "fhir_provenance_resource_emitted": false,
+    "reason": "current source rows do not carry enough authoritative agent/manifestation semantics to manufacture a FHIR Provenance or reaction event",
+    "audit_export_actor_and_facility": true
+  },
+  "external_implementation_guide": null,
+  "external_profile_validation": "NOT_RUN",
+  "external_partner_interoperability": "NOT_RUN"
+}
