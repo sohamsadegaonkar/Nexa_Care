@@ -89,7 +89,11 @@ def _calculate_hash(
 
 
 async def verify_partition(
-    connection, chain_partition: str, *, dry_run: bool
+    connection,
+    chain_partition: str,
+    *,
+    dry_run: bool,
+    require_exists: bool = False,
 ) -> VerificationFailure | None:
     rows = list(
         (
@@ -128,7 +132,9 @@ async def verify_partition(
     if not rows:
         if head_row is not None:
             return await fail("head row exists but partition has zero events")
-        return None  # Empty partition with no head -- valid.
+        if require_exists:
+            return await fail("requested partition does not exist")
+        return None  # Whole-ledger verification may validly encounter no partitions.
 
     by_hash = {}
     predecessor_of = {}
@@ -208,7 +214,7 @@ async def verify_partition(
 
     tip = ordered[-1]
     if head_row is None:
-        return await fail("no chain_chain_heads row exists for a non-empty partition")
+        return await fail("no audit_chain_heads row exists for a non-empty partition")
     if head_row["head_hash"] != tip["record_hash"]:
         return await fail(
             f"head_hash mismatch: stored={head_row['head_hash']} calculated={tip['record_hash']}"
@@ -241,7 +247,10 @@ async def verify_all(
         failures = []
         for chain_partition in partitions:
             result = await verify_partition(
-                connection, chain_partition, dry_run=dry_run
+                connection,
+                chain_partition,
+                dry_run=dry_run,
+                require_exists=partition is not None,
             )
             if result is not None:
                 failures.append(result)
