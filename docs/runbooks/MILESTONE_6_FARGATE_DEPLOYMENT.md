@@ -1,50 +1,34 @@
-# Milestone 6 Fargate deployment and Textract qualification
+# Milestone 6 / Slice 8A Fargate deployment and qualification runbook
 
-This is a platform-neutral operator plan for the isolated Milestone 6 physical
-Android qualification. It creates no infrastructure by itself. Substitute only
-approved deployment values at execution time; never commit domains, account
-identifiers, role ARNs, database URLs, Redis URLs, credentials, or secrets.
+This operator plan creates no infrastructure by itself. Use only approved
+synthetic environments and never commit domains, account identifiers, role
+ARNs, database/Redis URLs, credentials, secret ARNs, or secret values.
 
 ## Immutable release inputs
 
-1. Begin from a reviewed clean commit and record its full Git SHA as
-   `<full-git-sha>`.
-2. Build the repository Dockerfile and tag the image with the full SHA. Do not
-   use `latest` as the deployed identity.
-3. Push the immutable image to the approved ECR repository in `ap-south-1`, for
-   example `<ecr-image-uri>:<full-git-sha>`, and record its digest.
-4. Record the matching doctor-frontend commit and Android build profile. The
-   backend, web, and device evidence must identify the versions actually used.
+1. Start from a reviewed clean Git commit and record the full SHA.
+2. Build the repository Dockerfile from that SHA.
+3. Push the image to ECR and record its immutable digest. Never deploy `latest`.
+4. Record matching frontend/mobile build identities when they are in scope.
 
 ## Infrastructure preparation
 
-- Create or select the isolated ECR repository and ECS cluster in
-  `ap-south-1` under `<aws-account-id>`.
-- Use a dedicated Supabase PostgreSQL database and a dedicated TLS
-  Redis/Upstash instance. They must not contain real patient PHI.
-- Create an S3 bucket in `ap-south-1` with public access blocked, versioning and
-  approved lifecycle/retention controls, and SSE-KMS using a configured key.
-- Configure the shared application envelope KMS key and the S3 KMS key.
-  `AWS_PATIENT_SPECIFIC_KMS_KEYS=false` remains explicit for qualification.
-- Store backend secrets in AWS Secrets Manager or SSM Parameter Store. ECS task
-  definition secret entries reference `<secret-arn>`; no plaintext secret is
-  placed in the task definition, image, logs, repository, or frontend.
-- Provision an HTTPS Application Load Balancer for `<api-pilot-domain>`. Its
-  target group uses `/healthz`; TLS terminates only at the approved ingress.
-  Restrict the task security group to traffic from that load balancer.
+- Use an isolated ECS/Fargate service in `ap-south-1`.
+- Use dedicated synthetic PostgreSQL and TLS Redis/Upstash instances.
+- Use an S3 bucket in `ap-south-1` with default SSE-KMS, all four public-access
+  block settings enabled, and versioning enabled.
+- **Do not add/change lifecycle retention while the repository retention
+  approval is pending.**
+- Store runtime secrets in Secrets Manager/SSM and reference them from the task
+  definition. Do not put plaintext secrets in image/environment/logs.
+- Terminate TLS only at the approved HTTPS ingress and restrict the task security
+  group to that ingress.
 
-## ECS roles and minimum application permissions
+## ECS roles and minimum runtime permissions
 
-Use separate roles:
-
-- Execution role `<ecs-execution-role-arn>`: ECR image pull, CloudWatch log
-  delivery, and retrieval of only the task-definition secret references.
-- Application task role `<ecs-task-role-arn>`: runtime Textract, S3, and KMS
-  access only. Do not put AWS access keys in environment variables.
-
-Constrain all resource permissions to the configured bucket/key resources and
-the deployed region. The minimum task-role actions for the current code paths
-are:
+Use separate execution and application task roles. The application task role is
+restricted to the exact configured bucket and KMS resources. Current runtime
+and startup-preflight code paths require only the relevant subset of:
 
 ```text
 textract:AnalyzeDocument
@@ -52,102 +36,116 @@ s3:ListBucket
 s3:GetObject
 s3:PutObject
 s3:DeleteObject
+s3:GetEncryptionConfiguration
+s3:GetBucketPublicAccessBlock
+s3:GetBucketVersioning
 kms:DescribeKey
 kms:GenerateDataKey
 kms:Decrypt
 ```
 
-The bucket permission is metadata/readiness only; object actions are restricted
-to the qualification object prefix. Do not grant `s3:ListAllMyBuckets`, broad
-KMS administration, Textract asynchronous APIs, or KMS key creation/deletion.
-The preflight identity call uses the SDK identity chain and does not justify
-broader application permissions.
+Do not grant `s3:ListAllMyBuckets`, broad KMS administration, KMS key creation or
+deletion, secret-value reads to the application role beyond the task-definition
+mechanism, or wildcard resource access when resource scoping is possible.
 
-## Fargate task definition and service
+Static `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
+environment variables are forbidden. Runtime AWS identity comes from the task
+role.
 
-1. Define a Linux Fargate task using `<ecr-image-uri>:<full-git-sha>` (prefer the
-   recorded digest), container port 8000, and the non-root image user.
-2. Reference managed secrets and provide only non-secret runtime settings. Run
-   `python scripts/check_pilot_environment.py` against the final configuration
-   before enabling traffic.
-3. Configure `FORWARDED_ALLOW_IPS` and `TRUSTED_PROXY_NETWORKS` to the exact
-   final ingress addresses/CIDRs. Wildcard forwarding trust is prohibited.
-4. Send container stdout/stderr to a dedicated CloudWatch log group with
-   approved retention. Do not log tokens, patient/provider identities, document
-   content, object names, credentials, URLs containing credentials, or secret
-   ARNs.
-5. Configure container and target-group liveness on `GET /healthz`. Do not use
-   `GET /health` as a restart loop; it is the human/deployment readiness gate.
-6. Create the ECS service with `desiredCount=1` and no autoscaling. Do not use a
-   serverless or scale-to-zero backend. Do not deploy, restart, or scale while
-   an extraction is active.
+## Configuration materialization
 
-## One-time database release task
+1. Resolve the immutable image, role, log-group, secret metadata, KMS metadata,
+   and S3 security metadata with `scripts/generate_pilot_deployment_values.py`.
+   The generator is read-only and writes its rendered output outside the repo.
+2. Populate `deploy/ecs/nexa-care-pilot-task-definition.template.json` using the
+   approved values.
+3. Supply all runtime secrets, including provider-registration HMAC,
+   provider-contact HMAC and `OPERATIONS_AUTH_TOKEN`.
+4. Run `python scripts/check_pilot_environment.py` against the final task
+   environment. From the intended task identity, additionally run
+   `python scripts/check_pilot_environment.py --live-aws`.
+5. Stop on any mismatch; do not weaken the checker to make a deployment pass.
+
+## One-time migration task
+
+Database migration remains separate from API startup:
 
 1. Back up the dedicated database and verify the approved restore procedure.
-2. Launch a one-off Fargate task from the same immutable image and network
-   boundary, overriding only the command to
+2. Run the same immutable image as a one-off task with command
    `python scripts/run_pilot_migrations.py`.
-3. Supply `MIGRATION_DATABASE_URL` through a managed secret reference. The API
-   service must not receive or run the migration command.
-4. Require the task to exit zero and report both repository and database head
-   `20260909_device_trust_lifecycle`. Stop if it reports any other head.
-5. Start/update the API service only after the migration task succeeds. Require
-   HTTPS `GET https://<api-pilot-domain>/healthz` and then
-   `GET https://<api-pilot-domain>/health` to pass before qualification traffic.
+3. Provide only `MIGRATION_DATABASE_URL` for that release task.
+4. Require exit zero and exact repository/database head
+   `20260909_device_trust_lifecycle`.
+5. The API container must never run `alembic upgrade`, stamp, or downgrade on
+   startup.
 
-## Doctor frontend on Vercel
+## API startup contract
 
-1. Deploy the reviewed doctor frontend to `https://<doctor-pilot-domain>`.
-2. Set server-only `API_PROXY_TARGET=https://<api-pilot-domain>` so Next.js
-   rewrites `/api/:path*` to the backend. Configure the browser API base as the
-   doctor origin/same-origin path; do not expose backend secrets.
-3. Set backend `CORS_ALLOWED_ORIGINS` to the explicit doctor HTTPS origin and
-   `TRUSTED_HOSTS` to the API host. Verify secure HttpOnly session cookies,
-   CSRF-cookie/header double submit, origin rejection, and logout through the
-   same-origin rewrite.
+After the migration task succeeds, start/update the API service. Production-like
+startup must finish these read-only checks **before any background worker starts**:
 
-## Android build and synthetic enrollment
+1. static production configuration and secret shape;
+2. PostgreSQL reachability;
+3. exact `alembic_version` = repository migration head;
+4. TLS Redis reachability;
+5. application and storage KMS keys enabled for `ENCRYPT_DECRYPT`;
+6. S3 bucket reachable with default SSE-KMS, complete public-access block and
+   versioning enabled.
 
-1. Set the production/qualification EAS environment
-   `EXPO_PUBLIC_API_URL=https://<api-pilot-domain>` and keep HTTP fallback off.
-2. Produce a new EAS Android build; changing the deployed API URL requires a new
-   build because Expo public configuration is bundled into the application.
-3. Install that exact build on the physical Android device and record its build
-   identity. Confirm HTTPS API reachability without ADB reverse or LAN URLs.
-4. Create only the approved synthetic patient/provider identities and synthetic
-   one-page test document. Enroll the physical device and establish fresh
-   document-processing consent with `documents` scope. Capabilities remain
-   memory-only and bound to patient, provider, hospital, session, and workflow.
+A failure is a failed deployment, not a degraded-but-acceptable startup.
+
+## Service, health and observability
+
+- Keep focused qualification at `desiredCount=1`; do not scale/restart while an
+  extraction is active.
+- Container/load-balancer liveness uses `GET /healthz` only.
+- Traffic enablement requires public `GET /health` to be healthy.
+- Operator diagnostics require `GET /ops/health` with
+  `X-Nexa-Operations-Token`.
+- Prometheus scraping uses protected `GET /metrics` with the same token.
+- Public readiness exposes only coarse dependency classes. Exception class
+  names, outbox counts, AWS identifiers and configuration values are not public.
+- Request logs use structured JSON and server-owned route templates, never raw
+  URL path parameter values.
+
+The audit-outbox, failure-quarantine and optional provider-reconciliation loops
+are supervised and restarted with bounded exponential backoff after unexpected
+top-level exits.
+
+## Frontend/mobile qualification boundary
+
+The backend `CORS_ALLOWED_ORIGINS`, `TRUSTED_HOSTS`, `TRUSTED_PROXY_NETWORKS`
+and `FORWARDED_ALLOW_IPS` must match the actual HTTPS ingress topology. Mobile
+and web builds must use the exact deployed API identity. Only approved synthetic
+identities/documents may be used for pilot/physical qualification.
 
 ## Focused qualification
 
-1. Confirm the ECS service has exactly one healthy task and no deployment or
-   scaling event is active.
-2. Confirm `/healthz` and `/health`, CloudWatch safe logs, migration head, TLS
-   Redis, KMS/S3 readiness, and `DOCUMENT_EXTRACTION_PROVIDER=aws_textract`.
-3. In the doctor UI begin at **Upload & AI Extract**, select only the synthetic
-   document, and complete the physical-device consent flow.
-4. Verify real Textract evidence includes field-level source text, page,
-   bounding box, and confidence. Do not accept fabricated or source-free data.
-5. Accept only automated `SOURCE_ONLY` or `QUARANTINE` routing. Runtime
-   `AUTO_COMMIT` remains disabled; clinical commitment requires explicit
-   clinician source adjudication.
-6. Preserve versioned qualification evidence without patient data, secrets,
-   tokens, object names, or document content.
+1. Confirm exactly the intended healthy task set and no deployment/scaling event.
+2. Confirm `/healthz`, `/health`, protected `/ops/health`, safe CloudWatch logs,
+   exact migration head, TLS Redis and KMS/S3 readiness.
+3. Exercise the approved synthetic extraction/consent workflow.
+4. Preserve sanitized evidence tied to exact Git/image/frontend/mobile identities.
+5. Do not claim live production qualification from repository/CI evidence alone.
 
-## Rollback
+## Exact rollback contract
 
-1. Stop new qualification traffic.
-2. Stop uploads.
-3. Preserve database, S3, and audit evidence.
-4. Roll back Vercel and the ECS service to the last qualified immutable
-   frontend version and image digest.
-5. Do not automatically downgrade PostgreSQL; use an approved forward fix after
-   impact review.
-6. Invalidate sessions and require fresh consent before resuming.
-7. Revoke `<ecs-task-role-arn>` access only when containment is required.
+1. Stop new traffic and uploads.
+2. Preserve PostgreSQL, S3 and audit evidence.
+3. Select the last **qualified immutable** frontend version and backend image
+   digest; never roll back to an unpinned tag.
+4. Review database compatibility before changing application version.
+5. **Do not automatically downgrade PostgreSQL.** Existing migrations include
+   forward-only safety changes; use an approved corrective forward migration
+   after impact review.
+6. Start the prior image only if its startup schema gate accepts the current
+   database head.
+7. Verify `/healthz`, `/health`, protected `/ops/health`, audit/Redis/KMS/S3 and
+   synthetic smoke tests.
+8. Invalidate provider/patient sessions and require fresh consent before
+   protected workflows resume.
+9. Revoke the task role only when containment requires it.
 
-After rollback, keep `desiredCount=1`, verify `/healthz` and `/health`, and do
-not resume until audit, consent, database, Redis, KMS, S3, web-cookie/CSRF, and
-physical-device boundaries have been requalified.
+A rollback is not complete merely because a container is running. The previous
+qualified image must be compatible with the current schema and all security
+readiness gates must pass before traffic resumes.
