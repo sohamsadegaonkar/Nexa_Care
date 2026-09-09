@@ -91,10 +91,24 @@ async def test_healthy_chain_passes():
 
 
 @pytest.mark.asyncio
-async def test_empty_partition_with_no_head_is_valid():
+async def test_empty_partition_with_no_head_is_valid_for_whole_ledger_scan():
     conn = FakeConnection([], None)
     result = await verify_partition(conn, "global", dry_run=False)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_missing_partition_fails_closed():
+    conn = FakeConnection([], None)
+    result = await verify_partition(
+        conn,
+        "typo-partition",
+        dry_run=True,
+        require_exists=True,
+    )
+    assert result is not None
+    assert result.reason == "requested partition does not exist"
+    assert conn.marked_unhealthy == []
 
 
 @pytest.mark.asyncio
