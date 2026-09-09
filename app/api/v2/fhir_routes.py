@@ -12,13 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import require_active_consent, require_clinical_capability
-from app.models.patient_records import (
-    Allergy,
-    LabResult,
-    Medication,
-    TimelineEvent,
-    Vitals,
-)
+from app.models.patient_records import Allergy, LabResult, Medication, Vitals
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import AuditDomain, current_audit_context
@@ -57,7 +51,15 @@ def _common_provenance(row: object) -> dict:
 
 
 async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[dict]:
-    """Read current structured clinical rows for FHIR export."""
+    """Read authoritative structured clinical rows for FHIR export.
+
+    ``TimelineEvent`` is intentionally excluded. It is a mixed presentation log
+    for events such as vitals, labs, medication writes and pipeline activity, not
+    an authoritative diagnosis table. Free-text keyword matching must never mint
+    an active FHIR ``Condition``. Until Nexa has a dedicated structured diagnosis
+    model, Conditions are available only through the explicit legacy diagnoses
+    fallback when no structured clinical rows exist.
+    """
 
     pid = UUID(patient_id)
     vitals = await _scalars_all(
@@ -83,13 +85,6 @@ async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[d
         select(Allergy)
         .where(Allergy.patient_id == pid)
         .order_by(Allergy.severity.desc()),
-    )
-    timeline = await _scalars_all(
-        db,
-        select(TimelineEvent)
-        .where(TimelineEvent.patient_id == pid)
-        .order_by(TimelineEvent.occurred_at.desc())
-        .limit(50),
     )
 
     records: list[dict] = []
@@ -136,18 +131,6 @@ async def _fetch_structured_records(patient_id: str, db: AsyncSession) -> list[d
             **_common_provenance(row),
         }
         for row in allergies
-    )
-    records.extend(
-        {
-            "record_type": "timeline_diagnosis",
-            "summary": row.summary,
-            "occurred_at": row.occurred_at.isoformat(),
-        }
-        for row in timeline
-        if any(
-            term in row.summary.lower()
-            for term in ("diagnosis", "diabetes", "hypertension", "condition")
-        )
     )
     return records
 
