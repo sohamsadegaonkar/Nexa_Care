@@ -65,7 +65,7 @@ export default function PatientRecoveryScreen() {
           accessibilityLabel="Recovery phone number"
           placeholder="Phone number"
           value={phone}
-          editable={!busy && stage === 'phone'}
+          readOnly={busy || stage !== 'phone'}
           onChangeText={setPhone}
           keyboardType="phone-pad"
         />
@@ -75,7 +75,7 @@ export default function PatientRecoveryScreen() {
             accessibilityLabel="Recovery OTP"
             placeholder="OTP"
             value={otp}
-            editable={!busy && stage === 'otp'}
+            readOnly={busy || stage !== 'otp'}
             onChangeText={setOtp}
             keyboardType="number-pad"
           />

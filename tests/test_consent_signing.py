@@ -435,14 +435,14 @@ class TestConsentRequestScreenIntegration:
         code = _read(CONSENT_REQUEST_PATH)
         assert "Request Expired" in code, "Must show expired state UI"
 
-    def test_has_green_approve_button(self) -> None:
+    def test_has_primary_approve_button(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert 'theme="green"' in code, "Approve button must use the green theme"
+        assert 'intent="primary"' in code, "Approve must use the primary action treatment"
         assert "Approve" in code, "Must have Approve button text"
 
-    def test_has_red_deny_button(self) -> None:
+    def test_has_danger_deny_button(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert 'theme="red"' in code, "Deny button must use the red theme"
+        assert 'intent="danger"' in code, "Deny must use the danger action treatment"
         assert "Deny" in code, "Must have Deny button text"
 
     def test_deny_calls_signing_service(self) -> None:
@@ -475,7 +475,7 @@ class TestConsentRequestScreenIntegration:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(CONSENT_REQUEST_PATH)
-        assert "from 'tamagui'" in code, "Must use Tamagui components"
+        assert "from '@my/ui'" in code or "from 'tamagui'" in code, "Must use the shared Tamagui UI layer"
         assert "<div" not in code, "Must not use HTML div"
         assert "<button" not in code, "Must not use HTML button"
 
@@ -546,7 +546,7 @@ class TestBiometricApprovalScreenIntegration:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(BIOMETRIC_APPROVAL_PATH)
-        assert "from 'tamagui'" in code, "Must use Tamagui components"
+        assert "from '@my/ui'" in code or "from 'tamagui'" in code, "Must use the shared Tamagui UI layer"
         assert "<div" not in code, "Must not use HTML div"
 
 
@@ -595,7 +595,7 @@ class TestApprovalResultScreenIntegration:
 
     def test_uses_tamagui_only(self) -> None:
         code = _read(APPROVAL_RESULT_PATH)
-        assert "from 'tamagui'" in code, "Must use Tamagui components"
+        assert "from '@my/ui'" in code or "from 'tamagui'" in code, "Must use the shared Tamagui UI layer"
         assert "<div" not in code, "Must not use HTML div"
 
 
@@ -661,10 +661,10 @@ class TestConsentFlowE2E:
         biometric_code = _read(BIOMETRIC_APPROVAL_PATH)
         signing_code = _read(CONSENT_SIGNING_PATH)
 
-        # Step 1: ConsentRequestScreen shows challenge and has green Approve
+        # Step 1: ConsentRequestScreen shows challenge and has a primary Approve action
         assert "fetchChallenge" in consent_code, "Must fetch challenge"
         assert "Approve" in consent_code, "Must have Approve button"
-        assert 'theme="green"' in consent_code, "Approve must use the green theme"
+        assert 'intent="primary"' in consent_code, "Approve must use the primary action treatment"
 
         # Step 2: Approve navigates to biometric screen
         assert (
@@ -696,9 +696,9 @@ class TestConsentFlowE2E:
         consent_code = _read(CONSENT_REQUEST_PATH)
         signing_code = _read(CONSENT_SIGNING_PATH)
 
-        # Step 1: ConsentRequestScreen has red Deny button
+        # Step 1: ConsentRequestScreen has a distinct danger Deny action
         assert "Deny" in consent_code, "Must have Deny button"
-        assert 'theme="red"' in consent_code, "Deny must use the red theme"
+        assert 'intent="danger"' in consent_code, "Deny must use the danger action treatment"
 
         # Step 2: Deny calls denyWithSignature (no biometric gate)
         assert "denyWithSignature" in consent_code, "Deny must call denyWithSignature"

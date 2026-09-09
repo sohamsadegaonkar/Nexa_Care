@@ -16,7 +16,6 @@ export function DashboardScreen() {
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d')
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
@@ -137,24 +136,8 @@ export function DashboardScreen() {
         >
           Provider Dashboard
         </Text>
-        <Text color="$color11">Data-driven insights • Last updated just now</Text>
+        <Text color="$color11">Metrics returned by your care organization</Text>
       </YStack>
-
-      <XStack
-        gap="$3"
-        flexWrap="wrap"
-      >
-        {(['7d', '30d', '90d'] as const).map((range) => (
-          <Button
-            key={range}
-            size="$3"
-            theme={timeRange === range ? 'blue' : undefined}
-            onPress={() => setTimeRange(range)}
-          >
-            {range}
-          </Button>
-        ))}
-      </XStack>
 
       <YStack gap="$4">
         <XStack
@@ -165,62 +148,23 @@ export function DashboardScreen() {
             icon={Users}
             label="Total Patients"
             value={metrics.total_patients.toLocaleString()}
-            trend="+12%"
           />
           <KpiCard
             icon={Clock}
             label="Avg Duration"
             value={metrics.avg_appointment_duration}
-            trend="-3m"
           />
           <KpiCard
             icon={TrendingUp}
             label="Revisit Rate"
             value={metrics.revisit_rate}
-            trend="+4%"
           />
           <KpiCard
             icon={TrendingUp}
             label="Productivity"
             value={`${metrics.productivity_score}%`}
-            trend="+8%"
           />
         </XStack>
-
-        <Card
-          p="$5"
-          bg="$color2"
-          borderWidth={1}
-          borderColor="$borderColor"
-        >
-          <YStack gap="$4">
-            <Text
-              fontSize={18}
-              fontWeight="900"
-              color="$color12"
-            >
-              Productivity Trends
-            </Text>
-            <Text color="$color11">{timeRange} overview • Charts coming soon in v2</Text>
-            <YStack
-              gap="$3"
-              pt="$2"
-            >
-              <MetricRow
-                label="Appointments completed"
-                value="312"
-              />
-              <MetricRow
-                label="Avg patients per day"
-                value="21.4"
-              />
-              <MetricRow
-                label="Consent compliance rate"
-                value="98.2%"
-              />
-            </YStack>
-          </YStack>
-        </Card>
       </YStack>
     </YStack>
   )
@@ -230,12 +174,10 @@ function KpiCard({
   icon: Icon,
   label,
   value,
-  trend,
 }: {
   icon: any
   label: string
   value: string
-  trend: string
 }) {
   return (
     <Card
@@ -255,13 +197,6 @@ function KpiCard({
             size={22}
             color="$blue10"
           />
-          <Text
-            fontSize={12}
-            color="$green10"
-            fontWeight="700"
-          >
-            {trend}
-          </Text>
         </XStack>
         <Text
           fontSize={13}
@@ -279,19 +214,5 @@ function KpiCard({
         </Text>
       </YStack>
     </Card>
-  )
-}
-
-function MetricRow({ label, value }: { label: string; value: string }) {
-  return (
-    <XStack justify="space-between">
-      <Text color="$color11">{label}</Text>
-      <Text
-        color="$color12"
-        fontWeight="700"
-      >
-        {value}
-      </Text>
-    </XStack>
   )
 }

@@ -14,6 +14,7 @@ import {
   ensureCurrentDeviceEnrollment,
 } from 'app/services/currentDeviceEnrollment'
 import { ApiError } from 'app/utils/apiClient'
+import { nexaDark, nexaLight } from '@my/config'
 
 export const unstable_settings = {
   initialRouteName: 'index',
@@ -44,6 +45,7 @@ export default function App() {
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme()
+  const palette = colorScheme === 'dark' ? nexaDark : nexaLight
   const router = useRouter()
   const patientAuth = usePatientAuthSession()
   const navigateToConsent = useCallback(
@@ -92,8 +94,10 @@ function RootLayoutNav() {
           screenOptions={{
             contentStyle: {
               flex: 1,
-              backgroundColor: '#FFFFFF',
+              backgroundColor: palette.nexaCanvas,
             },
+            headerStyle: { backgroundColor: palette.nexaSurface },
+            headerTintColor: palette.nexaText,
           }}
         >
           <Stack.Screen

@@ -1,5 +1,16 @@
 import { useFocusEffect, useRouter } from 'expo-router'
-import { Button, H2, Paragraph, Spinner, Text, XStack, YStack } from 'tamagui'
+import {
+  ActionButton as Button,
+  Paragraph,
+  ScreenHeader,
+  Spinner,
+  StatusBadge,
+  Surface,
+  Text,
+  XStack,
+  YStack,
+} from '@my/ui'
+import { AlertTriangle, Clock, ShieldAlert, ShieldCheck, History } from '@tamagui/lucide-icons'
 import { useCallback, useRef, useState } from 'react'
 import { FlatList, RefreshControl, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
@@ -197,9 +208,9 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
         accessible
         accessibilityLabel={`${accessLabel} by ${doctorName} at ${hospitalName} on ${exactTimestamp} for ${purpose}.`}
       >
-        <YStack
+        <Surface
           minHeight={168}
-          backgroundColor="$backgroundHover"
+          backgroundColor="$nexaSurface"
           borderRadius="$4"
           borderWidth={1}
           borderColor="$borderColor"
@@ -213,7 +224,17 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             flexWrap="wrap"
             gap="$2"
           >
-            <Text fontSize={18}>{item.is_break_glass ? '🚨' : '🛡️'}</Text>
+            {item.is_break_glass ? (
+              <ShieldAlert
+                size={22}
+                color="$nexaDanger"
+              />
+            ) : (
+              <ShieldCheck
+                size={22}
+                color="$nexaAccent"
+              />
+            )}
             <Text
               color="$color"
               fontWeight="700"
@@ -221,22 +242,11 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             >
               {accessLabel}
             </Text>
-            <YStack
-              backgroundColor={item.is_break_glass ? '$red5' : '$blue5'}
-              borderRadius="$2"
-              paddingHorizontal="$2"
-              paddingVertical="$1"
-            >
-              <Text
-                color={item.is_break_glass ? '$red11' : '$blue11'}
-                fontWeight="700"
-                fontSize="$1"
-              >
-                {item.is_break_glass ? 'EMERGENCY ACCESS' : 'ROUTINE'}
-              </Text>
-            </YStack>
+            <StatusBadge tone={item.is_break_glass ? 'danger' : 'info'}>
+              {item.is_break_glass ? 'EMERGENCY ACCESS' : 'ROUTINE'}
+            </StatusBadge>
             <Text
-              color="$color10"
+              color="$nexaSecondary"
               marginLeft="auto"
               fontSize="$2"
             >
@@ -253,7 +263,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
               {doctorName}
             </Text>
             <Paragraph
-              color="$color10"
+              color="$nexaSecondary"
               size="$3"
             >
               {hospitalName}
@@ -262,7 +272,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
 
           <YStack gap="$1">
             <Text
-              color="$color10"
+              color="$nexaSecondary"
               fontWeight="600"
               fontSize="$2"
             >
@@ -282,20 +292,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
               gap="$2"
             >
               {item.data_categories.map((category, index) => (
-                <YStack
-                  key={`${category}-${index}`}
-                  backgroundColor="$backgroundFocus"
-                  borderRadius="$3"
-                  paddingHorizontal="$2"
-                  paddingVertical="$1"
-                >
-                  <Text
-                    color="$color10"
-                    fontSize="$2"
-                  >
-                    {humanizeValue(category)}
-                  </Text>
-                </YStack>
+                <StatusBadge key={`${category}-${index}`}>{humanizeValue(category)}</StatusBadge>
               ))}
             </XStack>
           ) : null}
@@ -304,15 +301,18 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
             alignItems="center"
             gap="$2"
           >
-            <Text fontSize={14}>🕒</Text>
+            <Clock
+              size={16}
+              color="$nexaSecondary"
+            />
             <Text
-              color="$color10"
+              color="$nexaSecondary"
               fontSize="$2"
             >
               {exactTimestamp}
             </Text>
           </XStack>
-        </YStack>
+        </Surface>
       </View>
     )
   }
@@ -320,25 +320,21 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
   return (
     <YStack
       flex={1}
-      backgroundColor="$background"
+      backgroundColor="$nexaCanvas"
+      width="100%"
+      maxWidth={800}
+      alignSelf="center"
     >
       <YStack
         paddingHorizontal="$4"
         paddingTop="$4"
         paddingBottom="$2"
       >
-        <H2
-          color="$color"
-          size="$7"
-        >
-          Access History
-        </H2>
-        <Paragraph
-          color="$color10"
-          size="$3"
-        >
-          Every time a provider accesses your data, it's recorded here.
-        </Paragraph>
+        <ScreenHeader
+          title="Access History"
+          eyebrow="YOUR CARE ACTIVITY"
+          description="Every time a provider accesses your data, it's recorded here."
+        />
       </YStack>
 
       <View style={{ flex: 1 }}>
@@ -369,10 +365,13 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                 paddingHorizontal="$4"
                 paddingBottom="$2"
               >
-                <Text>⚠️</Text>
+                <AlertTriangle
+                  size={20}
+                  color="$nexaDanger"
+                />
                 <Paragraph
                   flex={1}
-                  color="$red10"
+                  color="$nexaDanger"
                   size="$2"
                 >
                   {error}
@@ -403,7 +402,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                     color="$blue10"
                   />
                   <Paragraph
-                    color="$color10"
+                    color="$nexaSecondary"
                     size="$4"
                   >
                     Loading access history…
@@ -411,9 +410,12 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                 </>
               ) : error !== null ? (
                 <>
-                  <Text fontSize={36}>⚠️</Text>
+                  <AlertTriangle
+                    size={36}
+                    color="$nexaDanger"
+                  />
                   <Paragraph
-                    color="$red10"
+                    color="$nexaDanger"
                     size="$4"
                     textAlign="center"
                   >
@@ -429,19 +431,21 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
                 </>
               ) : (
                 <>
-                  <Text fontSize={48}>📭</Text>
+                  <History
+                    size={40}
+                    color="$nexaAccent"
+                  />
                   <Paragraph
-                    color="$color10"
+                    color="$nexaSecondary"
                     size="$4"
                     textAlign="center"
                   >
                     No provider has accessed your records yet.
                   </Paragraph>
                   <Paragraph
-                    color="$color10"
+                    color="$nexaSecondary"
                     size="$3"
                     textAlign="center"
-                    opacity={0.6}
                   >
                     When a provider accesses your data, it will appear here.
                   </Paragraph>
