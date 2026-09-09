@@ -1,4 +1,4 @@
-"""Regression checks for the current authority and Slice 7 closure documentation."""
+"""Regression checks for the current authority and backend closure documentation."""
 
 from __future__ import annotations
 
@@ -86,26 +86,54 @@ def test_deviation_report_does_not_reassert_resolved_alpha_security_gaps() -> No
     assert report.count("**RESOLVED**") >= 5
 
 
-def test_current_state_preserves_slice_7_external_and_manual_boundaries() -> None:
+def test_current_state_preserves_live_external_and_manual_boundaries() -> None:
     current = _read("docs/CURRENT-STATE.md")
 
     assert "BLOCKED BY PHYSICAL PLATFORM / NOT_RUN" in current
-    assert "Official live ABDM/NHA HPR/HFR" in current
-    assert "Slice 7F remains **EXTERNALLY BLOCKED**" in current
+    assert "BLOCKED_EXTERNAL_CONTRACT" in current
+    assert "external_adapter_enabled=false" in current
 
-    assert "Slice 7B live pilot runtime: NOT_RUN" in current
-    assert "Slice 7C live extraction accuracy: NOT QUALIFIED" in current
-    assert "Slice 7D external FHIR validation / partner interoperability: NOT_RUN" in current
-    assert "Slice 7E operational database snapshot integrity evidence: NOT_RUN" in current
+    assert "8A" in current and "MERGED / INTERNALLY QUALIFIED" in current
+    assert "BLOCKED BY MISSING PILOT AWS ACCOUNT WIRING / NOT DEPLOYED" in current
+    assert "BLOCKED BY PILOT AWS OIDC / LIVE BENCHMARK NOT_RUN" in current
 
-    assert "benchmark_valid=false" in current
-    assert "did not pass extraction accuracy qualification" in current
+    assert "ABDM_FHIR_EXTERNAL_VALIDATION=PASS" in current
+    assert "partner-sandbox exchange" in current
+    assert "Those remain **NOT_RUN / EXTERNAL**" in current
+
+    assert "OPERATIONAL_AUDIT_QUALIFICATION=BLOCKED_MISSING_DATABASE_WIRING" in current
+    assert "BLOCKED BY AUTHORIZED DATABASE WIRING / NOT_RUN" in current
     assert "DRAFT — NOT APPROVED — NOT IN EFFECT" in current
     assert "Security and privacy/legal approval remain **PENDING**" in current
-    assert "lifecycle application and read-back evidence remain **NOT_RUN**" in current
+    assert "S3 lifecycle application/read-back remains **NOT_RUN**" in current
+
+    assert "ROLLBACK_RUNTIME_QUALIFICATION=BLOCKED_MISSING_ACCOUNT_WIRING" in current
+    assert "7 / 7" in current
+    assert "live rollback/runtime qualification remains **BLOCKED" in current
+
+    assert "backend repository/software closure is complete" in current
+    assert "no repository-defined Slice 9" in current
 
 
-def test_slice_7_closure_plan_does_not_invent_external_or_future_completion() -> None:
+def test_current_state_preserves_historical_extraction_failure_without_weakening() -> None:
+    current = _read("docs/CURRENT-STATE.md")
+
+    assert "benchmark_valid=false" in current
+    assert "Synthetic Patient Iota" in current
+    assert "Synthetic Patient lota" in current
+    assert "no fuzzy matching or threshold weakening" in current
+    assert "34400385106" in current
+
+
+def test_current_state_records_external_fhir_profile_pass_without_partner_claim() -> None:
+    current = _read("docs/CURRENT-STATE.md")
+
+    assert "ndhm.in#6.5.0" in current
+    assert "ABDM 6.5.0 external profile validation PASS" in current
+    assert "partner/certification/production exchange NOT_RUN" in current
+
+
+def test_slice_7_closure_plan_remains_historical_and_does_not_rewrite_its_boundary() -> None:
     plan = _read("docs/governance/SLICE_7_PILOT_READINESS_PLAN.md")
 
     assert "SOFTWARE WORK THROUGH 7E MERGED" in plan
@@ -124,9 +152,19 @@ def test_current_state_names_partition_aware_audit_verifier() -> None:
     current = _read("docs/CURRENT-STATE.md")
 
     assert "scripts/verify_audit_partitions.py" in current
-    assert "scripts/verify_audit_chain.py" in current
-    assert "compatibility entry point" in current
     assert "scripts/verify_audit_integrity_evidence.py" in current
+
+
+def test_current_state_records_slice_8g_fail_closed_registry_activation() -> None:
+    current = _read("docs/CURRENT-STATE.md")
+    gate = _read("docs/governance/ABDM_HPR_HFR_MACHINE_CONTRACT_GATE.json")
+
+    assert "provider-verification-registry/1.0" in current or "provider_verification_registry.py" in current
+    assert '"status": "BLOCKED_EXTERNAL_CONTRACT"' in gate
+    assert '"external_adapter_enabled": false' in gate
+    assert "server_to_server_authentication_lifecycle" in gate
+    assert "rate_limit_semantics" in gate
+    assert "sandbox_or_qualification_target" in gate
 
 
 def test_alpha_architecture_is_explicitly_historical() -> None:
