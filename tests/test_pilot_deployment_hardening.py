@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 import subprocess
 import sys
@@ -12,6 +13,10 @@ from scripts import check_pilot_environment, run_pilot_migrations
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _key(byte: bytes) -> str:
+    return base64.urlsafe_b64encode(byte * 32).decode("ascii")
+
+
 def valid_pilot_environment() -> dict[str, str]:
     return {
         "ENVIRONMENT": "pilot",
@@ -19,11 +24,14 @@ def valid_pilot_environment() -> dict[str, str]:
         "DOCUMENT_AI_AWS_REGION": "ap-south-1",
         "DOCUMENT_AI_TIMEOUT_SECONDS": "30",
         "DOCUMENT_AI_MAX_ATTEMPTS": "3",
+        "DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS": "3",
+        "DOCUMENT_AI_JOB_MAX_ATTEMPTS": "3",
+        "DOCUMENT_AI_RECONCILIATION_MAX_ATTEMPTS": "3",
         "DOCUMENT_STORAGE_PROVIDER": "s3",
         "DOCUMENT_STORAGE_S3_BUCKET": "synthetic-pilot-bucket",
         "DOCUMENT_STORAGE_S3_REGION": "ap-south-1",
         "DOCUMENT_STORAGE_S3_KMS_KEY_ID": "alias/synthetic-storage",
-        "DOCUMENT_STORAGE_ENCRYPTION_KEY": "synthetic-storage-key",
+        "DOCUMENT_STORAGE_ENCRYPTION_KEY": _key(b"d"),
         "ENCRYPTION_BACKEND": "kms",
         "AWS_REGION": "ap-south-1",
         "KMS_KEY_ID": "alias/synthetic-envelope",
@@ -38,12 +46,18 @@ def valid_pilot_environment() -> dict[str, str]:
         "FORWARDED_ALLOW_IPS": "10.0.0.0/24",
         "SUPABASE_URL": "https://synthetic.supabase.example.test",
         "SUPABASE_KEY": "synthetic-supabase-key",
-        "HANDSHAKE_PEPPER_SECRET": "synthetic-handshake-secret",
-        "MFA_ENCRYPTION_KEY": "synthetic-mfa-key",
-        "PII_ENCRYPTION_KEY": "synthetic-pii-key",
-        "PATIENT_JWT_SECRET": "synthetic-jwt-secret",
-        "OTP_RATE_LIMIT_HMAC_SECRET": "synthetic-otp-secret",
+        "HANDSHAKE_PEPPER_SECRET": "h" * 48,
+        "MFA_ENCRYPTION_KEY": _key(b"m"),
+        "PII_ENCRYPTION_KEY": _key(b"p"),
+        "PATIENT_JWT_SECRET": "j" * 48,
+        "OTP_RATE_LIMIT_HMAC_SECRET": "o" * 48,
+        "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET": "r" * 48,
+        "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET": "c" * 48,
+        "OPERATIONS_AUTH_TOKEN": "x" * 48,
         "PUSH_STATUS_TRANSPORT": "poll",
+        "AUTO_COMMIT": "false",
+        "DATABASE_ECHO_SQL": "false",
+        "MAX_UPLOAD_BYTES": "20971520",
     }
 
 
@@ -132,24 +146,17 @@ def test_migration_script_scopes_url_and_redacts_command_output(
 @pytest.mark.parametrize(
     ("name", "value", "expected_error"),
     [
-        (
-            "DOCUMENT_EXTRACTION_PROVIDER",
-            "remote",
-            "DOCUMENT_EXTRACTION_PROVIDER",
-        ),
+        ("DOCUMENT_EXTRACTION_PROVIDER", "remote", "DOCUMENT_EXTRACTION_PROVIDER"),
         ("ENCRYPTION_BACKEND", "local", "ENCRYPTION_BACKEND"),
         ("UPSTASH_REDIS_URL", "redis://redis.example.test:6379", "UPSTASH_REDIS_URL"),
-        (
-            "CORS_ALLOWED_ORIGINS",
-            "http://doctor.example.test",
-            "CORS_ALLOWED_ORIGINS",
-        ),
+        ("CORS_ALLOWED_ORIGINS", "http://doctor.example.test", "CORS_ALLOWED_ORIGINS"),
         ("TRUSTED_HOSTS", "*", "TRUSTED_HOSTS"),
         ("TRUSTED_PROXY_NETWORKS", "0.0.0.0/0", "TRUSTED_PROXY_NETWORKS"),
         ("FORWARDED_ALLOW_IPS", "*", "FORWARDED_ALLOW_IPS"),
         ("DOCUMENT_AI_AWS_REGION", "us-east-1", "DOCUMENT_AI_AWS_REGION"),
         ("DOCUMENT_STORAGE_S3_REGION", "us-east-1", "DOCUMENT_STORAGE_S3_REGION"),
         ("AWS_REGION", "us-east-1", "AWS_REGION"),
+        ("OPERATIONS_AUTH_TOKEN", "short", "OPERATIONS_AUTH_TOKEN"),
     ],
 )
 def test_pilot_preflight_rejects_unsafe_configuration(
@@ -173,7 +180,22 @@ def test_pilot_preflight_rejects_static_aws_credentials(name: str) -> None:
 
     errors = check_pilot_environment.validate_configuration(environment)
 
-    assert f"{name}: static AWS credentials are forbidden" in errors
+    assert f"{name}: static AWS credentials forbidden" in errors
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET",
+        "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET",
+        "OPERATIONS_AUTH_TOKEN",
+    ],
+)
+def test_pilot_preflight_requires_full_runtime_secret_set(name: str) -> None:
+    environment = valid_pilot_environment()
+    environment.pop(name)
+    errors = check_pilot_environment.validate_configuration(environment)
+    assert f"{name}: required" in errors
 
 
 def test_valid_synthetic_pilot_configuration_passes() -> None:
@@ -216,8 +238,6 @@ def test_governance_contract_names_current_migration_head() -> None:
         encoding="utf-8"
     )
 
-    assert (
-        f"Current head is `{run_pilot_migrations.EXPECTED_HEAD}`" in constitution
-    )
+    assert f"Current head is `{run_pilot_migrations.EXPECTED_HEAD}`" in constitution
     assert f"current head `{run_pilot_migrations.EXPECTED_HEAD}`" in security
     assert "API containers never run migrations during startup" in security
