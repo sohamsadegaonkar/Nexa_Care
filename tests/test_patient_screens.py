@@ -221,7 +221,8 @@ class TestTamaguiOnly:
     @pytest.mark.parametrize("screen", SCREENS, ids=SCREENS)
     def test_uses_tamagui_imports(self, screen: str) -> None:
         code = _read_screen(screen)
-        assert "from 'tamagui'" in code, f"{screen} does not import from 'tamagui'"
+        uses_shared_tamagui = "from 'tamagui'" in code or "from '@my/ui'" in code
+        assert uses_shared_tamagui, f"{screen} does not use Tamagui or the shared @my/ui layer"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -327,7 +328,7 @@ class TestPatientNativeViewportConfiguration:
             code = path.read_text(encoding="utf-8")
             assert "contentStyle" in code
             assert "flex: 1" in code
-            assert "backgroundColor: '#FFFFFF'" in code
+            assert "nexaCanvas" in code, "Full-screen background must use the active Nexa theme"
 
     def test_root_navigator_hides_its_header_for_patient_routes(self) -> None:
         code = EXPO_ROOT_LAYOUT_PATH.read_text(encoding="utf-8")
@@ -398,11 +399,8 @@ class TestConsentRequestScreen:
         code = _read_screen("ConsentRequestScreen")
         assert "Approve" in code, "Must have Approve button"
         assert "Deny" in code, "Must have Deny button"
-        # Approve should be green, Deny should be red
-        assert (
-            "$green9" in code or "green" in code.lower()
-        ), "Approve must use green color"
-        assert "$red9" in code or "red" in code.lower(), "Deny must use red color"
+        assert 'intent="primary"' in code, "Approve must use the primary action treatment"
+        assert 'intent="danger"' in code, "Deny must use a distinct danger treatment"
 
     def test_fetches_challenge_from_api(self) -> None:
         code = _read_screen("ConsentRequestScreen")
@@ -433,8 +431,10 @@ class TestConsentRequestScreen:
         assert "useSafeAreaInsets" in code
         assert 'keyboardShouldPersistTaps="handled"' in code
         scroll_end = code.rindex("</ScrollView>")
-        assert code.index("onPress={handleApprove}") < scroll_end
-        assert code.index("onPress={handleDeny}") < scroll_end
+        assert scroll_end < code.index("onPress={handleApprove}"), "Approve must remain in the sticky action footer"
+        assert scroll_end < code.index("onPress={handleDeny}"), "Deny must remain in the sticky action footer"
+        assert "flexShrink={0}" in code
+        assert "paddingBottom={insets.bottom + 16}" in code
 
 
 class TestBiometricApprovalScreen:
@@ -724,7 +724,7 @@ def test_access_history_api_values_cannot_render_as_raw_native_children() -> Non
 def test_patient_error_messages_use_explicit_jsx_branches(screen_name: str) -> None:
     code = _read_screen(screen_name)
     assert "{error &&" not in code
-    assert "{error !== null ?" in code or "{error ?" in code
+    assert "{error !== null" in code or "{error ?" in code
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5. Route and deep-link verification

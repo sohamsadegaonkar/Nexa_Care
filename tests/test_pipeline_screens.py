@@ -1044,7 +1044,7 @@ class TestPipelineApiAlignment:
 class TestVisibleTextractConsentFlow:
     def test_dashboard_reaches_document_upload_intent(self) -> None:
         dashboard = _read(DOCTOR_DIR / "DoctorDashboardScreen.tsx")
-        assert "Upload &amp; AI Extract" in dashboard
+        assert "Upload & AI Extract" in dashboard
         assert "/doctor/patient-search?intent=document_upload" in dashboard
 
     def test_patient_search_preserves_document_upload_intent(self) -> None:

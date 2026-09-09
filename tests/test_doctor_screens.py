@@ -886,10 +886,12 @@ class TestDashboardRoleAndNfc:
         code = _read_screen("DoctorDashboardScreen")
         assert "mode=nfc" in code, "Must have NFC scan button navigating to ?mode=nfc"
 
-    def test_shows_provider_id_card(self) -> None:
-        """Must display provider ID in an identity card."""
+    def test_shows_human_facing_provider_context(self) -> None:
+        """Dashboard must identify the signed-in provider and facility without requiring a raw UUID."""
         code = _read_screen("DoctorDashboardScreen")
-        assert "providerId" in code, "Must display providerId from context"
+        assert "displayName" in code, "Must display provider name from context"
+        assert "hospitalName" in code, "Must display facility name from context"
+        assert "role" in code, "Must display session role from context"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
