@@ -204,7 +204,7 @@ describe('shared API transport', () => {
     )
 
     const [url, init] = requiredMockCall(fetchMock.mock.calls)
-    expect(url).toBe('https://native.example.test/api/v2/consent/request')
+    expect(url).toBe('https://native.example.test/api/v2/consent/v3/request')
     expect(init.headers.Authorization).toBe('Bearer provider-session-token')
     expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
   })
