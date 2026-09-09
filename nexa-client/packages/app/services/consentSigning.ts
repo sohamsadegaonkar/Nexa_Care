@@ -1,14 +1,13 @@
-/** Canonical consent challenge orchestration; key operations live only in deviceKeys.ts. */
+/** Canonical Signed Consent V3 orchestration. Private-key operations use native key handles. */
 import { ApiError, NexaApiClient } from '../utils/apiClient'
 import {
   authenticateWithBiometrics as requireBiometrics,
   constructConsentSigningInputV3,
-  signConsentChallengeV3,
 } from './deviceKeys'
 import { CurrentDeviceError, ensureCurrentDeviceEnrollment } from './currentDeviceEnrollment'
+import { signWithNativeDeviceKey } from './nativeDeviceSecurity'
 
 export const constructSigningInput = constructConsentSigningInputV3
-export const signConsentDecision = signConsentChallengeV3
 export async function authenticateWithBiometrics(): Promise<boolean> {
   await requireBiometrics()
   return true
@@ -40,9 +39,15 @@ export interface SignedApprovalResponse {
 async function submitSignedDecision(
   challenge: ConsentChallenge,
   decision: 'approved' | 'denied',
-  device: { deviceId: string; keyId: string; keyVersion: number; keyFingerprint: string }
+  device: {
+    deviceId: string
+    keyId: string
+    keyVersion: number
+    keyFingerprint: string
+    keyAlias: string
+  }
 ): Promise<SignedApprovalResponse> {
-  const signature = await signConsentDecision({
+  const signingInput = constructSigningInput({
     request_id: challenge.request_id,
     patient_id: challenge.patient_id,
     provider_id: challenge.provider_id,
@@ -60,6 +65,7 @@ async function submitSignedDecision(
     key_version: device.keyVersion,
     public_key_fingerprint: device.keyFingerprint,
   })
+  const signature = await signWithNativeDeviceKey(device.keyAlias, signingInput)
   const payload = {
     protocol_version: 'nexa-consent-v3' as const,
     request_id: challenge.request_id,
@@ -81,7 +87,6 @@ async function submitSignedDecision(
 export async function approveWithBiometric(
   challenge: ConsentChallenge
 ): Promise<SignedApprovalResponse> {
-  // Confirm the exact local device before showing Android biometrics.
   const currentDevice = await ensureCurrentDeviceEnrollment({ allowEnrollment: false })
   await requireBiometrics()
   return submitSignedDecision(challenge, 'approved', currentDevice)

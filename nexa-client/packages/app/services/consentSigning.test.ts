@@ -17,7 +17,9 @@ vi.mock('./currentDeviceEnrollment', () => ({
 vi.mock('./deviceKeys', () => ({
   authenticateWithBiometrics: mocks.biometrics,
   constructConsentSigningInputV3: vi.fn(() => 'canonical-input'),
-  signConsentChallengeV3: mocks.sign,
+}))
+vi.mock('./nativeDeviceSecurity', () => ({
+  signWithNativeDeviceKey: mocks.sign,
 }))
 vi.mock('../utils/apiClient', async (importOriginal) => {
   const original = await importOriginal<typeof import('../utils/apiClient')>()
@@ -52,7 +54,7 @@ const challenge = {
   status: 'pending',
 }
 
-describe('current-device signed approval', () => {
+describe('current-device native signed approval', () => {
   beforeEach(() => {
     mocks.ensure.mockReset().mockResolvedValue({
       deviceId: 'current-device',
@@ -61,6 +63,8 @@ describe('current-device signed approval', () => {
       status: 'active',
       enrolledNow: false,
       keyFingerprint: 'fingerprint',
+      keyAlias: 'nexa-key-alias',
+      custody: 'android-keystore',
     })
     mocks.biometrics.mockReset().mockResolvedValue(undefined)
     mocks.sign.mockReset().mockResolvedValue('ecdsa-signature')
@@ -71,7 +75,7 @@ describe('current-device signed approval', () => {
     })
   })
 
-  it('confirms exact enrollment before biometrics and signing', async () => {
+  it('confirms exact enrollment before biometrics and native signing', async () => {
     await approveWithBiometric(challenge)
     expect(mocks.ensure).toHaveBeenCalledWith({ allowEnrollment: false })
     expect(mocks.ensure.mock.invocationCallOrder[0]).toBeLessThan(
@@ -82,26 +86,21 @@ describe('current-device signed approval', () => {
     )
   })
 
-  it('submits the signature with the exact current installation device_id', async () => {
+  it('signs canonical V3 bytes through the current native alias', async () => {
     await approveWithBiometric(challenge)
+    expect(mocks.sign).toHaveBeenCalledWith('nexa-key-alias', 'canonical-input')
     expect(mocks.approve).toHaveBeenCalledWith(
       expect.objectContaining({
-        request_id: 'request-1',
-        patient_id: 'patient-1',
-        decision: 'approved',
-        challenge_nonce: 'nonce-1',
-        signature: 'ecdsa-signature',
         protocol_version: 'nexa-consent-v3',
         device_id: 'current-device',
         key_id: 'current-key',
         key_version: 3,
-        public_key_fingerprint: 'fingerprint',
-        consent_context_hash: 'a'.repeat(64),
+        signature: 'ecdsa-signature',
       })
     )
   })
 
-  it('never invokes biometrics, signing, or submission when setup is required', async () => {
+  it('never invokes biometrics, native signing, or submission when setup is required', async () => {
     mocks.ensure.mockRejectedValue(new Error('Secure this device to approve consent requests.'))
     await expect(approveWithBiometric(challenge)).rejects.toThrow('Secure this device')
     expect(mocks.biometrics).not.toHaveBeenCalled()

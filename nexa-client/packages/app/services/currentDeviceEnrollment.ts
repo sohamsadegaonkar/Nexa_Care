@@ -2,20 +2,27 @@ import * as SecureStore from 'expo-secure-store'
 import { Platform } from 'react-native'
 import { ApiError, getAuthToken } from '../utils/apiClient'
 import {
-  DEVICE_PRIVATE_KEY_STORAGE_KEY,
+  DEVICE_ID_STORAGE_KEY,
   type DeviceEnrollmentStage,
+  type DeviceInfo,
   type EnrollDeviceResponse,
-  deleteDeviceKey,
   enrollDevice,
-  fingerprintDevicePublicKey,
-  generateDeviceKeypair,
   getDeviceId,
   getDeviceLabel,
   getDevices,
-  getStoredDevicePublicKey,
   setDeviceId,
 } from './deviceKeys'
+import { deleteLegacyDevicePrivateKey, getLegacyDeviceKeyInfo } from './legacyDeviceKey'
+import {
+  commitPendingNativeDeviceKey,
+  ensurePendingNativeDeviceKey,
+  fingerprintPublicKeyDerBase64,
+  getCurrentNativeDeviceKey,
+  getPendingNativeDeviceKey,
+} from './nativeDeviceKeyring'
+import type { NativeDeviceKeyCustody } from './nativeDeviceSecurity'
 import { clearPatientAuthSession, DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY } from './patientAuthSession'
+import { migrateLegacyDeviceToNative } from './patientDeviceRotation'
 
 export type CurrentDeviceErrorCode =
   | 'SETUP_REQUIRED'
@@ -24,6 +31,7 @@ export type CurrentDeviceErrorCode =
   | 'DEVICE_CONFLICT'
   | 'INVALID_ENROLLMENT'
   | 'NETWORK_ERROR'
+  | 'NATIVE_SECURITY_REQUIRED'
 
 export class CurrentDeviceError extends Error {
   constructor(
@@ -39,9 +47,10 @@ export class CurrentDeviceError extends Error {
 
 export interface LocalInstallationMetadata {
   deviceId: string | null
-  keyAlias: string
   publicKeyDerBase64: string | null
   keyFingerprint: string | null
+  keyAlias: string | null
+  custody: NativeDeviceKeyCustody | 'legacy-secure-store' | null
   platform: 'ios' | 'android'
   hasPrivateKey: boolean
 }
@@ -53,6 +62,8 @@ export interface CurrentDeviceEnrollment {
   status: 'active'
   enrolledNow: boolean
   keyFingerprint: string
+  keyAlias: string
+  custody: NativeDeviceKeyCustody
 }
 
 export interface EnsureCurrentDeviceOptions {
@@ -63,24 +74,47 @@ export interface EnsureCurrentDeviceOptions {
 }
 
 let enrollmentInFlight: Promise<EnrollDeviceResponse> | null = null
+let migrationInFlight: Promise<CurrentDeviceEnrollment> | null = null
 
 export async function getLocalInstallationMetadata(): Promise<LocalInstallationMetadata> {
-  const [deviceId, key] = await Promise.all([getDeviceId(), getStoredDevicePublicKey()])
-  const publicKeyDerBase64 = key?.publicKeyDerBase64 ?? null
+  const deviceId = await getDeviceId()
+  const native = await getCurrentNativeDeviceKey()
+  if (native) {
+    return {
+      deviceId,
+      publicKeyDerBase64: native.publicKeyDerBase64,
+      keyFingerprint: await fingerprintPublicKeyDerBase64(native.publicKeyDerBase64),
+      keyAlias: native.alias,
+      custody: native.custody,
+      platform: Platform.OS === 'ios' ? 'ios' : 'android',
+      hasPrivateKey: true,
+    }
+  }
+  const legacy = await getLegacyDeviceKeyInfo()
   return {
     deviceId,
-    keyAlias: DEVICE_PRIVATE_KEY_STORAGE_KEY,
-    publicKeyDerBase64,
-    keyFingerprint: publicKeyDerBase64
-      ? await fingerprintDevicePublicKey(publicKeyDerBase64)
-      : null,
+    publicKeyDerBase64: legacy?.publicKeyDerBase64 ?? null,
+    keyFingerprint: legacy?.publicKeyFingerprint ?? null,
+    keyAlias: null,
+    custody: legacy ? 'legacy-secure-store' : null,
     platform: Platform.OS === 'ios' ? 'ios' : 'android',
-    hasPrivateKey: publicKeyDerBase64 !== null,
+    hasPrivateKey: legacy !== null,
   }
 }
 
 function mapError(error: unknown): CurrentDeviceError {
   if (error instanceof CurrentDeviceError) return error
+  if (
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'NATIVE_DEVICE_SECURITY_UNAVAILABLE'
+  ) {
+    return new CurrentDeviceError(
+      'This build does not include Nexa Care native device-key protection. Install a development or production build.',
+      'NATIVE_SECURITY_REQUIRED'
+    )
+  }
   if (error instanceof ApiError) {
     if (error.status === 401 || error.code === 'REAUTH_REQUIRED') {
       return new CurrentDeviceError(
@@ -98,14 +132,14 @@ function mapError(error: unknown): CurrentDeviceError {
     }
     if (error.status === 409) {
       return new CurrentDeviceError(
-        'This device could not be enrolled. Revoke an unused device or retry after the current enrollment finishes.',
+        'This device operation conflicted with current device state. Refresh trusted devices before retrying.',
         'DEVICE_CONFLICT',
         409
       )
     }
     if (error.status === 400 || error.status === 422) {
       return new CurrentDeviceError(
-        'The device enrollment request was rejected. Sign in again before retrying setup.',
+        'The device request was rejected. Sign in again before retrying setup.',
         'INVALID_ENROLLMENT',
         error.status
       )
@@ -126,7 +160,6 @@ function mapError(error: unknown): CurrentDeviceError {
 }
 
 async function enrollInstallation(
-  metadata: LocalInstallationMetadata,
   options: EnsureCurrentDeviceOptions,
   hasDeviceHistory: boolean
 ): Promise<EnrollDeviceResponse> {
@@ -148,18 +181,17 @@ async function enrollInstallation(
       )
     }
     options.onStage?.('generating')
-    const key = metadata.publicKeyDerBase64
-      ? { publicKeyDerBase64: metadata.publicKeyDerBase64 }
-      : await generateDeviceKeypair()
+    const key = await ensurePendingNativeDeviceKey()
     options.onStage?.('enrolling')
     const enrollment = await enrollDevice({
       device_public_key: key.publicKeyDerBase64,
       device_label: options.deviceLabel ?? getDeviceLabel(),
-      platform: metadata.platform,
+      platform: Platform.OS === 'ios' ? 'ios' : 'android',
       device_enrollment_token: enrollmentToken,
       ...(options.expoPushToken ? { expo_push_token: options.expoPushToken } : {}),
     })
     await setDeviceId(enrollment.device_id)
+    await commitPendingNativeDeviceKey(key.alias, { deletePrevious: true })
     await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
     return enrollment
   })().finally(() => {
@@ -168,12 +200,58 @@ async function enrollInstallation(
   return enrollmentInFlight
 }
 
-/**
- * Require this exact app installation to have both its private key and an
- * active matching server device. A stale/missing local device_id may be
- * repaired only when this installation's derived public-key fingerprint
- * uniquely matches an active device returned for the current patient.
- */
+async function resultForServerDevice(
+  device: DeviceInfo,
+  enrolledNow: boolean
+): Promise<CurrentDeviceEnrollment> {
+  const key = await getCurrentNativeDeviceKey()
+  if (!key) throw new CurrentDeviceError('Native signing key is unavailable.', 'SETUP_REQUIRED')
+  return {
+    deviceId: device.device_id,
+    keyId: device.key_id,
+    keyVersion: device.key_version,
+    status: 'active',
+    enrolledNow,
+    keyFingerprint: device.public_key_fingerprint,
+    keyAlias: key.alias,
+    custody: key.custody,
+  }
+}
+
+async function reconcilePendingDevice(devices: DeviceInfo[]): Promise<CurrentDeviceEnrollment | null> {
+  const pending = await getPendingNativeDeviceKey()
+  if (!pending) return null
+  const fingerprint = await fingerprintPublicKeyDerBase64(pending.publicKeyDerBase64)
+  const match = devices.find(
+    (device) => device.status === 'active' && device.public_key_fingerprint === fingerprint
+  )
+  if (!match) return null
+  await commitPendingNativeDeviceKey(pending.alias, { deletePrevious: true })
+  await setDeviceId(match.device_id)
+  await deleteLegacyDevicePrivateKey().catch(() => undefined)
+  return resultForServerDevice(match, false)
+}
+
+async function migrateLegacy(match: DeviceInfo): Promise<CurrentDeviceEnrollment> {
+  if (migrationInFlight) return migrationInFlight
+  migrationInFlight = (async () => {
+    const { rotation } = await migrateLegacyDeviceToNative(match)
+    await setDeviceId(rotation.device_id)
+    const devices = await getDevices()
+    const current = devices.devices.find(
+      (device) =>
+        device.device_id === rotation.device_id &&
+        device.key_id === rotation.new_key_id &&
+        device.status === 'active'
+    )
+    if (!current) throw new Error('DEVICE_ROTATION_RECONCILIATION_FAILED')
+    return resultForServerDevice(current, false)
+  })().finally(() => {
+    migrationInFlight = null
+  })
+  return migrationInFlight
+}
+
 export async function ensureCurrentDeviceEnrollment(
   options: EnsureCurrentDeviceOptions = {}
 ): Promise<CurrentDeviceEnrollment> {
@@ -188,78 +266,65 @@ export async function ensureCurrentDeviceEnrollment(
   }
 
   try {
-    let metadata = await getLocalInstallationMetadata()
     const server = await getDevices()
-    const exactActiveDevice = metadata.deviceId
-      ? server.devices.find(
-          (device) =>
-            device.device_id === metadata.deviceId &&
-            device.status === 'active' &&
-            device.public_key_fingerprint === metadata.keyFingerprint
-        )
-      : undefined
+    const reconciledPending = await reconcilePendingDevice(server.devices)
+    if (reconciledPending) return reconciledPending
 
-    if (exactActiveDevice && metadata.hasPrivateKey && metadata.keyFingerprint) {
-      await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
-      return {
-        deviceId: exactActiveDevice.device_id,
-        keyId: exactActiveDevice.key_id,
-        keyVersion: exactActiveDevice.key_version,
-        status: 'active',
-        enrolledNow: false,
-        keyFingerprint: metadata.keyFingerprint,
-      }
-    }
-
-    const fingerprintMatchedDevice =
-      metadata.hasPrivateKey && metadata.keyFingerprint
+    const metadata = await getLocalInstallationMetadata()
+    if (metadata.custody !== 'legacy-secure-store' && metadata.keyAlias && metadata.keyFingerprint) {
+      const exact = metadata.deviceId
         ? server.devices.find(
             (device) =>
+              device.device_id === metadata.deviceId &&
               device.status === 'active' &&
               device.public_key_fingerprint === metadata.keyFingerprint
           )
         : undefined
-
-    if (fingerprintMatchedDevice && metadata.keyFingerprint) {
-      await setDeviceId(fingerprintMatchedDevice.device_id)
-      await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
-      return {
-        deviceId: fingerprintMatchedDevice.device_id,
-        keyId: fingerprintMatchedDevice.key_id,
-        keyVersion: fingerprintMatchedDevice.key_version,
-        status: 'active',
-        enrolledNow: false,
-        keyFingerprint: metadata.keyFingerprint,
+      if (exact) {
+        await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
+        return resultForServerDevice(exact, false)
+      }
+      const fingerprintMatch = server.devices.find(
+        (device) =>
+          device.status === 'active' && device.public_key_fingerprint === metadata.keyFingerprint
+      )
+      if (fingerprintMatch) {
+        await setDeviceId(fingerprintMatch.device_id)
+        await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
+        return resultForServerDevice(fingerprintMatch, false)
       }
     }
 
-    if (options.allowEnrollment === false) {
-      throw new CurrentDeviceError(
-        'Secure this device to approve consent requests.',
-        'SETUP_REQUIRED'
+    if (metadata.custody === 'legacy-secure-store' && metadata.keyFingerprint) {
+      const legacyMatch = server.devices.find(
+        (device) =>
+          device.status === 'active' && device.public_key_fingerprint === metadata.keyFingerprint
       )
+      if (legacyMatch) return migrateLegacy(legacyMatch)
+      if (server.devices.length === 0) await deleteLegacyDevicePrivateKey()
     }
 
-    if (!metadata.hasPrivateKey && metadata.deviceId) {
-      await deleteDeviceKey()
-      metadata = { ...metadata, deviceId: null }
-    }
-    const enrollment = await enrollInstallation(metadata, options, server.devices.length > 0)
-    const enrolledMetadata = await getLocalInstallationMetadata()
-    if (!enrolledMetadata.keyFingerprint) {
+    if (server.devices.length > 0) {
       throw new CurrentDeviceError(
-        'The local signing key is unavailable after enrollment.',
-        'SETUP_REQUIRED'
+        'This installation is not a current trusted device. Authorize it from a trusted device, or use account recovery if all trusted devices are lost.',
+        'RECOVERY_REQUIRED',
+        409
       )
     }
-    return {
-      deviceId: enrollment.device_id,
-      keyId: enrollment.key_id,
-      keyVersion: enrollment.key_version,
-      status: 'active',
-      enrolledNow: true,
-      keyFingerprint: enrolledMetadata.keyFingerprint,
+    if (options.allowEnrollment === false) {
+      throw new CurrentDeviceError('Secure this device to approve consent requests.', 'SETUP_REQUIRED')
     }
+
+    if (metadata.deviceId) {
+      await SecureStore.deleteItemAsync(DEVICE_ID_STORAGE_KEY).catch(() => undefined)
+    }
+    const enrollment = await enrollInstallation(options, false)
+    const freshServer = await getDevices()
+    const enrolled = freshServer.devices.find(
+      (device) => device.device_id === enrollment.device_id && device.status === 'active'
+    )
+    if (!enrolled) throw new Error('DEVICE_ENROLLMENT_RECONCILIATION_FAILED')
+    return resultForServerDevice(enrolled, true)
   } catch (error) {
     const mapped = mapError(error)
     if (mapped.code === 'REAUTH_REQUIRED') await clearPatientAuthSession('expired')
