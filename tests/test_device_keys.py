@@ -69,9 +69,8 @@ def test_native_keyring_persists_only_aliases() -> None:
     assert "ensurePendingNativeDeviceKey" in code
     assert "commitPendingNativeDeviceKey" in code
     assert "clearCurrentNativeDeviceKey" in code
-    assert "publicKeyDerBase64" in code
+    assert "getNativeDeviceKey" in code
     assert "privateKey" not in code
-
 
 def test_bootstrap_and_reconciliation_use_pending_native_authority() -> None:
     code = _read(CURRENT_DEVICE)
@@ -109,10 +108,11 @@ def test_recovery_creates_fresh_native_authority_and_binds_server_response() -> 
 
 def test_trusted_device_management_is_server_first_for_revocation() -> None:
     code = _read(MANAGEMENT)
-    assert code.index("NexaApiClient.revokeDevice") < code.index("clearCurrentNativeDeviceKey")
+    body = code.split("export async function revokeManagedPatientDevice", 1)[1].split("
+}", 1)[0]
+    assert body.index("NexaApiClient.revokeDevice") < body.index("clearCurrentNativeDeviceKey")
     assert "rotateCurrentNativeDeviceKey" in code
     assert "isCurrentInstallation" in code
-
 
 def test_mobile_screens_route_through_authoritative_services() -> None:
     secure = _read(SECURE_DEVICE)
