@@ -23,16 +23,15 @@ PATIENT_REFERENCE = re.compile(
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 # FHIR R4 dateTime permits partial dates. Once a time is present, seconds and a
-# timezone are mandatory. This is intentionally pinned here instead of relying
-# on ``datetime.fromisoformat``, which accepts timezone-less timestamps that are
-# not valid FHIR R4 dateTime values.
+# timezone are mandatory. This lexical pattern is the R4 dateTime shape expressed
+# with non-capturing groups; calendar validity is checked separately below.
 FHIR_DATETIME = re.compile(
-    r"^(?:[1-9]\d{3})"
+    r"^(?:[0-9](?:[0-9](?:[0-9][1-9]|[1-9]0)|[1-9]00)|[1-9]000)"
     r"(?:-(?:0[1-9]|1[0-2])"
-    r"(?:-(?:0[1-9]|[12]\d|3[01])"
-    r"(?:T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)"
-    r"(?:\.\d+)?(?:Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00)))?"
-    r")?)?)?$"
+    r"(?:-(?:0[1-9]|[1-2][0-9]|3[0-1])"
+    r"(?:T(?:[01][0-9]|2[0-3]):[0-5][0-9]:(?:[0-5][0-9]|60)"
+    r"(?:\.[0-9]+)?(?:Z|(?:\+|-)(?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00)))?"
+    r")?)?$"
 )
 
 ALLOWED_RESOURCE_TYPES = frozenset(
