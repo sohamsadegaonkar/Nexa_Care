@@ -56,6 +56,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.routes import router as api_router
 from app.api.v2.auth_routes import router as auth_v2_router
 from app.api.v2.consent_routes import router as consent_v2_router
+from app.api.v2.consent_v3_routes import router as consent_v3_router
 from app.api.v2.document_routes import router as document_v2_router
 from app.api.v2.emergency_routes import router as emergency_v2_router
 from app.api.v2.fhir_routes import router as fhir_v2_router
@@ -361,6 +362,7 @@ app.add_middleware(GlobalLoggingMiddleware)
 app.include_router(api_router)
 app.include_router(auth_v2_router)
 app.include_router(consent_v2_router)
+app.include_router(consent_v3_router)
 app.include_router(document_v2_router)
 app.include_router(emergency_v2_router)
 app.include_router(fhir_v2_router)

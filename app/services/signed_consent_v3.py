@@ -12,6 +12,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import secrets
 import time
 import uuid
 from dataclasses import dataclass
@@ -203,7 +204,7 @@ class SignedConsentV3Verifier:
         if not (
             isinstance(consent_context_hash, str)
             and len(consent_context_hash) == 64
-            and hashlib.compare_digest(
+            and secrets.compare_digest(
                 consent_context_hash.lower(), expected_context_hash
             )
         ):

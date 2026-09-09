@@ -134,6 +134,7 @@ export function RequestConsentScreen() {
     try {
       const data = await NexaApiClient.requestConsent(
         {
+          protocol_version: 'nexa-consent-v3',
           discovery_handle: discoverySelection.discoveryHandle,
           purpose: documentUploadIntent ? 'document_processing' : purpose,
           scope: documentUploadIntent ? 'documents' : requestedScope,

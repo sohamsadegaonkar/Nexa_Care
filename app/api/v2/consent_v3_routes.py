@@ -382,7 +382,7 @@ async def create_consent_v3_request(
 
     request_data = {
         **context,
-        "created_at": context.pop("issued_at"),
+        "created_at": now.isoformat(),
         "protocol_version": SIGNED_CONSENT_V3_PROTOCOL_VERSION,
         "consent_context_hash": context_hash,
         "provider_name": provider.provider.display_name,
@@ -395,10 +395,6 @@ async def create_consent_v3_request(
         "clinical_mfa_verified_at": initiation.mfa_verified_at.isoformat(),
         "clinical_assurance_policy_version": initiation.assurance_policy_version,
     }
-    # context.pop above intentionally moved issued_at to the repository's
-    # existing created_at field; restore all other canonical fields unchanged.
-    request_data["issued_at"] = request_data["created_at"]
-
     redis = get_async_redis_client()
     try:
         await _redis_call(

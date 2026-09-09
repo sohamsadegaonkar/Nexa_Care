@@ -65,6 +65,8 @@ export interface EnrollDeviceParams {
 
 export interface EnrollDeviceResponse {
   device_id: string
+  key_id: string
+  key_version: number
   status: string
   patient_id: string
   enrolled_at: string
@@ -72,6 +74,8 @@ export interface EnrollDeviceResponse {
 
 export interface DeviceInfo {
   device_id: string
+  key_id: string
+  key_version: number
   device_label: string | null
   platform: string
   status: string
@@ -378,6 +382,61 @@ export async function signConsentChallenge(params: ConsentSigningFields): Promis
       'This device is not enrolled. Please secure this device before approving consent.'
     )
   const message = new TextEncoder().encode(constructConsentSigningInput(params))
+  const digest = new Uint8Array(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, message))
+  return bytesToBase64(p256.sign(digest, base64ToBytes(encodedPrivateKey)).toDERRawBytes())
+}
+
+
+export interface ConsentSigningFieldsV3 {
+  request_id: string
+  patient_id: string
+  provider_id: string
+  hospital_id: string
+  challenge_nonce: string
+  decision: 'approved' | 'denied'
+  scope: string
+  purpose: string
+  access_duration: number
+  issued_at: string
+  expires_at: string
+  consent_context_hash: string
+  device_id: string
+  key_id: string
+  key_version: number
+  public_key_fingerprint: string
+}
+
+export function constructConsentSigningInputV3(params: ConsentSigningFieldsV3): string {
+  return JSON.stringify({
+    access_duration: params.access_duration,
+    challenge_nonce: params.challenge_nonce,
+    consent_context_hash: params.consent_context_hash,
+    decision: params.decision,
+    device_id: params.device_id,
+    domain: 'NEXA_CARE_SIGNED_CONSENT',
+    expires_at: params.expires_at,
+    hospital_id: params.hospital_id,
+    issued_at: params.issued_at,
+    key_id: params.key_id,
+    key_version: params.key_version,
+    operation: 'CONSENT_DECISION',
+    patient_id: params.patient_id,
+    protocol_version: 'nexa-consent-v3',
+    provider_id: params.provider_id,
+    public_key_fingerprint: params.public_key_fingerprint,
+    purpose: params.purpose,
+    request_id: params.request_id,
+    scope: params.scope,
+  })
+}
+
+export async function signConsentChallengeV3(params: ConsentSigningFieldsV3): Promise<string> {
+  const encodedPrivateKey = await SecureStore.getItemAsync(DEVICE_PRIVATE_KEY_STORAGE_KEY)
+  if (!encodedPrivateKey)
+    throw new Error(
+      'This device is not enrolled. Please secure this device before approving consent.'
+    )
+  const message = new TextEncoder().encode(constructConsentSigningInputV3(params))
   const digest = new Uint8Array(await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, message))
   return bytesToBase64(p256.sign(digest, base64ToBytes(encodedPrivateKey)).toDERRawBytes())
 }

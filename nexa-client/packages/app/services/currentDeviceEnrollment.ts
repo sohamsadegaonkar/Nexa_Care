@@ -48,6 +48,8 @@ export interface LocalInstallationMetadata {
 
 export interface CurrentDeviceEnrollment {
   deviceId: string
+  keyId: string
+  keyVersion: number
   status: 'active'
   enrolledNow: boolean
   keyFingerprint: string
@@ -201,6 +203,8 @@ export async function ensureCurrentDeviceEnrollment(
       await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
       return {
         deviceId: exactActiveDevice.device_id,
+        keyId: exactActiveDevice.key_id,
+        keyVersion: exactActiveDevice.key_version,
         status: 'active',
         enrolledNow: false,
         keyFingerprint: metadata.keyFingerprint,
@@ -221,6 +225,8 @@ export async function ensureCurrentDeviceEnrollment(
       await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
       return {
         deviceId: fingerprintMatchedDevice.device_id,
+        keyId: fingerprintMatchedDevice.key_id,
+        keyVersion: fingerprintMatchedDevice.key_version,
         status: 'active',
         enrolledNow: false,
         keyFingerprint: metadata.keyFingerprint,
@@ -248,6 +254,8 @@ export async function ensureCurrentDeviceEnrollment(
     }
     return {
       deviceId: enrollment.device_id,
+      keyId: enrollment.key_id,
+      keyVersion: enrollment.key_version,
       status: 'active',
       enrolledNow: true,
       keyFingerprint: enrolledMetadata.keyFingerprint,

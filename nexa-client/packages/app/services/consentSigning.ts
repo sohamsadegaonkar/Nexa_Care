@@ -2,23 +2,24 @@
 import { ApiError, NexaApiClient } from '../utils/apiClient'
 import {
   authenticateWithBiometrics as requireBiometrics,
-  constructConsentSigningInput,
-  signConsentChallenge,
+  constructConsentSigningInputV3,
+  signConsentChallengeV3,
 } from './deviceKeys'
 import { CurrentDeviceError, ensureCurrentDeviceEnrollment } from './currentDeviceEnrollment'
 
-export const constructSigningInput = constructConsentSigningInput
-export const signConsentDecision = signConsentChallenge
+export const constructSigningInput = constructConsentSigningInputV3
+export const signConsentDecision = signConsentChallengeV3
 export async function authenticateWithBiometrics(): Promise<boolean> {
   await requireBiometrics()
   return true
 }
 
 export interface ConsentChallenge {
-  protocol_version: 'nexa-consent-v2'
+  protocol_version: 'nexa-consent-v3'
   request_id: string
   patient_id: string
   provider_id: string
+  hospital_id: string
   provider_name: string
   hospital_name: string
   purpose: string
@@ -27,6 +28,7 @@ export interface ConsentChallenge {
   challenge_nonce: string
   issued_at: string
   expires_at: string
+  consent_context_hash: string
   status: string
 }
 export interface SignedApprovalResponse {
@@ -38,12 +40,13 @@ export interface SignedApprovalResponse {
 async function submitSignedDecision(
   challenge: ConsentChallenge,
   decision: 'approved' | 'denied',
-  deviceId: string
+  device: { deviceId: string; keyId: string; keyVersion: number; keyFingerprint: string }
 ): Promise<SignedApprovalResponse> {
   const signature = await signConsentDecision({
     request_id: challenge.request_id,
     patient_id: challenge.patient_id,
     provider_id: challenge.provider_id,
+    hospital_id: challenge.hospital_id,
     challenge_nonce: challenge.challenge_nonce,
     decision,
     scope: challenge.scope,
@@ -51,15 +54,24 @@ async function submitSignedDecision(
     access_duration: challenge.access_duration,
     issued_at: challenge.issued_at,
     expires_at: challenge.expires_at,
-    device_id: deviceId,
+    consent_context_hash: challenge.consent_context_hash,
+    device_id: device.deviceId,
+    key_id: device.keyId,
+    key_version: device.keyVersion,
+    public_key_fingerprint: device.keyFingerprint,
   })
   const payload = {
+    protocol_version: 'nexa-consent-v3' as const,
     request_id: challenge.request_id,
     patient_id: challenge.patient_id,
     decision,
     challenge_nonce: challenge.challenge_nonce,
+    consent_context_hash: challenge.consent_context_hash,
     signature,
-    device_id: deviceId,
+    device_id: device.deviceId,
+    key_id: device.keyId,
+    key_version: device.keyVersion,
+    public_key_fingerprint: device.keyFingerprint,
   }
   return decision === 'approved'
     ? NexaApiClient.approveSignedConsent(payload)
@@ -72,7 +84,7 @@ export async function approveWithBiometric(
   // Confirm the exact local device before showing Android biometrics.
   const currentDevice = await ensureCurrentDeviceEnrollment({ allowEnrollment: false })
   await requireBiometrics()
-  return submitSignedDecision(challenge, 'approved', currentDevice.deviceId)
+  return submitSignedDecision(challenge, 'approved', currentDevice)
 }
 
 export type ConsentErrorKind = 'reauth' | 'forbidden' | 'not-found' | 'expired' | 'setup' | 'retry'
@@ -106,7 +118,7 @@ export async function denyWithSignature(
   challenge: ConsentChallenge
 ): Promise<SignedApprovalResponse> {
   const currentDevice = await ensureCurrentDeviceEnrollment({ allowEnrollment: false })
-  return submitSignedDecision(challenge, 'denied', currentDevice.deviceId)
+  return submitSignedDecision(challenge, 'denied', currentDevice)
 }
 
 export async function fetchChallenge(requestId: string): Promise<ConsentChallenge> {

@@ -194,6 +194,7 @@ describe('shared API transport', () => {
 
     await NexaApiClient.requestConsent(
       {
+        protocol_version: 'nexa-consent-v3',
         discovery_handle: 'opaque-discovery-handle-12345678901234567890',
         purpose: 'treatment',
         scope: 'clinical',
