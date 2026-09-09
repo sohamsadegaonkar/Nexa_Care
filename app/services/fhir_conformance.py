@@ -12,6 +12,7 @@ from collections import Counter
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 FHIR_VERSION = "4.0.1"
 CONFORMANCE_CONTRACT = "nexa-fhir-r4-base-v1"
@@ -119,6 +120,17 @@ def _valid_datetime(value: Any) -> bool:
     return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
+def _valid_urn_uuid(value: Any) -> bool:
+    if not isinstance(value, str) or not value.startswith("urn:uuid:"):
+        return False
+    raw_uuid = value.removeprefix("urn:uuid:")
+    try:
+        parsed = UUID(raw_uuid)
+    except (ValueError, AttributeError):
+        return False
+    return str(parsed) == raw_uuid.lower()
+
+
 def _coding_contains(
     concept: Any,
     *,
@@ -174,8 +186,9 @@ def _validate_condition(
     errors: list[str],
     path: str,
 ) -> None:
-    if not _coding_contains(
-        resource.get("clinicalStatus"),
+    clinical_status = resource.get("clinicalStatus")
+    if clinical_status is not None and not _coding_contains(
+        clinical_status,
         system=CONDITION_CLINICAL_STATUS_SYSTEM,
         allowed_codes=CONDITION_CLINICAL_STATUSES,
     ):
@@ -343,8 +356,8 @@ def validate_fhir_r4_bundle(
             continue
         full_url = entry.get("fullUrl")
         resource = entry.get("resource")
-        if not isinstance(full_url, str) or not full_url.startswith("urn:uuid:"):
-            errors.append(f"{path}.fullUrl: urn:uuid identity required")
+        if not _valid_urn_uuid(full_url):
+            errors.append(f"{path}.fullUrl: valid urn:uuid identity required")
         elif full_url in full_urls:
             errors.append(f"{path}.fullUrl: duplicate fullUrl forbidden")
         else:
