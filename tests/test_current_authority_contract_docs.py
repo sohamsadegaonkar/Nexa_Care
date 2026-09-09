@@ -1,4 +1,4 @@
-"""Regression checks for the post-Slice-6 authority contract documentation."""
+"""Regression checks for the current authority and Slice 7 closure documentation."""
 
 from __future__ import annotations
 
@@ -86,13 +86,47 @@ def test_deviation_report_does_not_reassert_resolved_alpha_security_gaps() -> No
     assert report.count("**RESOLVED**") >= 5
 
 
-def test_current_state_preserves_external_and_physical_blockers() -> None:
+def test_current_state_preserves_slice_7_external_and_manual_boundaries() -> None:
     current = _read("docs/CURRENT-STATE.md")
 
     assert "BLOCKED BY PHYSICAL PLATFORM / NOT_RUN" in current
     assert "Official live ABDM/NHA HPR/HFR" in current
-    assert "benchmark_valid" in current
+    assert "Slice 7F remains **EXTERNALLY BLOCKED**" in current
+
+    assert "Slice 7B live pilot runtime: NOT_RUN" in current
+    assert "Slice 7C live extraction accuracy: NOT QUALIFIED" in current
+    assert "Slice 7D external FHIR validation / partner interoperability: NOT_RUN" in current
+    assert "Slice 7E operational database snapshot integrity evidence: NOT_RUN" in current
+
+    assert "benchmark_valid=false" in current
     assert "did not pass extraction accuracy qualification" in current
+    assert "DRAFT — NOT APPROVED — NOT IN EFFECT" in current
+    assert "Security and privacy/legal approval remain **PENDING**" in current
+    assert "lifecycle application and read-back evidence remain **NOT_RUN**" in current
+
+
+def test_slice_7_closure_plan_does_not_invent_external_or_future_completion() -> None:
+    plan = _read("docs/governance/SLICE_7_PILOT_READINESS_PLAN.md")
+
+    assert "SOFTWARE WORK THROUGH 7E MERGED" in plan
+    assert "7F EXTERNALLY BLOCKED" in plan
+    assert "LIVE PILOT NOT_RUN" in plan
+    assert "LIVE ACCURACY NOT QUALIFIED" in plan
+    assert "EXTERNAL VALIDATION NOT_RUN" in plan
+    assert "OPERATIONAL DATABASE SNAPSHOT NOT_RUN" in plan
+    assert "RETENTION APPROVAL PENDING" in plan
+    assert "BLOCKED BY PHYSICAL PLATFORM / NOT_RUN" in plan
+    assert "no committed Slice 8 plan" in plan
+    assert "does not infer or invent one" in plan
+
+
+def test_current_state_names_partition_aware_audit_verifier() -> None:
+    current = _read("docs/CURRENT-STATE.md")
+
+    assert "scripts/verify_audit_partitions.py" in current
+    assert "scripts/verify_audit_chain.py" in current
+    assert "compatibility entry point" in current
+    assert "scripts/verify_audit_integrity_evidence.py" in current
 
 
 def test_alpha_architecture_is_explicitly_historical() -> None:
