@@ -36,3 +36,73 @@ jobs:
 
       - name: Build workspace packages
         run: yarn build
+
+  native-android:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./nexa-client
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Android native project
+        run: yarn workspace expo-app prebuild --platform android --no-install --clean
+
+      - name: Compile Android native sources
+        working-directory: ./nexa-client/apps/expo/android
+        run: ./gradlew :app:compileDebugKotlin --no-daemon
+        timeout-minutes: 15
+
+  native-ios:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: ./nexa-client
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate iOS native project
+        run: yarn workspace expo-app prebuild --platform ios --no-install --clean
+
+      - name: Install CocoaPods
+        working-directory: ./nexa-client/apps/expo/ios
+        run: pod install
+        timeout-minutes: 10
+
+      - name: Compile iOS native sources
+        working-directory: ./nexa-client/apps/expo/ios
+        run: |
+          WORKSPACE="$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)"
+          SCHEME="$(xcodebuild -list -json -workspace "$WORKSPACE" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["workspace"]["schemes"][0])')"
+          xcodebuild -workspace "$WORKSPACE" -scheme "$SCHEME" -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+        timeout-minutes: 20
