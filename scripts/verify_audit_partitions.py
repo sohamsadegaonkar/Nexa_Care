@@ -168,7 +168,12 @@ async def verify_partition(
         row = by_hash[current]
         details = row["details"]
         if isinstance(details, str):
-            details = json.loads(details)
+            try:
+                details = json.loads(details)
+            except (json.JSONDecodeError, TypeError):
+                return await fail(
+                    f"invalid details payload at audit_id={row['audit_id']}"
+                )
         if not isinstance(details, dict):
             return await fail(f"invalid details payload at audit_id={row['audit_id']}")
 
