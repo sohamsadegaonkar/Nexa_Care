@@ -1,0 +1,119 @@
+name: UI Cleanup Contract Reconciliation
+
+on:
+  push:
+    branches: [ui-ux-product-polish]
+
+permissions:
+  contents: write
+
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ui-ux-product-polish
+      - name: Reconcile stale source-shape guardrails
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path: str, old: str, new: str, count: int = 1) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrences, found {actual}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          consent = 'tests/test_consent_signing.py'
+          replace_exact(
+              consent,
+              '''    def test_has_green_approve_button(self) -> None:\n        code = _read(CONSENT_REQUEST_PATH)\n        assert 'theme="green"' in code, "Approve button must use the green theme"\n        assert "Approve" in code, "Must have Approve button text"''',
+              '''    def test_has_primary_approve_button(self) -> None:\n        code = _read(CONSENT_REQUEST_PATH)\n        assert 'intent="primary"' in code, "Approve must use the primary action treatment"\n        assert "Approve" in code, "Must have Approve button text"''',
+          )
+          replace_exact(
+              consent,
+              '''    def test_has_red_deny_button(self) -> None:\n        code = _read(CONSENT_REQUEST_PATH)\n        assert 'theme="red"' in code, "Deny button must use the red theme"\n        assert "Deny" in code, "Must have Deny button text"''',
+              '''    def test_has_danger_deny_button(self) -> None:\n        code = _read(CONSENT_REQUEST_PATH)\n        assert 'intent="danger"' in code, "Deny must use the danger action treatment"\n        assert "Deny" in code, "Must have Deny button text"''',
+          )
+          replace_exact(
+              consent,
+              '''        assert "from 'tamagui'" in code, "Must use Tamagui components"''',
+              '''        assert "from '@my/ui'" in code or "from 'tamagui'" in code, "Must use the shared Tamagui UI layer"''',
+          )
+          replace_exact(
+              consent,
+              '''        # Step 1: ConsentRequestScreen shows challenge and has green Approve\n        assert "fetchChallenge" in consent_code, "Must fetch challenge"\n        assert "Approve" in consent_code, "Must have Approve button"\n        assert 'theme="green"' in consent_code, "Approve must use the green theme"''',
+              '''        # Step 1: ConsentRequestScreen shows challenge and has a primary Approve action\n        assert "fetchChallenge" in consent_code, "Must fetch challenge"\n        assert "Approve" in consent_code, "Must have Approve button"\n        assert 'intent="primary"' in consent_code, "Approve must use the primary action treatment"''',
+          )
+          replace_exact(
+              consent,
+              '''        # Step 1: ConsentRequestScreen has red Deny button\n        assert "Deny" in consent_code, "Must have Deny button"\n        assert 'theme="red"' in consent_code, "Deny must use the red theme"''',
+              '''        # Step 1: ConsentRequestScreen has a distinct danger Deny action\n        assert "Deny" in consent_code, "Must have Deny button"\n        assert 'intent="danger"' in consent_code, "Deny must use the danger action treatment"''',
+          )
+
+          doctor = 'tests/test_doctor_screens.py'
+          replace_exact(
+              doctor,
+              '''    def test_shows_provider_id_card(self) -> None:\n        """Must display provider ID in an identity card."""\n        code = _read_screen("DoctorDashboardScreen")\n        assert "providerId" in code, "Must display providerId from context"''',
+              '''    def test_shows_human_facing_provider_context(self) -> None:\n        """Dashboard must identify the signed-in provider and facility without requiring a raw UUID."""\n        code = _read_screen("DoctorDashboardScreen")\n        assert "displayName" in code, "Must display provider name from context"\n        assert "hospitalName" in code, "Must display facility name from context"\n        assert "role" in code, "Must display session role from context"''',
+          )
+
+          patient = 'tests/test_patient_screens.py'
+          replace_exact(
+              patient,
+              '''        assert "from 'tamagui'" in code, f"{screen} does not import from 'tamagui'"''',
+              '''        uses_shared_tamagui = "from 'tamagui'" in code or "from '@my/ui'" in code\n        assert uses_shared_tamagui, f"{screen} does not use Tamagui or the shared @my/ui layer"''',
+          )
+          replace_exact(
+              patient,
+              '''            assert "backgroundColor: '#FFFFFF'" in code''',
+              '''            assert "nexaCanvas" in code, "Full-screen background must use the active Nexa theme"''',
+          )
+          replace_exact(
+              patient,
+              '''        # Approve should be green, Deny should be red\n        assert (\n            "$green9" in code or "green" in code.lower()\n        ), "Approve must use green color"\n        assert "$red9" in code or "red" in code.lower(), "Deny must use red color"''',
+              '''        assert 'intent="primary"' in code, "Approve must use the primary action treatment"\n        assert 'intent="danger"' in code, "Deny must use a distinct danger treatment"''',
+          )
+          replace_exact(
+              patient,
+              '''        scroll_end = code.rindex("</ScrollView>")\n        assert code.index("onPress={handleApprove}") < scroll_end\n        assert code.index("onPress={handleDeny}") < scroll_end''',
+              '''        scroll_end = code.rindex("</ScrollView>")\n        assert scroll_end < code.index("onPress={handleApprove}"), "Approve must remain in the sticky action footer"\n        assert scroll_end < code.index("onPress={handleDeny}"), "Deny must remain in the sticky action footer"\n        assert "flexShrink={0}" in code\n        assert "paddingBottom={insets.bottom + 16}" in code''',
+          )
+          replace_exact(
+              patient,
+              '''    assert "{error !== null ?" in code or "{error ?" in code''',
+              '''    assert "{error !== null" in code or "{error ?" in code''',
+          )
+
+          pipeline = 'tests/test_pipeline_screens.py'
+          replace_exact(
+              pipeline,
+              '''        assert "Upload &amp; AI Extract" in dashboard''',
+              '''        assert "Upload & AI Extract" in dashboard''',
+          )
+          PY
+      - name: Run focused reconciled guardrails
+        run: |
+          python -m pytest \
+            tests/test_consent_signing.py \
+            tests/test_doctor_screens.py \
+            tests/test_patient_screens.py \
+            tests/test_pipeline_screens.py \
+            -q --tb=short
+      - name: Check diff
+        run: git diff --check
+      - name: Commit reconciliation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_consent_signing.py tests/test_doctor_screens.py tests/test_patient_screens.py tests/test_pipeline_screens.py
+          git commit -m "test(ui): reconcile shared design-system contracts"
+          git push origin HEAD:ui-ux-product-polish
