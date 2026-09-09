@@ -19,6 +19,7 @@
     "@tamagui/themes": "2.0.0-rc.16",
     "axios": "^1.18.1",
     "burnt": "^0.12.2",
+    "expo": "~54.0.35",
     "expo-constants": "~18.0.13",
     "expo-crypto": "~15.0.8",
     "expo-linking": "~8.0.12",

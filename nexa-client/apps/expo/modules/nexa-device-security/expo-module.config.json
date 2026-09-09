@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "apple"],
+  "apple": {
+    "modules": ["NexaDeviceSecurityModule"]
+  },
+  "android": {
+    "modules": ["ai.nexacare.devicesecurity.NexaDeviceSecurityModule"]
+  }
+}
