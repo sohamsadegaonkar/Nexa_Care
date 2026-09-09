@@ -1,0 +1,95 @@
+name: ABDM FHIR External Validation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - slice-8d-abdm-fhir-external-validation
+    paths:
+      - 'app/services/fhir_converter.py'
+      - 'app/services/fhir_conformance.py'
+      - 'scripts/generate_fhir_abdm_qualification_fixtures.py'
+      - '.github/workflows/fhir-abdm-external-validation.yml'
+  pull_request:
+    paths:
+      - 'app/services/fhir_converter.py'
+      - 'app/services/fhir_conformance.py'
+      - 'scripts/generate_fhir_abdm_qualification_fixtures.py'
+      - '.github/workflows/fhir-abdm-external-validation.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Generate synthetic Nexa export fixtures
+        run: |
+          rm -rf /tmp/nexa-fhir-abdm
+          python scripts/generate_fhir_abdm_qualification_fixtures.py /tmp/nexa-fhir-abdm
+          python scripts/validate_fhir_r4_bundle.py \
+            /tmp/nexa-fhir-abdm/bundle.json \
+            --patient-id 11111111-1111-4111-8111-111111111111
+
+      - name: Download official HL7 FHIR validator
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            https://github.com/hapifhir/org.hl7.fhir.core/releases/latest/download/validator_cli.jar \
+            --output /tmp/validator_cli.jar
+          test -s /tmp/validator_cli.jar
+          echo "validator_sha256=$(sha256sum /tmp/validator_cli.jar | awk '{print $1}')"
+
+      - name: Validate Nexa resources against published ABDM IG 6.5.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >/tmp/abdm-validation-targets.tsv
+          import json
+          from pathlib import Path
+          data = json.loads(Path('/tmp/nexa-fhir-abdm/manifest.json').read_text())
+          assert data['synthetic_only'] is True
+          assert data['abdm_ig_package'] == 'ndhm.in#6.5.0'
+          assert data['fhir_version'] == '4.0.1'
+          for item in data['resources']:
+              print(f"{item['file']}\t{item['profile']}")
+          PY
+
+          failures=0
+          while IFS=$'\t' read -r file profile; do
+            echo "Validating ${file} against ${profile}"
+            if ! java -jar /tmp/validator_cli.jar \
+              "/tmp/nexa-fhir-abdm/${file}" \
+              -version 4.0.1 \
+              -ig ndhm.in#6.5.0 \
+              -profile "${profile}" \
+              -output "/tmp/nexa-fhir-abdm/${file%.json}-validation.txt"; then
+              failures=$((failures + 1))
+            fi
+          done </tmp/abdm-validation-targets.tsv
+
+          if [ "$failures" -ne 0 ]; then
+            echo "ABDM_FHIR_EXTERNAL_VALIDATION=FAIL count=${failures}"
+            for report in /tmp/nexa-fhir-abdm/*-validation.txt; do
+              echo "--- $(basename "$report") ---"
+              cat "$report"
+            done
+            exit 1
+          fi
+          echo "ABDM_FHIR_EXTERNAL_VALIDATION=PASS"
