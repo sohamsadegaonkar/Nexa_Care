@@ -57,24 +57,23 @@ def _entry(resource: dict) -> dict:
     return {"fullUrl": f"urn:uuid:{resource_id}", "resource": resource}
 
 
-def _condition(patient_id: str, diagnosis: str, *, recorded_at: str | None = None) -> dict:
-    resource = {
-        "resourceType": "Condition",
-        "clinicalStatus": {
-            "coding": [
-                {
-                    "system": CONDITION_CLINICAL_STATUS_SYSTEM,
-                    "code": "active",
-                    "display": "Active",
-                }
-            ]
-        },
-        "code": {"text": diagnosis},
-        "subject": {"reference": f"Patient/{patient_id}"},
-    }
-    if recorded_at:
-        resource["recordedDate"] = recorded_at
-    return _entry(resource)
+def _condition(patient_id: str, diagnosis: str) -> dict:
+    return _entry(
+        {
+            "resourceType": "Condition",
+            "clinicalStatus": {
+                "coding": [
+                    {
+                        "system": CONDITION_CLINICAL_STATUS_SYSTEM,
+                        "code": "active",
+                        "display": "Active",
+                    }
+                ]
+            },
+            "code": {"text": diagnosis},
+            "subject": {"reference": f"Patient/{patient_id}"},
+        }
+    )
 
 
 def _medication_request(patient_id: str, medication: dict | str) -> dict:
@@ -219,18 +218,10 @@ def generate_fhir_bundle(patient_id: str, clinical_records: list[dict]) -> dict:
         if record_type == "allergy":
             entries.append(_allergy_intolerance(patient_id, record))
             continue
-        if record_type == "timeline_diagnosis":
-            entries.append(
-                _condition(
-                    patient_id,
-                    str(
-                        record.get("summary") or record.get("diagnosis") or "Diagnosis"
-                    ),
-                    recorded_at=record.get("occurred_at"),
-                )
-            )
-            continue
 
+        # The remaining shape is the deprecated clinical-shard fallback. Its
+        # explicit ``diagnoses`` array is preserved for backward compatibility;
+        # timeline free text is never reinterpreted as a Condition here.
         for diagnosis in _string_items(record.get("diagnoses")):
             entries.append(_condition(patient_id, diagnosis))
         for prescription in _string_items(record.get("prescriptions")):
