@@ -7,9 +7,9 @@ Owner: Nexa Care engineering leadership
 Security reviewer: Human owner required  
 Privacy/legal reviewer: Human owner required  
 Clinical reviewer: Human owner required  
-Last reviewed: 2026-07-27  
+Last reviewed: 2026-09-09
 Next review: 2026-10-25 or sooner after a constitutional change  
-Repository baseline: `a9d542f` on `feature/document-processing-e2e`; Alembic head `20260727_doc_process_bind`
+Repository baseline: `aa091e14cf38124ca81e32438b49bdad4d79be8b` on `main`; Alembic head `20260909_device_trust_lifecycle`
 
 ## 1. Product mission
 
@@ -163,7 +163,7 @@ Validation query:
 Forward-fix strategy:
 ```
 
-Current head is `20260906_verification_scheduler`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
+Current head is `20260909_device_trust_lifecycle`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
 
 ## 11. Frontend standard
 
