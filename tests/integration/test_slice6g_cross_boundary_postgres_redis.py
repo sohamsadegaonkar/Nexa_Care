@@ -117,8 +117,8 @@ async def real_redis():
     try:
         yield client
     finally:
-        await client.aclose()
-        await pool.aclose()
+        await client.close()
+        await pool.disconnect(inuse_connections=True)
 
 
 def _keypair():
