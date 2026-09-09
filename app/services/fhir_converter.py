@@ -4,16 +4,48 @@ This module intentionally builds lightweight raw dictionaries instead of using
 large external FHIR packages. Current structured clinical records are the
 primary source; legacy shard-shaped dictionaries remain supported as fallback
 input for older data.
+
+The converter targets the declared Nexa base-R4 subset in
+``app.services.fhir_conformance``. External implementation-guide or partner
+conformance is a separate qualification boundary.
 """
 
 from __future__ import annotations
 
+import re
 from uuid import uuid4
+
+CONDITION_CLINICAL_STATUS_SYSTEM = (
+    "http://terminology.hl7.org/CodeSystem/condition-clinical"
+)
+ALLERGY_CLINICAL_STATUS_SYSTEM = (
+    "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical"
+)
+OBSERVATION_INTERPRETATION_SYSTEM = (
+    "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
+)
+UCUM_SYSTEM = "http://unitsofmeasure.org"
+
+# Only units whose source representation has an unambiguous UCUM mapping are
+# promoted to Quantity. Other values remain lossless valueString exports.
+UCUM_UNIT_CODES = {
+    "%": "%",
+    "mg/dL": "mg/dL",
+    "mmol/L": "mmol/L",
+    "kg": "kg",
+    "g": "g",
+    "cm": "cm",
+    "mm": "mm",
+    "bpm": "/min",
+    "beats/min": "/min",
+    "mmHg": "mm[Hg]",
+    "°C": "Cel",
+}
+_NUMERIC_VALUE = re.compile(r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$")
 
 
 def _string_items(value: object) -> list[str]:
     """Return non-empty string items from a clinical list field."""
-
     if not isinstance(value, list):
         return []
     return [item.strip() for item in value if isinstance(item, str) and item.strip()]
@@ -25,23 +57,24 @@ def _entry(resource: dict) -> dict:
     return {"fullUrl": f"urn:uuid:{resource_id}", "resource": resource}
 
 
-def _condition(patient_id: str, diagnosis: str) -> dict:
-    return _entry(
-        {
-            "resourceType": "Condition",
-            "clinicalStatus": {
-                "coding": [
-                    {
-                        "system": "http://terminology.hl7.org/CodeSystem/condition-clinical",
-                        "code": "active",
-                        "display": "Active",
-                    }
-                ]
-            },
-            "code": {"text": diagnosis},
-            "subject": {"reference": f"Patient/{patient_id}"},
-        }
-    )
+def _condition(patient_id: str, diagnosis: str, *, recorded_at: str | None = None) -> dict:
+    resource = {
+        "resourceType": "Condition",
+        "clinicalStatus": {
+            "coding": [
+                {
+                    "system": CONDITION_CLINICAL_STATUS_SYSTEM,
+                    "code": "active",
+                    "display": "Active",
+                }
+            ]
+        },
+        "code": {"text": diagnosis},
+        "subject": {"reference": f"Patient/{patient_id}"},
+    }
+    if recorded_at:
+        resource["recordedDate"] = recorded_at
+    return _entry(resource)
 
 
 def _medication_request(patient_id: str, medication: dict | str) -> dict:
@@ -72,10 +105,29 @@ def _medication_request(patient_id: str, medication: dict | str) -> dict:
     return _entry(resource)
 
 
+def _numeric_value(value: object) -> int | float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value
+    if not isinstance(value, str):
+        return None
+    raw = value.strip()
+    if not _NUMERIC_VALUE.fullmatch(raw):
+        return None
+    try:
+        number = float(raw)
+    except ValueError:
+        return None
+    return int(number) if number.is_integer() else number
+
+
 def _observation(patient_id: str, record: dict) -> dict:
     label = record.get("test_name") or record.get("type") or "Observation"
     value = record.get("value")
-    unit = record.get("unit")
+    unit = str(record.get("unit") or "").strip()
     resource = {
         "resourceType": "Observation",
         "status": "final",
@@ -83,12 +135,36 @@ def _observation(patient_id: str, record: dict) -> dict:
         "subject": {"reference": f"Patient/{patient_id}"},
     }
     if value is not None:
-        resource["valueString"] = f"{value} {unit}".strip() if unit else str(value)
+        numeric = _numeric_value(value)
+        ucum_code = UCUM_UNIT_CODES.get(unit) if unit else None
+        if numeric is not None and (not unit or ucum_code is not None):
+            quantity: dict[str, object] = {"value": numeric}
+            if unit:
+                quantity.update(
+                    {
+                        "unit": unit,
+                        "system": UCUM_SYSTEM,
+                        "code": ucum_code,
+                    }
+                )
+            resource["valueQuantity"] = quantity
+        else:
+            resource["valueString"] = (
+                f"{value} {unit}".strip() if unit else str(value)
+            )
     if record.get("recorded_at"):
         resource["effectiveDateTime"] = record["recorded_at"]
     if record.get("is_abnormal"):
         resource["interpretation"] = [
-            {"coding": [{"code": "A", "display": "Abnormal"}]}
+            {
+                "coding": [
+                    {
+                        "system": OBSERVATION_INTERPRETATION_SYSTEM,
+                        "code": "A",
+                        "display": "Abnormal",
+                    }
+                ]
+            }
         ]
     if record.get("reference_range"):
         resource["referenceRange"] = [{"text": str(record["reference_range"])}]
@@ -96,19 +172,33 @@ def _observation(patient_id: str, record: dict) -> dict:
 
 
 def _allergy_intolerance(patient_id: str, allergy: dict) -> dict:
+    """Export allergy propensity without inventing an adverse-reaction event.
+
+    The current Nexa ``Allergy`` row has allergen/severity/risk metadata but does
+    not model a concrete reaction manifestation. FHIR R4 requires every
+    ``AllergyIntolerance.reaction`` to contain at least one manifestation, so the
+    previous severity-only reaction was invalid. Until Nexa stores an actual
+    manifestation, severity is not emitted as a fabricated reaction event.
+    """
+
     return _entry(
         {
             "resourceType": "AllergyIntolerance",
-            "clinicalStatus": {"coding": [{"code": "active"}]},
+            "clinicalStatus": {
+                "coding": [
+                    {
+                        "system": ALLERGY_CLINICAL_STATUS_SYSTEM,
+                        "code": "active",
+                        "display": "Active",
+                    }
+                ]
+            },
             "code": {"text": str(allergy.get("allergen") or "Allergy")},
             "patient": {"reference": f"Patient/{patient_id}"},
             "criticality": "high"
             if str(allergy.get("risk_level") or "").upper()
             in {"HIGH_RISK", "CRITICAL_RISK"}
             else "unable-to-assess",
-            "reaction": [
-                {"severity": str(allergy.get("severity") or "unknown").lower()}
-            ],
         }
     )
 
@@ -136,6 +226,7 @@ def generate_fhir_bundle(patient_id: str, clinical_records: list[dict]) -> dict:
                     str(
                         record.get("summary") or record.get("diagnosis") or "Diagnosis"
                     ),
+                    recorded_at=record.get("occurred_at"),
                 )
             )
             continue
