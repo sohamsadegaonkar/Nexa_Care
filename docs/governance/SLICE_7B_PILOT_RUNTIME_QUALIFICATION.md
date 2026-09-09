@@ -1,10 +1,12 @@
 # Slice 7B — Pilot Runtime and Cloud-Security Qualification
 
-Status: **STARTED — evidence harness implemented; live pilot execution not yet claimed**
+Status: **SOFTWARE HARNESS QUALIFIED CANDIDATE — LIVE PILOT NOT_RUN**
 
 Baseline `main`: `03aa3bed8097dac989fe81ce34097d17da62f58d`
 
 Branch: `slice-7b-pilot-runtime-qualification`
+
+Pre-attestation qualification head: `7611d0e904065f84934cc2d6dcfae89e05a3aa8c`
 
 ## Objective
 
@@ -77,11 +79,40 @@ A manifest with top-level `status=PASS` is rejected unless every gate is exactly
 
 `FAIL`, `BLOCKED`, and `NOT_RUN` are legitimate per-check states. They cannot be hidden by a top-level PASS.
 
+## Software-harness qualification evidence
+
+Pre-attestation exact head:
+
+`7611d0e904065f84934cc2d6dcfae89e05a3aa8c`
+
+### Backend CI
+
+Backend CI #378, run `34348795109`: **SUCCESS**.
+
+- Ruff: **SUCCESS** — `All checks passed!`.
+- Partition A — Quality & Pure Unit: **3622 passed**, 396 deselected; JUnit failures/errors/skips `0/0/0`; zero-skip assertion **SUCCESS**.
+- Partition B — PostgreSQL Qualification: **SUCCESS**; zero-skip assertion **SUCCESS**.
+- Partition C — PostgreSQL + Redis Qualification: **SUCCESS**; zero-skip assertion **SUCCESS**.
+
+This is repository/CI qualification of the validator and existing application guardrails. The CI PostgreSQL/Redis services are not a deployed pilot runtime.
+
+### Frontend CI
+
+Frontend CI #327, run `34348795192`: **SUCCESS**.
+
+- frontend tests: **SUCCESS**;
+- Next production build: **SUCCESS**;
+- workspace package build: **SUCCESS**;
+- iOS native project generation, CocoaPods install, and native-source compile: **SUCCESS**;
+- Android native project generation and native-source compile: **SUCCESS**.
+
+Native compilation remains source/build evidence only and creates no physical-device claim.
+
 ## Live execution boundary
 
 Repository CI can qualify the evidence validator and the application behavior it can exercise locally. It cannot truthfully manufacture live ECS/Fargate, task-role, KMS key, S3 bucket policy, deployed frontend identity, or cloud-outage evidence.
 
-Therefore Slice 7B remains **not live-runtime qualified** until an authorized pilot environment exists and an operator runs the exact deployment/runbook checks, records sanitized measured results, validates the manifest, and attaches that manifest to an immutable repository qualification head.
+Therefore Slice 7B remains **LIVE PILOT NOT_RUN** until an authorized pilot environment exists and an operator runs the exact deployment/runbook checks, records sanitized measured results, validates the manifest, and attaches that manifest to an immutable repository qualification head.
 
 No AWS secrets should ever be committed as evidence. Only resource identifiers/ARNs that are already appropriate for sanitized operational evidence and non-secret measured statuses may be recorded.
 
@@ -96,7 +127,13 @@ No AWS secrets should ever be committed as evidence. Only resource identifiers/A
 7. create a sanitized evidence manifest;
 8. run `python scripts/validate_pilot_runtime_evidence.py <manifest>`;
 9. record measured evidence and exact deployment identities in this governance artifact;
-10. requalify the final documentation/evidence head before merge.
+10. requalify the final documentation/evidence head before any live-runtime PASS claim.
+
+## Merge boundary for the harness
+
+The validator, tests, and this governance artifact may merge after the exact final documentation head requalifies in Backend A/B/C and Frontend CI and review/base-state checks are clean. Such a merge means only that the **7B evidence harness is internally qualified and ready for live execution**.
+
+It does not mark the live runtime as PASS. A future measured pilot manifest must be committed and separately exact-head qualified before that claim can change.
 
 ## Explicit nonclaims
 
