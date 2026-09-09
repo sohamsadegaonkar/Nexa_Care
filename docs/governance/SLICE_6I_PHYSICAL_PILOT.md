@@ -56,6 +56,26 @@ The machine-checkable record is `docs/qualification/SLICE_6I_PHYSICAL_EVIDENCE.j
 
 Harness CI passing means only: **the 6I evidence contract and guardrails are qualified**. It does not change the physical status while the manifest remains blocked.
 
+## Harness qualification checkpoint
+
+The first complete Slice 6I evidence-harness implementation head is `b1634cc0e981fc3b8fb444377a77fdd499466c07` (`test(physical): establish Slice 6I evidence guardrails`). It contains the blocked evidence manifest, current physical-device runbook, validator, and adversarial validator tests. It does not contain physical execution evidence.
+
+Exact-head qualification on that implementation head completed successfully:
+
+- Backend CI #365, run `34327268795`:
+  - Partition A: **3602 passed**, 396 deselected; failures 0, errors 0, skipped 0. Ruff reported `All checks passed!`. The six new Slice 6I validator guardrail tests are included in this partition.
+  - Partition B: **272 passed**, 3726 deselected; failures 0, errors 0, skipped 0.
+  - Partition C: **124 passed**, 3874 deselected; failures 0, errors 0, skipped 0.
+  - all three JUnit zero-skip assertions passed;
+  - the disposable PostgreSQL qualification database migrated to Alembic head `20260909_device_trust_lifecycle`.
+- Frontend CI #314, run `34327268815`:
+  - JavaScript tests passed;
+  - Next production build and workspace package build passed;
+  - Android native prebuild and Kotlin compilation passed;
+  - iOS native prebuild, CocoaPods installation, and simulator compilation passed.
+
+This evidence establishes **HARNESS QUALIFIED** for the Slice 6I evidence contract and non-regression checks. It does **not** establish a physical pilot PASS. The committed physical manifest remains `BLOCKED_BY_PHYSICAL_PLATFORM` / `NOT_RUN`, and PR #19 remains draft pending genuine handset execution.
+
 ## Nonclaims
 
 Slice 6I currently does not claim physical Secure Enclave execution, physical Android hardware-backed Keystore execution, StrongBox execution, physical NFC behavior, end-to-end push delivery on a real handset, or a completed physical pilot. It does not claim Nexa Care is "fully secure".
