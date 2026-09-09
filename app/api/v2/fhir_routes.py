@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
-
 from datetime import datetime, timezone
 from uuid import UUID
 
@@ -14,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import require_active_consent, require_clinical_capability
-from app.security.provider_capabilities import ClinicalCapability
 from app.models.patient_records import (
     Allergy,
     LabResult,
@@ -24,6 +21,9 @@ from app.models.patient_records import (
 )
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.security.audit_context import AuditDomain, current_audit_context
+from app.security.provider_capabilities import ClinicalCapability
+from app.services.fhir_conformance import validate_fhir_r4_bundle
 from app.services.fhir_converter import generate_fhir_bundle
 
 router = APIRouter(prefix="/api/v2/fhir", tags=["fhir"])
@@ -191,6 +191,15 @@ async def export_fhir_bundle(
     patient_id_text = str(patient_id)
     clinical_records = await _fetch_clinical_records(patient_id_text, db)
     bundle = generate_fhir_bundle(patient_id_text, clinical_records)
+    conformance = validate_fhir_r4_bundle(
+        bundle, expected_patient_id=patient_id_text
+    )
+    if not conformance["valid"]:
+        # Never expose row values or detailed validator diagnostics to callers.
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="FHIR export failed internal conformance validation.",
+        )
     exported_at = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -209,6 +218,8 @@ async def export_fhir_bundle(
                 "source": "structured_patient_records"
                 if clinical_records and clinical_records[0].get("record_type")
                 else "legacy_nexa_clinical_fallback",
+                "fhir_contract": conformance["contract"],
+                "fhir_version": conformance["fhir_version"],
             },
             event_timestamp=exported_at,
         )
