@@ -1,0 +1,149 @@
+name: One-shot Slice 6E auth authority patch
+
+on:
+  push:
+    branches:
+      - slice-6e-lost-device-account-recovery
+    paths:
+      - .github/workflows/one-shot-6e-auth-authority.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-auth-authority:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slice-6e-lost-device-account-recovery
+          fetch-depth: 0
+      - name: Make patient login device authority explicit
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('app/api/v2/auth_routes.py')
+          source = path.read_text()
+
+          replacements = [
+              (
+                  '''class PatientOtpVerifyResponse(BaseModel):
+              access_token: str
+              token_type: str = "bearer"
+              expires_at: datetime
+              patient_id: str
+              device_enrollment_token: str
+          ''',
+                  '''class PatientOtpVerifyResponse(BaseModel):
+              access_token: str
+              token_type: str = "bearer"
+              expires_at: datetime
+              patient_id: str
+              device_enrollment_token: str | None = None
+              device_authority_state: str
+          ''',
+              ),
+              (
+                  '''async def _enforce_otp_limits(request: Request, phone: str) -> None:
+              ip = _client_ip_from_request(request) or "unknown"
+              action = request.url.path.rsplit("/", 1)[-1]
+              try:
+                  await _otp_rate_limiter.check(action=action, ip=ip, normalized_phone=phone)
+              except OtpRateLimitExceeded:
+                  raise HTTPException(
+                      status_code=429, detail="Too many OTP requests. Please try again later."
+                  )
+              except OtpRateLimitBackendUnavailable:
+                  raise HTTPException(
+                      status_code=503, detail="OTP service is temporarily unavailable."
+                  )
+          ''',
+                  '''async def _enforce_otp_limits(request: Request, phone: str) -> None:
+              ip = _client_ip_from_request(request) or "unknown"
+              action = request.url.path.rsplit("/", 1)[-1]
+              try:
+                  await _otp_rate_limiter.check(action=action, ip=ip, normalized_phone=phone)
+              except OtpRateLimitExceeded:
+                  raise HTTPException(
+                      status_code=429, detail="Too many OTP requests. Please try again later."
+                  )
+              except OtpRateLimitBackendUnavailable:
+                  raise HTTPException(
+                      status_code=503, detail="OTP service is temporarily unavailable."
+                  )
+          
+          
+          async def _patient_device_login_authority(
+              db: AsyncSession, *, patient_id: str, session_id: str
+          ) -> tuple[str | None, str]:
+              """Separate account authentication from bootstrap device authority."""
+              from app.services.patient_device_recovery_transactions import (
+                  patient_has_device_history,
+              )
+          
+              if await patient_has_device_history(db, patient_id=UUID(patient_id)):
+                  return None, "existing_device_required"
+              token = await issue_device_enrollment_token(patient_id, session_id)
+              return token, "bootstrap_enrollment"
+          ''',
+              ),
+              (
+                  '''        enrollment_token = await issue_device_enrollment_token(patient_id, session_id)
+          ''',
+                  '''        enrollment_token, device_authority_state = await _patient_device_login_authority(
+              db, patient_id=patient_id, session_id=session_id
+          )
+          ''',
+              ),
+              (
+                  '''        device_enrollment_token=enrollment_token,
+              )
+          
+          
+          @router.post("/patient/logout"''',
+                  '''        device_enrollment_token=enrollment_token,
+              device_authority_state=device_authority_state,
+          )
+          
+          
+          @router.post("/patient/logout"''',
+              ),
+              (
+                  '''        enrollment_token = await issue_device_enrollment_token(
+              account.patient_id, session_id
+          )
+          ''',
+                  '''        enrollment_token, device_authority_state = await _patient_device_login_authority(
+              db, patient_id=account.patient_id, session_id=session_id
+          )
+          ''',
+              ),
+              (
+                  '''        patient_id=account.patient_id,
+              device_enrollment_token=enrollment_token,
+          )
+          ''',
+                  '''        patient_id=account.patient_id,
+              device_enrollment_token=enrollment_token,
+              device_authority_state=device_authority_state,
+          )
+          ''',
+              ),
+          ]
+
+          for old, new in replacements:
+              if source.count(old) != 1:
+                  raise SystemExit(f'auth authority patch anchor count={source.count(old)} for: {old[:80]!r}')
+              source = source.replace(old, new, 1)
+
+          path.write_text(source)
+          PY
+          rm .github/workflows/one-shot-6e-auth-authority.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/v2/auth_routes.py .github/workflows/one-shot-6e-auth-authority.yml
+          git diff --cached --check
+          git commit -m "feat(auth): separate login from existing device authority"
+          git push origin HEAD:slice-6e-lost-device-account-recovery
