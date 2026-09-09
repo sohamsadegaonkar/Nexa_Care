@@ -91,12 +91,32 @@ def test_structured_export_satisfies_declared_internal_r4_subset() -> None:
     allergy = next(
         item for item in resources if item["resourceType"] == "AllergyIntolerance"
     )
-    assert allergy["criticality"] == "high"
+    assert "criticality" not in allergy
     assert "reaction" not in allergy
 
     condition = next(item for item in resources if item["resourceType"] == "Condition")
     assert condition["code"]["text"] == "Synthetic diagnosis"
     assert "recordedDate" not in condition
+
+
+def test_nexa_workflow_risk_does_not_become_fhir_allergy_criticality() -> None:
+    patient_id = str(uuid.uuid4())
+    bundle = generate_fhir_bundle(
+        patient_id,
+        [
+            {
+                "record_type": "allergy",
+                "allergen": "Synthetic Allergen",
+                "severity": "Severe",
+                "risk_level": "HIGH_RISK",
+            }
+        ],
+    )
+
+    allergy = bundle["entry"][0]["resource"]
+    assert allergy["resourceType"] == "AllergyIntolerance"
+    assert "criticality" not in allergy
+    assert "reaction" not in allergy
 
 
 def test_timeline_free_text_never_mints_condition() -> None:
