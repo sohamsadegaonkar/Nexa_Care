@@ -2,7 +2,7 @@
 
 Status: **QUALIFICATION CANDIDATE — live accuracy PASS not claimed**
 
-Baseline `main`: `03aa3bed8097dac989fe81ce34097d17da62f58d`
+Baseline `main`: `2a3bc69b1a6fb6f476bc073ccdee198b9a604f29`
 
 Branch: `slice-7c-extraction-qualification`
 
@@ -23,8 +23,8 @@ by the same sanitized benchmark result.
 ## Verified starting evidence
 
 The committed 15-document corpus is synthetic and contains 53 expected field
-occurrences.  The recorded authorized capture reached Amazon Textract for all
-15/15 documents with zero provider failures.  The current sanitized replay
+occurrences. The recorded authorized capture reached Amazon Textract for all
+15/15 documents with zero provider failures. The current sanitized replay
 records:
 
 - 95 authentic evidence records;
@@ -45,23 +45,23 @@ Before this slice, the benchmark exposed `identity_metrics` and
 `patient_identity_mismatch_detection` was calculated from raw bound-identity
 equality rather than from the actual `IdentityDecisionState` outcome.
 
-That distinction is security relevant.  The committed replay contains:
+That distinction is security relevant. The committed replay contains:
 
 - `TRUE_MATCH_ACCEPTED = 13`;
 - `TRUE_MATCH_REJECTED = 1`;
 - `MISMATCH_REJECTED = 1`;
 - `MISMATCH_ACCEPTED = 0`.
 
-The rejected true-match is synthetic case 12.  Textract captured the displayed
+The rejected true-match is synthetic case 12. Textract captured the displayed
 name as `Synthetic Patient lota` while the bound synthetic identity is
-`Synthetic Patient Iota`.  Nexa correctly fails closed on that discrepancy.
+`Synthetic Patient Iota`. Nexa correctly fails closed on that discrepancy.
 Slice 7C does **not** introduce fuzzy identity matching or reinterpret the OCR
 output to manufacture a PASS.
 
 ## Slice 7C qualification contract
 
 `scripts/validate_textract_accuracy_qualification.py` is the machine-checkable
-Slice 7C qualification boundary.  It consumes only sanitized aggregate benchmark
+Slice 7C qualification boundary. It consumes only sanitized aggregate benchmark
 JSON and performs no AWS calls.
 
 A PASS requires:
@@ -85,7 +85,7 @@ A PASS requires:
    zero `MISMATCH_ACCEPTED` outcomes.
 
 The validator intentionally keeps the existing conservative field-extraction
-thresholds stable.  It adds a stricter decision-policy gate rather than lowering
+thresholds stable. It adds a stricter decision-policy gate rather than lowering
 any threshold to fit the current replay.
 
 ## Regression evidence
@@ -100,15 +100,47 @@ any threshold to fit the current replay.
 - the committed sanitized replay remains truthfully unqualified under the new
   Slice 7C contract.
 
+## Measured software/evaluator qualification evidence
+
+The pre-attestation software head
+`13acd57cb88016ad9d93e398defea34a6b0686b6` was qualified against merged
+`main` baseline `2a3bc69b1a6fb6f476bc073ccdee198b9a604f29`.
+
+GitHub Actions measured evidence:
+
+- Backend CI #383, run `34350661392`: **PASS**.
+  - Partition A — Quality & Pure Unit: `3627` passed, `0` failures,
+    `0` errors, `0` skipped.
+  - Partition B — PostgreSQL Qualification: `272` passed, `0` failures,
+    `0` errors, `0` skipped.
+  - Partition C — PostgreSQL + Redis Qualification: `124` passed,
+    `0` failures, `0` errors, `0` skipped.
+  - PostgreSQL qualification migrated the disposable database to Alembic head
+    `20260909_device_trust_lifecycle`.
+- Frontend CI #332, run `34350661338`: **PASS**.
+  - frontend tests and production/workspace builds passed;
+  - native iOS generation/compile passed;
+  - native Android generation/compile passed.
+
+This evidence qualifies the Slice 7C **software/evaluator changes** on that
+baseline. It does not upgrade the committed Textract accuracy replay to PASS,
+does not authorize or represent a new AWS call, and does not establish
+production medical accuracy.
+
+Because this attestation changes the branch head, the attestation-bearing head
+must itself pass Backend A/B/C and Frontend CI before merge. Evidence from
+`13acd57cb88016ad9d93e398defea34a6b0686b6` is not substituted for that final
+exact-head requalification.
+
 ## Current qualification boundary
 
 The current committed replay is expected to fail Slice 7C because its actual
 identity decision accepts 13/14 true-match cases and fails closed on one OCR
-identity discrepancy.  This is safer than weakening identity authority.
+identity discrepancy. This is safer than weakening identity authority.
 
 A future accuracy PASS requires a separately authorized live synthetic Textract
 run against the fixed corpus (or an explicitly reviewed corpus revision), a
-sanitized report from that run, and a green Slice 7C validator result.  Provider
+sanitized report from that run, and a green Slice 7C validator result. Provider
 reachability alone is insufficient.
 
 No live AWS call is authorized by this document or by offline replay tests.
@@ -124,7 +156,7 @@ head has:
 - no unresolved review finding that weakens extraction or identity authority.
 
 A **full Slice 7C accuracy PASS** additionally requires an authorized live
-synthetic benchmark result satisfying the validator.  Until that happens, the
+synthetic benchmark result satisfying the validator. Until that happens, the
 live accuracy status remains **NOT QUALIFIED**.
 
 ## Explicit nonclaims
