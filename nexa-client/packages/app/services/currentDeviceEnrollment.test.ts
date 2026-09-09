@@ -93,11 +93,15 @@ describe('current installation enrollment reconciliation', () => {
     expect(mocks.setDeviceId).toHaveBeenCalledWith('new-device')
   })
 
-  it('does not mistake another active patient device for this installation', async () => {
+  it('requires trusted-device authorization or recovery when another device history exists', async () => {
     mocks.serverDevices = [{ device_id: 'old-installation', status: 'active' }]
+    mocks.enrollmentToken = null
     const { ensureCurrentDeviceEnrollment } = await service()
-    await ensureCurrentDeviceEnrollment()
-    expect(mocks.enroll).toHaveBeenCalledOnce()
+    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
+      code: 'RECOVERY_REQUIRED',
+      status: 409,
+    })
+    expect(mocks.enroll).not.toHaveBeenCalled()
   })
 
   it('does not enroll when local device_id, local key, and active server row match', async () => {
