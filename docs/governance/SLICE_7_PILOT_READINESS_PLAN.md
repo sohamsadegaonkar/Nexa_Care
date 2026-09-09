@@ -194,3 +194,26 @@ The next legitimate task is whichever external/manual prerequisite becomes real 
 - begin 7F only after authoritative NHA/ABDM server-to-server machine-contract material is available.
 
 Until then, creating a new PASS, physical result, external conformance claim, human approval, official HPR/HFR contract, or Slice 8 scope by assertion would violate the Slice 7 evidence model.
+
+## Measured closure qualification evidence
+
+The pre-attestation closure head `02bb2c25b3d4acb8aae7f0ef442dc9fcd4a5c383` was tested through pull-request synthetic merge `2a45c9305503a55af5b160e0701b534681f97921` against qualification base `main` `c811ba4abbb752a2ae7227d077d409e1d0738261`.
+
+Backend CI #413 completed successfully:
+
+- Ruff: PASS;
+- Partition A: 3,649 executed, 0 failures, 0 errors, 0 skips;
+- Partition B: 272 executed, 0 failures, 0 errors, 0 skips;
+- Partition C: 124 executed, 0 failures, 0 errors, 0 skips.
+
+Frontend CI #362 completed successfully:
+
+- frontend tests: PASS;
+- Next production build: PASS;
+- workspace package build: PASS;
+- Android native project generation and source compilation: PASS;
+- iOS native project generation, CocoaPods installation, and source compilation: PASS.
+
+PR #25 had no inline review threads when this evidence was recorded. The measured run qualifies the closure documentation/regression shape that existed at `02bb2c25...`; it does **not** turn any external/manual gate above into PASS.
+
+This attestation commit changes the branch head and is therefore **not itself merge evidence**. The exact resulting head must pass the same required backend and frontend workflows, including zero-skip backend qualification, before PR #25 is merge-eligible.
