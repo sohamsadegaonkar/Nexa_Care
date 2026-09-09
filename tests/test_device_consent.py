@@ -110,6 +110,10 @@ def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
     try:
         with (
             patch(
+                "app.api.v2.device_routes.patient_has_device_history",
+                new=AsyncMock(return_value=False),
+            ),
+            patch(
                 "app.api.v2.device_routes.claim_device_enrollment_token",
                 new=AsyncMock(return_value="claim-1"),
             ) as claim,

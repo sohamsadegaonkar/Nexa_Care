@@ -243,6 +243,10 @@ def test_successful_otp_verification_creates_live_session_before_enrollment(
                 "app.api.v2.auth_routes.issue_device_enrollment_token",
                 new=issue_enrollment,
             ),
+            patch(
+                "app.services.patient_device_recovery_transactions.patient_has_device_history",
+                new=AsyncMock(return_value=False),
+            ),
         ):
             response = client.post(
                 "/api/v2/auth/otp/verify",
@@ -254,6 +258,7 @@ def test_successful_otp_verification_creates_live_session_before_enrollment(
     body = response.json()
     assert body["patient_id"] == str(patient.patient_uuid)
     assert body["device_enrollment_token"] == "enroll-token"
+    assert body["device_authority_state"] == "bootstrap_enrollment"
     claims = decode_patient_access_token(body["access_token"])
     assert claims is not None
     assert claims["patient_id"] == body["patient_id"]
@@ -264,6 +269,31 @@ def test_successful_otp_verification_creates_live_session_before_enrollment(
     compiled_queries = " ".join(str(call.args[0]) for call in db.scalar.call_args_list)
     assert "patient_auth_identities.provider_subject" in compiled_queries
     assert "WHERE patients.phone" not in compiled_queries
+
+
+@pytest.mark.asyncio
+async def test_existing_device_history_does_not_mint_bootstrap_authority() -> None:
+    from app.api.v2 import auth_routes
+
+    issue_enrollment = AsyncMock(return_value="must-not-be-issued")
+    with (
+        patch(
+            "app.services.patient_device_recovery_transactions.patient_has_device_history",
+            new=AsyncMock(return_value=True),
+        ),
+        patch(
+            "app.api.v2.auth_routes.issue_device_enrollment_token",
+            new=issue_enrollment,
+        ),
+    ):
+        enrollment_token, authority_state = await auth_routes._patient_device_login_authority(
+            AsyncMock(),
+            patient_id="123e4567-e89b-12d3-a456-426614174001",
+            session_id=SESSION_A,
+        )
+    assert enrollment_token is None
+    assert authority_state == "existing_device_required"
+    issue_enrollment.assert_not_awaited()
 
 
 def test_otp_verification_fails_closed_when_session_authority_is_unavailable() -> None:

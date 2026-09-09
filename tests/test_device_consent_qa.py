@@ -163,6 +163,10 @@ def overrides():
 def valid_device_enrollment_grant():
     with (
         patch(
+            "app.api.v2.device_routes.patient_has_device_history",
+            new=AsyncMock(return_value=False),
+        ),
+        patch(
             "app.api.v2.device_routes.claim_device_enrollment_token",
             new=AsyncMock(return_value="claim-1"),
         ),
