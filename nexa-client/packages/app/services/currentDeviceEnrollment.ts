@@ -20,6 +20,7 @@ import { clearPatientAuthSession, DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY } from './
 export type CurrentDeviceErrorCode =
   | 'SETUP_REQUIRED'
   | 'REAUTH_REQUIRED'
+  | 'RECOVERY_REQUIRED'
   | 'DEVICE_CONFLICT'
   | 'INVALID_ENROLLMENT'
   | 'NETWORK_ERROR'
@@ -86,6 +87,13 @@ function mapError(error: unknown): CurrentDeviceError {
         401
       )
     }
+    if (error.status === 409 && error.code === 'DEVICE_RECOVERY_REQUIRED') {
+      return new CurrentDeviceError(
+        'This account already has device history and this installation is not a current trusted device. Verify your identity to recover device access.',
+        'RECOVERY_REQUIRED',
+        409
+      )
+    }
     if (error.status === 409) {
       return new CurrentDeviceError(
         'This device could not be enrolled. Revoke an unused device or retry after the current enrollment finishes.',
@@ -117,12 +125,20 @@ function mapError(error: unknown): CurrentDeviceError {
 
 async function enrollInstallation(
   metadata: LocalInstallationMetadata,
-  options: EnsureCurrentDeviceOptions
+  options: EnsureCurrentDeviceOptions,
+  hasDeviceHistory: boolean
 ): Promise<EnrollDeviceResponse> {
   if (enrollmentInFlight) return enrollmentInFlight
   enrollmentInFlight = (async () => {
     const enrollmentToken = await SecureStore.getItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
     if (!enrollmentToken) {
+      if (hasDeviceHistory) {
+        throw new CurrentDeviceError(
+          'This installation is not a current trusted device. Authorize it from a trusted device, or use account recovery if all trusted devices are lost.',
+          'RECOVERY_REQUIRED',
+          409
+        )
+      }
       throw new CurrentDeviceError(
         'Secure this device by signing in with a fresh OTP.',
         'REAUTH_REQUIRED',
@@ -152,7 +168,9 @@ async function enrollInstallation(
 
 /**
  * Require this exact app installation to have both its private key and an
- * active matching server device_id. Another patient device never satisfies it.
+ * active matching server device. A stale/missing local device_id may be
+ * repaired only when this installation's derived public-key fingerprint
+ * uniquely matches an active device returned for the current patient.
  */
 export async function ensureCurrentDeviceEnrollment(
   options: EnsureCurrentDeviceOptions = {}
@@ -189,6 +207,26 @@ export async function ensureCurrentDeviceEnrollment(
       }
     }
 
+    const fingerprintMatchedDevice =
+      metadata.hasPrivateKey && metadata.keyFingerprint
+        ? server.devices.find(
+            (device) =>
+              device.status === 'active' &&
+              device.public_key_fingerprint === metadata.keyFingerprint
+          )
+        : undefined
+
+    if (fingerprintMatchedDevice && metadata.keyFingerprint) {
+      await setDeviceId(fingerprintMatchedDevice.device_id)
+      await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
+      return {
+        deviceId: fingerprintMatchedDevice.device_id,
+        status: 'active',
+        enrolledNow: false,
+        keyFingerprint: metadata.keyFingerprint,
+      }
+    }
+
     if (options.allowEnrollment === false) {
       throw new CurrentDeviceError(
         'Secure this device to approve consent requests.',
@@ -200,7 +238,7 @@ export async function ensureCurrentDeviceEnrollment(
       await deleteDeviceKey()
       metadata = { ...metadata, deviceId: null }
     }
-    const enrollment = await enrollInstallation(metadata, options)
+    const enrollment = await enrollInstallation(metadata, options, server.devices.length > 0)
     const enrolledMetadata = await getLocalInstallationMetadata()
     if (!enrolledMetadata.keyFingerprint) {
       throw new CurrentDeviceError(

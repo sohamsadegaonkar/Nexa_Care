@@ -274,6 +274,12 @@ def _patch_stack(fake_redis, fake_sync_redis, patient_id):
     stack = ExitStack()
     stack.enter_context(
         patch(
+            "app.api.v2.device_routes.patient_has_device_history",
+            new=AsyncMock(return_value=False),
+        )
+    )
+    stack.enter_context(
+        patch(
             "app.api.v2.device_routes.claim_device_enrollment_token",
             new=AsyncMock(return_value="claim-1"),
         )

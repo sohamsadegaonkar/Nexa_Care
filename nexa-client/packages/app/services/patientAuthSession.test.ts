@@ -99,6 +99,18 @@ describe('patient authentication lifecycle', () => {
     expect(mocks.tokenProvider?.()).toBe(token)
   })
 
+  it('stores account authentication without retaining a stale bootstrap grant', async () => {
+    const session = await loadSession()
+    const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)
+    mocks.storage.set(session.DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, 'stale-bootstrap-token')
+
+    await session.storePatientAuthSession(token, null)
+
+    expect(mocks.storage.get(session.PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe(token)
+    expect(mocks.storage.has(session.DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)).toBe(false)
+    expect(session.getPatientAuthSnapshot().status).toBe('authenticated')
+  })
+
   it('revokes the server session before clearing local credentials on logout', async () => {
     const session = await loadSession()
     const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)

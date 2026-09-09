@@ -198,7 +198,8 @@ class PatientOtpVerifyResponse(BaseModel):
     token_type: str = "bearer"
     expires_at: datetime
     patient_id: str
-    device_enrollment_token: str
+    device_enrollment_token: str | None = None
+    device_authority_state: str
 
 
 class PatientRegistrationOtpSendResponse(BaseModel):
@@ -233,6 +234,18 @@ async def _enforce_otp_limits(request: Request, phone: str) -> None:
         raise HTTPException(
             status_code=503, detail="OTP service is temporarily unavailable."
         )
+
+
+async def _patient_device_login_authority(
+    db: AsyncSession, *, patient_id: str, session_id: str
+) -> tuple[str | None, str]:
+    """Keep account authentication separate from bootstrap device authority."""
+    from app.services.patient_device_recovery_transactions import patient_has_device_history
+
+    if await patient_has_device_history(db, patient_id=UUID(patient_id)):
+        return None, "existing_device_required"
+    token = await issue_device_enrollment_token(patient_id, session_id)
+    return token, "bootstrap_enrollment"
 
 
 @router.post("/otp/send", response_model=PatientOtpSendResponse)
@@ -333,7 +346,9 @@ async def patient_otp_verify(
         access_token, expires_at, session_id = await issue_patient_access_session(
             patient_id, str(supabase_user_id)
         )
-        enrollment_token = await issue_device_enrollment_token(patient_id, session_id)
+        enrollment_token, device_authority_state = await _patient_device_login_authority(
+            db, patient_id=patient_id, session_id=session_id
+        )
     except PatientSessionAuthorityUnavailable as exc:
         if session_id is not None:
             try:
@@ -353,6 +368,7 @@ async def patient_otp_verify(
         expires_at=expires_at,
         patient_id=patient_id,
         device_enrollment_token=enrollment_token,
+        device_authority_state=device_authority_state,
     )
 
 
@@ -612,8 +628,8 @@ async def patient_registration_otp_verify(
         access_token, expires_at, session_id = await issue_patient_access_session(
             account.patient_id, account.provider_subject
         )
-        enrollment_token = await issue_device_enrollment_token(
-            account.patient_id, session_id
+        enrollment_token, device_authority_state = await _patient_device_login_authority(
+            db, patient_id=account.patient_id, session_id=session_id
         )
     except Exception:
         if session_id is not None:
@@ -637,6 +653,7 @@ async def patient_registration_otp_verify(
         expires_at=expires_at,
         patient_id=account.patient_id,
         device_enrollment_token=enrollment_token,
+        device_authority_state=device_authority_state,
     )
 
 

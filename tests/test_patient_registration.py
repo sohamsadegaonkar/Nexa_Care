@@ -377,6 +377,10 @@ def test_same_finalized_attempt_recovers_after_device_redis_failure(
                 "app.api.v2.auth_routes.finalize_registration_attempt", new=AsyncMock()
             ),
             patch("app.api.v2.auth_routes.issue_device_enrollment_token", new=enroll),
+            patch(
+                "app.services.patient_device_recovery_transactions.patient_has_device_history",
+                new=AsyncMock(return_value=False),
+            ),
         ):
             body = {
                 "phone": "8000000001",

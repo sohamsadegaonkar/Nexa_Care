@@ -5,7 +5,8 @@ export interface PatientOtpVerifyResponse {
   token_type: 'bearer'
   expires_at: string
   patient_id: string
-  device_enrollment_token: string
+  device_enrollment_token: string | null
+  device_authority_state: 'bootstrap_enrollment' | 'existing_device_required'
 }
 
 export interface SubmissionGuard {
