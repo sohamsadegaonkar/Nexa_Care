@@ -233,13 +233,13 @@ class TestAlphaHonesty:
     """Crypto-scaffolded screens must honestly label themselves as alpha."""
 
     def test_secure_device_native_custody_is_truthful(self) -> None:
-    code = _read_screen("SecureDeviceScreen")
-    code_norm = _normalize_ws(code)
-    assert "native device-security module" in code_norm
-    assert "register only its public key" in code_norm
-    assert "hardware-backed or StrongBox-backed is determined by that device at runtime" in code_norm
-    assert "Physical-device execution is qualified separately" in code_norm
-    assert "P-256 keypair generated client-side" not in code_norm
+        code = _read_screen("SecureDeviceScreen")
+        code_norm = _normalize_ws(code)
+        assert "native device-security module" in code_norm
+        assert "register only its public key" in code_norm
+        assert "hardware-backed or StrongBox-backed is determined by that device at runtime" in code_norm
+        assert "Physical-device execution is qualified separately" in code_norm
+        assert "P-256 keypair generated client-side" not in code_norm
 
     def test_biometric_approval_labels_alpha(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
@@ -252,10 +252,10 @@ class TestAlphaHonesty:
         ), "BiometricApprovalScreen must honestly describe key storage"
 
     def test_device_enrolled_separates_compile_from_physical_proof(self) -> None:
-    code = _read_screen("DeviceEnrolledScreen")
-    assert "native key alias" in code
-    assert "Native build qualification does not by itself prove physical" in code
-    assert "/patient/devices" in code
+        code = _read_screen("DeviceEnrolledScreen")
+        assert "native key alias" in code
+        assert "Native build qualification does not by itself prove physical" in code
+        assert "/patient/devices" in code
 
     def test_no_hospital_grade_claims(self) -> None:
         """No screen claims hospital-grade biometric signing in runtime code."""
@@ -368,18 +368,18 @@ class TestSecureDeviceScreen:
         ), "Must reconcile and enroll the exact installation"
 
     def test_generates_native_signing_authority(self) -> None:
-    code = _read_screen("SecureDeviceScreen")
-    assert "ensureCurrentDeviceEnrollment" in code
-    assert "Creating native signing authority" in code
-    assert "generateDeviceKeypair" not in code
+        code = _read_screen("SecureDeviceScreen")
+        assert "ensureCurrentDeviceEnrollment" in code
+        assert "Creating native signing authority" in code
+        assert "generateDeviceKeypair" not in code
 
     def test_native_crypto_labels_are_honest(self) -> None:
-    code = _read_screen("SecureDeviceScreen")
-    code_norm = _normalize_ws(code)
-    assert "native key handle" in code_norm
-    assert "Only the public key and non-secret device metadata leave this installation" in code_norm
-    assert "Physical-device execution is qualified separately" in code_norm
-    assert "fully secure" not in code_norm.lower()
+        code = _read_screen("SecureDeviceScreen")
+        code_norm = _normalize_ws(code)
+        assert "native key handle" in code_norm
+        assert "Only the public key and non-secret device metadata leave this installation" in code_norm
+        assert "Physical-device execution is qualified separately" in code_norm
+        assert "fully secure" not in code_norm.lower()
 
 class TestConsentRequestScreen:
     def test_displays_provider_scope_duration(self) -> None:

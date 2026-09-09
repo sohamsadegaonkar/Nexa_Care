@@ -79,17 +79,17 @@ class TestConsentSigningService:
         assert "public_key_fingerprint" in code
 
     def test_uses_p256_curve(self) -> None:
-    android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
-    ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
-    assert "secp256r1" in android
-    assert "kSecAttrKeyTypeECSECPrimeRandom" in ios
-    assert "kSecAttrKeySizeInBits" in ios and "256" in ios
+        android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
+        ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
+        assert "secp256r1" in android
+        assert "kSecAttrKeyTypeECSECPrimeRandom" in ios
+        assert "kSecAttrKeySizeInBits" in ios and "256" in ios
 
     def test_routine_consent_uses_native_key_handle_not_securestore_scalar(self) -> None:
-    code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
-    assert "signWithNativeDeviceKey" in code
-    assert "DEVICE_PRIVATE_KEY_STORAGE_KEY" not in code
-    assert "expo-secure-store" not in code
+        code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
+        assert "signWithNativeDeviceKey" in code
+        assert "DEVICE_PRIVATE_KEY_STORAGE_KEY" not in code
+        assert "expo-secure-store" not in code
 
     def test_uses_apiclient(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -141,24 +141,24 @@ class TestConsentSigningService:
         assert "JSON.stringify" in code
 
     def test_hashes_with_sha256_before_signing(self) -> None:
-    android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
-    ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
-    assert "SHA256withECDSA" in android
-    assert "ecdsaSignatureMessageX962SHA256" in ios
+        android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
+        ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
+        assert "SHA256withECDSA" in android
+        assert "ecdsaSignatureMessageX962SHA256" in ios
 
     def test_signs_with_ecdsa_p256(self) -> None:
-    code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
-    native = _read(ROOT / "nexa-client/packages/app/services/nativeDeviceSecurity.ts")
-    assert "signWithNativeDeviceKey" in code
-    assert "signWithNativeDeviceKey" in native
-    assert "p256.sign" not in code
+        code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
+        native = _read(ROOT / "nexa-client/packages/app/services/nativeDeviceSecurity.ts")
+        assert "signWithNativeDeviceKey" in code
+        assert "signWithNativeDeviceKey" in native
+        assert "p256.sign" not in code
 
     def test_exports_der_signature(self) -> None:
-    android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
-    ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
-    assert "Base64.encodeToString(signer.sign()" in android
-    assert "ecdsaSignatureMessageX962SHA256" in ios
-    assert "signature.base64EncodedString()" in ios
+        android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
+        ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
+        assert "Base64.encodeToString(signer.sign()" in android
+        assert "ecdsaSignatureMessageX962SHA256" in ios
+        assert "signature.base64EncodedString()" in ios
 
     def test_has_approve_with_biometric_function(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -271,10 +271,10 @@ class TestConsentSigningService:
         assert "isChallengeExpired" in code, "Must have isChallengeExpired function"
 
     def test_native_custody_nonclaims_present(self) -> None:
-    code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
-    assert "Private-key operations use native key handles" in code
-    assert "p256.sign" not in code
-    assert "fully secure" not in code.lower()
+        code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
+        assert "Private-key operations use native key handles" in code
+        assert "p256.sign" not in code
+        assert "fully secure" not in code.lower()
 
     def test_no_hospital_grade_claims(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -334,12 +334,12 @@ class TestSigningInputBackendMatch:
         ), "Backend uses SHA-256 hashing"
 
     def test_ecdsa_p256_matches_backend(self) -> None:
-    android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
-    ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
-    backend_code = _read(SIGNED_VERIFIER_PATH)
-    assert "secp256r1" in android
-    assert "kSecAttrKeySizeInBits" in ios and "256" in ios
-    assert "SECP256R1" in backend_code or "ec.ECDSA" in backend_code
+        android = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/android/src/main/java/ai/nexacare/devicesecurity/NexaDeviceSecurityModule.kt")
+        ios = _read(ROOT / "nexa-client/apps/expo/modules/nexa-device-security/ios/NexaDeviceSecurityModule.swift")
+        backend_code = _read(SIGNED_VERIFIER_PATH)
+        assert "secp256r1" in android
+        assert "kSecAttrKeySizeInBits" in ios and "256" in ios
+        assert "SECP256R1" in backend_code or "ec.ECDSA" in backend_code
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 3. pushNotifications.ts
