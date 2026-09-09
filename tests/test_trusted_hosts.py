@@ -73,7 +73,8 @@ def test_preflight_uses_explicit_allowed_local_host() -> None:
     assert 'TestClient(app, base_url="http://localhost")' in source
 
 
-def test_production_default_is_not_testserver() -> None:
+def test_default_trusted_hosts_are_local_only_and_not_wildcard() -> None:
     source = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
-    assert 'os.getenv("TRUSTED_HOSTS", "*")' in source
-    assert 'os.getenv("TRUSTED_HOSTS", "testserver")' not in source
+    assert '"localhost,127.0.0.1,testserver"' in source
+    assert 'os.getenv("TRUSTED_HOSTS", "*")' not in source
+    assert _trusted_hosts == ["localhost", "127.0.0.1", "testserver"]
