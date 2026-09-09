@@ -15,6 +15,8 @@ import jwt
 from app.core.redis import get_async_redis_client as get_redis_client
 from app.services.patient_session_authority import (
     PatientSessionAuthorityUnavailable,
+    _epoch_key,
+    _session_key,
     create_patient_session,
     get_or_create_patient_session_epoch,
     resolve_patient_session_id,
@@ -226,36 +228,105 @@ async def claim_device_enrollment_token(
     return claim_id if claimed else None
 
 
-async def finalize_device_enrollment_token(token: str, claim_id: str) -> bool:
+async def finalize_device_enrollment_token(
+    token: str,
+    claim_id: str,
+    *,
+    patient_id: str,
+    auth_session_id: str,
+) -> bool:
+    """Consume one reserved grant only while its exact session is still current.
+
+    Real Redis uses one Lua linearization point across the grant, claim, exact
+    session row, and patient-wide session epoch. A logout/revoke that wins before
+    finalization therefore makes finalization fail closed and burns the stale
+    reservation instead of allowing a later PostgreSQL authority mutation.
+    """
+
     redis = get_redis_client()
     key = _token_key(token)
     claim_key = _CLAIM_PREFIX + key
     if hasattr(redis, "eval"):
         script = """
-        if redis.call('GET', KEYS[2]) == ARGV[1] then
-            redis.call('DEL', KEYS[1], KEYS[2])
-            return 1
+        local grant_raw = redis.call('GET', KEYS[1])
+        if not grant_raw then return 0 end
+        if redis.call('GET', KEYS[2]) ~= ARGV[1] then return 0 end
+
+        local grant_ok, grant = pcall(cjson.decode, grant_raw)
+        if not grant_ok
+           or grant['scope'] ~= 'device_enrollment'
+           or grant['patient_id'] ~= ARGV[2]
+           or grant['auth_session_id'] ~= ARGV[3] then
+            return 0
         end
-        return 0
+
+        local session_raw = redis.call('GET', KEYS[3])
+        local current_epoch = redis.call('GET', KEYS[4])
+        if not session_raw or not current_epoch then
+            redis.call('DEL', KEYS[1], KEYS[2])
+            return 0
+        end
+        local session_ok, session = pcall(cjson.decode, session_raw)
+        if not session_ok
+           or session['status'] ~= 'active'
+           or session['patient_id'] ~= ARGV[2]
+           or tostring(session['session_epoch']) ~= tostring(current_epoch) then
+            redis.call('DEL', KEYS[1], KEYS[2])
+            return 0
+        end
+
+        redis.call('DEL', KEYS[1], KEYS[2])
+        return 1
         """
         try:
             consumed = await _maybe_await(
-                redis.eval(script, 2, key, claim_key, claim_id)
+                redis.eval(
+                    script,
+                    4,
+                    key,
+                    claim_key,
+                    _session_key(auth_session_id),
+                    _epoch_key(patient_id),
+                    claim_id,
+                    patient_id,
+                    auth_session_id,
+                )
             )
         except Exception as exc:
             raise PatientSessionAuthorityUnavailable(
                 "Device enrollment authority store is unavailable"
             ) from exc
         return bool(consumed)
+
+    # Test/local Redis doubles may not implement Lua. Revalidate immediately
+    # before deletion; production qualification requires the atomic Lua branch.
+    session = await resolve_patient_session_id(
+        patient_id=patient_id, session_id=auth_session_id
+    )
+    if session is None:
+        return False
     try:
+        raw = await _maybe_await(redis.get(key))
         current = await _maybe_await(redis.get(claim_key))
     except Exception as exc:
         raise PatientSessionAuthorityUnavailable(
             "Device enrollment authority store is unavailable"
         ) from exc
+    if isinstance(raw, bytes):
+        raw = raw.decode()
     if isinstance(current, bytes):
         current = current.decode()
-    if current != claim_id:
+    try:
+        grant = json.loads(raw) if raw else None
+    except (TypeError, json.JSONDecodeError):
+        grant = None
+    if (
+        current != claim_id
+        or not isinstance(grant, dict)
+        or grant.get("scope") != "device_enrollment"
+        or grant.get("patient_id") != patient_id
+        or grant.get("auth_session_id") != auth_session_id
+    ):
         return False
     try:
         await _maybe_await(redis.delete(key, claim_key))

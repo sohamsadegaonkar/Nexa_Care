@@ -121,7 +121,15 @@ async def test_exact_session_grant_binding_and_cross_patient_rejection(real_redi
             )
             claim = await claim_device_enrollment_token(grant, patient_a, session_a)
             assert claim is not None
-            assert await finalize_device_enrollment_token(grant, claim) is True
+            assert (
+                await finalize_device_enrollment_token(
+                    grant,
+                    claim,
+                    patient_id=patient_a,
+                    auth_session_id=session_a,
+                )
+                is True
+            )
             assert await claim_device_enrollment_token(grant, patient_a, session_a) is None
         finally:
             await _cleanup(
@@ -183,7 +191,49 @@ async def test_concurrent_claims_have_exactly_one_winner_and_grant_is_one_time(r
             )
             winners = [result for result in results if result is not None]
             assert len(winners) == 1
-            assert await finalize_device_enrollment_token(grant, winners[0]) is True
+            assert (
+                await finalize_device_enrollment_token(
+                    grant,
+                    winners[0],
+                    patient_id=patient,
+                    auth_session_id=session_id,
+                )
+                is True
+            )
+            assert await claim_device_enrollment_token(grant, patient, session_id) is None
+        finally:
+            await _cleanup(real_redis, [patient], [session_id], tokens)
+
+
+@pytest.mark.asyncio
+async def test_logout_all_between_claim_and_finalize_burns_reserved_grant(real_redis):
+    patient = str(uuid.uuid4())
+    session_id = f"session-{uuid.uuid4().hex}"
+    tokens: list[str] = []
+    await _create_live_session(real_redis, patient, "subject-a", session_id)
+    with (
+        patch("app.services.patient_auth_service.get_redis_client", return_value=real_redis),
+        patch(
+            "app.services.patient_session_authority.get_redis_client", return_value=real_redis
+        ),
+    ):
+        try:
+            grant = await issue_device_enrollment_token(patient, session_id)
+            tokens.append(grant)
+            claim = await claim_device_enrollment_token(grant, patient, session_id)
+            assert claim is not None
+
+            await revoke_all_patient_sessions(patient)
+
+            assert (
+                await finalize_device_enrollment_token(
+                    grant,
+                    claim,
+                    patient_id=patient,
+                    auth_session_id=session_id,
+                )
+                is False
+            )
             assert await claim_device_enrollment_token(grant, patient, session_id) is None
         finally:
             await _cleanup(real_redis, [patient], [session_id], tokens)

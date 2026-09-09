@@ -132,7 +132,9 @@ async def test_enrollment_token_scope_session_binding_expiry_and_replay() -> Non
 
         claim = await claim_device_enrollment_token(token, "patient-1", SESSION_A)
         assert claim is not None
-        assert await finalize_device_enrollment_token(token, claim)
+        assert await finalize_device_enrollment_token(
+            token, claim, patient_id="patient-1", auth_session_id=SESSION_A
+        )
         assert (
             await claim_device_enrollment_token(token, "patient-1", SESSION_A) is None
         )

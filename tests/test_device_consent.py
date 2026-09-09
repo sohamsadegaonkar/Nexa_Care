@@ -139,7 +139,12 @@ def test_enroll_device(mock_scoped_session, sample_p256_der_b64):
             assert data["key_version"] == 1
             assert data["patient_id"] == mock_scoped_session
             claim.assert_awaited_once()
-            finalize.assert_awaited_once_with("e" * 43, "claim-1")
+            finalize.assert_awaited_once_with(
+                "e" * 43,
+                "claim-1",
+                patient_id=mock_scoped_session,
+                auth_session_id="test-current-patient-session",
+            )
             enroll.assert_awaited_once()
     finally:
         app.dependency_overrides.pop(get_db_session, None)
