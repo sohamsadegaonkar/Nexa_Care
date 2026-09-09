@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Materialize read-only Milestone 6 ECS metadata outside the repository.
+"""Materialize read-only Nexa Care ECS metadata outside the repository.
 
 This tool never obtains secret values and never invokes an AWS mutation API.
 """
@@ -20,6 +20,9 @@ APPROVED_AWS_COMMANDS = frozenset(
         ("logs", "describe-log-groups"),
         ("secretsmanager", "describe-secret"),
         ("s3api", "get-bucket-location"),
+        ("s3api", "get-bucket-encryption"),
+        ("s3api", "get-public-access-block"),
+        ("s3api", "get-bucket-versioning"),
         ("kms", "describe-key"),
     }
 )
@@ -34,8 +37,6 @@ def _outside_repo(path: Path) -> bool:
 
 
 def _validate_aws_command(command: tuple[str, ...]) -> None:
-    """Allow only the exact metadata service/action pairs used by this tool."""
-
     if len(command) < 2 or not all(isinstance(item, str) and item for item in command):
         raise ValueError("unsafe AWS operation refused")
     if (command[0].lower(), command[1].lower()) not in APPROVED_AWS_COMMANDS:
@@ -81,6 +82,67 @@ def _required_string(payload: dict, name: str) -> str:
     return value
 
 
+def _validate_bucket_security(arguments: argparse.Namespace) -> None:
+    location_payload = _aws(
+        arguments.storage_profile,
+        arguments.region,
+        "s3api",
+        "get-bucket-location",
+        "--bucket",
+        arguments.bucket,
+    )
+    location = location_payload.get("LocationConstraint") or "us-east-1"
+    if location != arguments.region:
+        raise RuntimeError("qualification bucket is in the wrong region")
+
+    encryption = _aws(
+        arguments.storage_profile,
+        arguments.region,
+        "s3api",
+        "get-bucket-encryption",
+        "--bucket",
+        arguments.bucket,
+    )
+    rules = encryption.get("ServerSideEncryptionConfiguration", {}).get("Rules", [])
+    if not any(
+        isinstance(rule, dict)
+        and rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
+        == "aws:kms"
+        for rule in rules
+    ):
+        raise RuntimeError("qualification bucket default encryption is not SSE-KMS")
+
+    public_block = _aws(
+        arguments.storage_profile,
+        arguments.region,
+        "s3api",
+        "get-public-access-block",
+        "--bucket",
+        arguments.bucket,
+    ).get("PublicAccessBlockConfiguration", {})
+    if not all(
+        public_block.get(name) is True
+        for name in (
+            "BlockPublicAcls",
+            "IgnorePublicAcls",
+            "BlockPublicPolicy",
+            "RestrictPublicBuckets",
+        )
+    ):
+        raise RuntimeError("qualification bucket public access block is incomplete")
+
+    versioning = _aws(
+        arguments.storage_profile,
+        arguments.region,
+        "s3api",
+        "get-bucket-versioning",
+        "--bucket",
+        arguments.bucket,
+    )
+    if versioning.get("Status") != "Enabled":
+        raise RuntimeError("qualification bucket versioning is not enabled")
+
+
 def generate(arguments: argparse.Namespace) -> dict[str, str]:
     if not _outside_repo(arguments.output):
         raise ValueError("output must be outside repository")
@@ -116,17 +178,9 @@ def generate(arguments: argparse.Namespace) -> dict[str, str]:
         raise RuntimeError("qualified ECR image was not found")
     digest = _required_string(details[0], "imageDigest")
     repository = _required_string(details[0], "registryId")
-    bucket = _aws(
-        arguments.storage_profile,
-        arguments.region,
-        "s3api",
-        "get-bucket-location",
-        "--bucket",
-        arguments.bucket,
-    )
-    location = bucket.get("LocationConstraint") or "us-east-1"
-    if location != arguments.region:
-        raise RuntimeError("qualification bucket is in the wrong region")
+
+    _validate_bucket_security(arguments)
+
     for key_id in (arguments.envelope_kms_key_id, arguments.storage_kms_key_id):
         metadata = _aws(
             arguments.profile,
@@ -139,6 +193,7 @@ def generate(arguments: argparse.Namespace) -> dict[str, str]:
         key = metadata.get("KeyMetadata", {})
         if key.get("KeyState") != "Enabled" or key.get("KeyUsage") != "ENCRYPT_DECRYPT":
             raise RuntimeError("qualification KMS key is not enabled for encryption")
+
     _aws(
         arguments.profile,
         arguments.region,
@@ -147,28 +202,25 @@ def generate(arguments: argparse.Namespace) -> dict[str, str]:
         "--log-group-name-prefix",
         arguments.log_group_name,
     )
-    _aws(
-        arguments.profile,
-        arguments.region,
-        "secretsmanager",
-        "describe-secret",
-        "--secret-id",
-        arguments.runtime_secret_id,
-    )
-    _aws(
-        arguments.profile,
-        arguments.region,
-        "secretsmanager",
-        "describe-secret",
-        "--secret-id",
-        arguments.storage_secret_id,
-    )
+    for secret_id in (arguments.runtime_secret_id, arguments.storage_secret_id):
+        _aws(
+            arguments.profile,
+            arguments.region,
+            "secretsmanager",
+            "describe-secret",
+            "--secret-id",
+            secret_id,
+        )
+
     return {
         "TASK_CPU": "512",
         "TASK_MEMORY": "1024",
         "ECS_EXECUTION_ROLE_ARN": _required_string(execution.get("Role", {}), "Arn"),
         "ECS_TASK_ROLE_ARN": _required_string(task.get("Role", {}), "Arn"),
-        "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST": f"{repository}.dkr.ecr.{arguments.region}.amazonaws.com/{arguments.repository_name}@{digest}",
+        "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST": (
+            f"{repository}.dkr.ecr.{arguments.region}.amazonaws.com/"
+            f"{arguments.repository_name}@{digest}"
+        ),
         "DOCUMENT_STORAGE_S3_BUCKET": arguments.bucket,
         "DOCUMENT_STORAGE_S3_KMS_KEY_ID": arguments.storage_kms_key_id,
         "APPLICATION_ENVELOPE_KMS_KEY_ID": arguments.envelope_kms_key_id,
@@ -206,7 +258,8 @@ def main() -> int:
     print("PASS: execution role resolved")
     print("PASS: task role resolved")
     print("PASS: immutable image digest resolved")
-    print("PASS: bucket region, KMS, log group, and secret metadata resolved")
+    print("PASS: bucket encryption/public-block/versioning metadata resolved")
+    print("PASS: KMS, log group, and secret metadata resolved")
     print("INFO: secret values were not read")
     return 0
 
