@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.verify_audit_integrity_evidence import classify_failure
@@ -25,6 +27,23 @@ def test_integration_suite_uses_canonical_partition_verifier() -> None:
 
     assert "python -m scripts.verify_audit_partitions --dry-run" in source
     assert "python scripts/verify_audit_chain.py" not in source
+
+
+def test_evidence_script_direct_entrypoint_imports_from_repo_root() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "scripts" / "verify_audit_integrity_evidence.py"),
+            "--help",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "--partition" in result.stdout
 
 
 def test_sanitized_audit_failure_classification_never_requires_raw_values() -> None:
