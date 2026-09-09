@@ -19,9 +19,10 @@ python -m pytest tests/ -q --ignore=tests/integration/
 echo "=== Step 3: Integration tests ==="
 python -m pytest tests/integration/ -v --tb=long
 
-echo "=== Step 4: Audit chain verification ==="
-# Note: This requires a live/test database connection
-python scripts/verify_audit_chain.py
+echo "=== Step 4: Partitioned audit-chain verification ==="
+# Canonical ledger verification is partition-aware. Dry-run preserves evidence
+# collection semantics without changing chain-head health state from this suite.
+python -m scripts.verify_audit_partitions --dry-run
 
 echo "=== Step 5: Encryption round-trip verification ==="
 # This script runs a full E2E flow against the local instance
