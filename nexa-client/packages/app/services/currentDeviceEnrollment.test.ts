@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   ensurePending: vi.fn(),
   commitPending: vi.fn(),
   migrateLegacy: vi.fn(),
+  deleteLegacy: vi.fn(),
   clearSession: vi.fn(),
 }))
 
@@ -47,7 +48,7 @@ vi.mock('./deviceKeys', () => ({
 }))
 vi.mock('./legacyDeviceKey', () => ({
   getLegacyDeviceKeyInfo: vi.fn(async () => mocks.legacy),
-  deleteLegacyDevicePrivateKey: vi.fn(),
+  deleteLegacyDevicePrivateKey: mocks.deleteLegacy,
 }))
 vi.mock('./nativeDeviceKeyring', () => ({
   getCurrentNativeDeviceKey: vi.fn(async () => mocks.currentNative),
@@ -113,20 +114,26 @@ describe('native current installation reconciliation', () => {
       return mocks.currentNative
     })
     mocks.migrateLegacy.mockReset()
+    mocks.deleteLegacy.mockReset().mockResolvedValue(undefined)
     mocks.clearSession.mockReset()
   })
 
   it('bootstraps with a pending native public key and never sends private material', async () => {
-    mocks.enroll.mockResolvedValue({
-      device_id: 'device-1', key_id: 'key-1', key_version: 1, status: 'active', patient_id: 'patient-1', enrolled_at: ''
+    mocks.enroll.mockImplementation(async () => {
+      mocks.serverDevices = [activeDevice()]
+      return {
+        device_id: 'device-1',
+        key_id: 'key-1',
+        key_version: 1,
+        status: 'active',
+        patient_id: 'patient-1',
+        enrolled_at: '',
+      }
     })
-    mocks.serverDevices = []
     const { ensureCurrentDeviceEnrollment } = await service()
-    const promise = ensureCurrentDeviceEnrollment()
-    await vi.waitFor(() => expect(mocks.enroll).toHaveBeenCalledOnce())
-    mocks.serverDevices = [activeDevice()]
-    const result = await promise
+    const result = await ensureCurrentDeviceEnrollment()
     expect(result).toMatchObject({ deviceId: 'device-1', keyAlias: 'pending-alias', enrolledNow: true })
+    expect(mocks.enroll).toHaveBeenCalledOnce()
     const payload = mocks.enroll.mock.calls[0]?.[0]
     expect(payload.device_public_key).toBe('native-der')
     expect(JSON.stringify(payload)).not.toContain('private')
@@ -159,13 +166,20 @@ describe('native current installation reconciliation', () => {
   it('migrates an active legacy SecureStore key through proof-of-possession rotation', async () => {
     mocks.legacy = { publicKeyDerBase64: 'legacy-der', publicKeyFingerprint: 'legacy-fingerprint' }
     mocks.serverDevices = [activeDevice({ public_key_fingerprint: 'legacy-fingerprint' })]
-    mocks.migrateLegacy.mockResolvedValue({
-      rotation: { device_id: 'device-1', new_key_id: 'key-2', new_key_version: 2 },
+    mocks.migrateLegacy.mockImplementation(async () => {
+      mocks.currentNative = {
+        alias: 'native-alias',
+        publicKeyDerBase64: 'native-der',
+        custody: 'android-keystore',
+        platform: 'android',
+        nonExportable: true,
+      }
+      mocks.legacy = null
+      mocks.serverDevices = [activeDevice({ key_id: 'key-2', key_version: 2 })]
+      return {
+        rotation: { device_id: 'device-1', new_key_id: 'key-2', new_key_version: 2 },
+      }
     })
-    mocks.currentNative = {
-      alias: 'native-alias', publicKeyDerBase64: 'native-der', custody: 'android-keystore', platform: 'android', nonExportable: true
-    }
-    mocks.serverDevices.push(activeDevice({ key_id: 'key-2', key_version: 2 }))
     const { ensureCurrentDeviceEnrollment } = await service()
     await expect(ensureCurrentDeviceEnrollment()).resolves.toMatchObject({ keyVersion: 2 })
     expect(mocks.migrateLegacy).toHaveBeenCalledOnce()
