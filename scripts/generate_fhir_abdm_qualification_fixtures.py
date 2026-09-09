@@ -5,10 +5,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
-from app.services.fhir_conformance import validate_fhir_r4_bundle
-from app.services.fhir_converter import generate_fhir_bundle
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from app.services.fhir_conformance import validate_fhir_r4_bundle  # noqa: E402
+from app.services.fhir_converter import generate_fhir_bundle  # noqa: E402
 
 PATIENT_ID = "11111111-1111-4111-8111-111111111111"
 PROFILE_BY_RESOURCE = {
