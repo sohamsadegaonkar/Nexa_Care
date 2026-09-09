@@ -1,0 +1,91 @@
+name: One-use Slice 6H guardrail indent repair
+
+on:
+  push:
+    branches: [slice-6h-mobile-native]
+    paths: [.github/workflows/slice6h-indent-repair.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: slice-6h-mobile-native
+          fetch-depth: 0
+      - name: Repair only generated class-method indentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import ast
+
+          targets = {
+              'tests/test_consent_signing.py': [
+                  'test_uses_p256_curve',
+                  'test_routine_consent_uses_native_key_handle_not_securestore_scalar',
+                  'test_hashes_with_sha256_before_signing',
+                  'test_signs_with_ecdsa_p256',
+                  'test_exports_der_signature',
+                  'test_native_custody_nonclaims_present',
+                  'test_ecdsa_p256_matches_backend',
+              ],
+              'tests/test_patient_screens.py': [
+                  'test_secure_device_native_custody_is_truthful',
+                  'test_device_enrolled_separates_compile_from_physical_proof',
+                  'test_generates_native_signing_authority',
+                  'test_native_crypto_labels_are_honest',
+              ],
+          }
+
+          def repair(path: str, names: list[str]) -> None:
+              p = Path(path)
+              lines = p.read_text(encoding='utf-8').splitlines(keepends=True)
+              found = set()
+              i = 0
+              while i < len(lines):
+                  stripped = lines[i].lstrip()
+                  leading = len(lines[i]) - len(stripped)
+                  matched = next((name for name in names if leading == 4 and stripped.startswith(f'def {name}(')), None)
+                  if not matched:
+                      i += 1
+                      continue
+                  if matched in found:
+                      raise SystemExit(f'{path}: duplicate function {matched}')
+                  found.add(matched)
+                  j = i + 1
+                  while j < len(lines):
+                      s = lines[j].lstrip()
+                      lead = len(lines[j]) - len(s)
+                      if s.strip() and (lead < 4 or (lead == 4 and (s.startswith('def ') or s.startswith('@')))):
+                          break
+                      if s.strip():
+                          if lead != 4:
+                              raise SystemExit(f'{path}:{j+1}: unexpected indentation {lead} in generated {matched}')
+                          lines[j] = '    ' + lines[j]
+                      j += 1
+                  i = j
+              missing = set(names) - found
+              if missing:
+                  raise SystemExit(f'{path}: missing generated functions: {sorted(missing)}')
+              text = ''.join(lines)
+              ast.parse(text, filename=path)
+              p.write_text(text, encoding='utf-8')
+
+          for path, names in targets.items():
+              repair(path, names)
+
+          for path in [*targets, 'tests/test_device_keys.py']:
+              ast.parse(Path(path).read_text(encoding='utf-8'), filename=path)
+          PY
+          git rm .github/workflows/slice6h-indent-repair.yml
+          git diff --check
+      - name: Commit repaired guardrails
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_consent_signing.py tests/test_patient_screens.py tests/test_device_keys.py
+          git commit -m "test(mobile): repair native custody guardrails"
+          git push origin HEAD:slice-6h-mobile-native
