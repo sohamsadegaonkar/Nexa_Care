@@ -2,140 +2,114 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   storage: new Map<string, string>(),
-  secureStoreAvailable: true,
-  accessToken: 'patient-access-token' as string | null,
   post: vi.fn(),
-  setAuthTokenProvider: vi.fn(),
+  get: vi.fn(),
+  authenticate: vi.fn(),
 }))
-
-const patientId = '123e4567-e89b-12d3-a456-426614174001'
-const patientPayload = Buffer.from(
-  JSON.stringify({
-    sub: patientId,
-    patient_id: patientId,
-    exp: Math.floor(Date.now() / 1000) + 3600,
-    jti: 'device-test-session',
-  })
-).toString('base64url')
-const patientAccessToken = `header.${patientPayload}.signature`
 
 vi.mock('expo-secure-store', () => ({
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
-  isAvailableAsync: vi.fn(async () => mocks.secureStoreAvailable),
   getItemAsync: vi.fn(async (key: string) => mocks.storage.get(key) ?? null),
   setItemAsync: vi.fn(async (key: string, value: string) => {
     mocks.storage.set(key, value)
   }),
-  deleteItemAsync: vi.fn(async (key: string) => {
-    mocks.storage.delete(key)
-  }),
 }))
-
-vi.mock('expo-crypto', () => ({
-  CryptoDigestAlgorithm: { SHA256: 'SHA-256' },
-  getRandomBytesAsync: vi.fn(async () => {
-    const privateKey = new Uint8Array(32)
-    privateKey[31] = 1
-    return privateKey
-  }),
-  digest: vi.fn(async () => {
-    const bytes = new Uint8Array(32)
-    bytes[0] = 0xab
-    return bytes.buffer
-  }),
+vi.mock('expo-local-authentication', () => ({
+  hasHardwareAsync: vi.fn(async () => true),
+  isEnrolledAsync: vi.fn(async () => true),
+  authenticateAsync: mocks.authenticate,
 }))
-
-vi.mock('expo-local-authentication', () => ({}))
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }))
 vi.mock('../utils/apiClient', () => ({
-  apiClient: { post: mocks.post, get: vi.fn() },
-  getAuthToken: vi.fn(async () => mocks.accessToken),
-  setAuthTokenProvider: mocks.setAuthTokenProvider,
+  apiClient: { post: mocks.post, get: mocks.get },
 }))
 
 import {
-  DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY,
   DEVICE_ID_STORAGE_KEY,
-  DEVICE_PRIVATE_KEY_STORAGE_KEY,
-  PATIENT_ACCESS_TOKEN_STORAGE_KEY,
-  generateAndEnrollDevice,
-  fingerprintDevicePublicKey,
-  storePatientAuthSession,
+  authenticateWithBiometrics,
+  constructConsentSigningInputV3,
+  enrollDevice,
+  getDeviceId,
+  getDevices,
+  setDeviceId,
 } from './deviceKeys'
 
-describe('physical-device enrollment prerequisites', () => {
+describe('canonical public device authority contract', () => {
   beforeEach(() => {
     mocks.storage.clear()
-    mocks.secureStoreAvailable = true
-    mocks.accessToken = patientAccessToken
     mocks.post.mockReset()
-    mocks.setAuthTokenProvider.mockClear()
+    mocks.get.mockReset()
+    mocks.authenticate.mockReset().mockResolvedValue({ success: true })
   })
 
-  it('persists patient and enrollment tokens only in SecureStore', async () => {
-    await storePatientAuthSession(patientAccessToken, 'enrollment-token-value')
-
-    expect(mocks.storage.get(PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe(patientAccessToken)
-    expect(mocks.storage.get(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)).toBe('enrollment-token-value')
-    expect(mocks.setAuthTokenProvider).toHaveBeenCalledOnce()
+  it('stores only the logical device identifier in this service', async () => {
+    await setDeviceId('device-1')
+    expect(mocks.storage.get(DEVICE_ID_STORAGE_KEY)).toBe('device-1')
+    await expect(getDeviceId()).resolves.toBe('device-1')
   })
 
-  it('fingerprints decoded DER bytes rather than the base64 text', async () => {
-    await expect(fingerprintDevicePublicKey('AQID')).resolves.toBe(`ab${'00'.repeat(31)}`)
-  })
-
-  it('uses Expo secure randomness, enrolls, and retains only device state', async () => {
-    await storePatientAuthSession(patientAccessToken, 'enrollment-token-value')
+  it('enrolls only caller-supplied public key material', async () => {
     mocks.post.mockResolvedValue({
       data: {
         device_id: 'device-1',
+        key_id: 'key-1',
+        key_version: 1,
         status: 'active',
         patient_id: 'patient-1',
-        enrolled_at: '2026-07-14T00:00:00Z',
+        enrolled_at: '2026-09-09T00:00:00Z',
       },
     })
-    const stages: string[] = []
-
-    const result = await generateAndEnrollDevice('Test Android', (stage) => stages.push(stage))
-
-    expect(result.device_id).toBe('device-1')
-    expect(stages).toEqual(['generating', 'enrolling'])
+    await enrollDevice({
+      device_public_key: 'public-spki',
+      device_label: 'Pixel',
+      platform: 'android',
+      device_enrollment_token: 'one-time-grant',
+    })
     expect(mocks.post).toHaveBeenCalledWith(
       '/api/v2/patient/devices/enroll',
-      expect.objectContaining({
-        device_enrollment_token: 'enrollment-token-value',
-        device_label: 'Test Android',
-        platform: 'android',
-        device_public_key: expect.any(String),
-      })
+      expect.objectContaining({ device_public_key: 'public-spki' })
     )
-    expect(mocks.storage.has(DEVICE_PRIVATE_KEY_STORAGE_KEY)).toBe(true)
-    expect(mocks.storage.get(DEVICE_ID_STORAGE_KEY)).toBe('device-1')
-    expect(mocks.storage.has(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)).toBe(false)
+    expect(JSON.stringify(mocks.post.mock.calls[0]?.[1])).not.toContain('private')
   })
 
-  it('fails before key generation and network when enrollment authorization is absent', async () => {
-    await expect(generateAndEnrollDevice()).rejects.toThrow(
-      'Device enrollment authorization is missing or expired'
-    )
-    expect(mocks.post).not.toHaveBeenCalled()
-    expect(mocks.storage.has(DEVICE_PRIVATE_KEY_STORAGE_KEY)).toBe(false)
+  it('lists versioned device metadata without creating key authority', async () => {
+    mocks.get.mockResolvedValue({ data: { patient_id: 'patient-1', devices: [] } })
+    await expect(getDevices()).resolves.toEqual({ patient_id: 'patient-1', devices: [] })
+    expect(mocks.get).toHaveBeenCalledWith('/api/v2/patient/devices')
   })
 
-  it('fails before network when the patient JWT is absent', async () => {
-    mocks.storage.set(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, 'enrollment-token-value')
-    mocks.accessToken = null
-
-    await expect(generateAndEnrollDevice()).rejects.toThrow('Patient session is missing or expired')
-    expect(mocks.post).not.toHaveBeenCalled()
+  it('keeps V3 canonical signing input bound to exact device key version and fingerprint', () => {
+    const payload = constructConsentSigningInputV3({
+      request_id: 'request-1',
+      patient_id: 'patient-1',
+      provider_id: 'provider-1',
+      hospital_id: 'hospital-1',
+      challenge_nonce: 'nonce-1',
+      decision: 'approved',
+      scope: 'summary',
+      purpose: 'treatment',
+      access_duration: 300,
+      issued_at: '2026-09-09T00:00:00Z',
+      expires_at: '2026-09-09T00:05:00Z',
+      consent_context_hash: 'a'.repeat(64),
+      device_id: 'device-1',
+      key_id: 'key-2',
+      key_version: 2,
+      public_key_fingerprint: 'b'.repeat(64),
+    })
+    expect(JSON.parse(payload)).toMatchObject({
+      protocol_version: 'nexa-consent-v3',
+      domain: 'NEXA_CARE_SIGNED_CONSENT',
+      operation: 'CONSENT_DECISION',
+      device_id: 'device-1',
+      key_id: 'key-2',
+      key_version: 2,
+      public_key_fingerprint: 'b'.repeat(64),
+    })
   })
 
-  it('reports a missing native SecureStore module before network access', async () => {
-    mocks.secureStoreAvailable = false
-
-    await expect(generateAndEnrollDevice()).rejects.toThrow(
-      'Install a development build that includes expo-secure-store'
-    )
-    expect(mocks.post).not.toHaveBeenCalled()
+  it('uses local authentication only as a user-verification gate', async () => {
+    await expect(authenticateWithBiometrics()).resolves.toBeUndefined()
+    expect(mocks.authenticate).toHaveBeenCalledOnce()
   })
 })
