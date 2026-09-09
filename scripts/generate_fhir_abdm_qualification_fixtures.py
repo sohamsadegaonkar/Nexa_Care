@@ -16,6 +16,7 @@ from app.services.fhir_conformance import validate_fhir_r4_bundle  # noqa: E402
 from app.services.fhir_converter import generate_fhir_bundle  # noqa: E402
 
 PATIENT_ID = "11111111-1111-4111-8111-111111111111"
+REQUESTER_PROVIDER_ID = "22222222-2222-4222-8222-222222222222"
 PROFILE_BY_RESOURCE = {
     "Condition": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/Condition",
     "MedicationRequest": "https://nrces.in/ndhm/fhir/r4/StructureDefinition/MedicationRequest",
@@ -48,10 +49,15 @@ def _records() -> list[dict]:
             "strength": "500 mg",
             "frequency": "twice daily",
             "prescribed_at": "2026-09-09T10:02:00+00:00",
+            # This is deliberate synthetic authority data. The converter must not
+            # infer requester from the provider performing a later export.
+            "requester_provider_id": REQUESTER_PROVIDER_ID,
         },
         {
             "record_type": "allergy",
             "allergen": "Synthetic Allergen",
+            # Explicit fixture lifecycle authority; no production default exists.
+            "clinical_status": "active",
         },
         {"diagnoses": ["Synthetic diagnosis"]},
     ]
@@ -92,6 +98,7 @@ def main() -> int:
             {
                 "synthetic_only": True,
                 "patient_id": PATIENT_ID,
+                "requester_provider_id": REQUESTER_PROVIDER_ID,
                 "abdm_ig_package": "ndhm.in#6.5.0",
                 "fhir_version": "4.0.1",
                 "resources": manifest,
