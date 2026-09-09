@@ -5,9 +5,15 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from collections.abc import Mapping
+from pathlib import Path
 
-from app.core.production_runtime import validate_production_configuration
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from app.core.production_runtime import validate_production_configuration  # noqa: E402
 
 EXPECTED_REGION = "ap-south-1"
 ALLOWED_ENVIRONMENTS = frozenset({"pilot", "staging", "production"})
@@ -103,7 +109,6 @@ def validate_configuration(environment: Mapping[str, str]) -> list[str]:
     if auto_commit and auto_commit not in FALSE_VALUES:
         errors.append("AUTO_COMMIT: enabled or ambiguous settings are forbidden")
 
-    # Deduplicate while preserving deterministic order for operators/tests.
     return list(dict.fromkeys(errors))
 
 
@@ -134,7 +139,10 @@ def check_live_aws(environment: Mapping[str, str]) -> bool:
         }
         for key_id in key_ids:
             metadata = kms.describe_key(KeyId=key_id).get("KeyMetadata", {})
-            if metadata.get("KeyState") != "Enabled" or metadata.get("KeyUsage") != "ENCRYPT_DECRYPT":
+            if (
+                metadata.get("KeyState") != "Enabled"
+                or metadata.get("KeyUsage") != "ENCRYPT_DECRYPT"
+            ):
                 raise RuntimeError("KMS key not ready")
 
         s3 = session.client("s3", config=client_config)
