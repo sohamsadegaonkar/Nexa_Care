@@ -79,8 +79,8 @@ python scripts/run_pilot_migrations.py
 ```
 
 The repository and database must both resolve to the single Alembic head
-`20260906_verification_scheduler`. API container startup never runs migrations and
-must not be used to stamp or downgrade a database.
+`20260909_device_trust_lifecycle`. API container startup never runs migrations
+and must not be used to stamp or downgrade a database.
 
 `GET /healthz` is the dependency-free liveness probe for the container and load
 balancer. `GET /health` is the deployment readiness gate and must report healthy
