@@ -51,7 +51,7 @@ from app.models.provider import (
 from app.services.consent_engine import get_consent_redis_client
 from app.services.patient_auth_service import issue_patient_access_session
 from app.services.provider_auth_service import hash_provider_password
-from app.services.signed_approval_verifier import canonical_signed_approval_payload
+from app.services.signed_consent_v3 import canonical_signed_consent_v3_payload
 from tests.helpers.qualification_infra import (
     get_qualification_redis_url,
     postgres_database_url,
@@ -176,7 +176,10 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
                 "patient_id": str(patient.patient_uuid),
                 "patient_subject": patient_subject,
                 "public_patient_id": patient.public_patient_id,
-                "device_id": str(device.id),
+                "device_id": str(device.device_id),
+                "device_key_id": str(device.id),
+                "device_key_version": device.key_version,
+                "device_key_fingerprint": device.public_key_fingerprint,
                 "card_uid": card_uid,
                 "provider_id": str(provider_id),
                 "hospital_id": str(hospital_id),
@@ -204,17 +207,22 @@ async def _approve(
     request_id: str,
     patient_id: str,
     device_id: str,
+    key_id: str,
+    key_version: int,
+    public_key_fingerprint: str,
 ) -> None:
     challenge = await client.get(
-        f"/api/v2/consent/challenge/{request_id}",
+        f"/api/v2/consent/v3/challenge/{request_id}",
         headers={"Authorization": f"Bearer {patient_token}"},
     )
     assert challenge.status_code == 200, challenge.text
     data = challenge.json()
-    signing_bytes = canonical_signed_approval_payload(
+    assert data["protocol_version"] == "nexa-consent-v3"
+    signing_bytes = canonical_signed_consent_v3_payload(
         request_id=request_id,
         patient_id=patient_id,
         provider_id=data["provider_id"],
+        hospital_id=data["hospital_id"],
         challenge_nonce=data["challenge_nonce"],
         decision="approved",
         purpose=data["purpose"],
@@ -222,24 +230,34 @@ async def _approve(
         issued_at=data["issued_at"],
         expires_at=data["expires_at"],
         access_duration=data["access_duration"],
+        consent_context_hash=data["consent_context_hash"],
         device_id=device_id,
+        key_id=key_id,
+        key_version=key_version,
+        public_key_fingerprint=public_key_fingerprint,
     )
     digest = hashlib.sha256(signing_bytes).digest()
     signature = private_key.sign(digest, ec.ECDSA(utils.Prehashed(hashes.SHA256())))
     response = await client.post(
-        "/api/v2/consent/approve-signed",
+        "/api/v2/consent/v3/approve-signed",
         headers={"Authorization": f"Bearer {patient_token}"},
         json={
+            "protocol_version": "nexa-consent-v3",
             "request_id": request_id,
             "patient_id": patient_id,
             "decision": "approved",
             "challenge_nonce": data["challenge_nonce"],
+            "consent_context_hash": data["consent_context_hash"],
             "signature": base64.b64encode(signature).decode("ascii"),
             "device_id": device_id,
+            "key_id": key_id,
+            "key_version": key_version,
+            "public_key_fingerprint": public_key_fingerprint,
         },
     )
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "approved"
+    assert response.json()["protocol_version"] == "nexa-consent-v3"
     assert "consent_token" not in response.json()
 
 
@@ -336,9 +354,10 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
             )
 
             request = await client.post(
-                "/api/v2/consent/request",
+                "/api/v2/consent/v3/request",
                 headers=headers,
                 json={
+                    "protocol_version": "nexa-consent-v3",
                     "discovery_handle": discovery["discovery_handle"],
                     "purpose": "treatment",
                     "scope": "clinical",
@@ -352,9 +371,10 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
             assert 110 <= await redis.ttl(f"consent_request:{request_id}") <= 120
 
             reused = await client.post(
-                "/api/v2/consent/request",
+                "/api/v2/consent/v3/request",
                 headers=headers,
                 json={
+                    "protocol_version": "nexa-consent-v3",
                     "discovery_handle": discovery["discovery_handle"],
                     "purpose": "treatment",
                     "scope": "clinical",
@@ -370,6 +390,9 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
                 request_id=request_id,
                 patient_id=str(graph["patient_id"]),
                 device_id=str(graph["device_id"]),
+                key_id=str(graph["device_key_id"]),
+                key_version=int(graph["device_key_version"]),
+                public_key_fingerprint=str(graph["device_key_fingerprint"]),
             )
 
             status_response = await client.get(
@@ -379,7 +402,7 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
             assert status_response.json()["status"] == "approved"
 
             claim = await client.post(
-                f"/api/v2/consent/{request_id}/claim-access", headers=headers
+                f"/api/v2/consent/v3/{request_id}/claim-access", headers=headers
             )
             assert claim.status_code == 200, claim.text
             claim_data = claim.json()
@@ -389,7 +412,7 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
             assert claim_data["consent_token"]
 
             replay = await client.post(
-                f"/api/v2/consent/{request_id}/claim-access", headers=headers
+                f"/api/v2/consent/v3/{request_id}/claim-access", headers=headers
             )
             assert replay.status_code in {403, 409}
 
@@ -554,9 +577,10 @@ async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAcc
             discovery = nfc.json()
 
             request = await client.post(
-                "/api/v2/consent/request",
+                "/api/v2/consent/v3/request",
                 headers=headers,
                 json={
+                    "protocol_version": "nexa-consent-v3",
                     "discovery_handle": discovery["discovery_handle"],
                     "purpose": "treatment",
                     "scope": "clinical",
@@ -574,10 +598,13 @@ async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAcc
                 request_id=request_id,
                 patient_id=str(graph["patient_id"]),
                 device_id=str(graph["device_id"]),
+                key_id=str(graph["device_key_id"]),
+                key_version=int(graph["device_key_version"]),
+                public_key_fingerprint=str(graph["device_key_fingerprint"]),
             )
 
             claim = await client.post(
-                f"/api/v2/consent/{request_id}/claim-access", headers=headers
+                f"/api/v2/consent/v3/{request_id}/claim-access", headers=headers
             )
             assert claim.status_code == 200, claim.text
             claim_data = claim.json()
