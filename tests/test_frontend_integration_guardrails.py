@@ -39,8 +39,17 @@ def test_frontend_transport_and_device_key_are_canonical():
             key_modules.append(path.relative_to(ROOT).as_posix())
     assert not offenders
     assert sorted(set(key_modules)) == [
-        "nexa-client/packages/app/services/deviceKeys.ts"
+        "nexa-client/packages/app/services/deviceKeys.ts",
+        "nexa-client/packages/app/services/legacyDeviceKey.ts",
     ]
+
+    legacy = (
+        ROOT / "nexa-client/packages/app/services/legacyDeviceKey.ts"
+    ).read_text(encoding="utf-8")
+    assert "Legacy raw-key access is deliberately isolated to one-time 6H rotation migration" in legacy
+    assert "signLegacyDeviceMessage" in legacy
+    assert "export async function generate" not in legacy
+
     assert not (ROOT / "nexa-client/packages/app/utils/deviceKey.ts").exists()
 
 
