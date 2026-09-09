@@ -1,0 +1,181 @@
+name: Live Cloud Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    environment: pilot
+    env:
+      ROLE_ARN: ${{ vars.NEXA_PILOT_AWS_ROLE_ARN || secrets.NEXA_PILOT_AWS_ROLE_ARN || vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+      ECS_CLUSTER: ${{ vars.NEXA_PILOT_ECS_CLUSTER || secrets.NEXA_PILOT_ECS_CLUSTER || vars.ECS_CLUSTER || secrets.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.NEXA_PILOT_ECS_SERVICE || secrets.NEXA_PILOT_ECS_SERVICE || vars.ECS_SERVICE || secrets.ECS_SERVICE }}
+      ECR_REPOSITORY: ${{ vars.NEXA_PILOT_ECR_REPOSITORY || secrets.NEXA_PILOT_ECR_REPOSITORY || vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+      RUNTIME_SECRET_ID: ${{ vars.NEXA_PILOT_RUNTIME_SECRET_ID || secrets.NEXA_PILOT_RUNTIME_SECRET_ID || vars.RUNTIME_SECRET_ID || secrets.RUNTIME_SECRET_ID }}
+      DOCUMENT_STORAGE_SECRET_ID: ${{ vars.NEXA_PILOT_DOCUMENT_STORAGE_SECRET_ID || secrets.NEXA_PILOT_DOCUMENT_STORAGE_SECRET_ID || vars.DOCUMENT_STORAGE_SECRET_ID || secrets.DOCUMENT_STORAGE_SECRET_ID }}
+      API_BASE_URL: ${{ vars.NEXA_PILOT_API_BASE_URL || secrets.NEXA_PILOT_API_BASE_URL || vars.API_BASE_URL || secrets.API_BASE_URL }}
+      OPERATIONS_AUTH_TOKEN: ${{ secrets.NEXA_PILOT_OPERATIONS_AUTH_TOKEN || secrets.OPERATIONS_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require live qualification inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          required = [
+              "ROLE_ARN", "ECS_CLUSTER", "ECS_SERVICE", "ECR_REPOSITORY",
+              "RUNTIME_SECRET_ID", "DOCUMENT_STORAGE_SECRET_ID", "API_BASE_URL",
+              "OPERATIONS_AUTH_TOKEN",
+          ]
+          missing = [name for name in required if not os.getenv(name)]
+          if missing:
+              print("LIVE_CLOUD_QUALIFICATION=BLOCKED_MISSING_ACCOUNT_WIRING")
+              print("MISSING_COUNT=" + str(len(missing)))
+              raise SystemExit(42)
+          print("LIVE_CLOUD_INPUTS=PASS")
+          PY
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: nexa-live-cloud-qualification
+          mask-aws-account-id: true
+
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity >/dev/null
+          echo "AWS_OIDC_IDENTITY=PASS"
+
+      - name: Verify ECS service is stable and Fargate-backed
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_json="$(mktemp)"
+          aws ecs describe-services \
+            --region "$AWS_REGION" \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            >"$service_json"
+          python - "$service_json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          services = data.get("services") or []
+          if len(services) != 1:
+              raise SystemExit("expected exactly one ECS service")
+          svc = services[0]
+          if svc.get("launchType") not in (None, "FARGATE") and svc.get("capacityProviderStrategy"):
+              providers = {item.get("capacityProvider") for item in svc.get("capacityProviderStrategy", [])}
+              if not providers.intersection({"FARGATE", "FARGATE_SPOT"}):
+                  raise SystemExit("service is not Fargate-backed")
+          desired = int(svc.get("desiredCount") or 0)
+          running = int(svc.get("runningCount") or 0)
+          pending = int(svc.get("pendingCount") or 0)
+          if desired < 1 or running != desired or pending != 0:
+              raise SystemExit("ECS service is not at desired stable count")
+          deployments = svc.get("deployments") or []
+          primaries = [d for d in deployments if d.get("status") == "PRIMARY"]
+          if len(primaries) != 1 or primaries[0].get("rolloutState") not in (None, "COMPLETED"):
+              raise SystemExit("primary ECS deployment is not complete")
+          print("ECS_SERVICE_STABLE=PASS")
+          PY
+          rm -f "$service_json"
+
+      - name: Verify immutable ECR image exists
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_def_arn="$(aws ecs describe-services --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
+          image="$(aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_def_arn" --query 'taskDefinition.containerDefinitions[0].image' --output text)"
+          case "$image" in
+            *@sha256:*) ;;
+            *) echo "deployed image is not pinned by digest"; exit 51 ;;
+          esac
+          digest="${image##*@}"
+          aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageDigest="$digest" >/dev/null
+          echo "IMMUTABLE_IMAGE=PASS"
+
+      - name: Verify task definition has no static AWS credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          task_def_arn="$(aws ecs describe-services --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
+          task_json="$(mktemp)"
+          aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_def_arn" >"$task_json"
+          python - "$task_json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))["taskDefinition"]
+          forbidden = {"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"}
+          for container in data.get("containerDefinitions", []):
+              names = {item.get("name") for item in container.get("environment", [])}
+              names |= {item.get("name") for item in container.get("secrets", [])}
+              bad = sorted(forbidden & names)
+              if bad:
+                  raise SystemExit("static AWS credential variables are present in task definition")
+          if not data.get("taskRoleArn"):
+              raise SystemExit("application task role is missing")
+          print("TASK_ROLE_BOUNDARY=PASS")
+          PY
+          rm -f "$task_json"
+
+      - name: Verify secret metadata is reachable without reading secret values
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws secretsmanager describe-secret --region "$AWS_REGION" --secret-id "$RUNTIME_SECRET_ID" >/dev/null
+          aws secretsmanager describe-secret --region "$AWS_REGION" --secret-id "$DOCUMENT_STORAGE_SECRET_ID" >/dev/null
+          echo "SECRET_METADATA=PASS"
+
+      - name: Verify public liveness and readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${API_BASE_URL%/}"
+          curl --fail --silent --show-error --max-time 15 "$base/healthz" >/tmp/healthz.json
+          curl --fail --silent --show-error --max-time 15 "$base/health" >/tmp/health.json
+          python - <<'PY'
+          import json
+          for path in ("/tmp/healthz.json", "/tmp/health.json"):
+              obj = json.load(open(path, encoding="utf-8"))
+              if obj.get("status") not in {"ok", "healthy"}:
+                  raise SystemExit(f"unhealthy response at {path}")
+          print("PUBLIC_HEALTH=PASS")
+          PY
+
+      - name: Verify protected operational health and metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${API_BASE_URL%/}"
+          curl --fail --silent --show-error --max-time 20 \
+            -H "X-Nexa-Operations-Token: $OPERATIONS_AUTH_TOKEN" \
+            "$base/ops/health" >/tmp/ops-health.json
+          curl --fail --silent --show-error --max-time 20 \
+            -H "X-Nexa-Operations-Token: $OPERATIONS_AUTH_TOKEN" \
+            "$base/metrics" >/tmp/metrics.txt
+          python - <<'PY'
+          import json
+          obj = json.load(open("/tmp/ops-health.json", encoding="utf-8"))
+          if obj.get("status") not in {"ok", "healthy"}:
+              raise SystemExit("protected operational health is not healthy")
+          metrics = open("/tmp/metrics.txt", encoding="utf-8").read()
+          if not metrics.strip():
+              raise SystemExit("protected metrics response is empty")
+          print("OPS_HEALTH_AND_METRICS=PASS")
+          PY
+
+      - name: Qualification complete
+        run: echo "LIVE_CLOUD_QUALIFICATION=PASS"
