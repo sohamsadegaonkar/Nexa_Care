@@ -22,6 +22,18 @@ PATIENT_REFERENCE = re.compile(
     r"^Patient/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
+# FHIR R4 dateTime permits partial dates. Once a time is present, seconds and a
+# timezone are mandatory. This is intentionally pinned here instead of relying
+# on ``datetime.fromisoformat``, which accepts timezone-less timestamps that are
+# not valid FHIR R4 dateTime values.
+FHIR_DATETIME = re.compile(
+    r"^(?:[1-9]\d{3})"
+    r"(?:-(?:0[1-9]|1[0-2])"
+    r"(?:-(?:0[1-9]|[12]\d|3[01])"
+    r"(?:T(?:[01]\d|2[0-3]):[0-5]\d:(?:[0-5]\d|60)"
+    r"(?:\.\d+)?(?:Z|[+-](?:(?:0\d|1[0-3]):[0-5]\d|14:00)))?"
+    r")?)?)?$"
+)
 
 ALLOWED_RESOURCE_TYPES = frozenset(
     {"Condition", "MedicationRequest", "Observation", "AllergyIntolerance"}
@@ -83,14 +95,29 @@ def _nonempty_text(value: Any) -> bool:
 
 
 def _valid_datetime(value: Any) -> bool:
-    if not _nonempty_text(value):
+    if not _nonempty_text(value) or not FHIR_DATETIME.fullmatch(value):
         return False
+
+    # Regex validation covers legal partial-date precision. For complete dates,
+    # also reject impossible calendar values (for example 2026-02-31).
+    if len(value) >= 10:
+        try:
+            datetime.strptime(value[:10], "%Y-%m-%d")
+        except ValueError:
+            return False
+
+    if "T" not in value:
+        return True
+
+    # FHIR permits leap-second ``:60``. Python's parser does not, so normalize
+    # only for calendar/offset validation after the FHIR lexical check above.
     raw = value.replace("Z", "+00:00")
+    raw = re.sub(r":60(?=(?:\.\d+)?[+-])", ":59", raw, count=1)
     try:
-        datetime.fromisoformat(raw)
+        parsed = datetime.fromisoformat(raw)
     except ValueError:
         return False
-    return True
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
 
 def _coding_contains(
