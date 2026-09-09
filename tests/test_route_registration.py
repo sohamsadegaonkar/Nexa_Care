@@ -136,6 +136,10 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/request"),
     ("POST", "/api/v2/consent/approve-signed"),
     ("POST", "/api/v2/consent/{request_id}/claim-access"),
+    ("POST", "/api/v2/consent/v3/request"),
+    ("GET", "/api/v2/consent/v3/challenge/{request_id}"),
+    ("POST", "/api/v2/consent/v3/approve-signed"),
+    ("POST", "/api/v2/consent/v3/{request_id}/claim-access"),
     ("GET", "/api/v2/consent/status/{request_id}"),
     (
         "POST",

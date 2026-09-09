@@ -432,7 +432,7 @@ class TestConsentFlowIntegration:
     and SignedApprovalVerifier all run real code.
     """
 
-    def test_full_consent_flow_with_real_signatures(
+    def test_v2_signed_flow_is_retired_after_real_signature_approval(
         self,
         client,
         fake_redis,
@@ -532,27 +532,14 @@ class TestConsentFlowIntegration:
                 f"/api/v2/consent/{request_id}/claim-access",
                 headers={"X-Hospital-Id": str(provider.hospital_id)},
             )
-            assert claim_resp.status_code == 200, claim_resp.text
-            assert claim_resp.headers["cache-control"] == "no-store"
-            claim = claim_resp.json()
-            assert claim["patient_id"] == patient_id
-            consent_token = claim["consent_token"]
-            assert consent_token not in str(fake_sync_redis._a.data.keys())
-
-            from app.services.approved_access_capability import validate
-
-            capability = asyncio.run(
-                validate(
-                    token=consent_token,
-                    patient_id=patient_id,
-                    provider_id=provider_id,
-                    hospital_id=str(provider.hospital_id),
-                    requested_category="clinical_summary",
-                )
+            assert claim_resp.status_code == 410, claim_resp.text
+            detail = claim_resp.json()["detail"]
+            assert detail["error_code"] == "SIGNED_CONSENT_V2_ACCESS_RETIRED"
+            assert detail["upgrade_protocol"] == "nexa-consent-v3"
+            assert not any(
+                str(key).startswith("consent_access:capability:")
+                for key in fake_sync_redis._a.data
             )
-            assert capability is not None
-            assert capability.patient_id == patient_id
-            assert capability.clinician_id == provider_id
 
     def test_denied_consent_flow_with_real_signatures(
         self,

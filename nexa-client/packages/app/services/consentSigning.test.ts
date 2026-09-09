@@ -16,8 +16,8 @@ vi.mock('./currentDeviceEnrollment', () => ({
 }))
 vi.mock('./deviceKeys', () => ({
   authenticateWithBiometrics: mocks.biometrics,
-  constructConsentSigningInput: vi.fn(() => 'canonical-input'),
-  signConsentChallenge: mocks.sign,
+  constructConsentSigningInputV3: vi.fn(() => 'canonical-input'),
+  signConsentChallengeV3: mocks.sign,
 }))
 vi.mock('../utils/apiClient', async (importOriginal) => {
   const original = await importOriginal<typeof import('../utils/apiClient')>()
@@ -35,10 +35,11 @@ import { ApiError } from '../utils/apiClient'
 import { approveWithBiometric, classifyConsentError } from './consentSigning'
 
 const challenge = {
-  protocol_version: 'nexa-consent-v2' as const,
+  protocol_version: 'nexa-consent-v3' as const,
   request_id: 'request-1',
   patient_id: 'patient-1',
   provider_id: 'provider-1',
+  hospital_id: 'hospital-1',
   provider_name: 'Provider',
   hospital_name: 'Hospital',
   purpose: 'routine_checkup',
@@ -47,6 +48,7 @@ const challenge = {
   challenge_nonce: 'nonce-1',
   issued_at: '2098-12-31T23:45:00Z',
   expires_at: '2099-01-01T00:00:00Z',
+  consent_context_hash: 'a'.repeat(64),
   status: 'pending',
 }
 
@@ -54,6 +56,8 @@ describe('current-device signed approval', () => {
   beforeEach(() => {
     mocks.ensure.mockReset().mockResolvedValue({
       deviceId: 'current-device',
+      keyId: 'current-key',
+      keyVersion: 3,
       status: 'active',
       enrolledNow: false,
       keyFingerprint: 'fingerprint',
@@ -87,7 +91,12 @@ describe('current-device signed approval', () => {
         decision: 'approved',
         challenge_nonce: 'nonce-1',
         signature: 'ecdsa-signature',
+        protocol_version: 'nexa-consent-v3',
         device_id: 'current-device',
+        key_id: 'current-key',
+        key_version: 3,
+        public_key_fingerprint: 'fingerprint',
+        consent_context_hash: 'a'.repeat(64),
       })
     )
   })

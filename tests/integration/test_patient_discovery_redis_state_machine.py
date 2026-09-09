@@ -256,7 +256,9 @@ async def test_real_redis_consent_pending_audit_is_inert_after_downstream_failur
             await consent_routes.claim_approved_access(
                 request_id, Response(), provider, fake_db()
             )
-        assert claim_error.value.status_code == 409
+        assert claim_error.value.status_code == 410
+        assert claim_error.value.detail["error_code"] == "SIGNED_CONSENT_V2_ACCESS_RETIRED"
+        assert claim_error.value.detail["upgrade_protocol"] == "nexa-consent-v3"
         with pytest.raises(HTTPException) as replay_error:
             await consent_routes.create_consent_request(
                 consent_routes.ConsentChallengeRequestPayload(

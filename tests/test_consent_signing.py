@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SERVICES_DIR = ROOT / "nexa-client" / "packages" / "app" / "services"
 FEATURES_DIR = ROOT / "nexa-client" / "packages" / "app" / "features" / "patient"
 CONSENT_ROUTES_PATH = ROOT / "app" / "api" / "v2" / "consent_routes.py"
-SIGNED_VERIFIER_PATH = ROOT / "app" / "services" / "signed_approval_verifier.py"
+SIGNED_VERIFIER_PATH = ROOT / "app" / "services" / "signed_consent_v3.py"
 
 CONSENT_SIGNING_PATH = SERVICES_DIR / "consentSigning.ts"
 DEVICE_KEYS_PATH = SERVICES_DIR / "deviceKeys.ts"
@@ -68,6 +68,15 @@ class TestConsentSigningService:
 
     def test_file_exists(self) -> None:
         assert CONSENT_SIGNING_PATH.exists(), "consentSigning.ts must exist"
+
+    def test_current_orchestrator_is_v3_only(self) -> None:
+        code = CONSENT_SIGNING_PATH.read_text(encoding="utf-8")
+        assert "nexa-consent-v3" in code
+        assert "nexa-consent-v2" not in code
+        assert "consent_context_hash" in code
+        assert "key_id" in code
+        assert "key_version" in code
+        assert "public_key_fingerprint" in code
 
     def test_uses_p256_curve(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -126,7 +135,7 @@ class TestConsentSigningService:
     def test_signing_input_uses_canonical_json(self) -> None:
         """Fields must use the unambiguous v2 canonical JSON protocol."""
         code = _read(CONSENT_SIGNING_PATH)
-        assert "nexa-consent-v2" in code
+        assert "nexa-consent-v3" in code
         assert "JSON.stringify" in code
 
     def test_hashes_with_sha256_before_signing(self) -> None:
@@ -197,14 +206,14 @@ class TestConsentSigningService:
     def test_approve_submits_to_correct_endpoint(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         assert (
-            "/api/v2/consent/approve-signed" in code
-        ), "Must submit to /api/v2/consent/approve-signed"
+            "/api/v2/consent/v3/approve-signed" in code
+        ), "Must submit to /api/v2/consent/v3/approve-signed"
 
     def test_deny_submits_to_same_endpoint(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         # Both approve and deny submit to the same endpoint with different decision
         assert (
-            "/api/v2/consent/approve-signed" in code
+            "/api/v2/consent/v3/approve-signed" in code
         ), "Deny must also submit to approve-signed endpoint with decision=denied"
 
     def test_payload_includes_required_fields(self) -> None:
@@ -250,8 +259,8 @@ class TestConsentSigningService:
     def test_fetches_challenge_from_correct_endpoint(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
         assert (
-            "/api/v2/consent/challenge/" in code
-        ), "Must fetch challenge from /api/v2/consent/challenge/{requestId}"
+            "/api/v2/consent/v3/challenge/" in code
+        ), "Must fetch challenge from /api/v2/consent/v3/challenge/{requestId}"
 
     def test_has_is_challenge_expired_function(self) -> None:
         code = _read(CONSENT_SIGNING_PATH)
@@ -312,8 +321,8 @@ class TestSigningInputBackendMatch:
         """Both client and backend bind the v2 protocol and all fields."""
         client_code = _read(CONSENT_SIGNING_PATH)
         backend_code = _read(SIGNED_VERIFIER_PATH)
-        assert "nexa-consent-v2" in client_code
-        assert "nexa-consent-v2" in backend_code
+        assert "nexa-consent-v3" in client_code
+        assert "nexa-consent-v3" in backend_code
         assert "sort_keys=True" in backend_code
 
     def test_sha256_hashing_matches_backend(self) -> None:
@@ -675,7 +684,7 @@ class TestConsentFlowE2E:
 
         # Step 5: Submits to approve-signed endpoint
         assert (
-            "/api/v2/consent/approve-signed" in signing_code
+            "/api/v2/consent/v3/approve-signed" in signing_code
         ), "Must submit to approve-signed endpoint"
 
         # Step 6: Navigates to result screen
@@ -709,8 +718,8 @@ class TestConsentFlowE2E:
 
         # Step 4: Submits to same endpoint
         assert (
-            "/api/v2/consent/approve-signed" in deny_body
-            or "/api/v2/consent/approve-signed" in signing_code
+            "/api/v2/consent/v3/approve-signed" in deny_body
+            or "/api/v2/consent/v3/approve-signed" in signing_code
         ), "Deny must submit to approve-signed endpoint"
 
     def test_expired_flow_complete(self) -> None:

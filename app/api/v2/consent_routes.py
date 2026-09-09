@@ -711,6 +711,7 @@ async def create_consent_request(
     expires_at = now + timedelta(seconds=challenge_ttl_seconds)
 
     challenge_payload = {
+        "protocol_version": "nexa-consent-v2",
         "request_id": request_id,
         "patient_id": patient_id,
         "provider_id": provider.actor_uid,  # Server-derived — NEVER from request body
@@ -1153,6 +1154,15 @@ async def claim_approved_access(
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8")
     data = json.loads(raw)
+
+    if data.get("protocol_version") == "nexa-consent-v2":
+        raise HTTPException(
+            status_code=status.HTTP_410_GONE,
+            detail={
+                "error_code": "SIGNED_CONSENT_V2_ACCESS_RETIRED",
+                "upgrade_protocol": "nexa-consent-v3",
+            },
+        )
 
     if data.get("status") != "approved":
         raise HTTPException(

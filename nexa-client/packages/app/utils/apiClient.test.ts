@@ -194,6 +194,7 @@ describe('shared API transport', () => {
 
     await NexaApiClient.requestConsent(
       {
+        protocol_version: 'nexa-consent-v3',
         discovery_handle: 'opaque-discovery-handle-12345678901234567890',
         purpose: 'treatment',
         scope: 'clinical',
@@ -203,7 +204,7 @@ describe('shared API transport', () => {
     )
 
     const [url, init] = requiredMockCall(fetchMock.mock.calls)
-    expect(url).toBe('https://native.example.test/api/v2/consent/request')
+    expect(url).toBe('https://native.example.test/api/v2/consent/v3/request')
     expect(init.headers.Authorization).toBe('Bearer provider-session-token')
     expect(init.headers['X-Hospital-Id']).toBe('hospital-1')
   })

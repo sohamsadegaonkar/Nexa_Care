@@ -89,6 +89,7 @@ describe('RequestConsentScreen web consent flow', () => {
     expect(requestConsent).toHaveBeenCalledOnce()
     expect(requestConsent).toHaveBeenCalledWith(
       {
+        protocol_version: 'nexa-consent-v3',
         discovery_handle: 'opaque-discovery-handle-12345678901234567890',
         purpose: 'follow_up',
         scope: 'clinical',

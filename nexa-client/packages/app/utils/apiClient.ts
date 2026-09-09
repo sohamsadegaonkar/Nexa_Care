@@ -91,6 +91,7 @@ export interface EnrolledDevicesListResponse {
 }
 
 export interface ConsentChallengeRequest {
+  protocol_version: 'nexa-consent-v3'
   discovery_handle: string
   purpose:
     | 'treatment'
@@ -105,6 +106,7 @@ export interface ConsentChallengeRequest {
 }
 
 export interface ConsentChallengeResponse {
+  protocol_version: 'nexa-consent-v3'
   request_id: string
   challenge_nonce: string
   expires_in_seconds: number
@@ -116,10 +118,11 @@ export interface ConsentChallengeResponse {
 }
 
 export interface FullConsentChallenge {
-  protocol_version: 'nexa-consent-v2'
+  protocol_version: 'nexa-consent-v3'
   request_id: string
   patient_id: string
   provider_id: string
+  hospital_id: string
   provider_name: string
   hospital_name: string
   purpose: string
@@ -128,16 +131,22 @@ export interface FullConsentChallenge {
   challenge_nonce: string
   issued_at: string
   expires_at: string
+  consent_context_hash: string
   status: string
 }
 
 export interface SignedApprovalRequest {
+  protocol_version: 'nexa-consent-v3'
   request_id: string
   patient_id: string
   decision: 'approved' | 'denied'
   challenge_nonce: string
+  consent_context_hash: string
   signature: string
   device_id: string
+  key_id: string
+  key_version: number
+  public_key_fingerprint: string
 }
 
 export interface SignedApprovalResponse {
@@ -776,7 +785,7 @@ export const NexaApiClient = {
     hospitalId: string
   ): Promise<ConsentChallengeResponse> {
     return request<ConsentChallengeResponse>(
-      '/api/v2/consent/request',
+      '/api/v2/consent/v3/request',
       {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -792,13 +801,13 @@ export const NexaApiClient = {
   },
 
   fetchConsentChallenge(requestId: string): Promise<FullConsentChallenge> {
-    return request<FullConsentChallenge>(`/api/v2/consent/challenge/${requestId}`, {
+    return request<FullConsentChallenge>(`/api/v2/consent/v3/challenge/${requestId}`, {
       method: 'GET',
     })
   },
 
   approveSignedConsent(payload: SignedApprovalRequest): Promise<SignedApprovalResponse> {
-    return request<SignedApprovalResponse>('/api/v2/consent/approve-signed', {
+    return request<SignedApprovalResponse>('/api/v2/consent/v3/approve-signed', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -806,7 +815,7 @@ export const NexaApiClient = {
 
   denySignedConsent(payload: SignedApprovalRequest): Promise<SignedApprovalResponse> {
     if (payload.decision !== 'denied') throw new Error('denySignedConsent requires decision=denied')
-    return request<SignedApprovalResponse>('/api/v2/consent/approve-signed', {
+    return request<SignedApprovalResponse>('/api/v2/consent/v3/approve-signed', {
       method: 'POST',
       body: JSON.stringify(payload),
     })
@@ -941,7 +950,7 @@ export const NexaApiClient = {
 
   claimConsentAccess(requestId: string, hospitalId: string): Promise<ConsentAccessClaimResponse> {
     return request<ConsentAccessClaimResponse>(
-      `/api/v2/consent/${encodeURIComponent(requestId)}/claim-access`,
+      `/api/v2/consent/v3/${encodeURIComponent(requestId)}/claim-access`,
       { method: 'POST' },
       { 'X-Hospital-Id': hospitalId }
     )

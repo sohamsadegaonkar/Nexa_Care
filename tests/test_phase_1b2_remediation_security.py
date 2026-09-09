@@ -567,7 +567,9 @@ def test_consent_audit_failure_with_delete_failure_leaves_inert_challenge(
                     request_id, Response(), provider, db
                 )
             )
-        assert claim_error.value.status_code == 409
+        assert claim_error.value.status_code == 410
+        assert claim_error.value.detail["error_code"] == "SIGNED_CONSENT_V2_ACCESS_RETIRED"
+        assert claim_error.value.detail["upgrade_protocol"] == "nexa-consent-v3"
         signed_approval = consent_routes.SignedApprovalRequestPayload(
             request_id=request_id,
             patient_id=str(patient.patient_uuid),
