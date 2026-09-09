@@ -1,0 +1,92 @@
+name: Operational Audit Integrity Qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - slice-8e-operational-audit-retention-evidence
+    paths:
+      - '.github/workflows/operational-audit-integrity.yml'
+      - 'scripts/verify_audit_integrity_evidence.py'
+      - 'scripts/verify_audit_partitions.py'
+      - 'app/observability/audit_ledger.py'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    environment: pilot
+    env:
+      DATABASE_URL: ${{ secrets.NEXA_PILOT_AUDIT_DATABASE_URL || secrets.NEXA_PILOT_DATABASE_URL || secrets.DATABASE_URL }}
+      DATABASE_ECHO_SQL: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require authorized operational database input
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ]; then
+            echo "OPERATIONAL_AUDIT_QUALIFICATION=BLOCKED_MISSING_DATABASE_WIRING"
+            exit 42
+          fi
+          case "$DATABASE_URL" in
+            postgresql+asyncpg://*) ;;
+            *) echo "OPERATIONAL_AUDIT_QUALIFICATION=BLOCKED_INVALID_DATABASE_DRIVER"; exit 43 ;;
+          esac
+          echo "OPERATIONAL_AUDIT_INPUT=PASS"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install verifier dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify all audit partitions and emit sanitized evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +e
+          python scripts/verify_audit_integrity_evidence.py >/tmp/nexa-audit-evidence.json
+          rc=$?
+          set -e
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          evidence = json.loads(Path('/tmp/nexa-audit-evidence.json').read_text())
+          expected_keys = {
+              'schema', 'status', 'dry_run', 'scope', 'failure_count',
+              'failure_codes', 'raw_audit_payloads_included',
+              'raw_hashes_or_event_ids_included',
+          }
+          if set(evidence) != expected_keys:
+              raise SystemExit('unexpected operational evidence shape')
+          if evidence['schema'] != 'nexa-slice-7e-audit-integrity-evidence-v1':
+              raise SystemExit('unexpected evidence schema')
+          if evidence['dry_run'] is not True or evidence['scope'] != 'all-partitions':
+              raise SystemExit('operational qualification must be all-partitions dry-run')
+          if evidence['raw_audit_payloads_included'] is not False:
+              raise SystemExit('raw audit payload inclusion forbidden')
+          if evidence['raw_hashes_or_event_ids_included'] is not False:
+              raise SystemExit('raw audit identifiers inclusion forbidden')
+          print(json.dumps(evidence, sort_keys=True))
+          if evidence['status'] != 'PASS':
+              raise SystemExit('audit integrity evidence did not PASS')
+          PY
+          if [ "$rc" -ne 0 ]; then
+            echo "OPERATIONAL_AUDIT_QUALIFICATION=FAIL"
+            exit "$rc"
+          fi
+          echo "OPERATIONAL_AUDIT_QUALIFICATION=PASS"
+
+      - name: Reassert retention non-mutation boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq 'DRAFT — NOT APPROVED — NOT IN EFFECT' docs/governance/MILESTONE_6_PILOT_RETENTION_DECISION.md
+          grep -Fq 'DO NOT CONFIGURE THE S3 LIFECYCLE RULE' docs/governance/MILESTONE_6_PILOT_RETENTION_DECISION.md
+          echo "RETENTION_POLICY_MUTATION=NOT_PERFORMED"
