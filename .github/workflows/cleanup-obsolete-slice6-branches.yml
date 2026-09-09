@@ -1,0 +1,138 @@
+name: One-use obsolete Slice 6 branch cleanup
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/cleanup-obsolete-slice6-branches.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact cleanup commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate and atomically delete obsolete refs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_PARENT: 6ddf2b352b623e1d3fa430c35a23e26e9c1954bc
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current="$(git rev-parse HEAD)"
+          parent="$(git rev-parse HEAD^)"
+          if [[ "$parent" != "$EXPECTED_PARENT" ]]; then
+            echo "Refusing cleanup: workflow commit parent is $parent, expected $EXPECTED_PARENT" >&2
+            exit 1
+          fi
+
+          changed="$(git diff --name-only "$parent" "$current")"
+          if [[ "$changed" != ".github/workflows/cleanup-obsolete-slice6-branches.yml" ]]; then
+            echo "Refusing cleanup: bootstrap commit changed unexpected paths:" >&2
+            printf '%s\n' "$changed" >&2
+            exit 1
+          fi
+
+          branches=(
+            slice-6d-device-key-rotation
+            slice-6e-lost-device-account-recovery
+            slice-6f-signed-consent-v3
+            slice-6g-cross-boundary-qualification
+            slice-6h-mobile-native
+            slice-6i-physical-pilot
+            tmp-noop
+          )
+          heads=(
+            8e4a1d49254e3ce4ac09a13a6178ca2dc7790535
+            cd2139eb1bea72cdf2f3507a693d43b48bc5e47e
+            af2da428b3e7506c021fc8163575dbc23f5b657b
+            8204cebf80303153a0e23e5f77c99ef0b496799e
+            a6af30bafc62cbe5ad7ca0381dea661b61424699
+            93e730b4bd3aa2d821f78938895e5d45003b2e61
+            056f64926492846043331d47a95fffc5d030d1bd
+          )
+          prs=(14 15 16 17 18 19)
+          merges=(
+            0db79938b339db57adf00844da03350a9f048c0a
+            f84164d1892c7940d126f3817266242743427e96
+            5a4efadc47464b3454ec0ab6749ab583cb485bc0
+            bfde0c0879ef73c4e9fdfd1ccc9f862d482f13e3
+            9782d208f9330d9dcc4ba63af31d9a5bee7877db
+            6ddf2b352b623e1d3fa430c35a23e26e9c1954bc
+          )
+
+          expected_refs="$(printf '%s\n' main "${branches[@]}" | sort)"
+          actual_refs="$(git ls-remote --heads origin | awk '{sub("refs/heads/", "", $2); print $2}' | sort)"
+          if [[ "$actual_refs" != "$expected_refs" ]]; then
+            echo "Refusing cleanup: branch inventory changed." >&2
+            echo "Expected:" >&2
+            printf '%s\n' "$expected_refs" >&2
+            echo "Actual:" >&2
+            printf '%s\n' "$actual_refs" >&2
+            exit 1
+          fi
+
+          for i in "${!branches[@]}"; do
+            remote_sha="$(git ls-remote --heads origin "refs/heads/${branches[$i]}" | awk '{print $1}')"
+            if [[ "$remote_sha" != "${heads[$i]}" ]]; then
+              echo "Refusing cleanup: ${branches[$i]} moved to $remote_sha; expected ${heads[$i]}" >&2
+              exit 1
+            fi
+          done
+
+          for i in "${!prs[@]}"; do
+            pr_json="$(curl -fsSL \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls/${prs[$i]}")"
+            PR_JSON="$pr_json" EXPECT_HEAD="${heads[$i]}" EXPECT_MERGE="${merges[$i]}" python3 -c '
+import json, os, sys
+pr = json.loads(os.environ["PR_JSON"])
+if pr.get("merged_at") is None:
+    raise SystemExit("PR is not merged")
+if pr["head"]["sha"] != os.environ["EXPECT_HEAD"]:
+    raise SystemExit(f"PR head moved: {pr[\"head\"][\"sha\"]}")
+if pr.get("merge_commit_sha") != os.environ["EXPECT_MERGE"]:
+    raise SystemExit(f"unexpected merge commit: {pr.get(\"merge_commit_sha\")}")
+'
+          done
+
+          git fetch origin \
+            "+refs/heads/tmp-noop:refs/remotes/origin/tmp-noop" \
+            "+refs/heads/slice-6e-lost-device-account-recovery:refs/remotes/origin/slice-6e-lost-device-account-recovery"
+          git merge-base --is-ancestor \
+            056f64926492846043331d47a95fffc5d030d1bd \
+            cd2139eb1bea72cdf2f3507a693d43b48bc5e47e || {
+              echo "Refusing cleanup: tmp-noop is no longer an ancestor of final 6E." >&2
+              exit 1
+            }
+
+          git push --atomic origin --delete "${branches[@]}"
+
+          remaining="$(git ls-remote --heads origin | awk '{sub("refs/heads/", "", $2); print $2}' | sort)"
+          if [[ "$remaining" != "main" ]]; then
+            echo "Cleanup verification failed; remaining refs:" >&2
+            printf '%s\n' "$remaining" >&2
+            exit 1
+          fi
+
+      - name: Self-remove cleanup workflow without changing product tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout -B main "$GITHUB_SHA"
+          rm .github/workflows/cleanup-obsolete-slice6-branches.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore(repo): remove one-use branch cleanup workflow"
+          git push origin main
