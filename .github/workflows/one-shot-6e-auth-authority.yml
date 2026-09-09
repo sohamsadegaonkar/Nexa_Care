@@ -18,7 +18,7 @@ jobs:
         with:
           ref: slice-6e-lost-device-account-recovery
           fetch-depth: 0
-      - name: Apply Slice 6E authority compatibility patch
+      - name: Apply Slice 6E backend authority compatibility patch
         shell: bash
         run: |
           python - <<'PY'
@@ -33,11 +33,10 @@ jobs:
                   raise SystemExit(f'{path_name}: anchor count={count}, expected={expected}: {old[:100]!r}')
               path.write_text(source.replace(old, new, expected))
 
-          def regex_once(path_name: str, pattern: str, replacement: str, *, dotall: bool = False) -> None:
+          def regex_once(path_name: str, pattern: str, replacement: str) -> None:
               path = Path(path_name)
               source = path.read_text()
-              flags = re.MULTILINE | (re.DOTALL if dotall else 0)
-              updated, count = re.subn(pattern, replacement, source, count=1, flags=flags)
+              updated, count = re.subn(pattern, replacement, source, count=1, flags=re.MULTILINE)
               if count != 1:
                   raise SystemExit(f'{path_name}: regex count={count}: {pattern[:100]!r}')
               path.write_text(updated)
@@ -173,111 +172,6 @@ jobs:
               '                new=AsyncMock(return_value=False),\n'
               '            ),\n',
           )
-
-          replace_count(
-              'nexa-client/packages/app/services/patientOtp.ts',
-              '  device_enrollment_token: string\n',
-              "  device_enrollment_token: string | null\n  device_authority_state: 'bootstrap_enrollment' | 'existing_device_required'\n",
-          )
-          replace_count(
-              'nexa-client/packages/app/services/patientAuthSession.ts',
-              '  enrollmentToken: string\n',
-              '  enrollmentToken: string | null\n',
-          )
-          regex_once(
-              'nexa-client/packages/app/services/patientAuthSession.ts',
-              r'    await Promise\.all\(\[\n      SecureStore\.setItemAsync\(PATIENT_ACCESS_TOKEN_STORAGE_KEY, token, \{\n.*?    \]\)\n',
-              '    await SecureStore.setItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY, token, {\n'
-              '      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,\n'
-              '    })\n'
-              '    if (enrollmentToken) {\n'
-              '      await SecureStore.setItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, enrollmentToken, {\n'
-              '        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,\n'
-              '      })\n'
-              '    } else {\n'
-              '      await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)\n'
-              '    }\n',
-              dotall=True,
-          )
-
-          current = 'nexa-client/packages/app/services/currentDeviceEnrollment.ts'
-          replace_count(
-              current,
-              'async function enrollInstallation(\n    metadata: LocalInstallationMetadata,\n    options: EnsureCurrentDeviceOptions\n): Promise<EnrollDeviceResponse> {\n',
-              'async function enrollInstallation(\n    metadata: LocalInstallationMetadata,\n    options: EnsureCurrentDeviceOptions,\n    hasDeviceHistory: boolean\n): Promise<EnrollDeviceResponse> {\n',
-          )
-          old_no_token = (
-              '    if (!enrollmentToken) {\n'
-              '      throw new CurrentDeviceError(\n'
-              "        'Secure this device by signing in with a fresh OTP.',\n"
-              "        'REAUTH_REQUIRED',\n"
-              '        401\n'
-              '      )\n'
-              '    }\n'
-          )
-          new_no_token = (
-              '    if (!enrollmentToken) {\n'
-              '      if (hasDeviceHistory) {\n'
-              '        throw new CurrentDeviceError(\n'
-              "          'This installation is not a current trusted device. Authorize it from a trusted device, or use account recovery if all trusted devices are lost.',\n"
-              "          'RECOVERY_REQUIRED',\n"
-              '          409\n'
-              '        )\n'
-              '      }\n'
-              '      throw new CurrentDeviceError(\n'
-              "        'Secure this device by signing in with a fresh OTP.',\n"
-              "        'REAUTH_REQUIRED',\n"
-              '        401\n'
-              '      )\n'
-              '    }\n'
-          )
-          replace_count(current, old_no_token, new_no_token)
-          replace_count(
-              current,
-              '    const enrollment = await enrollInstallation(metadata, options)\n',
-              '    const enrollment = await enrollInstallation(metadata, options, server.devices.length > 0)\n',
-          )
-
-          current_test = 'nexa-client/packages/app/services/currentDeviceEnrollment.test.ts'
-          old_test = (
-              "  it('does not mistake another active patient device for this installation', async () => {\n"
-              "    mocks.serverDevices = [{ device_id: 'old-installation', status: 'active' }]\n"
-              '    const { ensureCurrentDeviceEnrollment } = await service()\n'
-              '    await ensureCurrentDeviceEnrollment()\n'
-              '    expect(mocks.enroll).toHaveBeenCalledOnce()\n'
-              '  })\n'
-          )
-          new_test = (
-              "  it('requires trusted-device authorization or recovery when another device history exists', async () => {\n"
-              "    mocks.serverDevices = [{ device_id: 'old-installation', status: 'active' }]\n"
-              '    mocks.enrollmentToken = null\n'
-              '    const { ensureCurrentDeviceEnrollment } = await service()\n'
-              '    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({\n'
-              "      code: 'RECOVERY_REQUIRED',\n"
-              '      status: 409,\n'
-              '    })\n'
-              '    expect(mocks.enroll).not.toHaveBeenCalled()\n'
-              '  })\n'
-          )
-          replace_count(current_test, old_test, new_test)
-
-          session_test = 'nexa-client/packages/app/services/patientAuthSession.test.ts'
-          nullable_test = (
-              "  it('stores account authentication without retaining a stale bootstrap grant', async () => {\n"
-              '    const session = await loadSession()\n'
-              "    const token = patientJwt('patient-a', Math.floor(Date.now() / 1000) + 300)\n"
-              "    mocks.storage.set(session.DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, 'stale-bootstrap-token')\n\n"
-              '    await session.storePatientAuthSession(token, null)\n\n'
-              '    expect(mocks.storage.get(session.PATIENT_ACCESS_TOKEN_STORAGE_KEY)).toBe(token)\n'
-              '    expect(mocks.storage.has(session.DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)).toBe(false)\n'
-              "    expect(session.getPatientAuthSnapshot().status).toBe('authenticated')\n"
-              '  })\n\n'
-          )
-          replace_count(
-              session_test,
-              "  it('revokes the server session before clearing local credentials on logout', async () => {\n",
-              nullable_test + "  it('revokes the server session before clearing local credentials on logout', async () => {\n",
-          )
           PY
           python -m py_compile app/api/v2/auth_routes.py \
             tests/integration/test_consent_flow_qa.py \
@@ -296,11 +190,6 @@ jobs:
             tests/test_device_consent_qa.py \
             tests/test_patient_otp_auth.py \
             tests/test_patient_registration.py \
-            nexa-client/packages/app/services/patientOtp.ts \
-            nexa-client/packages/app/services/patientAuthSession.ts \
-            nexa-client/packages/app/services/currentDeviceEnrollment.ts \
-            nexa-client/packages/app/services/currentDeviceEnrollment.test.ts \
-            nexa-client/packages/app/services/patientAuthSession.test.ts \
             .github/workflows/one-shot-6e-auth-authority.yml
           git diff --cached --check
           git commit -m "feat(recovery): enforce account and device authority split"
