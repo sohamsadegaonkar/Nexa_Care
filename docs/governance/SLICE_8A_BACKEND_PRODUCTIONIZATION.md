@@ -1,6 +1,6 @@
 # Slice 8A — Backend Productionization Qualification
 
-**Status:** IMPLEMENTATION COMPLETE / INTERNAL QUALIFICATION CANDIDATE — LIVE CLOUD `NOT_RUN`
+**Status:** IMPLEMENTATION COMPLETE / INTERNAL SOFTWARE-RUNTIME QUALIFICATION CANDIDATE — FINAL EVIDENCE-HEAD CI PENDING — LIVE CLOUD `NOT_RUN`
 
 **Authoritative base `main`:** `dd81d50473f4d78b9f153c65466979d18c53ebb5`
 
@@ -79,7 +79,53 @@ Slice 8A is eligible for internal qualification only when the exact evidence-bea
 10. PR review comments/threads contain no unresolved finding.
 11. `main` is still the qualified base, or the branch is explicitly requalified against any newer `main` before merge.
 
-Measured CI evidence is intentionally not recorded in this initial candidate revision. It will be added only after successful first-pass qualification, and that evidence-bearing commit will itself receive a fresh exact-head CI qualification before merge.
+## Measured first-pass qualification evidence
+
+The following evidence was measured on the corrected pre-attestation branch head `c03e362940b1fc049ee05f4fe4800fc4a1d3615e`, tested by GitHub Actions through synthetic PR merge commit `b9b95e6f6580125bd5d51e70501f66de908d763d` against base `dd81d50473f4d78b9f153c65466979d18c53ebb5`.
+
+### Backend CI #419 — run `34380363081` — SUCCESS
+
+- Ruff/lint: SUCCESS.
+- Partition A — Quality & Pure Unit: `3692 passed`, `396 deselected`; JUnit failures `0`, errors `0`, skipped `0`.
+- Partition B — PostgreSQL: `272 passed`, `3816 deselected`; JUnit failures `0`, errors `0`, skipped `0`.
+- Partition C — PostgreSQL + Redis: `124 passed`, `3964 deselected`; JUnit failures `0`, errors `0`, skipped `0`.
+- All partition qualification assertions completed successfully.
+
+### Frontend CI #368 — run `34380363132` — SUCCESS
+
+- frontend tests: SUCCESS;
+- Next production build: SUCCESS;
+- workspace package builds: SUCCESS;
+- Android native project generation: SUCCESS;
+- Android native source compilation: SUCCESS;
+- iOS native project generation: SUCCESS;
+- CocoaPods installation: SUCCESS;
+- iOS native source compilation: SUCCESS.
+
+### First diagnostic PR run and resolved findings
+
+The earlier Backend CI #416 was intentionally treated as diagnostic evidence, not as a pass. It found four contract/test regressions after the initial PR was opened:
+
+1. one legacy non-production `/health` test still expected the retired detailed public response shape;
+2. the pilot operations document no longer printed the exact current migration head required by existing authority-contract tests;
+3. the same migration-head omission triggered a second deployment-hardening contract test;
+4. route inventory did not yet explicitly admit the intentional protected `/ops/health` and `/metrics` routes.
+
+Those findings were corrected without weakening production sanitization or operational authorization. The public `/health` contract remains coarse, the exact migration head remains documented, and the protected operations routes are explicitly inventoried.
+
+Additional Slice 8A regressions pin:
+
+- direct execution of `python scripts/check_pilot_environment.py` without repository-import failure;
+- fail-closed production secret validation, including placeholder and cross-purpose secret-reuse rejection;
+- production startup preflight ordering before background workers;
+- public readiness sanitization and protected operational diagnostics;
+- unexpected worker-exit supervision with bounded restart backoff;
+- deployment/runtime template completeness and static-AWS-credential prohibition;
+- read-only AWS metadata qualification boundaries;
+- schema-compatible, forward-only rollback language;
+- pending retention/lifecycle approval boundaries.
+
+This measured evidence is a **first successful qualification pass** only. Because this governance record changes the branch head, Backend and Frontend CI must run again and succeed on the exact evidence-bearing head before PR #26 can be internally qualified and merged.
 
 ## Explicit nonclaims
 
@@ -91,6 +137,7 @@ Slice 8A repository and CI evidence does **not** claim any of the following:
 - no live dedicated PostgreSQL or Redis dependency/outage qualification has been executed;
 - no live rollback has been performed;
 - no live CloudWatch/Prometheus scrape has been qualified;
+- no real patient PHI or production patient workload has been used by this qualification;
 - Slice 7B live cloud/runtime qualification remains `NOT_RUN`;
 - document extraction live accuracy, external FHIR interoperability, ABDM/NHA machine-contract qualification, operational retention approval, and physical-device qualification remain governed by their existing separate boundaries.
 
