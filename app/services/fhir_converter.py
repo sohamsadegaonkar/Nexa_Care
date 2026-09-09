@@ -15,12 +15,6 @@ from __future__ import annotations
 import re
 from uuid import uuid4
 
-CONDITION_CLINICAL_STATUS_SYSTEM = (
-    "http://terminology.hl7.org/CodeSystem/condition-clinical"
-)
-ALLERGY_CLINICAL_STATUS_SYSTEM = (
-    "http://terminology.hl7.org/CodeSystem/allergyintolerance-clinical"
-)
 OBSERVATION_INTERPRETATION_SYSTEM = (
     "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation"
 )
@@ -58,18 +52,10 @@ def _entry(resource: dict) -> dict:
 
 
 def _condition(patient_id: str, diagnosis: str) -> dict:
+    """Export a legacy diagnosis without inventing current lifecycle status."""
     return _entry(
         {
             "resourceType": "Condition",
-            "clinicalStatus": {
-                "coding": [
-                    {
-                        "system": CONDITION_CLINICAL_STATUS_SYSTEM,
-                        "code": "active",
-                        "display": "Active",
-                    }
-                ]
-            },
             "code": {"text": diagnosis},
             "subject": {"reference": f"Patient/{patient_id}"},
         }
@@ -90,9 +76,14 @@ def _medication_request(patient_id: str, medication: dict | str) -> dict:
         dosage = ""
         authored_on = None
 
+    # Nexa's Medication model intentionally covers active *or historical*
+    # prescriptions and does not store a FHIR lifecycle status. R4 requires a
+    # MedicationRequest.status, so use its explicit ``unknown`` code rather than
+    # asserting ``active``. ``intent=order`` is supported by the source concept
+    # of a prescription/order; status remains deliberately unasserted.
     resource = {
         "resourceType": "MedicationRequest",
-        "status": "active",
+        "status": "unknown",
         "intent": "order",
         "medicationCodeableConcept": {"text": str(name)},
         "subject": {"reference": f"Patient/{patient_id}"},
@@ -174,25 +165,14 @@ def _allergy_intolerance(patient_id: str, allergy: dict) -> dict:
     """Export only allergy semantics represented authoritatively by Nexa.
 
     The current ``Allergy`` row stores an allergen plus Nexa provenance/routing
-    metadata. It does not store a FHIR reaction manifestation or an authoritative
-    clinical criticality assessment. ``risk_level`` is therefore not mapped to
-    ``AllergyIntolerance.criticality`` and severity is not emitted as a fabricated
-    reaction. Missing FHIR elements remain absent until the source model can
-    support them truthfully.
+    metadata. It does not store FHIR lifecycle status, reaction manifestation, or
+    an authoritative clinical criticality assessment. Those elements therefore
+    remain absent until the source model can support them truthfully.
     """
 
     return _entry(
         {
             "resourceType": "AllergyIntolerance",
-            "clinicalStatus": {
-                "coding": [
-                    {
-                        "system": ALLERGY_CLINICAL_STATUS_SYSTEM,
-                        "code": "active",
-                        "display": "Active",
-                    }
-                ]
-            },
             "code": {"text": str(allergy.get("allergen") or "Allergy")},
             "patient": {"reference": f"Patient/{patient_id}"},
         }
