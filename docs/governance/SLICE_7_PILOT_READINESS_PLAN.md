@@ -1,10 +1,10 @@
 # Slice 7 — Pilot Readiness, Interoperability, and Evidence Closure
 
-Status: **STARTED — reconciliation/design branch**
+Status: **SOFTWARE WORK THROUGH 7E MERGED — 7F EXTERNALLY BLOCKED / EXTERNAL-MANUAL GATES OPEN**
 
-Baseline: `aa091e14cf38124ca81e32438b49bdad4d79be8b`
+Closure baseline: `c811ba4abbb752a2ae7227d077d409e1d0738261`
 
-Branch: `slice-7-reconciliation`
+Closure branch: `slice-7-closure-reconciliation`
 
 ## Goal
 
@@ -18,124 +18,108 @@ Core rule:
 IMPLEMENTED != INTERNALLY QUALIFIED != DEPLOYED != EXTERNALLY QUALIFIED != PHYSICALLY QUALIFIED
 ```
 
-Each 7.x sub-slice must state exactly which level it proves.
+Each 7.x sub-slice states exactly which level it proves.
 
-## Verified starting point
+## Closure state at the current baseline
 
-The repository enters Slice 7 with these relevant facts:
+The repository has completed the internally executable software/evidence-harness work through 7E:
 
-- internal Provider Trust qualification is merged, while official live ABDM/NHA HPR/HFR machine-contract qualification remains externally blocked;
-- patient session/device/recovery/rotation authority and Signed Consent V3 are merged and internally qualified;
-- cross-boundary PostgreSQL/Redis failure ordering is qualified;
-- native Android/iOS signing-key custody is implemented and compile-qualified, but physical hardware execution remains unproven;
-- Slice 6I evidence machinery is qualified while physical execution remains `BLOCKED_BY_PHYSICAL_PLATFORM / NOT_RUN`;
-- current Alembic head is `20260909_device_trust_lifecycle`;
-- AWS KMS/S3 and pilot runtime tooling exist, but implementation/tooling alone is not a fresh live deployment qualification;
-- the FHIR R4 export route is internally implemented/tested but not externally conformance-qualified;
-- AWS Textract was reached successfully for all 15/15 synthetic benchmark documents in the recorded authorized run, but extraction accuracy qualification did not pass;
-- pilot retention security/privacy/legal approval remains pending.
+- **7A — MERGED / INTERNALLY QUALIFIED:** current authority-critical documentation and regression contracts were reconciled with Signed Consent V3, device lifecycle/recovery/rotation, FHIR export, pipeline authority, and Alembic head `20260909_device_trust_lifecycle`.
+- **7B — SOFTWARE HARNESS MERGED / LIVE PILOT NOT_RUN:** the machine-checkable pilot-runtime evidence contract is qualified, but no live ECS/Fargate/KMS/S3 pilot runtime PASS is claimed.
+- **7C — SOFTWARE/EVALUATOR MERGED / LIVE ACCURACY NOT QUALIFIED:** the evaluator now prevents provider reachability or nominal benchmark status from hiding extraction/identity failures. The committed synthetic replay remains truthfully unqualified.
+- **7D — INTERNAL BASE-R4 CONTRACT MERGED / EXTERNAL VALIDATION NOT_RUN:** `nexa-fhir-r4-base-v1` is internally qualified. Official/full-validator, implementation-guide, partner-sandbox, certification, and production-exchange claims remain unrun.
+- **7E — SOFTWARE/GOVERNANCE MERGED / OPERATIONAL SNAPSHOT AND RETENTION APPROVALS OPEN:** canonical partition-aware audit verification, sanitized evidence output, and retention non-regression guardrails are qualified. A real operational database snapshot and human retention approvals are not supplied by CI.
+- **7F — EXTERNALLY BLOCKED:** authoritative ABDM/NHA HPR/HFR machine-contract material is still required before implementation/live qualification may proceed.
 
-## Slice 7 sequencing
+Parallel Slice 6I physical handset execution remains **BLOCKED BY PHYSICAL PLATFORM / NOT_RUN**.
+
+This closure state means the repository has exhausted the currently defined, internally executable Slice 7 software work. It does not mean all pilot-readiness gates have passed.
+
+## Slice 7 sequencing and retained contracts
 
 ### 7A — Baseline and contract reconciliation
 
 **Objective:** make current repository documentation and machine-readable contracts describe the software that actually exists after Slices 5–6.
 
-Required work:
+Implemented/qualified scope includes:
 
-- reconcile `docs/CURRENT-STATE.md` against current governance attestations and code;
-- correct stale migration/deployment references to `20260909_device_trust_lifecycle`;
-- identify historical alpha documents that must not override current runtime contracts;
-- audit `docs/API-CONTRACTS.md` and `docs/API-CONTRACT-DEVIATIONS.md` against current V3 consent/device/FHIR/pipeline routes;
-- remove or mark stale security-gap statements that are already resolved, without deleting historical evidence;
-- add tests for any contract artifact whose drift can create an unsafe client/server assumption.
+- reconciliation of `docs/CURRENT-STATE.md`, `docs/API-CONTRACTS.md`, and `docs/API-CONTRACT-DEVIATIONS.md` with current authority;
+- current migration/deployment references pinned to `20260909_device_trust_lifecycle`;
+- historical Alpha documents explicitly prevented from overriding current runtime contracts;
+- regression tests guarding Signed Consent V3, device authority paths, FHIR authorization/nonclaims, pipeline authority, and external/physical blockers.
 
-Exit gate:
-
-- exact-head Backend A/B/C zero-skip CI;
-- Frontend JS/build + Android/iOS compile CI when client contracts are touched;
-- no unresolved current-state contradiction for authority-critical routes.
+Status: **MERGED / INTERNALLY QUALIFIED**.
 
 ### 7B — Pilot runtime and cloud-security qualification
 
 **Objective:** qualify the current code in an immutable, synthetic-data pilot runtime rather than inferring deployment safety from local/CI tests.
 
-Scope:
+The merged evidence contract requires a future live qualification to bind:
 
 - exact backend image digest and frontend deployment identity;
-- ECS/Fargate task-role credential path; no static AWS access keys;
-- `ENCRYPTION_BACKEND=kms` with the intended AWS KMS key and encryption context;
-- encrypted S3 document storage with expected KMS metadata and public-access protections;
-- dedicated PostgreSQL and TLS Redis/Upstash;
-- database migrated to exact repository head before traffic;
-- `/healthz` and `/health` readiness behavior;
-- audit-outbox worker/backlog health;
+- ECS/Fargate task-role credential path with no static AWS access keys;
+- `ENCRYPTION_BACKEND=kms`, the intended KMS key, and encryption context;
+- encrypted S3 document storage and public-access protections;
+- dedicated PostgreSQL and TLS Redis/Upstash at the exact migration head;
+- `/healthz` and `/health` readiness;
+- audit-outbox health/backlog;
 - trusted host/CORS/proxy boundaries;
-- rollback and session/consent invalidation sequence;
-- Redis/KMS/S3/database unavailability fail-closed cases where authority depends on them.
+- rollback plus session/consent invalidation;
+- fail-closed Redis/KMS/S3/database dependency-outage scenarios.
 
-No real patient PHI is allowed by default. A green 7B means **pilot-runtime qualification for the tested immutable deployment**, not generic production certification.
+Status: **SOFTWARE HARNESS MERGED / LIVE PILOT NOT_RUN**.
+
+No real patient PHI is authorized by the harness merge. A future live PASS applies only to the exact immutable deployment represented by measured sanitized evidence.
 
 ### 7C — Document extraction accuracy qualification
 
 **Objective:** close the gap between provider reachability and clinically useful extraction accuracy.
 
-Starting evidence:
+The merged evaluator preserves a fixed synthetic benchmark contract, separates provider failures from parser/classification/occurrence failures, prevents duplicate/inflated evidence matches, and independently gates the actual identity-decision outcomes.
 
-- a recorded authorized synthetic run reached AWS Textract for 15/15 documents without provider errors;
-- that run failed benchmark accuracy gates and left `benchmark_valid=false`.
+The recorded authorized synthetic run reached AWS Textract for 15/15 documents without provider errors, but the committed replay remains unqualified. `benchmark_valid=false`, and the fail-closed identity decision rejects one true-match case whose OCR name differs from the bound synthetic identity.
 
-Required work:
+Status: **SOFTWARE/EVALUATOR MERGED / LIVE ACCURACY NOT QUALIFIED**.
 
-- preserve a fixed synthetic benchmark and expected-occurrence corpus;
-- separate provider transport failures from parser/classification/occurrence failures;
-- eliminate duplicate/inflated evidence matches;
-- qualify identity classification independently from field extraction;
-- require stable precision/recall/coverage thresholds before setting benchmark PASS;
-- keep high/critical-risk and uncertain clinical data on the explicit human-review path;
-- preserve immutable source/evidence provenance and quarantine semantics.
-
-No benchmark PASS may be inferred from "15/15 provider calls succeeded".
+No benchmark PASS may be inferred from “15/15 provider calls succeeded,” and thresholds/identity authority must not be weakened to manufacture one.
 
 ### 7D — FHIR R4 conformance and interoperability
 
 **Objective:** move from an internally tested export shape to a declared, validated interoperability contract.
 
-Current implementation boundary:
+The merged internal contract `nexa-fhir-r4-base-v1` declares FHIR `4.0.1` and the exact emitted base resource subset:
 
-- `/api/v2/fhir/export/{patient_id}` is provider-trust and active-consent gated;
-- structured patient records are preferred with a legacy shard fallback;
-- audit failure aborts export.
+- `Condition`;
+- `MedicationRequest`;
+- `Observation`;
+- `AllergyIntolerance`.
 
-Required work:
+The export remains provider-trust and active-consent gated; audit failure and internal contract failure abort export. Internal validation covers declared identifiers/references, terminology, timestamps, Quantity/UCUM rules, resource constraints, empty/partial records, and malformed internal data within the local contract.
 
-- freeze the exact resource/profile set Nexa claims to emit;
-- validate generated bundles/resources against the chosen FHIR R4 rules and implementation guide/profile set;
-- test identifiers, references, terminology, timestamps, units, provenance, empty/partial records, and malformed internal data;
-- preserve patient/provider/facility authorization boundaries during export;
-- add deterministic conformance fixtures and machine-readable reports;
-- add an external target/sandbox qualification only when a real target exists.
+Status: **INTERNAL BASE-R4 CONTRACT MERGED / EXTERNAL VALIDATION NOT_RUN**.
 
-Internal schema validation is not external certification.
+Internal schema validation is not official/full FHIR validation, an implementation-guide PASS, ABDM profile compliance, partner-system interoperability, certification, or production exchange qualification.
 
 ### 7E — Operational evidence, audit, and retention closure
 
 **Objective:** make operational evidence reproducible and remove stale governance ambiguity without allowing engineering code to self-approve legal/privacy decisions.
 
-Required work:
+The merged software/governance work:
 
-- reconcile audit-ledger integrity tooling and runbook with the canonical ledger implementation;
-- qualify chain verification against controlled tamper scenarios and operational database snapshots;
-- define sanitized evidence-manifest conventions for deployment/runtime qualification;
-- reconcile rollback, incident preservation, and evidence retention runbooks;
-- keep the Milestone 6 retention decision PENDING until named security and privacy/legal reviewers actually approve it;
-- prevent pending/proposed retention values from becoming cloud lifecycle configuration accidentally.
+- makes `scripts/verify_audit_partitions.py` the canonical partition-aware operator verifier;
+- retains `scripts/verify_audit_chain.py` only as a compatibility entry point into current behavior;
+- provides sanitized `scripts/verify_audit_integrity_evidence.py` output without raw audit payloads, hashes, event IDs, or database exceptions;
+- fails closed on controlled tamper/fork/cycle/disconnect/protocol/scope/sequence/head errors, malformed serialized payloads, and an explicitly requested nonexistent partition;
+- preserves integrity failures as evidence instead of silently healing the ledger;
+- keeps `docs/governance/MILESTONE_6_PILOT_RETENTION_DECISION.md` pending and prevents proposed retention values from silently becoming S3 lifecycle implementation.
 
-Engineering may validate configuration **after** approval; it may not manufacture the approval.
+Status: **SOFTWARE/GOVERNANCE MERGED / OPERATIONAL DATABASE SNAPSHOT NOT_RUN / RETENTION APPROVAL PENDING**.
+
+Engineering may validate a lifecycle configuration **after** genuine human approval; it may not manufacture that approval.
 
 ### 7F — Official ABDM/NHA HPR/HFR machine-contract qualification
 
-Status at Slice 7 start: **EXTERNALLY BLOCKED**.
+Status: **EXTERNALLY BLOCKED**.
 
 The repository must not invent an official contract. Work may proceed only when authoritative NHA/ABDM material supplies the actual server-to-server endpoint/authentication/transport/error/rate-limit contract required for live qualification.
 
@@ -165,31 +149,71 @@ When a genuine device is available, its seven physical scenarios can be run from
 
 ## Native NFC boundary
 
-No qualified native NFC reader currently exists. If native NFC becomes a product requirement for the next pilot, it must receive its own explicit 7.x sub-slice or a separately approved extension with:
-
-- actual iOS/Android native reader implementation;
-- opaque payload only;
-- no patient UUID or clinical data on the tag;
-- replay/expiry/session/provider/facility binding;
-- physical controller evidence.
+No qualified native NFC reader currently exists. If native NFC becomes a product requirement for a future pilot, it requires a separately approved, explicitly scoped implementation/qualification effort with actual iOS/Android reader behavior, opaque tag payloads, replay/expiry/session/provider/facility binding, and physical controller evidence.
 
 The existing scanner abstraction is not a physical NFC implementation.
 
-## Merge discipline
+## Remaining evidence and authority gates
 
-Each executable 7.x sub-slice follows the same discipline established in Slice 6:
+The following are still open after the 7E merge and cannot be closed by CI assertion:
+
+1. Slice 6I physical handset execution — **BLOCKED BY PHYSICAL PLATFORM / NOT_RUN**.
+2. Slice 7B live pilot runtime — **LIVE PILOT NOT_RUN**.
+3. Slice 7C live synthetic extraction accuracy — **NOT QUALIFIED**.
+4. Slice 7D external/full FHIR validation or partner interoperability — **NOT_RUN**.
+5. Slice 7E authorized operational database snapshot integrity verification — **NOT_RUN**.
+6. Named security and privacy/legal retention approval — **PENDING**; lifecycle apply/read-back evidence — **NOT_RUN**.
+7. Slice 7F official ABDM/NHA HPR/HFR machine-contract qualification — **EXTERNALLY BLOCKED**.
+
+## Merge discipline retained for future executable work
+
+Any future measured qualification or newly approved sub-slice follows the established discipline:
 
 1. branch from current verified `main`;
-2. implement only the scoped authority contract;
+2. implement or execute only the explicitly scoped authority/evidence contract;
 3. open a draft PR;
-4. run exact-head CI and real PostgreSQL/Redis/cloud/interop qualification where relevant;
+4. run exact-head CI and real PostgreSQL/Redis/cloud/interop/physical qualification where relevant;
 5. fix failures without weakening authority;
 6. record measured evidence and explicit nonclaims;
-7. requalify the final documentation head;
+7. requalify the final evidence/documentation head;
 8. merge with an expected-head guard;
 9. verify `main`;
 10. delete obsolete branches only after their work is proven merged.
 
-## Immediate next action after this reconciliation
+## Next action after Slice 7 software closure
 
-Complete **7A** by auditing the current API contracts/deviation report against the merged V3 consent, device lifecycle/recovery, FHIR export, and pipeline contracts. Only after 7A is qualified should implementation begin on 7B/7C/7D in parallel or priority order.
+There is **no committed Slice 8 plan** at this closure baseline. This document does not infer or invent one.
+
+The next legitimate task is whichever external/manual prerequisite becomes real first:
+
+- execute Slice 6I on genuine supported handset hardware;
+- execute Slice 7B against an authorized immutable synthetic-data cloud runtime;
+- run a separately authorized Slice 7C live synthetic benchmark and validate its sanitized result;
+- select an actual Slice 7D FHIR implementation guide/full validator/partner target and run it;
+- capture Slice 7E evidence from an authorized operational database snapshot and obtain genuine security/privacy/legal retention approval before lifecycle rollout; or
+- begin 7F only after authoritative NHA/ABDM server-to-server machine-contract material is available.
+
+Until then, creating a new PASS, physical result, external conformance claim, human approval, official HPR/HFR contract, or Slice 8 scope by assertion would violate the Slice 7 evidence model.
+
+## Measured closure qualification evidence
+
+The pre-attestation closure head `02bb2c25b3d4acb8aae7f0ef442dc9fcd4a5c383` was tested through pull-request synthetic merge `2a45c9305503a55af5b160e0701b534681f97921` against qualification base `main` `c811ba4abbb752a2ae7227d077d409e1d0738261`.
+
+Backend CI #413 completed successfully:
+
+- Ruff: PASS;
+- Partition A: 3,649 executed, 0 failures, 0 errors, 0 skips;
+- Partition B: 272 executed, 0 failures, 0 errors, 0 skips;
+- Partition C: 124 executed, 0 failures, 0 errors, 0 skips.
+
+Frontend CI #362 completed successfully:
+
+- frontend tests: PASS;
+- Next production build: PASS;
+- workspace package build: PASS;
+- Android native project generation and source compilation: PASS;
+- iOS native project generation, CocoaPods installation, and source compilation: PASS.
+
+PR #25 had no inline review threads when this evidence was recorded. The measured run qualifies the closure documentation/regression shape that existed at `02bb2c25...`; it does **not** turn any external/manual gate above into PASS.
+
+This attestation commit changes the branch head and is therefore **not itself merge evidence**. The exact resulting head must pass the same required backend and frontend workflows, including zero-skip backend qualification, before PR #25 is merge-eligible.

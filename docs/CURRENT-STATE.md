@@ -1,7 +1,7 @@
 # Nexa Care — Current Engineering State
 
 **Last reconciled:** 2026-09-09  
-**Source baseline:** `aa091e14cf38124ca81e32438b49bdad4d79be8b`  
+**Source baseline:** `c811ba4abbb752a2ae7227d077d409e1d0738261`  
 **Purpose:** repository-attested current state. Historical alpha documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
 
 ## 1. Current authority boundaries
@@ -24,7 +24,7 @@ Patient consent cannot repair failed provider trust, and a valid account login c
 
 The internal Provider Trust implementation and PostgreSQL/Redis qualification are merged. Current clinical authorization is built from independently evaluated provider identity/credential, professional verification, facility verification, affiliation state, fixed server-owned clinical capability, and mode-specific session/MFA assurance.
 
-Official live ABDM/NHA HPR/HFR server-to-server qualification is **not** claimed. Phase 5G used synthetic registry behavior; the repository still records the official HPR/HFR machine contract as externally blocked pending authoritative NHA contract/authentication details. No live production HPR/HFR source should be enabled by inference from synthetic qualification.
+Official live ABDM/NHA HPR/HFR server-to-server qualification is **not** claimed. Phase 5G used synthetic registry behavior. Slice 7F remains **EXTERNALLY BLOCKED** until authoritative NHA/ABDM material supplies the real server-to-server endpoint, authentication, transport, error, retry/rate-limit, and related machine contract. No live production HPR/HFR source should be enabled by inference from synthetic qualification.
 
 ## 3. Patient sessions, devices, recovery, and consent
 
@@ -62,9 +62,7 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 **BLOCKED BY PHYSICAL PLATFORM / NOT_RUN**
 
-No physical Secure Enclave, Android hardware-backed Keystore, StrongBox, biometric, or NFC execution is claimed from CI.
-
-No qualified native NFC reader or cross-device NFC/QR key-transfer protocol is currently implemented.
+No physical Secure Enclave, Android hardware-backed Keystore, StrongBox, biometric, or NFC execution is claimed from CI. No qualified native NFC reader or cross-device NFC/QR key-transfer protocol is currently implemented.
 
 ## 5. Persistence and migrations
 
@@ -74,49 +72,71 @@ The current single Alembic head is:
 
 `20260909_device_trust_lifecycle` revises `20260906_verification_scheduler`. Pilot/staging/production migration tooling is pinned to the current head and startup must not silently migrate, stamp, or downgrade the database.
 
-## 6. Encryption and deployment boundary
+## 6. Pilot runtime and cloud-security boundary — Slice 7B
 
-The repository contains both local envelope-encryption support and an `AWSKMSProvider`, plus S3 encrypted document storage and pilot environment/deployment validation tooling.
+Slice 7B's software evidence harness and validator are merged and internally qualified. They bind a future pilot claim to an exact repository commit, immutable backend image digest, frontend deployment identity, migration head, ECS task-role identity, KMS/S3 properties, PostgreSQL/Redis state, readiness checks, rollback/invalidation evidence, and dependency-failure behavior.
 
-For pilot/staging/production, repository policy requires cloud KMS-backed envelope encryption, managed AWS task-role credentials, dedicated PostgreSQL/Redis, restricted host/proxy/CORS configuration, and audit/readiness checks. The presence of this implementation and tooling does **not** by itself establish a fresh live production deployment qualification.
+**Slice 7B live pilot runtime: NOT_RUN.**
 
-Any new pilot/production claim must bind exact immutable backend/frontend versions, the deployed runtime configuration, PostgreSQL migration state, Redis state, KMS/S3 metadata, readiness checks, rollback evidence, and synthetic-only qualification data unless separately approved for real clinical data.
+Repository CI does not prove a deployed ECS/Fargate runtime, live task-role credentials, a specific KMS key or S3 bucket policy, deployed frontend identity, or measured cloud outage behavior. A live PASS requires an authorized synthetic-only pilot deployment and a sanitized measured evidence manifest validated against the merged 7B contract. No real patient PHI is authorized by the software-harness merge.
 
-## 7. FHIR interoperability
+## 7. FHIR interoperability — Slice 7D
 
 The backend exposes a consent- and provider-trust-gated FHIR R4 export route at `/api/v2/fhir/export/{patient_id}`. It exports current structured patient records first and falls back to the deprecated clinical shard only when structured records are absent. Audit failure aborts export.
 
-Internal route/unit coverage does not establish external FHIR conformance certification, partner-system interoperability, profile validation against an external implementation guide, or production exchange qualification. Those remain separate work.
+Slice 7D merged an internally qualified base-R4 contract, `nexa-fhir-r4-base-v1`, for FHIR `4.0.1`. The declared emitted resource subset is `Condition`, `MedicationRequest`, `Observation`, and `AllergyIntolerance`. The export path now runs a fail-closed internal validator covering the declared structural, reference, terminology, timestamp, Quantity/UCUM, and resource-specific invariants.
 
-## 8. Document AI / extraction
+**Slice 7D external FHIR validation / partner interoperability: NOT_RUN.**
+
+The local contract is not a complete official FHIR validator, ABDM/India implementation-guide validation, partner-sandbox result, certification, or production exchange qualification. Those require an actual external target/profile/conformance authority.
+
+## 8. Document AI / extraction — Slice 7C
 
 The document pipeline includes provider-authorized AWS Textract integration, durable evidence/routing, clinician adjudication boundaries, failure quarantine, and real PostgreSQL/Redis coverage.
 
-The repository records a real authorized synthetic benchmark execution that reached Textract for all 15/15 benchmark documents without provider errors, but **did not pass extraction accuracy qualification**. Exact-occurrence precision and identity classification remained failing gates and `benchmark_valid` remained false.
+Slice 7C's software/evaluator qualification is merged. Its validator separates provider reachability, extraction metrics, and the actual fail-closed identity decision so a nominal benchmark result cannot hide a false accept or false reject.
 
-Therefore provider reachability must not be described as extraction-accuracy qualification.
+The repository records an authorized synthetic benchmark execution that reached Textract for all 15/15 benchmark documents without provider errors, but **did not pass extraction accuracy qualification**. The committed replay left `benchmark_valid=false`, and one true-match synthetic identity was correctly rejected after OCR produced a discrepant name. No fuzzy matching or threshold weakening was introduced to manufacture a pass.
 
-## 9. Audit and operational governance
+**Slice 7C live extraction accuracy: NOT QUALIFIED.** A future PASS requires a separately authorized live synthetic benchmark against the fixed or explicitly reviewed corpus and a green Slice 7C validator result. Provider reachability alone is insufficient.
 
-The repository contains a canonical audit ledger, tamper-evidence tests, and `scripts/verify_audit_chain.py`; older documentation claiming that no audit-chain verifier exists is stale.
+## 9. Audit and operational governance — Slice 7E
 
-Pilot retention remains a human-governance boundary. `docs/governance/MILESTONE_6_PILOT_RETENTION_DECISION.md` is still DRAFT/PENDING for security and privacy/legal approval and must not be converted into an S3 lifecycle rule while those approvals are absent.
+Slice 7E's software/governance work is merged and internally qualified.
 
-## 10. Current external/manual blockers
+The canonical operator verifier is `scripts/verify_audit_partitions.py`, which verifies the partitioned ledger against durable `audit_chain_heads`. The historical `scripts/verify_audit_chain.py` path is now only a compatibility entry point into the canonical partition-aware verifier. The sanitized evidence wrapper `scripts/verify_audit_integrity_evidence.py` emits value-free classifications rather than raw audit payloads, hashes, event IDs, or database exceptions.
 
-The following cannot be converted into PASS by repository code or CI alone:
+The verifier fails closed for forks/cycles, disconnected components, protocol/scope mismatches, sequence discontinuity, chain-head mismatch, malformed serialized payloads, and an explicitly requested nonexistent partition. A verified integrity failure is evidence to preserve; it is not permission to silently rewrite the ledger.
 
-1. Slice 6I physical handset qualification — **BLOCKED BY PHYSICAL PLATFORM / NOT_RUN**.
-2. Official ABDM/NHA HPR/HFR live server-to-server qualification — externally blocked pending authoritative machine contract/auth details.
-3. Pilot retention security/privacy/legal approval — human approval remains pending.
-4. Any external FHIR partner/certification claim — requires an actual target/conformance authority.
+**Slice 7E operational database snapshot integrity evidence: NOT_RUN.** Repository CI qualifies the verifier and controlled regression cases; it cannot prove a specific authorized pilot/production database snapshot without connecting to that environment.
 
-## 11. Next engineering program
+Pilot retention remains a human-governance boundary. `docs/governance/MILESTONE_6_PILOT_RETENTION_DECISION.md` remains **DRAFT — NOT APPROVED — NOT IN EFFECT**. Security and privacy/legal approval remain **PENDING**, and no proposed retention duration may become an S3 lifecycle rule by engineering inference. Actual lifecycle application and read-back evidence remain **NOT_RUN** until approval exists.
 
-The next software program is **Slice 7 — Pilot Readiness, Interoperability, and Evidence Closure**.
+## 10. Slice 7 software closure and remaining gates
 
-Its scope and sequencing are defined in:
+The internally executable repository work for **Slice 7A through Slice 7E is merged**. That statement is deliberately narrower than saying every pilot-readiness objective is complete.
 
-`docs/governance/SLICE_7_PILOT_READINESS_PLAN.md`
+The following remaining gates cannot be converted into PASS by repository code or CI alone:
 
-Slice 7 may proceed on internally executable work while the external/manual blockers above remain truthfully recorded. Progress in Slice 7 does not relabel Slice 6I physical execution as complete.
+1. **Slice 6I physical handset qualification — BLOCKED BY PHYSICAL PLATFORM / NOT_RUN.**
+2. **Slice 7B live pilot runtime — NOT_RUN.** Requires an authorized immutable synthetic-data deployment and measured cloud/runtime evidence.
+3. **Slice 7C live extraction accuracy — NOT QUALIFIED.** Requires a separately authorized live synthetic benchmark satisfying the merged evaluator.
+4. **Slice 7D external FHIR validation / partner interoperability — NOT_RUN.** Requires a real implementation guide, validator/partner target, or conformance authority.
+5. **Slice 7E operational database snapshot integrity evidence — NOT_RUN.** Requires an authorized operational database snapshot and controlled evidence capture.
+6. **Pilot retention security/privacy/legal approval — PENDING; lifecycle apply/read-back — NOT_RUN.** Engineering may validate an approved policy but may not create the approval.
+7. **Slice 7F official ABDM/NHA HPR/HFR machine-contract qualification — EXTERNALLY BLOCKED.** It requires authoritative NHA/ABDM machine-contract material before implementation or live qualification may proceed.
+
+## 11. Next engineering action
+
+There is no committed `SLICE_8` plan in the repository at this baseline, and this reconciliation does not invent one.
+
+The next safe action is whichever real prerequisite becomes available first:
+
+- execute Slice 6I on genuine supported handset hardware;
+- execute the Slice 7B live synthetic pilot qualification in an authorized cloud environment;
+- run a separately authorized Slice 7C live synthetic extraction benchmark;
+- select and execute a real Slice 7D external FHIR validator/profile/partner target;
+- capture authorized Slice 7E operational database snapshot evidence and obtain the required human retention approvals before any lifecycle rollout; or
+- begin Slice 7F only after authoritative NHA/ABDM server-to-server contract material is available.
+
+Until one of those prerequisites exists, creating a new software PASS, external contract, physical result, human approval, or Slice 8 scope by assertion would be inaccurate.
