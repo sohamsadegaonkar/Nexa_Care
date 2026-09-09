@@ -22,7 +22,7 @@ jobs:
       - name: Reconcile current authority documentation and tests
         shell: bash
         env:
-          EXPECTED_PARENT: 9a2a8b7092f062ca4e1e3ddcc886b21a38dab89e
+          EXPECTED_PARENT: 01c9a14f27b4b90b9f212fa0bf416d8afb93c811
         run: |
           set -euo pipefail
 
@@ -96,7 +96,7 @@ jobs:
           replace_once(
               'docs/governance/NEXA_CARE_ENGINEERING_CONSTITUTION.md',
               'Last reviewed: 2026-07-27  \n',
-              'Last reviewed: 2026-09-09  \n',
+              'Last reviewed: 2026-09-09\n',
           )
           replace_once(
               'docs/governance/NEXA_CARE_ENGINEERING_CONSTITUTION.md',
