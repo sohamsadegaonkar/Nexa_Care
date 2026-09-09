@@ -171,13 +171,14 @@ def _observation(patient_id: str, record: dict) -> dict:
 
 
 def _allergy_intolerance(patient_id: str, allergy: dict) -> dict:
-    """Export allergy propensity without inventing an adverse-reaction event.
+    """Export only allergy semantics represented authoritatively by Nexa.
 
-    The current Nexa ``Allergy`` row has allergen/severity/risk metadata but does
-    not model a concrete reaction manifestation. FHIR R4 requires every
-    ``AllergyIntolerance.reaction`` to contain at least one manifestation, so the
-    previous severity-only reaction was invalid. Until Nexa stores an actual
-    manifestation, severity is not emitted as a fabricated reaction event.
+    The current ``Allergy`` row stores an allergen plus Nexa provenance/routing
+    metadata. It does not store a FHIR reaction manifestation or an authoritative
+    clinical criticality assessment. ``risk_level`` is therefore not mapped to
+    ``AllergyIntolerance.criticality`` and severity is not emitted as a fabricated
+    reaction. Missing FHIR elements remain absent until the source model can
+    support them truthfully.
     """
 
     return _entry(
@@ -194,10 +195,6 @@ def _allergy_intolerance(patient_id: str, allergy: dict) -> dict:
             },
             "code": {"text": str(allergy.get("allergen") or "Allergy")},
             "patient": {"reference": f"Patient/{patient_id}"},
-            "criticality": "high"
-            if str(allergy.get("risk_level") or "").upper()
-            in {"HIGH_RISK", "CRITICAL_RISK"}
-            else "unable-to-assess",
         }
     )
 
