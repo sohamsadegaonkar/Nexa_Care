@@ -162,6 +162,46 @@ def test_quantity_code_requires_system_and_nexa_uses_ucum() -> None:
     assert any("required when Quantity.code is present" in error for error in report["errors"])
 
 
+def test_datetime_with_time_requires_timezone_under_r4() -> None:
+    patient_id = str(uuid.uuid4())
+    bundle = generate_fhir_bundle(
+        patient_id,
+        [
+            {
+                "record_type": "lab",
+                "test_name": "Synthetic Lab",
+                "value": "1.5",
+                "unit": "mg/dL",
+                "recorded_at": "2026-09-09T10:00:00",
+            }
+        ],
+    )
+
+    report = validate_fhir_r4_bundle(bundle, expected_patient_id=patient_id)
+
+    assert report["valid"] is False
+    assert any("effectiveDateTime" in error for error in report["errors"])
+
+
+def test_invalid_r4_timezone_offset_is_rejected() -> None:
+    patient_id = str(uuid.uuid4())
+    bundle = generate_fhir_bundle(
+        patient_id,
+        [
+            {
+                "record_type": "medication",
+                "name": "SyntheticMed",
+                "prescribed_at": "2026-09-09T10:02:00+14:01",
+            }
+        ],
+    )
+
+    report = validate_fhir_r4_bundle(bundle, expected_patient_id=patient_id)
+
+    assert report["valid"] is False
+    assert any("authoredOn" in error for error in report["errors"])
+
+
 def test_empty_collection_bundle_is_valid_internal_export() -> None:
     patient_id = str(uuid.uuid4())
     bundle = generate_fhir_bundle(patient_id, [])
