@@ -1,12 +1,14 @@
 # Slice 7A — Baseline and Contract Reconciliation
 
-Status: **QUALIFICATION CANDIDATE — exact-head CI pending**
+Status: **QUALIFIED CANDIDATE — final evidence-bearing head requalification pending**
 
 Baseline `main`: `aa091e14cf38124ca81e32438b49bdad4d79be8b`
 
 Branch: `slice-7-reconciliation`
 
 Pre-attestation reconciliation head: `2ff82a4acd34994be6e95c032b4f46324cdd6d01`
+
+Qualified candidate head: `3ec91b835d5c595a2838d6a801169bd5d09a57da`
 
 ## Objective
 
@@ -33,7 +35,7 @@ Historical Alpha architecture remains preserved as history but now explicitly yi
 
 ## Migration-head reconciliation
 
-The executable migration tool already pins:
+The executable migration tool pins:
 
 `20260909_device_trust_lifecycle`
 
@@ -63,9 +65,9 @@ Historical statements that correctly describe an earlier phase's then-current he
 - accidental relabeling of physical/external blockers as completed;
 - the frozen Alpha architecture being mistaken for the current authority contract.
 
-`tests/test_pilot_deployment_hardening.py` now derives current migration assertions from `scripts/run_pilot_migrations.py` instead of pinning a superseded migration literal.
+`tests/test_pilot_deployment_hardening.py` derives current migration assertions from `scripts/run_pilot_migrations.py` instead of pinning a superseded migration literal.
 
-## Qualification history before this attestation
+## Qualification history
 
 At implementation head `9a2a8b7092f062ca4e1e3ddcc886b21a38dab89e`:
 
@@ -76,22 +78,67 @@ At implementation head `9a2a8b7092f062ca4e1e3ddcc886b21a38dab89e`:
   - Partition A failed only on three reconciliation assertions: two wording-sensitive new assertions and one pre-existing stale migration-head assertion.
 - Frontend CI #320, run `34334655157`: **SUCCESS**.
 
-The three Partition-A findings were corrected without changing runtime authorization semantics. The resulting reconciliation commit `2ff82a4acd34994be6e95c032b4f46324cdd6d01` was produced by an exact-parent, exact-string, self-removing one-use workflow. Its PR-triggered workflows were marked `action_required` because the commit author was `github-actions[bot]`; no CI jobs ran on that bot-authored commit. This attestation commit intentionally creates the normal repository-owned candidate head required for full exact-head qualification.
+The three Partition-A findings were corrected without changing runtime authorization semantics. The resulting reconciliation commit `2ff82a4acd34994be6e95c032b4f46324cdd6d01` was produced by an exact-parent, exact-string, self-removing one-use workflow. Its PR-triggered workflows were marked `action_required` because the commit author was `github-actions[bot]`; no CI jobs ran on that bot-authored commit.
 
-## Exit gate
+## Qualified candidate evidence
 
-Slice 7A is not complete until the exact final documentation head has all of the following:
+Exact candidate head:
+
+`3ec91b835d5c595a2838d6a801169bd5d09a57da`
+
+### Backend CI
+
+Backend CI #375, run `34344731792`: **SUCCESS**.
+
+- Ruff: **SUCCESS** — `All checks passed!`.
+- Partition A — Quality & Pure Unit:
+  - **3609 passed**, 396 deselected;
+  - JUnit total 3609, failures `0`, errors `0`, skipped `0`;
+  - zero-skip qualification assertion: **SUCCESS**.
+- Partition B — PostgreSQL Qualification:
+  - **272 passed**, 3733 deselected;
+  - JUnit total 272, failures `0`, errors `0`, skipped `0`;
+  - zero-skip qualification assertion: **SUCCESS**;
+  - disposable PostgreSQL migrated through `20260909_device_trust_lifecycle`.
+- Partition C — PostgreSQL + Redis Qualification:
+  - **124 passed**, 3881 deselected;
+  - JUnit total 124, failures `0`, errors `0`, skipped `0`;
+  - zero-skip qualification assertion: **SUCCESS**;
+  - disposable PostgreSQL migrated through `20260909_device_trust_lifecycle` and the real CI Redis service was exercised.
+
+### Frontend CI
+
+Frontend CI #324, run `34344731780`: **SUCCESS**.
+
+- frontend tests / Next production build / workspace package build: **SUCCESS**;
+- iOS native project generation, CocoaPods install, and native-source compile: **SUCCESS**;
+- Android native project generation and native-source compile: **SUCCESS**.
+
+These native compile jobs are source/build evidence only. They are not physical StrongBox, Secure Enclave, biometric, NFC, or handset-execution evidence.
+
+### PR review state at candidate qualification
+
+PR #20 had:
+
+- submitted reviews: **0**;
+- inline review threads: **0**.
+
+No authority-critical review finding was open at this checkpoint.
+
+## Final exact-head gate
+
+This evidence update moves the branch head. Therefore Slice 7A is not merge-qualified until the exact evidence-bearing documentation head again satisfies:
 
 - Backend CI success;
 - Ruff success;
 - Partition A success with JUnit failures/errors/skips `0/0/0`;
 - Partition B success with JUnit failures/errors/skips `0/0/0`;
 - Partition C success with JUnit failures/errors/skips `0/0/0`;
-- Frontend CI success, including native Android/iOS compile jobs where configured;
-- no unresolved authority-critical documentation contradiction found in the 7A audit;
-- PR review state checked before merge.
+- Frontend CI success, including configured native Android/iOS compile jobs;
+- no unresolved PR review thread or submitted review requiring changes;
+- `main` has not moved underneath the qualified PR base.
 
-Because the final evidence update moves the branch head, the evidence-bearing documentation head must be requalified again before merge.
+Only after those checks may PR #20 be marked ready and merged with an expected-head guard.
 
 ## Explicit nonclaims
 
