@@ -154,19 +154,21 @@ export function hydratePatientAuthSession(): Promise<PatientAuthSnapshot> {
 
 export async function storePatientAuthSession(
   token: string,
-  enrollmentToken: string
+  enrollmentToken: string | null
 ): Promise<void> {
   const next = authenticatedSnapshot(token)
   if (!next) throw new Error('The patient session returned by the server is invalid or expired.')
   try {
-    await Promise.all([
-      SecureStore.setItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY, token, {
+    await SecureStore.setItemAsync(PATIENT_ACCESS_TOKEN_STORAGE_KEY, token, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    })
+    if (enrollmentToken) {
+      await SecureStore.setItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, enrollmentToken, {
         keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      }),
-      SecureStore.setItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY, enrollmentToken, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      }),
-    ])
+      })
+    } else {
+      await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
+    }
   } catch (error) {
     await deletePersistedSession()
     throw error
