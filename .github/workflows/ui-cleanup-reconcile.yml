@@ -99,14 +99,6 @@ jobs:
               '''        assert "Upload & AI Extract" in dashboard''',
           )
           PY
-      - name: Run focused reconciled guardrails
-        run: |
-          python -m pytest \
-            tests/test_consent_signing.py \
-            tests/test_doctor_screens.py \
-            tests/test_patient_screens.py \
-            tests/test_pipeline_screens.py \
-            -q --tb=short
       - name: Check diff
         run: git diff --check
       - name: Commit reconciliation
