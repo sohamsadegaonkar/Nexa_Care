@@ -1,6 +1,6 @@
 # Slice 6F — Signed Consent V3
 
-Status: implementation complete; exact-head qualification pending.
+Status: implementation qualified on `c761104af35be51a7a3a3949d8e2f339e456547d`; this doc-only attestation commit must pass exact-head CI before merge.
 
 ## Security boundary
 
@@ -68,7 +68,7 @@ V3 uses explicit endpoints:
 
 Current client consent request/signing code targets these V3 contracts.
 
-## Qualification evidence implemented
+## Qualification coverage
 
 The branch contains:
 
@@ -79,7 +79,26 @@ The branch contains:
 - V2 downgrade-retirement assertions proving newly tagged V2 requests cannot mint post-cutover capabilities;
 - route registration and mobile/client contract tests for the explicit V3 endpoints.
 
-Exact-head Backend CI partitions A/B/C with zero skips and Frontend CI must pass before this slice is marked qualified or the PR is made ready for merge.
+## Qualification evidence
+
+Implementation/governance-draft head qualified: `c761104af35be51a7a3a3949d8e2f339e456547d`.
+
+Backend CI #314, run `34315075216`:
+
+- Partition A / job `102349479653`: Ruff `All checks passed!`; 3654 tests executed; 0 failures; 0 errors; 0 skips. Zero-skip qualification passed.
+- Partition B / job `102349479785`: 272 tests executed; 0 failures; 0 errors; 0 skips. Zero-skip qualification passed.
+- Partition C / job `102349479487`: 118 tests executed; 0 failures; 0 errors; 0 skips. Zero-skip qualification passed.
+
+Frontend CI #263, run `34315075170`, job `102349479035`:
+
+- Next harness invocation: 6 tests passed.
+- app/package invocation: 212 tests passed across 30 test files.
+- Next production build verification compiled successfully, completed TypeScript checking and generated all 18 static pages.
+- workspace package build completed successfully.
+
+The first real post-cutover CI run had exposed stale V2 contract expectations rather than a V3 signature-verification failure. Those expectations were reconciled without reopening legacy V2 capability minting. The resulting cutover-contract patch was then included in the successful qualification above.
+
+This attestation is documentation-only. Because it creates a new branch head, Backend A/B/C zero-skip qualification and Frontend CI must also pass on the attestation head before PR #16 is made ready or merged.
 
 ## Nonclaims
 
