@@ -425,7 +425,10 @@ async def enroll_device(
 
     try:
         finalized = await finalize_device_enrollment_token(
-            payload.device_enrollment_token, claim_id
+            payload.device_enrollment_token,
+            claim_id,
+            patient_id=patient_id,
+            auth_session_id=patient.session_id,
         )
     except PatientSessionAuthorityUnavailable as exc:
         raise HTTPException(
