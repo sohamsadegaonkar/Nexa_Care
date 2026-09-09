@@ -53,6 +53,10 @@ def test_sanitized_audit_failure_classification_never_requires_raw_values() -> N
         "multiple successors for hash abc (fork/cycle)": "CHAIN_FORK_OR_CYCLE",
         "record_hash mismatch at audit_id=123": "RECORD_HASH_MISMATCH",
         "sequence discontinuity at audit_id=123": "SEQUENCE_DISCONTINUITY",
+        "requested partition does not exist": "PARTITION_NOT_FOUND",
+        "no audit_chain_heads row exists for a non-empty partition": (
+            "MISSING_CHAIN_HEAD"
+        ),
         "head_hash mismatch: stored=x calculated=y": "HEAD_HASH_MISMATCH",
         "some future integrity failure containing sensitive internals": (
             "UNCLASSIFIED_INTEGRITY_FAILURE"
