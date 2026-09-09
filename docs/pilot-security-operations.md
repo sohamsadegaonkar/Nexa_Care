@@ -73,9 +73,10 @@ Database migration remains a separate one-time release task with
 python scripts/run_pilot_migrations.py
 ```
 
-The migration task upgrades and verifies the exact single repository head. API
-containers never run migrations. In a production-like runtime, API startup then
-independently refuses to start unless:
+The current exact repository migration head is
+`20260909_device_trust_lifecycle`. The migration task upgrades and verifies that
+exact single repository head. API containers never run migrations. In a
+production-like runtime, API startup then independently refuses to start unless:
 
 1. static production configuration is valid;
 2. PostgreSQL is reachable;
