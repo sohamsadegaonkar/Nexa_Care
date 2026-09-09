@@ -8,7 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_legacy_audit_verifier_is_only_partitioned_compatibility_wrapper() -> None:
-    source = (ROOT / "scripts" / "verify_audit_chain.py").read_text(encoding="utf-8")
+    source = (ROOT / "scripts" / "verify_audit_chain.py").read_text(
+        encoding="utf-8"
+    )
 
     assert "scripts.verify_audit_partitions" in source
     assert "partitioned_main" in source
@@ -38,9 +40,8 @@ def test_sanitized_audit_failure_classification_never_requires_raw_values() -> N
         ),
     }
 
-    assert {classify_failure(reason): expected for reason, expected in samples.items()} == {
-        expected: expected for expected in samples.values()
-    }
+    for reason, expected in samples.items():
+        assert classify_failure(reason) == expected
 
 
 def test_retention_decision_remains_human_gated_and_not_in_effect() -> None:
