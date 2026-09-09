@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -11,7 +10,6 @@ import pytest
 from app.services.patient_device_recovery import (
     PatientRecoveryAuthorityUnavailable,
     PatientRecoveryCapabilityError,
-    TrustedEnrollmentAuthorityUnavailable,
     TrustedEnrollmentChallengeError,
     canonical_trusted_enrollment_payload,
     consume_patient_recovery_capability,
