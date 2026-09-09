@@ -45,6 +45,7 @@ jobs:
               consent,
               '''        assert "from 'tamagui'" in code, "Must use Tamagui components"''',
               '''        assert "from '@my/ui'" in code or "from 'tamagui'" in code, "Must use the shared Tamagui UI layer"''',
+              count=3,
           )
           replace_exact(
               consent,
