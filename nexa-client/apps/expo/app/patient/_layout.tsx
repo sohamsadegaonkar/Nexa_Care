@@ -1,19 +1,21 @@
 import { Stack } from 'expo-router'
+import { useTheme } from '@my/ui'
 
 export const unstable_settings = {
   initialRouteName: 'access-history',
 }
 
 export default function PatientLayout() {
+  const theme = useTheme()
   return (
     <Stack
       screenOptions={{
-        headerStyle: { backgroundColor: '#0A84FF' },
-        headerTintColor: '#FFFFFF',
+        headerStyle: { backgroundColor: theme.nexaSurface.val },
+        headerTintColor: theme.nexaText.val,
         headerTitleStyle: { fontWeight: '600' },
         contentStyle: {
           flex: 1,
-          backgroundColor: '#FFFFFF',
+          backgroundColor: theme.nexaCanvas.val,
         },
       }}
     >

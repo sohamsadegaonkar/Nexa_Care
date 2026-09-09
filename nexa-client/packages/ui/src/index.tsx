@@ -5,6 +5,7 @@ export { config, type Conf } from '@my/config'
 export * from './CustomToast'
 export * from './SwitchThemeButton'
 export * from './SwitchRouterButton'
+export * from './NexaPrimitives'
 
 // type augmentation for tamagui custom config
 import type { Conf } from '@my/config'

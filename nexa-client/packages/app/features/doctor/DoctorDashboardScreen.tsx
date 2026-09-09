@@ -1,273 +1,181 @@
-/**
- * Doctor dashboard screen — entry point after login.
- *
- * Shows the provider's name, hospital, and role from the session context.
- * Quick actions: search patient, scan NFC, emergency access.
- * No hardcoded provider_id.
- *
- * Guards: If no active session, redirects to /doctor/login.
- *
- * Route: /doctor/dashboard
- */
-
 'use client'
 
-import { Card, Text, YStack, Button, XStack, Separator, Spinner, Paragraph } from '@my/ui'
+import {
+  ActionButton,
+  InlineNotice,
+  LoadingState,
+  Paragraph,
+  ScreenContainer,
+  ScreenHeader,
+  SectionHeading,
+  StatusBadge,
+  Surface,
+  Text,
+  XStack,
+  YStack,
+} from '@my/ui'
+import {
+  FileText,
+  Search,
+  RadioReceiver,
+  ClipboardCheck,
+  ArrowUpRight,
+  ShieldAlert,
+} from '@tamagui/lucide-icons'
 import { useRouter } from 'next/navigation'
+import { useEffect } from 'react'
 import { useProviderAuth } from './ProviderAuthContext'
-import { useState, useEffect } from 'react'
+
+const actions = [
+  {
+    title: 'Find a patient',
+    description: 'Start with a Nexa patient ID, then request access.',
+    label: 'Search Patient',
+    icon: Search,
+    route: '/doctor/patient-search',
+  },
+  {
+    title: 'Scan an NFC card',
+    description: 'Discover a patient before requesting their consent.',
+    label: 'Scan NFC Card',
+    icon: RadioReceiver,
+    route: '/doctor/patient-search?mode=nfc',
+  },
+  {
+    title: 'Upload a document',
+    description: 'Request document access, upload, and review extracted information.',
+    label: 'Upload & AI Extract',
+    icon: FileText,
+    route: '/doctor/patient-search?intent=document_upload',
+  },
+  {
+    title: 'Review source evidence',
+    description: 'Open the adjudication workspace to review assigned cases.',
+    label: 'Source adjudication workspace',
+    icon: ClipboardCheck,
+    route: '/doctor/pipeline/adjudication',
+  },
+]
 
 export function DoctorDashboardScreen() {
   const router = useRouter()
-  const { hydrated, isAuthenticated, displayName, hospitalName, providerId, role, logout } =
-    useProviderAuth()
-  const [pendingCount, setPendingCount] = useState<number>(0)
-  const [pendingLoading, setPendingLoading] = useState(true)
-  const [pendingError, setPendingError] = useState<string | null>(null)
-
-  // ── Session guard — redirect to login if not authenticated ────────────
+  const { hydrated, isAuthenticated, displayName, hospitalName, role } = useProviderAuth()
   useEffect(() => {
-    if (hydrated && !isAuthenticated) {
-      router.replace('/doctor/login')
-    }
+    if (hydrated && !isAuthenticated) router.replace('/doctor/login')
   }, [hydrated, isAuthenticated, router])
 
-  // ── Fetch pending consent request count ───────────────────────────────
-  useEffect(() => {
-    if (!isAuthenticated) return
-
-    let cancelled = false
-    const fetchPending = async () => {
-      setPendingLoading(true)
-      setPendingError(null)
-      try {
-        // ALPHA: No dedicated pending-count endpoint yet.
-        setPendingCount(0)
-      } catch {
-        if (!cancelled) {
-          setPendingError('Could not load pending requests.')
-        }
-      } finally {
-        if (!cancelled) {
-          setPendingLoading(false)
-        }
-      }
-    }
-    fetchPending()
-    return () => {
-      cancelled = true
-    }
-  }, [isAuthenticated])
-
-  const handleLogout = () => {
-    logout()
-    router.push('/doctor/login')
-  }
-
-  // ── Unauthenticated — render nothing while redirecting ────────────────
-
-  if (!hydrated || !isAuthenticated) {
-    return (
-      <YStack
-        flex={1}
-        bg="$background"
-        justifyContent="center"
-        alignItems="center"
-      >
-        <Spinner
-          size="large"
-          color="$blue10"
-        />
-      </YStack>
-    )
-  }
+  if (!hydrated || !isAuthenticated) return <LoadingState label="Opening your workspace..." />
 
   return (
-    <YStack
-      flex={1}
-      bg="$background"
-      padding="$5"
-      gap="$5"
-      maxWidth={900}
-      marginHorizontal="auto"
-    >
-      {/* Header */}
-      <XStack
-        alignItems="center"
-        justifyContent="space-between"
+    <ScreenContainer>
+      <ScreenHeader
+        eyebrow="PROVIDER WORKSPACE"
+        title="Ready for your next patient"
+        description="Find a patient, request access, and bring the right information into focus."
+      />
+      <Surface>
+        <XStack
+          flexWrap="wrap"
+          alignItems="center"
+          justifyContent="space-between"
+          gap="$3"
+        >
+          <YStack gap="$1">
+            <Text
+              color="$nexaText"
+              fontWeight="700"
+              fontSize={18}
+            >
+              {displayName || 'Provider name unavailable'}
+            </Text>
+            <Paragraph color="$nexaSecondary">
+              {hospitalName || 'Facility name unavailable'}
+            </Paragraph>
+          </YStack>
+          <StatusBadge>{role ? `Session role: ${role}` : 'Session role unavailable'}</StatusBadge>
+        </XStack>
+      </Surface>
+      <YStack gap="$3">
+        <SectionHeading>Start a care workflow</SectionHeading>
+        <XStack
+          flexWrap="wrap"
+          gap="$4"
+        >
+          {actions.map(({ title, description, label, icon: Icon, route }) => (
+            <Surface
+              key={route}
+              flexBasis={400}
+              flexGrow={1}
+              flexShrink={1}
+              minWidth={0}
+            >
+              <XStack
+                alignItems="center"
+                justifyContent="space-between"
+              >
+                <YStack
+                  backgroundColor="$nexaAccentSoft"
+                  padding="$3"
+                  borderRadius={12}
+                >
+                  <Icon
+                    size={24}
+                    color="$nexaAccent"
+                  />
+                </YStack>
+                <ArrowUpRight
+                  size={20}
+                  color="$nexaSecondary"
+                />
+              </XStack>
+              <SectionHeading>{title}</SectionHeading>
+              <Paragraph
+                color="$nexaSecondary"
+                fontSize={15}
+                lineHeight={24}
+                flex={1}
+              >
+                {description}
+              </Paragraph>
+              <ActionButton onPress={() => router.push(route)}>{label}</ActionButton>
+            </Surface>
+          ))}
+        </XStack>
+      </YStack>
+      <Surface
+        backgroundColor="$nexaDangerSoft"
+        borderColor="$nexaDanger"
       >
-        <YStack>
-          <Text
-            fontSize={28}
-            fontWeight="900"
-            color="$color12"
-          >
-            Dashboard
-          </Text>
-          <Paragraph
-            color="$color11"
-            fontSize={15}
-          >
-            {displayName || 'Provider'} · {hospitalName || 'Hospital'}
-          </Paragraph>
-          <Paragraph
-            color="$color11"
-            fontSize={13}
-          >
-            Role: {role || 'clinician'}
-          </Paragraph>
-        </YStack>
-        <Button
-          size="$3"
-          chromeless
-          onPress={handleLogout}
+        <XStack
+          gap="$3"
+          alignItems="center"
         >
-          Sign Out
-        </Button>
-      </XStack>
-
-      <Separator />
-
-      {/* Provider info card */}
-      <Card
-        padding="$4"
-        backgroundColor="$backgroundHover"
-        borderRadius="$4"
-        gap="$2"
-      >
-        <Text
-          color="$color11"
-          fontSize={12}
-          textTransform="uppercase"
-          letterSpacing={1}
+          <ShieldAlert
+            size={24}
+            color="$nexaDanger"
+          />
+          <SectionHeading>Emergency access</SectionHeading>
+        </XStack>
+        <Paragraph
+          color="$nexaDanger"
+          fontSize={15}
+          lineHeight={24}
         >
-          Provider Identity
-        </Text>
-        <Text
-          color="$color12"
-          fontSize={18}
-          fontWeight="600"
-        >
-          {providerId || '—'}
-        </Text>
-      </Card>
-
-      {/* Quick actions */}
-      <YStack
-        gap="$3"
-        maxWidth={600}
-      >
-        <Button
-          theme="blue"
-          size="$4"
-          onPress={() => router.push('/doctor/patient-search?intent=document_upload')}
-        >
-          Upload &amp; AI Extract
-        </Button>
-
-        <Button
-          theme="blue"
-          size="$4"
-          onPress={() => router.push('/doctor/patient-search')}
-        >
-          🔍 Search Patient
-        </Button>
-
-        <Button
-          theme="blue"
-          size="$4"
-          onPress={() => router.push('/doctor/patient-search?mode=nfc')}
-        >
-          📱 Scan NFC Card
-        </Button>
-
-        <Button
-          theme="orange"
-          size="$4"
+          For urgent care when routine consent cannot be obtained. Access is limited, time-bound,
+          and recorded in the patient's access history.
+        </Paragraph>
+        <ActionButton
+          intent="danger"
+          alignSelf="flex-start"
           onPress={() => router.push('/doctor/emergency-access')}
         >
-          🚨 Emergency Access
-        </Button>
-
-        <Button
-          theme="blue"
-          size="$4"
-          onPress={() => router.push('/doctor/pipeline/adjudication')}
-        >
-          Source adjudication workspace
-        </Button>
-      </YStack>
-
-      <Separator />
-
-      {/* Pending consent requests */}
-      <YStack gap="$2">
-        <Paragraph
-          color="$color11"
-          fontSize={15}
-          fontWeight="600"
-        >
-          Pending Consent Requests
-        </Paragraph>
-        {pendingLoading ? (
-          <Spinner
-            size="small"
-            color="$blue10"
-          />
-        ) : pendingError ? (
-          <YStack
-            backgroundColor="$red2"
-            borderRadius="$3"
-            padding="$3"
-            gap="$2"
-          >
-            <Text
-              color="$red10"
-              fontSize={14}
-            >
-              {pendingError}
-            </Text>
-            <Button
-              size="$2"
-              chromeless
-              onPress={() => {
-                setPendingLoading(true)
-                setPendingError(null)
-                setPendingCount(0)
-              }}
-            >
-              Retry
-            </Button>
-          </YStack>
-        ) : pendingCount > 0 ? (
-          <YStack
-            backgroundColor="$orange4"
-            borderRadius="$3"
-            padding="$3"
-          >
-            <Text
-              color="$orange10"
-              fontSize={16}
-              fontWeight="600"
-            >
-              {pendingCount} request{pendingCount !== 1 ? 's' : ''} awaiting patient approval
-            </Text>
-          </YStack>
-        ) : (
-          <YStack
-            backgroundColor="$green4"
-            borderRadius="$3"
-            padding="$3"
-          >
-            <Text
-              color="$green10"
-              fontSize={16}
-            >
-              No pending requests
-            </Text>
-          </YStack>
-        )}
-      </YStack>
-    </YStack>
+          Review emergency access
+        </ActionButton>
+      </Surface>
+      <InlineNotice title="Patient permission comes first">
+        Routine record access and document workflows require the patient's approval. Your current
+        permissions are checked for each protected action.
+      </InlineNotice>
+    </ScreenContainer>
   )
 }

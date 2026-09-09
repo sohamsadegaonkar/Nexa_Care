@@ -1,7 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Button, useIsomorphicLayoutEffect } from 'tamagui'
+import { useIsomorphicLayoutEffect } from 'tamagui'
+import { ActionButton } from './NexaPrimitives'
 import { useThemeSetting, useRootTheme } from '@tamagui/next-theme'
 
 export const SwitchThemeButton = () => {
@@ -11,8 +12,15 @@ export const SwitchThemeButton = () => {
   const [clientTheme, setClientTheme] = useState<string | undefined>('light')
 
   useIsomorphicLayoutEffect(() => {
-    setClientTheme(themeSetting.forcedTheme || themeSetting.current || theme)
+    setClientTheme(themeSetting.forcedTheme || themeSetting.resolvedTheme || theme)
   }, [themeSetting.current, themeSetting.resolvedTheme])
 
-  return <Button onPress={themeSetting.toggle}>Change theme: {clientTheme}</Button>
+  return (
+    <ActionButton
+      aria-label={`Change theme: ${clientTheme}`}
+      onPress={() => themeSetting.set(clientTheme === 'dark' ? 'light' : 'dark')}
+    >
+      {clientTheme === 'dark' ? 'Light appearance' : 'Dark appearance'}
+    </ActionButton>
+  )
 }

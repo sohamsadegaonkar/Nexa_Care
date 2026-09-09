@@ -1,15 +1,20 @@
 import { useRouter, useLocalSearchParams } from 'expo-router'
 import {
-  YStack,
-  H2,
+  ActionButton,
+  InlineNotice,
+  LoadingState,
   Paragraph,
-  Button,
+  ScreenContainer,
+  ScreenHeader,
+  SectionHeading,
+  StatusBadge,
+  Surface,
   Text,
   ScrollView,
   XStack,
-  Separator,
-  Spinner,
-} from 'tamagui'
+  YStack,
+} from '@my/ui'
+import { Clock, UserCheck } from '@tamagui/lucide-icons'
 import { useState, useEffect, useCallback } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
@@ -142,66 +147,20 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
   }
 
   // ── Render: Loading ──────────────────────────────────────────────────
-  if (loading && !challenge) {
+  if (loading && !challenge) return <LoadingState label="Loading consent request..." />
+
+  if (!challenge || expired)
     return (
-      <YStack
-        flex={1}
-        backgroundColor="$background"
-        justifyContent="center"
-        alignItems="center"
-      >
-        <Spinner
-          size="large"
-          color="$blue10"
+      <ScreenContainer>
+        <ScreenHeader title={expired ? 'Request Expired' : 'Request Unavailable'} />
+        <InlineNotice
+          title={error ?? 'This request is no longer available. No access was approved here.'}
+          tone="warning"
         />
-        <Paragraph
-          color="$color10"
-          size="$4"
-          marginTop="$3"
-        >
-          Loading consent request...
-        </Paragraph>
-      </YStack>
+        <ActionButton onPress={resetToAccessHistory}>Go to Access History</ActionButton>
+      </ScreenContainer>
     )
-  }
 
-  // ── Render: Expired / Not Found ──────────────────────────────────────
-  if (!challenge || expired) {
-    return (
-      <YStack
-        flex={1}
-        backgroundColor="$background"
-        justifyContent="center"
-        alignItems="center"
-        gap="$3"
-        padding="$4"
-      >
-        <Text fontSize={44}>⏰</Text>
-        <H2
-          color="$color"
-          textAlign="center"
-        >
-          {expired ? 'Request Expired' : 'Request Unavailable'}
-        </H2>
-        <Paragraph
-          color="$color10"
-          textAlign="center"
-          size="$4"
-        >
-          {error ?? 'This consent request has expired. No action is needed.'}
-        </Paragraph>
-        <Button
-          theme="blue"
-          size="$4"
-          onPress={resetToAccessHistory}
-        >
-          Go to Access History
-        </Button>
-      </YStack>
-    )
-  }
-
-  // ── Render: Scope as list ────────────────────────────────────────────
   const scopeItems =
     typeof challenge.scope === 'string'
       ? challenge.scope
@@ -209,209 +168,191 @@ export default function ConsentRequestScreen({ initialChallenge }: ConsentReques
           .map((s) => s.trim())
           .filter(Boolean)
       : challenge.scope
-
   const accessMinutes = Math.ceil(challenge.access_duration / 60)
 
-  // ── Render: Active challenge ─────────────────────────────────────────
   return (
     <YStack
       flex={1}
-      backgroundColor="$background"
+      backgroundColor="$nexaCanvas"
     >
       <ScrollView
         flex={1}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator
-        contentContainerStyle={{
-          padding: 16,
-          paddingBottom: insets.bottom + 32,
-          gap: 16,
-        }}
+        contentContainerStyle={{ paddingBottom: 24 }}
       >
-        <YStack
-          gap="$2"
-          alignItems="center"
-          marginTop="$2"
-        >
-          <Text fontSize={44}>📋</Text>
-          <H2
-            color="$color"
-            textAlign="center"
-          >
-            Access Request
-          </H2>
-        </YStack>
-
-        <YStack
-          backgroundColor="$backgroundHover"
-          borderRadius="$4"
-          padding="$4"
-          gap="$3"
-        >
-          <YStack>
-            <Paragraph
-              color="$color10"
-              size="$2"
-              textTransform="uppercase"
-              letterSpacing={1}
+        <ScreenContainer maxWidth={680}>
+          <ScreenHeader
+            eyebrow="YOUR RECORDS, YOUR CHOICE"
+            title="Access Request"
+            description="Review who is asking, what they need, and how long access will last."
+          />
+          <Surface>
+            <XStack
+              gap="$3"
+              alignItems="center"
             >
-              Requesting Provider
-            </Paragraph>
-            <Text
-              color="$color"
-              fontSize="$5"
-              fontWeight="600"
-            >
-              {challenge.provider_name}
-            </Text>
-            <Text
-              color="$color10"
-              fontSize="$3"
-            >
-              {challenge.hospital_name}
-            </Text>
-          </YStack>
-
-          <Separator />
-
-          <YStack>
-            <Paragraph
-              color="$color10"
-              size="$2"
-              textTransform="uppercase"
-              letterSpacing={1}
-            >
-              Purpose
-            </Paragraph>
-            <Text
-              color="$color"
-              fontSize="$4"
-            >
-              {challenge.purpose}
-            </Text>
-          </YStack>
-
-          <Separator />
-
-          <YStack>
-            <Paragraph
-              color="$color10"
-              size="$2"
-              textTransform="uppercase"
-              letterSpacing={1}
-            >
-              Data Requested
-            </Paragraph>
-            <YStack
-              gap="$1"
-              marginTop="$1"
-            >
-              {scopeItems.map((item) => (
-                <XStack
-                  key={item}
-                  gap="$2"
-                  alignItems="center"
+              <YStack
+                padding="$3"
+                backgroundColor="$nexaAccentSoft"
+                borderRadius={12}
+              >
+                <UserCheck
+                  size={24}
+                  color="$nexaAccent"
+                />
+              </YStack>
+              <YStack
+                flex={1}
+                gap="$1"
+              >
+                <Text
+                  color="$nexaSecondary"
+                  fontSize={13}
                 >
-                  <Text fontSize="$3">•</Text>
-                  <Text
-                    color="$color"
-                    fontSize="$3"
-                  >
-                    {item}
-                  </Text>
-                </XStack>
-              ))}
+                  Requesting Provider
+                </Text>
+                <SectionHeading>
+                  {challenge.provider_name || 'Provider name unavailable'}
+                </SectionHeading>
+                <Paragraph color="$nexaSecondary">
+                  {challenge.hospital_name || 'Facility name unavailable'}
+                </Paragraph>
+              </YStack>
+            </XStack>
+            <YStack
+              borderTopWidth={1}
+              borderColor="$nexaBorder"
+              paddingTop="$3"
+              gap="$1"
+            >
+              <Text
+                fontWeight="700"
+                color="$nexaText"
+              >
+                Purpose
+              </Text>
+              <Paragraph color="$nexaSecondary">{challenge.purpose}</Paragraph>
             </YStack>
-          </YStack>
-
-          <Separator />
-
-          <XStack
-            justifyContent="space-between"
-            alignItems="center"
-          >
-            <Paragraph
-              color="$color10"
-              size="$2"
-              textTransform="uppercase"
-              letterSpacing={1}
+          </Surface>
+          <Surface>
+            <SectionHeading>Data Requested</SectionHeading>
+            <XStack
+              flexWrap="wrap"
+              gap="$2"
             >
-              Access Duration
-            </Paragraph>
+              {scopeItems.map((item, index) => (
+                <StatusBadge
+                  key={`${item}-${index}`}
+                  tone="info"
+                >
+                  {item}
+                </StatusBadge>
+              ))}
+            </XStack>
+            <XStack
+              borderTopWidth={1}
+              borderColor="$nexaBorder"
+              paddingTop="$3"
+              alignItems="center"
+              gap="$3"
+              flexWrap="wrap"
+            >
+              <Clock
+                size={22}
+                color="$nexaAccent"
+              />
+              <YStack
+                flex={1}
+                gap="$1"
+              >
+                <Text
+                  color="$nexaSecondary"
+                  fontSize={14}
+                >
+                  Access Duration
+                </Text>
+                <Text
+                  color="$nexaText"
+                  fontWeight="700"
+                  fontSize={20}
+                >
+                  {accessMinutes} minute{accessMinutes !== 1 ? 's' : ''}
+                </Text>
+              </YStack>
+            </XStack>
+          </Surface>
+          <Surface
+            backgroundColor="$nexaWarningSoft"
+            borderColor="$nexaWarning"
+          >
             <Text
-              color="$orange10"
-              fontSize="$4"
-              fontWeight="600"
-            >
-              {accessMinutes} minute{accessMinutes !== 1 ? 's' : ''}
-            </Text>
-          </XStack>
-
-          <Separator />
-
-          <XStack
-            justifyContent="space-between"
-            alignItems="center"
-          >
-            <Paragraph
-              color="$color10"
-              size="$2"
-              textTransform="uppercase"
-              letterSpacing={1}
+              color="$nexaWarning"
+              fontWeight="700"
             >
               Request Expires In
-            </Paragraph>
+            </Text>
             <Text
-              color="$red10"
-              fontSize="$5"
+              color="$nexaWarning"
+              fontSize={24}
               fontWeight="700"
-              style={{ fontFamily: 'monospace' }}
             >
               {countdown}
             </Text>
-          </XStack>
-        </YStack>
-
-        <Paragraph
-          color="$color10"
-          textAlign="center"
-          size="$3"
-          maxWidth={340}
-          marginHorizontal="auto"
-        >
-          {challenge.provider_name} from {challenge.hospital_name} is requesting access to your
-          medical record for {challenge.purpose}. Access duration: {accessMinutes} minute
-          {accessMinutes !== 1 ? 's' : ''}. Data requested: {scopeItems.join(', ')}. Approve only if
-          you recognize this request.
-        </Paragraph>
-
-        {error !== null ? (
-          <Text
-            color="$red10"
-            textAlign="center"
-            fontSize="$3"
+            <Paragraph
+              color="$nexaWarning"
+              fontSize={14}
+            >
+              This is the time left to respond, separate from the access duration above.
+            </Paragraph>
+          </Surface>
+          <Paragraph
+            color="$nexaSecondary"
+            fontSize={15}
+            lineHeight={24}
           >
-            {error}
-          </Text>
-        ) : null}
-
-        <Button
-          size="$4"
-          theme="green"
-          disabled={expired || denying}
-          onPress={handleApprove}
-        >
-          Approve
-        </Button>
-        <Button
-          size="$4"
-          theme="red"
-          disabled={expired || denying}
-          onPress={handleDeny}
-        >
-          {denying ? 'Denying...' : 'Deny'}
-        </Button>
+            Approve only if you recognize this request. Next, you will verify your approval with
+            biometrics. Denying does not grant access.
+          </Paragraph>
+          {error !== null && (
+            <InlineNotice
+              title={error}
+              tone="danger"
+            />
+          )}
+        </ScreenContainer>
       </ScrollView>
+      <YStack
+        flexShrink={0}
+        backgroundColor="$nexaSurface"
+        borderTopWidth={1}
+        borderColor="$nexaBorder"
+        paddingHorizontal="$4"
+        paddingTop="$3"
+        paddingBottom={insets.bottom + 16}
+      >
+        <YStack
+          width="100%"
+          maxWidth={648}
+          alignSelf="center"
+          gap="$3"
+        >
+          <ActionButton
+            intent="primary"
+            disabled={expired || denying}
+            onPress={handleApprove}
+          >
+            Approve
+          </ActionButton>
+          <ActionButton
+            intent="danger"
+            disabled={expired || denying}
+            onPress={handleDeny}
+          >
+            {denying ? 'Denying...' : 'Deny'}
+          </ActionButton>
+        </YStack>
+      </YStack>
     </YStack>
   )
 }

@@ -1,10 +1,12 @@
 import type { Metadata } from 'next'
+import './product.css'
 import { NextTamaguiProvider } from 'app/provider/NextTamaguiProvider'
 import { ProviderAuthProvider } from 'app/features/doctor/ProviderAuthContext'
 
 export const metadata: Metadata = {
-  title: 'Tamagui • App Router',
-  description: 'Tamagui, Solito, Expo & Next.js',
+  title: { default: 'Nexa Care | Connected care', template: '%s | Nexa Care' },
+  description:
+    'Consent-first health records and clinical workflows. Connect care with clear patient control and source transparency.',
   icons: '/favicon.ico',
 }
 

@@ -1,6 +1,18 @@
 'use client'
 
-import { Button, H1, H4, Input, Paragraph, Separator, Spinner, Text, YStack } from '@my/ui'
+import {
+  ActionButton,
+  AuthFrame,
+  FormField,
+  InlineNotice,
+  LoadingState,
+  Paragraph,
+  ScreenHeader,
+  Separator,
+  StatusBadge,
+  XStack,
+  YStack,
+} from '@my/ui'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useProviderAuth } from './ProviderAuthContext'
@@ -77,234 +89,157 @@ export function DoctorLoginScreen({ showEntryOptions = false }: DoctorLoginScree
     cancelMfa()
   }, [cancelMfa])
 
-  if (!hydrated) {
+  if (!hydrated)
     return (
-      <YStack
-        flex={1}
-        bg="$background"
-        justifyContent="center"
-        alignItems="center"
-      >
-        <Spinner
-          size="large"
-          color="$blue10"
-        />
-      </YStack>
+      <AuthFrame>
+        <LoadingState label="Preparing sign in…" />
+      </AuthFrame>
     )
-  }
 
   const displayError = localError ?? loginError
-
-  if (status === 'mfa_required') {
-    return (
-      <YStack
-        flex={1}
-        bg="$background"
-        justifyContent="center"
-        alignItems="center"
-        padding="$6"
-      >
-        <YStack
-          width="100%"
-          maxWidth={440}
-          gap="$4"
-        >
-          <YStack
-            alignItems="center"
-            gap="$2"
-          >
-            <H4
-              color="$color12"
-              fontSize={22}
-            >
-              Verify Provider
-            </H4>
-            <Paragraph
-              color="$color10"
-              fontSize={15}
-              textAlign="center"
-            >
-              Enter the current code from your authenticator app.
-            </Paragraph>
-          </YStack>
-          <YStack gap="$3">
-            <YStack gap="$1">
-              <Text
-                color="$color11"
-                fontSize={13}
-                fontWeight="700"
-              >
-                Authenticator Code
-              </Text>
-              <Input
-                size="$4"
-                placeholder="000000"
-                value={totpCode}
-                onChangeText={setTotpCode}
-                keyboardType="numeric"
-                maxLength={8}
-                autoCapitalize="none"
-                autoCorrect={false}
-              />
-            </YStack>
-            {displayError ? (
-              <YStack
-                backgroundColor="$red4"
-                borderRadius="$3"
-                padding="$3"
-              >
-                <Text
-                  color="$red10"
-                  fontSize={14}
-                >
-                  {displayError}
-                </Text>
-              </YStack>
-            ) : null}
-            <Button
-              theme="blue"
-              size="$4"
-              disabled={loggingIn || totpCode.trim().length < 6}
-              onPress={handleVerifyMfa}
-            >
-              {loggingIn ? (
-                <Spinner
-                  color="$blue10"
-                  size="small"
-                />
-              ) : (
-                'Verify'
-              )}
-            </Button>
-            <Button
-              size="$3"
-              chromeless
-              onPress={backToLogin}
-            >
-              Back to Sign In
-            </Button>
-          </YStack>
-        </YStack>
-      </YStack>
-    )
-  }
+  const mfa = status === 'mfa_required'
 
   return (
-    <YStack
-      flex={1}
-      bg="$background"
-      justifyContent="center"
-      alignItems="center"
-      padding="$6"
-    >
-      <YStack
-        width="100%"
-        maxWidth={440}
-        gap="$4"
+    <AuthFrame>
+      <StatusBadge tone="info">
+        {mfa ? 'Step 2 · Verify your sign in' : 'Provider workspace'}
+      </StatusBadge>
+      <ScreenHeader
+        title={mfa ? 'Verify Provider' : 'Provider Login'}
+        description={
+          mfa
+            ? 'Enter the current code from your authenticator app.'
+            : 'Welcome back. Sign in to continue caring for your patients.'
+        }
+      />
+      {demoMode && (
+        <InlineNotice
+          title="Demo mode — credentials are supplied separately"
+          tone="warning"
+        />
+      )}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault()
+          void (mfa ? handleVerifyMfa() : handleLogin())
+        }}
       >
-        <YStack
-          alignItems="center"
-          gap="$2"
-        >
-          <H1
-            color="$color12"
-            fontSize={36}
-          >
-            Nexa Care
-          </H1>
-          <Paragraph
-            color="$color10"
-            fontSize={18}
-          >
-            Provider Login
-          </Paragraph>
-          {demoMode ? (
-            <Text
-              color="$orange10"
-              fontSize={13}
-              fontWeight="700"
-            >
-              Demo mode — credentials are supplied separately
-            </Text>
-          ) : null}
-        </YStack>
-        <YStack gap="$3">
-          <YStack gap="$1">
-            <Text
-              color="$color11"
-              fontSize={13}
-              fontWeight="700"
-            >
-              Email or Login Identifier
-            </Text>
-            <Input
-              size="$4"
-              placeholder="doctor@hospital.com"
-              value={email}
-              onChangeText={setEmail}
+        <YStack gap="$4">
+          {mfa ? (
+            <FormField
+              key="mfa"
+              id="provider-code"
+              label="Authenticator Code"
+              placeholder="000000"
+              value={totpCode}
+              onChangeText={setTotpCode}
+              keyboardType="numeric"
+              inputMode="numeric"
+              maxLength={8}
               autoCapitalize="none"
               autoCorrect={false}
+              autoComplete="one-time-code"
+              autoFocus
+              letterSpacing={6}
+              fontSize={24}
+              textAlign="center"
+              readOnly={loggingIn}
+              onSubmitEditing={handleVerifyMfa}
             />
-          </YStack>
-          <YStack gap="$1">
-            <Text
-              color="$color11"
-              fontSize={13}
-              fontWeight="700"
-            >
-              Password
-            </Text>
-            <Input
-              size="$4"
-              placeholder="Enter password"
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-          </YStack>
-          {displayError ? (
-            <YStack
-              backgroundColor="$red4"
-              borderRadius="$3"
-              padding="$3"
-            >
-              <Text
-                color="$red10"
-                fontSize={14}
-              >
-                {displayError}
-              </Text>
-            </YStack>
-          ) : null}
-          <Button
-            theme="blue"
-            size="$4"
-            disabled={loggingIn}
-            onPress={handleLogin}
-          >
-            {loggingIn ? (
-              <Spinner
-                color="$blue10"
-                size="small"
+          ) : (
+            <>
+              <FormField
+                id="provider-identifier"
+                label="Email or Login Identifier"
+                placeholder="doctor@hospital.com"
+                value={email}
+                onChangeText={setEmail}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="username"
+                readOnly={loggingIn}
+                onSubmitEditing={handleLogin}
               />
-            ) : (
-              'Sign In'
-            )}
-          </Button>
+              <FormField
+                id="provider-password"
+                label="Password"
+                placeholder="Enter password"
+                value={password}
+                onChangeText={setPassword}
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete="current-password"
+                readOnly={loggingIn}
+                onSubmitEditing={handleLogin}
+              />
+            </>
+          )}
+          {displayError && (
+            <InlineNotice
+              title={displayError}
+              tone="danger"
+            />
+          )}
+          <ActionButton
+            intent="primary"
+            disabled={loggingIn || (mfa && totpCode.trim().length < 6)}
+            onPress={mfa ? handleVerifyMfa : handleLogin}
+            aria-busy={loggingIn}
+          >
+            {loggingIn ? (mfa ? 'Verifying…' : 'Signing in…') : mfa ? 'Verify' : 'Sign In'}
+          </ActionButton>
+          {loggingIn && (
+            <Paragraph
+              aria-live="polite"
+              color="$nexaSecondary"
+              fontSize={13}
+            >
+              Please wait while we verify your sign in.
+            </Paragraph>
+          )}
         </YStack>
-
-        {showEntryOptions ? (
-          <>
-            <Separator />
-            <YStack gap="$3">
-              <Button onPress={() => router.push('/patient/login')}>Continue as Patient</Button>
-              <Button onPress={() => router.push('/scanner')}>NFC Scanner</Button>
-            </YStack>
-          </>
-        ) : null}
-      </YStack>
-    </YStack>
+      </form>
+      {mfa ? (
+        <ActionButton
+          disabled={loggingIn}
+          onPress={backToLogin}
+        >
+          Back to Sign In
+        </ActionButton>
+      ) : (
+        <Paragraph
+          color="$nexaSecondary"
+          fontSize={13}
+          lineHeight={21}
+        >
+          Use the account associated with your care organization.
+        </Paragraph>
+      )}
+      {showEntryOptions && !mfa && (
+        <>
+          <Separator borderColor="$nexaBorder" />
+          <XStack
+            flexWrap="wrap"
+            gap="$2"
+          >
+            <ActionButton
+              flex={1}
+              minWidth={180}
+              onPress={() => router.push('/patient/login')}
+            >
+              Continue as Patient
+            </ActionButton>
+            <ActionButton
+              flex={1}
+              minWidth={140}
+              onPress={() => router.push('/scanner')}
+            >
+              NFC Scanner
+            </ActionButton>
+          </XStack>
+        </>
+      )}
+    </AuthFrame>
   )
 }

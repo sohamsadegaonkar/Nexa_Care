@@ -4,7 +4,7 @@ import { config } from '@my/config'
 
 export function Provider({
   children,
-  defaultTheme = 'light',
+  defaultTheme,
   ...rest
 }: Omit<TamaguiProviderProps, 'config' | 'defaultTheme'> & { defaultTheme?: string }) {
   const colorScheme = useColorScheme()

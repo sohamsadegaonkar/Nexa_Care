@@ -1,0 +1,38 @@
+// Semantic product colors shared by Tamagui and native navigation.
+export const nexaLight = {
+  nexaCanvas: '#F4F7F7',
+  nexaSurface: '#FFFFFF',
+  nexaMuted: '#EAF1F1',
+  nexaBorder: '#CCDADA',
+  nexaText: '#182F35',
+  nexaSecondary: '#4D666C',
+  nexaAccent: '#086F6B',
+  nexaAccentHover: '#075C59',
+  nexaOnAccent: '#FFFFFF',
+  nexaAccentSoft: '#E0F2EE',
+  nexaDanger: '#A52C39',
+  nexaDangerSoft: '#FFF0F1',
+  nexaWarning: '#80520D',
+  nexaWarningSoft: '#FFF4DB',
+  nexaSuccess: '#236540',
+  nexaSuccessSoft: '#E8F4EB',
+}
+
+export const nexaDark: typeof nexaLight = {
+  nexaCanvas: '#101C21',
+  nexaSurface: '#18292F',
+  nexaMuted: '#22373E',
+  nexaBorder: '#3C545C',
+  nexaText: '#ECF4F4',
+  nexaSecondary: '#B1C6CC',
+  nexaAccent: '#8ADBD0',
+  nexaAccentHover: '#ACEBE3',
+  nexaOnAccent: '#102D2B',
+  nexaAccentSoft: '#203E3D',
+  nexaDanger: '#FFB4BC',
+  nexaDangerSoft: '#40282F',
+  nexaWarning: '#F3CF87',
+  nexaWarningSoft: '#3D3422',
+  nexaSuccess: '#A6DFB8',
+  nexaSuccessSoft: '#243C30',
+}
