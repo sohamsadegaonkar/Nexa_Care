@@ -88,14 +88,22 @@ def test_structured_export_satisfies_declared_internal_r4_subset() -> None:
     assert blood_pressure["valueString"] == "130/85 mmHg"
     assert "valueQuantity" not in blood_pressure
 
+    medication = next(
+        item for item in resources if item["resourceType"] == "MedicationRequest"
+    )
+    assert medication["status"] == "unknown"
+    assert medication["intent"] == "order"
+
     allergy = next(
         item for item in resources if item["resourceType"] == "AllergyIntolerance"
     )
+    assert "clinicalStatus" not in allergy
     assert "criticality" not in allergy
     assert "reaction" not in allergy
 
     condition = next(item for item in resources if item["resourceType"] == "Condition")
     assert condition["code"]["text"] == "Synthetic diagnosis"
+    assert "clinicalStatus" not in condition
     assert "recordedDate" not in condition
 
 
@@ -115,6 +123,7 @@ def test_nexa_workflow_risk_does_not_become_fhir_allergy_criticality() -> None:
 
     allergy = bundle["entry"][0]["resource"]
     assert allergy["resourceType"] == "AllergyIntolerance"
+    assert "clinicalStatus" not in allergy
     assert "criticality" not in allergy
     assert "reaction" not in allergy
 
@@ -171,6 +180,22 @@ def test_reference_to_different_patient_is_rejected() -> None:
 
     assert report["valid"] is False
     assert any("reference must match requested patient" in error for error in report["errors"])
+
+
+def test_fake_urn_uuid_full_url_is_rejected() -> None:
+    patient_id = str(uuid.uuid4())
+    bundle = generate_fhir_bundle(
+        patient_id,
+        [{"diagnoses": ["Synthetic diagnosis"]}],
+    )
+    resource = bundle["entry"][0]["resource"]
+    resource["id"] = "not-a-uuid"
+    bundle["entry"][0]["fullUrl"] = "urn:uuid:not-a-uuid"
+
+    report = validate_fhir_r4_bundle(bundle, expected_patient_id=patient_id)
+
+    assert report["valid"] is False
+    assert any("valid urn:uuid identity required" in error for error in report["errors"])
 
 
 def test_quantity_code_requires_system_and_nexa_uses_ucum() -> None:
