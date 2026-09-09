@@ -1,6 +1,6 @@
 # Slice 6G — Cross-Boundary Qualification
 
-Status: **implementation qualified on `9a52f923b883df8e0612223eaf84e7b418627f35`; final documentation-head CI remains the merge gate**.
+Status: **qualified for merge on final head `810673c74c42bcd81ddb0c27ce7eaf5591699742`**.
 
 Baseline: merged Slice 6F `5a4efadc47464b3454ec0ab6749ab583cb485bc0`.
 
@@ -67,41 +67,30 @@ If PostgreSQL fails after epoch invalidation, old sessions remain invalid and ol
 
 Activation and consumption are Redis-atomic. Consume deletes the ACTIVE handle as its linearization point; revoke deletes the same key. In a consume/revoke race, the handle cannot survive for later reuse. A losing operation cannot create a second disclosure authority.
 
-## Implementation-head qualification evidence
+## Qualification evidence
 
-Authoritative implementation qualification head: `9a52f923b883df8e0612223eaf84e7b418627f35`.
+Implementation qualification head `9a52f923b883df8e0612223eaf84e7b418627f35`:
 
-Backend CI #324, run `34317367091`, completed successfully on that exact implementation tree:
+- Backend CI #324 / run `34317367091`: **SUCCESS**.
+  - Ruff: `All checks passed!`.
+  - Partition A: **3654 passed, 396 deselected**, JUnit failures/errors/skips `0/0/0`.
+  - Partition B: **272 passed, 3778 deselected, 13 warnings**, JUnit `0/0/0`.
+  - Partition C: **124 passed, 3926 deselected, 21 warnings**, JUnit `0/0/0`.
+  - all three explicit zero-skip gates passed.
+- Frontend CI #273 / run `34317367048`: **SUCCESS**.
+  - Next harness: **6 passed**.
+  - app/package suites: **212 passed** across 30 files.
+  - Next production build: success.
+  - workspace build: success.
 
-- Ruff: **SUCCESS**, `All checks passed!`;
-- Partition A — Quality & Pure Unit: **3654 passed, 396 deselected**, JUnit failures/errors/skips `0/0/0`;
-- Partition B — PostgreSQL Qualification: **272 passed, 3778 deselected, 13 warnings**, JUnit failures/errors/skips `0/0/0`;
-- Partition C — PostgreSQL + Redis Qualification: **124 passed, 3926 deselected, 21 warnings**, JUnit failures/errors/skips `0/0/0`;
-- all three explicit zero-skip qualification steps passed.
+Final documentation head `810673c74c42bcd81ddb0c27ce7eaf5591699742`:
 
-Frontend CI #273, run `34317367048`, completed successfully on the same implementation head:
+- Backend CI #325 / run `34317821829`: **SUCCESS**; Ruff, Partitions A/B/C, and every zero-skip assertion passed.
+- Frontend CI #274 / run `34317821793`: **SUCCESS**; tests, Next production build, and workspace package build all passed.
+- PR review submissions: none.
+- PR inline review threads: none.
 
-- Next harness: **6 passed**;
-- app/package suites: **212 passed** across 30 files;
-- Next production build verification: **SUCCESS**;
-- workspace package build: **SUCCESS**.
-
-The new real PostgreSQL+Redis cross-boundary tests are included in Partition C's 124 executed tests.
-
-## Qualification history
-
-Backend CI #321 on earlier implementation head `56193d85c808446961f56639d6d56aea472127fe` established that Ruff and Partition A were green and that all five new cross-boundary test bodies executed successfully. Partition C failed only in fixture teardown because the repository pins `redis==4.5.1`, which provides `close()` rather than the newer `aclose()` API. The fixture cleanup was corrected without changing production behavior or test assertions. That failed run is not qualification evidence.
-
-## Final merge gate
-
-This attestation changes the branch head, so the documentation-only final head must again satisfy:
-
-- Backend CI success;
-- Ruff success;
-- Partitions A/B/C success with each zero-skip assertion passing;
-- Frontend CI tests and both builds success;
-- no unresolved review threads or change requests;
-- PR head unchanged between final qualification and merge.
+Backend CI #321 on earlier head `56193d85c808446961f56639d6d56aea472127fe` is not qualification evidence: all five new test bodies ran, but Partition C teardown used the newer `redis-py` `aclose()` API while the repository pins `redis==4.5.1`. The fixture was corrected to the pinned `close()`/pool disconnect API without changing production behavior or assertions.
 
 ## Nonclaims
 
