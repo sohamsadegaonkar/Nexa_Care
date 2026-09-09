@@ -91,10 +91,24 @@ async def test_healthy_chain_passes():
 
 
 @pytest.mark.asyncio
-async def test_empty_partition_with_no_head_is_valid():
+async def test_empty_partition_with_no_head_is_valid_for_whole_ledger_scan():
     conn = FakeConnection([], None)
     result = await verify_partition(conn, "global", dry_run=False)
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_missing_partition_fails_closed():
+    conn = FakeConnection([], None)
+    result = await verify_partition(
+        conn,
+        "typo-partition",
+        dry_run=True,
+        require_exists=True,
+    )
+    assert result is not None
+    assert result.reason == "requested partition does not exist"
+    assert conn.marked_unhealthy == []
 
 
 @pytest.mark.asyncio
@@ -136,6 +150,25 @@ async def test_tampered_payload_fails_hash_recalculation():
     result = await verify_partition(conn, "global", dry_run=False)
     assert result is not None
     assert "record_hash mismatch" in result.reason
+
+
+@pytest.mark.asyncio
+async def test_malformed_serialized_payload_fails_closed_and_marks_unhealthy():
+    rows = _build_healthy_chain(1)
+    rows[0]["details"] = "{not-json"
+    head = {
+        "head_event_id": rows[0]["audit_id"],
+        "head_hash": rows[0]["record_hash"],
+        "sequence_number": 1,
+        "is_healthy": True,
+    }
+    conn = FakeConnection(rows, head)
+
+    result = await verify_partition(conn, "global", dry_run=False)
+
+    assert result is not None
+    assert "invalid details payload" in result.reason
+    assert conn.marked_unhealthy == ["global"]
 
 
 @pytest.mark.asyncio
