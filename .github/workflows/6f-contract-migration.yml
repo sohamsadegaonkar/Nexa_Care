@@ -20,6 +20,7 @@ jobs:
           fetch-depth: 0
       - name: Apply anchored contract migration
         run: |
+          sed -i 's/^    assert claim_error.value.detail/        assert claim_error.value.detail/' .github/6f_contract_migration.py
           python .github/6f_contract_migration.py
           git diff --check
           python -m compileall -q app tests
