@@ -1,0 +1,30 @@
+{
+  "schema": "nexa-abdm-hpr-hfr-machine-contract-gate-v1",
+  "last_checked": "2026-09-10",
+  "status": "BLOCKED_EXTERNAL_CONTRACT",
+  "external_adapter_enabled": false,
+  "current_registry_boundary": "provider-verification-registry/1.0",
+  "published_fhir_interoperability_is_not_registry_transport_contract": true,
+  "required_before_ready": [
+    "authoritative_source_url",
+    "contract_version_or_publication_identity",
+    "server_to_server_authentication_lifecycle",
+    "professional_registry_endpoint_and_method",
+    "facility_registry_endpoint_and_method",
+    "request_schemas",
+    "response_schemas",
+    "identity_binding_semantics",
+    "status_and_error_dispositions",
+    "retry_semantics",
+    "rate_limit_semantics",
+    "sandbox_or_qualification_target",
+    "official_change_or_versioning_policy"
+  ],
+  "nonclaims": [
+    "No HPR HTTP endpoint is inferred.",
+    "No HFR HTTP endpoint is inferred.",
+    "No token or client-credential scheme is inferred.",
+    "No unofficial mirror is accepted as machine-contract authority.",
+    "No registry observation directly grants clinical authority."
+  ]
+}

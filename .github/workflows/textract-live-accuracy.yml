@@ -1,0 +1,121 @@
+name: Textract Live Accuracy Qualification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    environment: pilot
+    env:
+      ROLE_ARN: ${{ vars.NEXA_PILOT_AWS_ROLE_ARN || secrets.NEXA_PILOT_AWS_ROLE_ARN || vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require approved AWS OIDC role
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ROLE_ARN:-}" ]; then
+            echo "TEXTRACT_LIVE_QUALIFICATION=BLOCKED_MISSING_OIDC_ROLE"
+            exit 42
+          fi
+          echo "TEXTRACT_LIVE_INPUTS=PASS"
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: nexa-textract-live-accuracy
+          mask-aws-account-id: true
+
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity >/dev/null
+          echo "AWS_OIDC_IDENTITY=PASS"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run live synthetic Textract benchmark and sanitized capture
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/nexa-textract-live-replay
+          set +e
+          python scripts/run_textract_accuracy_benchmark.py \
+            tests/ai_extraction/benchmark/documents \
+            tests/ai_extraction/benchmark/synthetic-manifest.json \
+            --region "$AWS_REGION" \
+            --timeout 30 \
+            --attempts 3 \
+            --capture-sanitized-replay /tmp/nexa-textract-live-replay \
+            >/tmp/nexa-textract-live-result.json
+          rc=$?
+          set -e
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          result = json.loads(Path('/tmp/nexa-textract-live-result.json').read_text())
+          summary = {
+              'benchmark_valid': result.get('benchmark_valid'),
+              'metrics_valid': result.get('metrics_valid'),
+              'attempted_documents': result.get('attempted_documents'),
+              'successful_documents': result.get('successful_documents'),
+              'failed_documents': result.get('failed_documents'),
+              'live_provider_calls': result.get('live_provider_calls'),
+              'identity_cases_correct': result.get('identity_cases_correct'),
+              'identity_cases_incorrect': result.get('identity_cases_incorrect'),
+              'identity_incorrect_case_indexes': result.get('identity_incorrect_case_indexes'),
+              'metrics': result.get('metrics'),
+              'gate_results': result.get('gate_results'),
+              'provider_error_counts': result.get('provider_error_counts'),
+          }
+          print(json.dumps(summary, sort_keys=True))
+          if result.get('provider_mode') != 'live_capture':
+              raise SystemExit('live capture provider mode required')
+          if result.get('attempted_documents') != 15 or result.get('live_provider_calls') != 15:
+              raise SystemExit('all 15 synthetic documents must reach the live provider')
+          PY
+          if [ "$rc" -ne 0 ]; then
+            echo "TEXTRACT_LIVE_QUALIFICATION=FAIL"
+            exit "$rc"
+          fi
+          echo "TEXTRACT_LIVE_QUALIFICATION=PASS"
+
+      - name: Prove captured replay reproduces the live result
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_textract_accuracy_benchmark.py \
+            --replay-sanitized /tmp/nexa-textract-live-replay \
+            >/tmp/nexa-textract-replay-result.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          live = json.loads(Path('/tmp/nexa-textract-live-result.json').read_text())
+          replay = json.loads(Path('/tmp/nexa-textract-replay-result.json').read_text())
+          keys = [
+              'benchmark_valid', 'metrics_valid', 'attempted_documents',
+              'successful_documents', 'failed_documents', 'metrics',
+              'gate_results', 'identity_case_decisions',
+          ]
+          for key in keys:
+              if live.get(key) != replay.get(key):
+                  raise SystemExit(f'sanitized replay drift for {key}')
+          if replay.get('live_provider_calls') != 0:
+              raise SystemExit('replay unexpectedly called live provider')
+          print('SANITIZED_REPLAY_REPRODUCTION=PASS')
+          PY
