@@ -91,7 +91,7 @@ broader application permissions.
 3. Supply `MIGRATION_DATABASE_URL` through a managed secret reference. The API
    service must not receive or run the migration command.
 4. Require the task to exit zero and report both repository and database head
-   `20260906_verification_scheduler`. Stop if it reports any other head.
+   `20260909_device_trust_lifecycle`. Stop if it reports any other head.
 5. Start/update the API service only after the migration task succeeds. Require
    HTTPS `GET https://<api-pilot-domain>/healthz` and then
    `GET https://<api-pilot-domain>/health` to pass before qualification traffic.

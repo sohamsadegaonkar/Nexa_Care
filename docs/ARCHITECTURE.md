@@ -3,6 +3,8 @@
 **Version:** `v2.0.0-alpha`  
 **Status:** LOCKED (Specification Freeze for 10-Squad Alpha Milestone)
 
+> **Historical Alpha snapshot.** For current authority-critical architecture, `docs/CURRENT-STATE.md` and `docs/API-CONTRACTS.md` take precedence. The SecureStore signing model and Alpha branch workflow below are historical and must not be used as current pilot authority or release instructions.
+
 ---
 
 ## 1. High-Level Component & Architecture Diagram

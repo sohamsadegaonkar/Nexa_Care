@@ -46,7 +46,8 @@ def test_canonical_device_contract_covers_current_authority_paths() -> None:
         assert route in contract
 
     assert "public_key_fingerprint" in contract
-    assert "JavaScript-readable raw P-256 scalar" in contract
+    assert "native key aliases" in contract
+    assert "JavaScript-readable raw" in contract
 
 
 def test_fhir_export_is_documented_without_external_certification_claim() -> None:
@@ -89,6 +90,14 @@ def test_current_state_preserves_external_and_physical_blockers() -> None:
     current = _read("docs/CURRENT-STATE.md")
 
     assert "BLOCKED BY PHYSICAL PLATFORM / NOT_RUN" in current
-    assert "official live ABDM/NHA HPR/HFR" in current
+    assert "Official live ABDM/NHA HPR/HFR" in current
     assert "benchmark_valid" in current
     assert "did not pass extraction accuracy qualification" in current
+
+
+def test_alpha_architecture_is_explicitly_historical() -> None:
+    architecture = _read("docs/ARCHITECTURE.md")
+
+    assert "Historical Alpha snapshot" in architecture
+    assert "docs/CURRENT-STATE.md" in architecture
+    assert "docs/API-CONTRACTS.md" in architecture
