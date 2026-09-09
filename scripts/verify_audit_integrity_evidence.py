@@ -11,8 +11,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import sys
+from pathlib import Path
 
-from scripts.verify_audit_partitions import verify_all
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.verify_audit_partitions import verify_all  # noqa: E402
 
 EVIDENCE_SCHEMA = "nexa-slice-7e-audit-integrity-evidence-v1"
 
@@ -76,6 +82,7 @@ def main() -> int:
                     "schema": EVIDENCE_SCHEMA,
                     "status": "ERROR",
                     "dry_run": True,
+                    "scope": "single-partition" if arguments.partition else "all-partitions",
                     "failure_count": 0,
                     "failure_codes": ["VERIFIER_EXECUTION_ERROR"],
                     "raw_audit_payloads_included": False,
