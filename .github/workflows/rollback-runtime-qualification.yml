@@ -1,0 +1,220 @@
+name: Rollback Runtime Qualification
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - slice-8f-monitoring-rollback-qualification
+    paths:
+      - '.github/workflows/rollback-runtime-qualification.yml'
+      - 'app/core/production_runtime.py'
+      - 'docs/runbooks/MILESTONE_6_FARGATE_DEPLOYMENT.md'
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    environment: pilot
+    env:
+      ROLE_ARN: ${{ vars.NEXA_PILOT_AWS_ROLE_ARN || secrets.NEXA_PILOT_AWS_ROLE_ARN || vars.AWS_ROLE_ARN || secrets.AWS_ROLE_ARN }}
+      ECS_CLUSTER: ${{ vars.NEXA_PILOT_ECS_CLUSTER || secrets.NEXA_PILOT_ECS_CLUSTER || vars.ECS_CLUSTER || secrets.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.NEXA_PILOT_ECS_SERVICE || secrets.NEXA_PILOT_ECS_SERVICE || vars.ECS_SERVICE || secrets.ECS_SERVICE }}
+      ECR_REPOSITORY: ${{ vars.NEXA_PILOT_ECR_REPOSITORY || secrets.NEXA_PILOT_ECR_REPOSITORY || vars.ECR_REPOSITORY || secrets.ECR_REPOSITORY }}
+      ROLLBACK_TASK_DEFINITION: ${{ vars.NEXA_PILOT_ROLLBACK_TASK_DEFINITION || secrets.NEXA_PILOT_ROLLBACK_TASK_DEFINITION }}
+      API_BASE_URL: ${{ vars.NEXA_PILOT_API_BASE_URL || secrets.NEXA_PILOT_API_BASE_URL || vars.API_BASE_URL || secrets.API_BASE_URL }}
+      OPERATIONS_AUTH_TOKEN: ${{ secrets.NEXA_PILOT_OPERATIONS_AUTH_TOKEN || secrets.OPERATIONS_AUTH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require explicit rollback qualification inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          required = [
+              'ROLE_ARN', 'ECS_CLUSTER', 'ECS_SERVICE', 'ECR_REPOSITORY',
+              'ROLLBACK_TASK_DEFINITION', 'API_BASE_URL', 'OPERATIONS_AUTH_TOKEN',
+          ]
+          missing = [name for name in required if not os.getenv(name)]
+          if missing:
+              print('ROLLBACK_RUNTIME_QUALIFICATION=BLOCKED_MISSING_ACCOUNT_WIRING')
+              print('MISSING_COUNT=' + str(len(missing)))
+              raise SystemExit(42)
+          print('ROLLBACK_RUNTIME_INPUTS=PASS')
+          PY
+
+      - name: Configure AWS credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: nexa-rollback-runtime-qualification
+          mask-aws-account-id: true
+
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws sts get-caller-identity >/dev/null
+          echo 'AWS_OIDC_IDENTITY=PASS'
+
+      - name: Verify current service and rollback candidate are immutable and isolated
+        shell: bash
+        run: |
+          set -euo pipefail
+          service_json="$(mktemp)"
+          candidate_json="$(mktemp)"
+          aws ecs describe-services --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" >"$service_json"
+          aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$ROLLBACK_TASK_DEFINITION" >"$candidate_json"
+          python - "$service_json" "$candidate_json" <<'PY' >/tmp/nexa-rollback-metadata.json
+          import json, sys
+          service = json.load(open(sys.argv[1], encoding='utf-8')).get('services') or []
+          if len(service) != 1:
+              raise SystemExit('expected exactly one current ECS service')
+          svc = service[0]
+          desired = int(svc.get('desiredCount') or 0)
+          running = int(svc.get('runningCount') or 0)
+          pending = int(svc.get('pendingCount') or 0)
+          if desired < 1 or running != desired or pending != 0:
+              raise SystemExit('current ECS service is not stable')
+          current_td = str(svc.get('taskDefinition') or '')
+          candidate = json.load(open(sys.argv[2], encoding='utf-8')).get('taskDefinition') or {}
+          candidate_arn = str(candidate.get('taskDefinitionArn') or '')
+          if not candidate_arn or candidate_arn == current_td:
+              raise SystemExit('rollback candidate must be explicit and different from current task definition')
+          if candidate.get('networkMode') != 'awsvpc' or 'FARGATE' not in set(candidate.get('requiresCompatibilities') or []):
+              raise SystemExit('rollback candidate is not Fargate/awsvpc compatible')
+          containers = candidate.get('containerDefinitions') or []
+          essential = [c for c in containers if c.get('essential', True)]
+          if len(essential) != 1:
+              raise SystemExit('rollback candidate must have exactly one essential application container')
+          app = essential[0]
+          image = str(app.get('image') or '')
+          if '@sha256:' not in image:
+              raise SystemExit('rollback candidate image must be pinned by digest')
+          forbidden = {'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'}
+          names = {item.get('name') for item in app.get('environment', [])}
+          names |= {item.get('name') for item in app.get('secrets', [])}
+          if forbidden & names:
+              raise SystemExit('rollback candidate contains static AWS credential variables')
+          if not candidate.get('taskRoleArn'):
+              raise SystemExit('rollback candidate application task role is missing')
+          log_cfg = app.get('logConfiguration') or {}
+          if log_cfg.get('logDriver') != 'awslogs':
+              raise SystemExit('rollback candidate must use awslogs')
+          awsvpc = ((svc.get('networkConfiguration') or {}).get('awsvpcConfiguration') or {})
+          subnets = awsvpc.get('subnets') or []
+          security_groups = awsvpc.get('securityGroups') or []
+          if not subnets or not security_groups:
+              raise SystemExit('current service network configuration is incomplete')
+          print(json.dumps({
+              'candidate_task_definition': candidate_arn,
+              'container_name': app.get('name'),
+              'image_digest': image.split('@', 1)[1],
+              'subnets': subnets,
+              'security_groups': security_groups,
+              'assign_public_ip': awsvpc.get('assignPublicIp', 'DISABLED'),
+          }))
+          PY
+          digest="$(python -c "import json; print(json.load(open('/tmp/nexa-rollback-metadata.json'))['image_digest'])")"
+          aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageDigest="$digest" >/dev/null
+          rm -f "$service_json" "$candidate_json"
+          echo 'ROLLBACK_CANDIDATE_STATIC_PREFLIGHT=PASS'
+
+      - name: Run isolated rollback candidate startup preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY' >/tmp/nexa-rollback-network.json
+          import json
+          m = json.load(open('/tmp/nexa-rollback-metadata.json'))
+          print(json.dumps({'awsvpcConfiguration': {
+              'subnets': m['subnets'],
+              'securityGroups': m['security_groups'],
+              'assignPublicIp': m['assign_public_ip'],
+          }}))
+          PY
+          python - <<'PY' >/tmp/nexa-rollback-overrides.json
+          import json
+          m = json.load(open('/tmp/nexa-rollback-metadata.json'))
+          command = [
+              'python', '-c',
+              "import asyncio; from app.core.production_runtime import run_production_startup_preflight; "
+              "r=asyncio.run(run_production_startup_preflight()); "
+              "assert r.production_like and set(r.checks)=={'configuration','postgres','schema','redis','kms','s3'}; "
+              "print('ROLLBACK_CANDIDATE_PREFLIGHT=PASS')",
+          ]
+          print(json.dumps({'containerOverrides': [{'name': m['container_name'], 'command': command}]}))
+          PY
+          candidate_td="$(python -c "import json; print(json.load(open('/tmp/nexa-rollback-metadata.json'))['candidate_task_definition'])")"
+          run_json="$(mktemp)"
+          aws ecs run-task \
+            --region "$AWS_REGION" \
+            --cluster "$ECS_CLUSTER" \
+            --task-definition "$candidate_td" \
+            --launch-type FARGATE \
+            --count 1 \
+            --network-configuration "file:///tmp/nexa-rollback-network.json" \
+            --overrides "file:///tmp/nexa-rollback-overrides.json" \
+            >"$run_json"
+          task_arn="$(python - "$run_json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding='utf-8'))
+          if data.get('failures'):
+              raise SystemExit('isolated rollback task could not be scheduled')
+          tasks = data.get('tasks') or []
+          if len(tasks) != 1:
+              raise SystemExit('expected exactly one isolated rollback task')
+          print(tasks[0]['taskArn'])
+          PY
+          )"
+          aws ecs wait tasks-stopped --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --tasks "$task_arn"
+          task_json="$(mktemp)"
+          aws ecs describe-tasks --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --tasks "$task_arn" >"$task_json"
+          python - "$task_json" <<'PY'
+          import json, sys
+          metadata = json.load(open('/tmp/nexa-rollback-metadata.json'))
+          tasks = json.load(open(sys.argv[1], encoding='utf-8')).get('tasks') or []
+          if len(tasks) != 1:
+              raise SystemExit('isolated rollback task result unavailable')
+          target = [c for c in tasks[0].get('containers', []) if c.get('name') == metadata['container_name']]
+          if len(target) != 1 or target[0].get('exitCode') != 0:
+              raise SystemExit('rollback candidate startup preflight failed')
+          print('ROLLBACK_CANDIDATE_RUNTIME_PREFLIGHT=PASS')
+          PY
+          rm -f "$run_json" "$task_json" /tmp/nexa-rollback-network.json /tmp/nexa-rollback-overrides.json
+
+      - name: Verify current service monitoring remains healthy
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${API_BASE_URL%/}"
+          curl --fail --silent --show-error --max-time 15 "$base/healthz" >/tmp/healthz.json
+          curl --fail --silent --show-error --max-time 15 "$base/health" >/tmp/health.json
+          curl --fail --silent --show-error --max-time 20 -H "X-Nexa-Operations-Token: $OPERATIONS_AUTH_TOKEN" "$base/ops/health" >/tmp/ops-health.json
+          curl --fail --silent --show-error --max-time 20 -H "X-Nexa-Operations-Token: $OPERATIONS_AUTH_TOKEN" "$base/metrics" >/tmp/metrics.txt
+          python - <<'PY'
+          import json
+          for path in ('/tmp/healthz.json', '/tmp/health.json', '/tmp/ops-health.json'):
+              obj = json.load(open(path, encoding='utf-8'))
+              if obj.get('status') not in {'ok', 'healthy'}:
+                  raise SystemExit('runtime health qualification failed')
+          if not open('/tmp/metrics.txt', encoding='utf-8').read().strip():
+              raise SystemExit('protected metrics response is empty')
+          print('CURRENT_SERVICE_MONITORING=PASS')
+          PY
+
+      - name: Record non-mutation boundary
+        run: |
+          echo 'ROLLBACK_TRAFFIC_SWITCH=NOT_PERFORMED'
+          echo 'DATABASE_DOWNGRADE=NOT_PERFORMED'
+
+      - name: Qualification complete
+        run: echo 'ROLLBACK_RUNTIME_QUALIFICATION=PASS'
