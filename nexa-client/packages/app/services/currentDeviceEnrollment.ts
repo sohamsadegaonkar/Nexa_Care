@@ -125,12 +125,20 @@ function mapError(error: unknown): CurrentDeviceError {
 
 async function enrollInstallation(
   metadata: LocalInstallationMetadata,
-  options: EnsureCurrentDeviceOptions
+  options: EnsureCurrentDeviceOptions,
+  hasDeviceHistory: boolean
 ): Promise<EnrollDeviceResponse> {
   if (enrollmentInFlight) return enrollmentInFlight
   enrollmentInFlight = (async () => {
     const enrollmentToken = await SecureStore.getItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY)
     if (!enrollmentToken) {
+      if (hasDeviceHistory) {
+        throw new CurrentDeviceError(
+          'This installation is not a current trusted device. Authorize it from a trusted device, or use account recovery if all trusted devices are lost.',
+          'RECOVERY_REQUIRED',
+          409
+        )
+      }
       throw new CurrentDeviceError(
         'Secure this device by signing in with a fresh OTP.',
         'REAUTH_REQUIRED',
@@ -230,7 +238,7 @@ export async function ensureCurrentDeviceEnrollment(
       await deleteDeviceKey()
       metadata = { ...metadata, deviceId: null }
     }
-    const enrollment = await enrollInstallation(metadata, options)
+    const enrollment = await enrollInstallation(metadata, options, server.devices.length > 0)
     const enrolledMetadata = await getLocalInstallationMetadata()
     if (!enrolledMetadata.keyFingerprint) {
       throw new CurrentDeviceError(
