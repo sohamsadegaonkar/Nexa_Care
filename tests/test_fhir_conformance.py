@@ -50,11 +50,7 @@ def test_structured_export_satisfies_declared_internal_r4_subset() -> None:
                 "severity": "Severe",
                 "risk_level": "HIGH_RISK",
             },
-            {
-                "record_type": "timeline_diagnosis",
-                "summary": "Synthetic diagnosis",
-                "occurred_at": "2026-09-09T10:03:00+00:00",
-            },
+            {"diagnoses": ["Synthetic diagnosis"]},
         ],
     )
 
@@ -99,7 +95,24 @@ def test_structured_export_satisfies_declared_internal_r4_subset() -> None:
     assert "reaction" not in allergy
 
     condition = next(item for item in resources if item["resourceType"] == "Condition")
-    assert condition["recordedDate"] == "2026-09-09T10:03:00+00:00"
+    assert condition["code"]["text"] == "Synthetic diagnosis"
+    assert "recordedDate" not in condition
+
+
+def test_timeline_free_text_never_mints_condition() -> None:
+    patient_id = str(uuid.uuid4())
+    bundle = generate_fhir_bundle(
+        patient_id,
+        [
+            {
+                "record_type": "timeline_diagnosis",
+                "summary": "No diabetes; screening discussion only",
+                "occurred_at": "2026-09-09T10:03:00+00:00",
+            }
+        ],
+    )
+
+    assert bundle["entry"] == []
 
 
 def test_allergy_reaction_without_required_manifestation_is_rejected() -> None:
