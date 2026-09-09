@@ -5,7 +5,13 @@ from __future__ import annotations
 import asyncio
 import unittest
 
-from app.core.rate_limiter import RateLimiter, client_ip_key
+from fastapi import HTTPException
+
+from app.core.rate_limiter import (
+    RateLimitBackendUnavailable,
+    RateLimiter,
+    client_ip_key,
+)
 
 
 class FakeAsyncRedisPipeline:
@@ -29,7 +35,6 @@ class FakeAsyncRedisPipeline:
                 self._client._counters[key] = self._client._counters.get(key, 0) + 1
                 results.append(self._client._counters[key])
             elif cmd[0] == "expire":
-                # Fake TTL bookkeeping is not needed for these unit tests.
                 results.append(1)
         self._commands.clear()
         return results
@@ -48,6 +53,11 @@ class FakeAsyncRedisClient:
 
     async def close(self) -> None:
         pass
+
+
+class FailingAsyncRedisClient:
+    async def eval(self, *_args, **_kwargs):
+        raise ConnectionError("credential-bearing redis failure")
 
 
 class FakeRequest:
@@ -82,6 +92,28 @@ class TestRateLimiter(unittest.TestCase):
         )
         self.assertTrue(asyncio.run(limiter.is_allowed("key-a")))
         self.assertTrue(asyncio.run(limiter.is_allowed("key-b")))
+
+    def test_backend_failure_is_not_treated_as_allowed(self):
+        limiter = RateLimiter(
+            max_requests=1,
+            window_seconds=60,
+            key_func=lambda r: "key",
+            redis_client=FailingAsyncRedisClient(),
+        )
+        with self.assertRaises(RateLimitBackendUnavailable):
+            asyncio.run(limiter.is_allowed("key"))
+
+    def test_dependency_converts_backend_failure_to_503(self):
+        limiter = RateLimiter(
+            max_requests=1,
+            window_seconds=60,
+            key_func=lambda r: "key",
+            redis_client=FailingAsyncRedisClient(),
+        )
+        with self.assertRaises(HTTPException) as raised:
+            asyncio.run(limiter(FakeRequest("10.0.0.1")))
+        self.assertEqual(raised.exception.status_code, 503)
+        self.assertEqual(raised.exception.detail, "Rate limit enforcement unavailable")
 
     def test_client_ip_key_ignores_forwarded_header_from_untrusted_peer(self):
         request = FakeRequest(host="10.0.0.1", forwarded="203.0.113.5, 10.0.0.1")
