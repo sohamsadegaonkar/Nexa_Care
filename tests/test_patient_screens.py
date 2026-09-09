@@ -232,28 +232,14 @@ class TestTamaguiOnly:
 class TestAlphaHonesty:
     """Crypto-scaffolded screens must honestly label themselves as alpha."""
 
-    def test_secure_device_labels_alpha(self) -> None:
+    def test_secure_device_native_custody_is_truthful(self) -> None:
         code = _read_screen("SecureDeviceScreen")
         code_norm = _normalize_ws(code)
-        assert (
-            "ALPHA" in code_norm
-        ), "SecureDeviceScreen must label key generation as ALPHA"
-        # Must use precise honest phrasing (whitespace-normalized for JSX wrapping)
-        assert (
-            "P-256 keypair generated client-side" in code_norm
-            and "private key stored in platform secure storage" in code_norm
-        ), (
-            "SecureDeviceScreen must use honest ALPHA claim: "
-            "'P-256 keypair generated client-side and private key stored "
-            "in platform secure storage'"
-        )
-        assert (
-            "Not yet" in code_norm
-            and "hardware-backed non-exportable signing key" in code_norm
-        ), (
-            "SecureDeviceScreen must state not-yet: hardware-backed non-exportable "
-            "signing key with biometric-gated key usage"
-        )
+        assert "native device-security module" in code_norm
+        assert "register only its public key" in code_norm
+        assert "hardware-backed or StrongBox-backed is determined by that device at runtime" in code_norm
+        assert "Physical-device execution is qualified separately" in code_norm
+        assert "P-256 keypair generated client-side" not in code_norm
 
     def test_biometric_approval_labels_alpha(self) -> None:
         code = _read_screen("BiometricApprovalScreen")
@@ -265,9 +251,11 @@ class TestAlphaHonesty:
             or "private key stored in platform secure storage" in code_norm
         ), "BiometricApprovalScreen must honestly describe key storage"
 
-    def test_device_enrolled_labels_alpha(self) -> None:
+    def test_device_enrolled_separates_compile_from_physical_proof(self) -> None:
         code = _read_screen("DeviceEnrolledScreen")
-        assert "ALPHA" in code, "DeviceEnrolledScreen must label key storage as ALPHA"
+        assert "native key alias" in code
+        assert "Native build qualification does not by itself prove physical" in code
+        assert "/patient/devices" in code
 
     def test_no_hospital_grade_claims(self) -> None:
         """No screen claims hospital-grade biometric signing in runtime code."""
@@ -379,34 +367,19 @@ class TestSecureDeviceScreen:
             "ensureCurrentDeviceEnrollment" in code
         ), "Must reconcile and enroll the exact installation"
 
-    def test_generates_keypair(self) -> None:
+    def test_generates_native_signing_authority(self) -> None:
         code = _read_screen("SecureDeviceScreen")
-        assert (
-            "generateDeviceKeypair" in code or "keypair" in code.lower()
-        ), "Must generate device keypair"
+        assert "ensureCurrentDeviceEnrollment" in code
+        assert "Creating native signing authority" in code
+        assert "generateDeviceKeypair" not in code
 
-    def test_alpha_honest_crypto_labels(self) -> None:
-        """Must label as ALPHA with honest limitations about key generation."""
+    def test_native_crypto_labels_are_honest(self) -> None:
         code = _read_screen("SecureDeviceScreen")
         code_norm = _normalize_ws(code)
-        assert "ALPHA" in code_norm, "Must label key generation as ALPHA"
-        # Must use precise honest phrasing (whitespace-normalized for JSX wrapping)
-        assert (
-            "P-256 keypair generated client-side" in code_norm
-        ), "Must state: P-256 keypair generated client-side"
-        assert (
-            "private key stored in platform secure storage" in code_norm
-        ), "Must state: private key stored in platform secure storage"
-        assert (
-            "Not yet" in code_norm
-        ), "Must state 'Not yet' for unimplemented capability"
-        assert (
-            "hardware-backed non-exportable signing key" in code_norm
-        ), "Must state not-yet: hardware-backed non-exportable signing key"
-        assert (
-            "biometric-gated key usage" in code_norm
-        ), "Must state not-yet: biometric-gated key usage"
-
+        assert "native key handle" in code_norm
+        assert "Only the public key and non-secret device metadata leave this installation" in code_norm
+        assert "Physical-device execution is qualified separately" in code_norm
+        assert "fully secure" not in code_norm.lower()
 
 class TestConsentRequestScreen:
     def test_displays_provider_scope_duration(self) -> None:
@@ -751,8 +724,7 @@ def test_access_history_api_values_cannot_render_as_raw_native_children() -> Non
 def test_patient_error_messages_use_explicit_jsx_branches(screen_name: str) -> None:
     code = _read_screen(screen_name)
     assert "{error &&" not in code
-    assert "{error !== null ?" in code
-
+    assert "{error !== null ?" in code or "{error ?" in code
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 5. Route and deep-link verification

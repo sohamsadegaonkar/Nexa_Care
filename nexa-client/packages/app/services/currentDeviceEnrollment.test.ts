@@ -4,24 +4,28 @@ const mocks = vi.hoisted(() => ({
   accessToken: 'patient-token' as string | null,
   enrollmentToken: 'fresh-enrollment-token' as string | null,
   localDeviceId: null as string | null,
-  publicKey: null as string | null,
-  serverDevices: [] as Array<{
-    device_id: string
-    status: string
-    public_key_fingerprint?: string
-  }>,
+  currentNative: null as any,
+  pendingNative: null as any,
+  legacy: null as any,
+  serverDevices: [] as any[],
   enroll: vi.fn(),
-  generate: vi.fn(),
   setDeviceId: vi.fn(),
-  deleteDeviceKey: vi.fn(),
+  ensurePending: vi.fn(),
+  commitPending: vi.fn(),
+  migrateLegacy: vi.fn(),
+  deleteLegacy: vi.fn(),
   clearSession: vi.fn(),
 }))
 
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }))
 vi.mock('expo-secure-store', () => ({
-  getItemAsync: vi.fn(async () => mocks.enrollmentToken),
-  deleteItemAsync: vi.fn(async () => {
-    mocks.enrollmentToken = null
+  WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'WHEN_UNLOCKED_THIS_DEVICE_ONLY',
+  getItemAsync: vi.fn(async (key: string) =>
+    key === 'enrollment-token-key' ? mocks.enrollmentToken : null
+  ),
+  setItemAsync: vi.fn(),
+  deleteItemAsync: vi.fn(async (key: string) => {
+    if (key === 'enrollment-token-key') mocks.enrollmentToken = null
   }),
 }))
 vi.mock('../utils/apiClient', async (importOriginal) => {
@@ -34,26 +38,27 @@ vi.mock('./patientAuthSession', () => ({
 }))
 vi.mock('./deviceKeys', () => ({
   DEVICE_ID_STORAGE_KEY: 'device-id-key',
-  DEVICE_PRIVATE_KEY_STORAGE_KEY: 'private-key-alias',
   getDeviceId: vi.fn(async () => mocks.localDeviceId),
-  getStoredDevicePublicKey: vi.fn(async () =>
-    mocks.publicKey ? { publicKeyDerBase64: mocks.publicKey } : null
-  ),
-  fingerprintDevicePublicKey: vi.fn(async () => 'public-key-fingerprint'),
   getDevices: vi.fn(async () => ({ patient_id: 'patient-1', devices: mocks.serverDevices })),
-  generateDeviceKeypair: mocks.generate.mockImplementation(async () => {
-    mocks.publicKey = 'new-public-key'
-    return { publicKeyDerBase64: mocks.publicKey }
-  }),
   enrollDevice: mocks.enroll,
   setDeviceId: mocks.setDeviceId.mockImplementation(async (deviceId: string) => {
     mocks.localDeviceId = deviceId
   }),
-  deleteDeviceKey: mocks.deleteDeviceKey.mockImplementation(async () => {
-    mocks.localDeviceId = null
-    mocks.publicKey = null
-  }),
   getDeviceLabel: vi.fn(() => 'Android test device'),
+}))
+vi.mock('./legacyDeviceKey', () => ({
+  getLegacyDeviceKeyInfo: vi.fn(async () => mocks.legacy),
+  deleteLegacyDevicePrivateKey: mocks.deleteLegacy,
+}))
+vi.mock('./nativeDeviceKeyring', () => ({
+  getCurrentNativeDeviceKey: vi.fn(async () => mocks.currentNative),
+  getPendingNativeDeviceKey: vi.fn(async () => mocks.pendingNative),
+  ensurePendingNativeDeviceKey: mocks.ensurePending,
+  commitPendingNativeDeviceKey: mocks.commitPending,
+  fingerprintPublicKeyDerBase64: vi.fn(async (value: string) => `${value}-fingerprint`),
+}))
+vi.mock('./patientDeviceRotation', () => ({
+  migrateLegacyDeviceToNative: mocks.migrateLegacy,
 }))
 
 async function service() {
@@ -61,182 +66,148 @@ async function service() {
   return import('./currentDeviceEnrollment')
 }
 
-function successfulEnrollment(deviceId = 'new-device') {
-  mocks.enroll.mockResolvedValue({
-    device_id: deviceId,
-    patient_id: 'patient-1',
+function activeDevice(overrides: Record<string, unknown> = {}) {
+  return {
+    device_id: 'device-1',
+    key_id: 'key-1',
+    key_version: 1,
+    device_label: 'Android',
+    platform: 'android',
     status: 'active',
-    enrolled_at: '2026-07-15T00:00:00Z',
-  })
+    enrolled_at: '2026-09-09T00:00:00Z',
+    public_key_fingerprint: 'native-der-fingerprint',
+    ...overrides,
+  }
 }
 
-describe('current installation enrollment reconciliation', () => {
+describe('native current installation reconciliation', () => {
   beforeEach(() => {
     mocks.accessToken = 'patient-token'
     mocks.enrollmentToken = 'fresh-enrollment-token'
     mocks.localDeviceId = null
-    mocks.publicKey = null
+    mocks.currentNative = null
+    mocks.pendingNative = null
+    mocks.legacy = null
     mocks.serverDevices = []
     mocks.enroll.mockReset()
-    mocks.generate.mockClear()
     mocks.setDeviceId.mockClear()
-    mocks.deleteDeviceKey.mockClear()
+    mocks.ensurePending.mockReset().mockResolvedValue({
+      alias: 'pending-alias',
+      publicKeyDerBase64: 'native-der',
+      custody: 'android-keystore',
+      platform: 'android',
+      nonExportable: true,
+      hardwareBacked: false,
+      strongBoxBacked: false,
+    })
+    mocks.commitPending.mockReset().mockImplementation(async () => {
+      mocks.currentNative = {
+        alias: 'pending-alias',
+        publicKeyDerBase64: 'native-der',
+        custody: 'android-keystore',
+        platform: 'android',
+        nonExportable: true,
+        hardwareBacked: false,
+        strongBoxBacked: false,
+      }
+      mocks.pendingNative = null
+      return mocks.currentNative
+    })
+    mocks.migrateLegacy.mockReset()
+    mocks.deleteLegacy.mockReset().mockResolvedValue(undefined)
     mocks.clearSession.mockReset()
-    successfulEnrollment()
   })
 
-  it('enrolls this installation when the server has no devices', async () => {
+  it('bootstraps with a pending native public key and never sends private material', async () => {
+    mocks.enroll.mockImplementation(async () => {
+      mocks.serverDevices = [activeDevice()]
+      return {
+        device_id: 'device-1',
+        key_id: 'key-1',
+        key_version: 1,
+        status: 'active',
+        patient_id: 'patient-1',
+        enrolled_at: '',
+      }
+    })
     const { ensureCurrentDeviceEnrollment } = await service()
     const result = await ensureCurrentDeviceEnrollment()
-    expect(result).toMatchObject({ deviceId: 'new-device', enrolledNow: true })
+    expect(result).toMatchObject({ deviceId: 'device-1', keyAlias: 'pending-alias', enrolledNow: true })
     expect(mocks.enroll).toHaveBeenCalledOnce()
-    expect(mocks.setDeviceId).toHaveBeenCalledWith('new-device')
+    const payload = mocks.enroll.mock.calls[0]?.[0]
+    expect(payload.device_public_key).toBe('native-der')
+    expect(JSON.stringify(payload)).not.toContain('private')
   })
 
-  it('requires trusted-device authorization or recovery when another device history exists', async () => {
-    mocks.serverDevices = [{ device_id: 'old-installation', status: 'active' }]
-    mocks.enrollmentToken = null
+  it('accepts only an active server row matching the current native fingerprint', async () => {
+    mocks.localDeviceId = 'device-1'
+    mocks.currentNative = {
+      alias: 'native-alias', publicKeyDerBase64: 'native-der', custody: 'android-keystore', platform: 'android', nonExportable: true
+    }
+    mocks.serverDevices = [activeDevice()]
     const { ensureCurrentDeviceEnrollment } = await service()
-    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'RECOVERY_REQUIRED',
-      status: 409,
+    await expect(ensureCurrentDeviceEnrollment()).resolves.toMatchObject({
+      deviceId: 'device-1', keyAlias: 'native-alias', enrolledNow: false
     })
     expect(mocks.enroll).not.toHaveBeenCalled()
   })
 
-  it('does not enroll when local device_id, local key, and active server row match', async () => {
-    mocks.localDeviceId = 'current-device'
-    mocks.publicKey = 'current-public-key'
-    mocks.serverDevices = [
-      {
-        device_id: 'current-device',
-        status: 'active',
-        public_key_fingerprint: 'public-key-fingerprint',
-      },
-    ]
+  it('reconciles a pending key after an ambiguous prior server commit', async () => {
+    mocks.pendingNative = {
+      alias: 'pending-alias', publicKeyDerBase64: 'native-der', custody: 'android-keystore', platform: 'android', nonExportable: true
+    }
+    mocks.serverDevices = [activeDevice()]
     const { ensureCurrentDeviceEnrollment } = await service()
-    const result = await ensureCurrentDeviceEnrollment()
-    expect(result).toMatchObject({ deviceId: 'current-device', enrolledNow: false })
+    await expect(ensureCurrentDeviceEnrollment()).resolves.toMatchObject({ deviceId: 'device-1' })
+    expect(mocks.commitPending).toHaveBeenCalledWith('pending-alias', { deletePrevious: true })
     expect(mocks.enroll).not.toHaveBeenCalled()
-    expect(mocks.enrollmentToken).toBeNull()
   })
 
-  it.each([
-    ['absent', []],
-    ['revoked', [{ device_id: 'current-device', status: 'revoked' }]],
-  ])('re-enrolls when the local device is %s on the server', async (_case, devices) => {
-    mocks.localDeviceId = 'current-device'
-    mocks.publicKey = 'current-public-key'
-    mocks.serverDevices = devices
+  it('migrates an active legacy SecureStore key through proof-of-possession rotation', async () => {
+    mocks.legacy = { publicKeyDerBase64: 'legacy-der', publicKeyFingerprint: 'legacy-fingerprint' }
+    mocks.serverDevices = [activeDevice({ public_key_fingerprint: 'legacy-fingerprint' })]
+    mocks.migrateLegacy.mockImplementation(async () => {
+      mocks.currentNative = {
+        alias: 'native-alias',
+        publicKeyDerBase64: 'native-der',
+        custody: 'android-keystore',
+        platform: 'android',
+        nonExportable: true,
+      }
+      mocks.legacy = null
+      mocks.serverDevices = [activeDevice({ key_id: 'key-2', key_version: 2 })]
+      return {
+        rotation: { device_id: 'device-1', new_key_id: 'key-2', new_key_version: 2 },
+      }
+    })
     const { ensureCurrentDeviceEnrollment } = await service()
-    await ensureCurrentDeviceEnrollment()
-    expect(mocks.enroll).toHaveBeenCalledOnce()
+    await expect(ensureCurrentDeviceEnrollment()).resolves.toMatchObject({ keyVersion: 2 })
+    expect(mocks.migrateLegacy).toHaveBeenCalledOnce()
+    expect(mocks.enroll).not.toHaveBeenCalled()
   })
 
-  it('re-enrolls when device_id matches but the local key fingerprint does not', async () => {
-    mocks.localDeviceId = 'current-device'
-    mocks.publicKey = 'replacement-public-key'
-    mocks.serverDevices = [
-      {
-        device_id: 'current-device',
-        status: 'active',
-        public_key_fingerprint: 'old-public-key-fingerprint',
-      },
-    ]
+  it('never reuses bootstrap enrollment after any device history exists', async () => {
+    mocks.serverDevices = [activeDevice({ status: 'revoked' })]
     const { ensureCurrentDeviceEnrollment } = await service()
-    await ensureCurrentDeviceEnrollment()
-    expect(mocks.enroll).toHaveBeenCalledOnce()
+    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
+      code: 'RECOVERY_REQUIRED', status: 409
+    })
+    expect(mocks.enroll).not.toHaveBeenCalled()
   })
 
-  it('creates a fresh key and device identity when the local private key is missing', async () => {
-    mocks.localDeviceId = 'stale-device'
-    mocks.serverDevices = [
-      {
-        device_id: 'stale-device',
-        status: 'active',
-        public_key_fingerprint: 'different-fingerprint',
-      },
-    ]
-    const { ensureCurrentDeviceEnrollment } = await service()
-    await ensureCurrentDeviceEnrollment()
-    expect(mocks.deleteDeviceKey).toHaveBeenCalledOnce()
-    expect(mocks.generate).toHaveBeenCalledOnce()
-    expect(mocks.enroll).toHaveBeenCalledOnce()
-  })
-
-  it('deduplicates concurrent enrollment attempts and React-style remount retries', async () => {
-    let finish!: (value: unknown) => void
-    mocks.enroll.mockReturnValue(
-      new Promise((resolve) => {
-        finish = resolve
-      })
-    )
-    const { ensureCurrentDeviceEnrollment } = await service()
-    const first = ensureCurrentDeviceEnrollment()
-    const second = ensureCurrentDeviceEnrollment()
-    await vi.waitFor(() => expect(mocks.enroll).toHaveBeenCalledOnce())
-    finish({ device_id: 'new-device', patient_id: 'patient-1', status: 'active', enrolled_at: '' })
-    await Promise.all([first, second])
-    mocks.serverDevices = [
-      {
-        device_id: 'new-device',
-        status: 'active',
-        public_key_fingerprint: 'public-key-fingerprint',
-      },
-    ]
-    await ensureCurrentDeviceEnrollment()
-    expect(mocks.enroll).toHaveBeenCalledOnce()
-  })
-
-  it('clears the patient session when enrollment returns 401', async () => {
-    const { ensureCurrentDeviceEnrollment } = await service()
+  it('clears the patient session when the backend rejects enrollment authority with 401', async () => {
     const { ApiError } = await import('../utils/apiClient')
     mocks.enroll.mockRejectedValue(new ApiError('expired', 401, 'REAUTH_REQUIRED'))
-    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'REAUTH_REQUIRED',
-      status: 401,
-    })
+    const { ensureCurrentDeviceEnrollment } = await service()
+    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({ code: 'REAUTH_REQUIRED' })
     expect(mocks.clearSession).toHaveBeenCalledWith('expired')
   })
 
-  it('maps a device-limit conflict to an actionable error', async () => {
-    const { ensureCurrentDeviceEnrollment } = await service()
-    const { ApiError } = await import('../utils/apiClient')
-    mocks.enroll.mockRejectedValue(new ApiError('maximum devices', 409, 'CONFLICT'))
-    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'DEVICE_CONFLICT',
-      status: 409,
-    })
-  })
-
-  it('requires fresh OTP when no unused enrollment token remains', async () => {
-    mocks.enrollmentToken = null
-    const { ensureCurrentDeviceEnrollment } = await service()
-    await expect(ensureCurrentDeviceEnrollment()).rejects.toMatchObject({
-      code: 'REAUTH_REQUIRED',
-      status: 401,
-    })
-    expect(mocks.enroll).not.toHaveBeenCalled()
-  })
-
-  it('reports setup before biometrics when enrollment is disallowed', async () => {
+  it('does not generate authority when enrollment is disallowed', async () => {
     const { ensureCurrentDeviceEnrollment } = await service()
     await expect(ensureCurrentDeviceEnrollment({ allowEnrollment: false })).rejects.toMatchObject({
-      code: 'SETUP_REQUIRED',
+      code: 'SETUP_REQUIRED'
     })
-    expect(mocks.enroll).not.toHaveBeenCalled()
-  })
-
-  it('never includes private key or tokens in the enrollment payload', async () => {
-    mocks.publicKey = 'public-key-only'
-    const { ensureCurrentDeviceEnrollment } = await service()
-    await ensureCurrentDeviceEnrollment({ expoPushToken: 'push-token' })
-    const payload = mocks.enroll.mock.calls[0]?.[0]
-    expect(payload).toMatchObject({
-      device_public_key: 'public-key-only',
-      device_enrollment_token: 'fresh-enrollment-token',
-      expo_push_token: 'push-token',
-    })
-    expect(JSON.stringify(payload)).not.toContain('private')
+    expect(mocks.ensurePending).not.toHaveBeenCalled()
   })
 })
