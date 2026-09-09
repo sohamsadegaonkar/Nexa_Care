@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
   },
 }))
 
-vi.mock('expo', () => ({
+vi.mock('expo-modules-core', () => ({
   requireOptionalNativeModule: vi.fn(() => mocks.native),
 }))
 
