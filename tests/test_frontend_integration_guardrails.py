@@ -39,9 +39,15 @@ def test_frontend_transport_and_device_key_are_canonical():
             key_modules.append(path.relative_to(ROOT).as_posix())
     assert not offenders
     assert sorted(set(key_modules)) == [
-        "nexa-client/packages/app/services/deviceKeys.ts",
         "nexa-client/packages/app/services/legacyDeviceKey.ts",
     ]
+
+    device_keys = (
+        ROOT / "nexa-client/packages/app/services/deviceKeys.ts"
+    ).read_text(encoding="utf-8")
+    assert "p256.sign(" not in device_keys
+    assert "generateDeviceKeypair" not in device_keys
+    assert "signConsentChallenge" not in device_keys
 
     legacy = (
         ROOT / "nexa-client/packages/app/services/legacyDeviceKey.ts"
