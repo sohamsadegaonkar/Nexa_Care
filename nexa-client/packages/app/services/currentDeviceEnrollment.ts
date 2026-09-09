@@ -20,6 +20,7 @@ import { clearPatientAuthSession, DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY } from './
 export type CurrentDeviceErrorCode =
   | 'SETUP_REQUIRED'
   | 'REAUTH_REQUIRED'
+  | 'RECOVERY_REQUIRED'
   | 'DEVICE_CONFLICT'
   | 'INVALID_ENROLLMENT'
   | 'NETWORK_ERROR'
@@ -84,6 +85,13 @@ function mapError(error: unknown): CurrentDeviceError {
         'Your session or device enrollment authorization expired. Sign in with OTP again.',
         'REAUTH_REQUIRED',
         401
+      )
+    }
+    if (error.status === 409 && error.code === 'DEVICE_RECOVERY_REQUIRED') {
+      return new CurrentDeviceError(
+        'This account already has device history and this installation is not a current trusted device. Verify your identity to recover device access.',
+        'RECOVERY_REQUIRED',
+        409
       )
     }
     if (error.status === 409) {
@@ -152,7 +160,9 @@ async function enrollInstallation(
 
 /**
  * Require this exact app installation to have both its private key and an
- * active matching server device_id. Another patient device never satisfies it.
+ * active matching server device. A stale/missing local device_id may be
+ * repaired only when this installation's derived public-key fingerprint
+ * uniquely matches an active device returned for the current patient.
  */
 export async function ensureCurrentDeviceEnrollment(
   options: EnsureCurrentDeviceOptions = {}
@@ -183,6 +193,26 @@ export async function ensureCurrentDeviceEnrollment(
       await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
       return {
         deviceId: exactActiveDevice.device_id,
+        status: 'active',
+        enrolledNow: false,
+        keyFingerprint: metadata.keyFingerprint,
+      }
+    }
+
+    const fingerprintMatchedDevice =
+      metadata.hasPrivateKey && metadata.keyFingerprint
+        ? server.devices.find(
+            (device) =>
+              device.status === 'active' &&
+              device.public_key_fingerprint === metadata.keyFingerprint
+          )
+        : undefined
+
+    if (fingerprintMatchedDevice && metadata.keyFingerprint) {
+      await setDeviceId(fingerprintMatchedDevice.device_id)
+      await SecureStore.deleteItemAsync(DEVICE_ENROLLMENT_TOKEN_STORAGE_KEY).catch(() => undefined)
+      return {
+        deviceId: fingerprintMatchedDevice.device_id,
         status: 'active',
         enrolledNow: false,
         keyFingerprint: metadata.keyFingerprint,
