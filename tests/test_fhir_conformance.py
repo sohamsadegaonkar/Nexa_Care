@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
+from unittest.mock import AsyncMock, patch
 
+from fastapi import HTTPException
+
+from app.api.v2.fhir_routes import export_fhir_bundle
 from app.services.fhir_conformance import (
     CONFORMANCE_CONTRACT,
     EXTERNAL_PROFILE_VALIDATION_STATUS,
@@ -165,3 +170,39 @@ def test_empty_collection_bundle_is_valid_internal_export() -> None:
 
     assert report["valid"] is True
     assert report["resource_counts"] == {}
+
+
+def test_export_route_fails_closed_before_audit_on_conformance_error() -> None:
+    patient_id = uuid.uuid4()
+
+    with (
+        patch(
+            "app.api.v2.fhir_routes._fetch_clinical_records",
+            new_callable=AsyncMock,
+            return_value=[],
+        ),
+        patch(
+            "app.api.v2.fhir_routes.validate_fhir_r4_bundle",
+            return_value={"valid": False},
+        ),
+        patch(
+            "app.api.v2.fhir_routes.append_audit_log_or_503",
+            new_callable=AsyncMock,
+        ) as audit,
+    ):
+        try:
+            asyncio.run(
+                export_fhir_bundle(
+                    patient_id,
+                    provider=object(),  # unused before conformance gate
+                    _=object(),
+                    db=object(),
+                )
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 500
+            assert exc.detail == "FHIR export failed internal conformance validation."
+        else:
+            raise AssertionError("invalid FHIR bundle was exported")
+
+    audit.assert_not_awaited()
