@@ -55,6 +55,9 @@ from app.main import app
 #   3. Slice 8A intentionally added two protected operational GET routes:
 #      /ops/health and /metrics. They are hidden from OpenAPI and protected by
 #      the independent operations token in production-like environments.
+#   4. Patient registration recovery adds three intentional unauthenticated
+#      auth endpoints. Their own OTP/Redis authority is distinct from login
+#      and device authority.
 #
 # If this file goes red again: don't just delete the offending entries to
 # make it pass. Confirm with whoever owns the route in question whether the
@@ -67,6 +70,9 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/patient/logout-all"),
     ("POST", "/api/v2/auth/register/otp/send"),
     ("POST", "/api/v2/auth/register/otp/verify"),
+    ("POST", "/api/v2/auth/registration-recovery/otp/send"),
+    ("POST", "/api/v2/auth/registration-recovery/otp/verify"),
+    ("POST", "/api/v2/auth/registration-recovery/complete"),
     ("POST", "/api/v2/auth/provider/register"),
     ("POST", "/api/v1/handshake"),
     ("POST", "/api/v1/enroll-biometric"),
