@@ -23,6 +23,7 @@ from app.services.audit_outbox import enqueue_audit_event
 
 
 _SUPABASE_PROVIDER = "supabase"
+REGISTRATION_RECOVERY_REQUIRED = "REGISTRATION_RECOVERY_REQUIRED"
 
 
 class PatientRegistrationError(RuntimeError):
@@ -67,8 +68,16 @@ async def _find_identity(
 async def _existing_account_or_error(
     db: AsyncSession, identity: PatientAuthIdentity
 ) -> PatientRegistrationAccount:
+    """Return a complete active graph or force explicit registration recovery.
+
+    Once Nexa has a durable external-identity link, first-time registration may
+    never silently reactivate, recreate, or rebind around that history.  A
+    revoked identity, deleted/missing patient, or incomplete patient record is
+    therefore a registration-recovery state rather than a fresh-registration
+    opportunity or a login/device-recovery shortcut.
+    """
     if identity.revoked_at is not None:
-        raise PatientRegistrationError("REGISTRATION_IDENTITY_UNAVAILABLE")
+        raise PatientRegistrationError(REGISTRATION_RECOVERY_REQUIRED)
 
     patient = await db.scalar(
         select(Patient).where(
@@ -77,13 +86,13 @@ async def _existing_account_or_error(
         )
     )
     if patient is None:
-        raise PatientRegistrationError("REGISTRATION_IDENTITY_UNAVAILABLE")
+        raise PatientRegistrationError(REGISTRATION_RECOVERY_REQUIRED)
 
     record = await db.scalar(
         select(PatientRecord).where(PatientRecord.patient_id == patient.patient_uuid)
     )
     if record is None:
-        raise PatientRegistrationError("REGISTRATION_IDENTITY_UNAVAILABLE")
+        raise PatientRegistrationError(REGISTRATION_RECOVERY_REQUIRED)
     return PatientRegistrationAccount(
         patient_id=str(patient.patient_uuid),
         created=False,
@@ -121,11 +130,17 @@ async def _attempt_has_success_audit(
 async def recover_patient_registration_for_attempt(
     db: AsyncSession, *, attempt_id: str, patient_id: str | None = None
 ) -> PatientRegistrationAccount | None:
-    """Recover only a graph durably proven to belong to this same attempt.
+    """Recover only a complete, unambiguous graph proven for this attempt.
 
     This handles the narrow crash window after the database commit but before
     Redis receives ``finalized``.  It never uses a provider subject supplied by
     the client and it cannot adopt an account created by another attempt.
+
+    If durable attempt evidence exists but the linked graph is revoked,
+    deleted, incomplete, ambiguous, or no longer matches that evidence, the
+    caller must enter explicit registration recovery.  This function never
+    repairs the graph and never falls through into first-time registration,
+    login, or device recovery semantics.
     """
     durable_patient_id = patient_id or await db.scalar(
         text(
@@ -138,19 +153,27 @@ async def recover_patient_registration_for_attempt(
     )
     if durable_patient_id is None:
         return None
-    identity = await db.scalar(
-        select(PatientAuthIdentity).where(
-            PatientAuthIdentity.patient_id == durable_patient_id,
-            PatientAuthIdentity.provider == _SUPABASE_PROVIDER,
-        )
+
+    identities = list(
+        (
+            await db.scalars(
+                select(PatientAuthIdentity)
+                .where(
+                    PatientAuthIdentity.patient_id == durable_patient_id,
+                    PatientAuthIdentity.provider == _SUPABASE_PROVIDER,
+                )
+                .limit(2)
+            )
+        ).all()
     )
-    if identity is None:
-        raise PatientRegistrationError("REGISTRATION_IDENTITY_UNAVAILABLE")
-    account = await _existing_account_or_error(db, identity)
+    if len(identities) != 1:
+        raise PatientRegistrationError(REGISTRATION_RECOVERY_REQUIRED)
+
+    account = await _existing_account_or_error(db, identities[0])
     if not await _attempt_has_success_audit(
         db, attempt_id=attempt_id, patient_id=account.patient_id
     ):
-        raise PatientRegistrationError("REGISTRATION_IDENTITY_UNAVAILABLE")
+        raise PatientRegistrationError(REGISTRATION_RECOVERY_REQUIRED)
     return account
 
 
@@ -162,6 +185,11 @@ async def finalize_patient_registration(
     PostgreSQL obtains a transaction-scoped lock before inspecting or creating
     the graph.  The database unique constraint remains the authoritative
     collision backstop for writers that do not use this service.
+
+    A complete active graph created by another attempt is an existing account
+    and stays behind the login boundary.  Any historical identity whose graph
+    cannot be proven complete and active requires explicit registration
+    recovery; registration never reactivates, recreates, or rebinds it.
     """
     subject = provider_subject.strip()
     if not subject or len(subject) > 255:

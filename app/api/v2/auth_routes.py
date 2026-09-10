@@ -86,6 +86,7 @@ from app.services.patient_session_authority import (
     revoke_patient_session,
 )
 from app.services.patient_registration_service import (
+    REGISTRATION_RECOVERY_REQUIRED,
     PatientRegistrationError,
     finalize_patient_registration,
     recover_patient_registration_for_attempt,
@@ -486,6 +487,28 @@ def _registration_provider_identity(result, submitted_phone: str) -> tuple[str, 
     return str(provider_subject), str(provider_access_token)
 
 
+def _patient_registration_http_error(exc: PatientRegistrationError) -> HTTPException:
+    """Map registration-domain state without crossing into login/device recovery."""
+    if exc.code in {
+        "REGISTRATION_PROVIDER_RESPONSE_INVALID",
+        "REGISTRATION_PHONE_MISMATCH",
+    }:
+        status_code = status.HTTP_401_UNAUTHORIZED
+    elif exc.code == REGISTRATION_RECOVERY_REQUIRED:
+        status_code = status.HTTP_409_CONFLICT
+    elif exc.code in {
+        "REGISTRATION_IDENTITY_UNAVAILABLE",
+        "ACCOUNT_ALREADY_REGISTERED",
+    }:
+        status_code = status.HTTP_403_FORBIDDEN
+    else:
+        status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    detail: dict[str, object] = {"error_code": exc.code}
+    if status_code == status.HTTP_503_SERVICE_UNAVAILABLE:
+        detail["retryable"] = True
+    return HTTPException(status_code=status_code, detail=detail)
+
+
 @router.post("/register/otp/verify", response_model=PatientOtpVerifyResponse)
 async def patient_registration_otp_verify(
     payload: PatientRegistrationOtpVerifyRequest,
@@ -518,29 +541,23 @@ async def patient_registration_otp_verify(
                 attempt_id=attempt.attempt_id,
                 patient_id=attempt.finalized_patient_id,
             )
-        except PatientRegistrationError:
-            raise HTTPException(
-                status_code=403,
-                detail={"error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"},
-            ) from None
+        except PatientRegistrationError as exc:
+            raise _patient_registration_http_error(exc) from None
         if account is None:
             raise HTTPException(
-                status_code=403,
-                detail={"error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"},
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error_code": REGISTRATION_RECOVERY_REQUIRED},
             )
     else:
         try:
             account = await recover_patient_registration_for_attempt(
                 db, attempt_id=attempt.attempt_id
             )
-        except PatientRegistrationError:
+        except PatientRegistrationError as exc:
             await release_registration_attempt_claim(
                 payload.registration_attempt_token, phone, attempt
             )
-            raise HTTPException(
-                status_code=403,
-                detail={"error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"},
-            ) from None
+            raise _patient_registration_http_error(exc) from None
         if account is not None:
             try:
                 await finalize_registration_attempt(
@@ -606,28 +623,10 @@ async def patient_registration_otp_verify(
                     db, provider_subject=provider_subject, attempt_id=attempt.attempt_id
                 )
             except PatientRegistrationError as exc:
-                status_code = (
-                    401
-                    if exc.code
-                    in {
-                        "REGISTRATION_PROVIDER_RESPONSE_INVALID",
-                        "REGISTRATION_PHONE_MISMATCH",
-                    }
-                    else 403
-                    if exc.code
-                    in {
-                        "REGISTRATION_IDENTITY_UNAVAILABLE",
-                        "ACCOUNT_ALREADY_REGISTERED",
-                    }
-                    else 503
-                )
-                detail = {"error_code": exc.code}
-                if status_code == 503:
-                    detail["retryable"] = True
                 await release_registration_attempt_claim(
                     payload.registration_attempt_token, phone, attempt
                 )
-                raise HTTPException(status_code=status_code, detail=detail) from None
+                raise _patient_registration_http_error(exc) from None
 
             try:
                 await finalize_registration_attempt(
