@@ -1,4 +1,4 @@
-"""Security qualification for bounded patient-registration verification attempts."""
+"""Security qualification for bounded patient-registration invalid OTP attempts."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from app.services.patient_registration_attempt_service import (
     RegistrationAttemptError,
     claim_registration_attempt,
     issue_registration_attempt,
+    record_registration_attempt_invalid_otp,
     release_registration_attempt_claim,
 )
 
@@ -47,8 +48,14 @@ def _secret():
     )
 
 
+def _state(redis: _Redis) -> dict:
+    return json.loads(next(iter(redis.values.values())))
+
+
 @pytest.mark.asyncio
-async def test_registration_attempt_verification_budget_is_server_side_and_bounded() -> None:
+async def test_claim_and_release_do_not_consume_invalid_otp_budget() -> None:
+    """DB/provider availability retries must not burn the OTP-guess budget."""
+
     redis = _Redis()
     with (
         _secret(),
@@ -58,33 +65,85 @@ async def test_registration_attempt_verification_budget_is_server_side_and_bound
         ),
     ):
         token = await issue_registration_attempt(PHONE)
-        key = next(iter(redis.values))
+        assert _state(redis)["verification_count"] == 0
 
-        initial = json.loads(redis.values[key])
-        assert initial["verification_count"] == 0
-        assert initial["state"] == "pending"
+        for _ in range(REGISTRATION_ATTEMPT_MAX_VERIFICATIONS + 2):
+            claim = await claim_registration_attempt(token, PHONE)
+            claimed = _state(redis)
+            assert claimed["state"] == "verifying"
+            assert claimed["verification_count"] == 0
+
+            await release_registration_attempt_claim(token, PHONE, claim)
+            released = _state(redis)
+            assert released["state"] == "pending"
+            assert released["verification_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_confirmed_invalid_otps_exhaust_attempt_after_five_failures() -> None:
+    redis = _Redis()
+    with (
+        _secret(),
+        patch(
+            "app.services.patient_registration_attempt_service.get_async_redis_client",
+            return_value=redis,
+        ),
+    ):
+        token = await issue_registration_attempt(PHONE)
 
         for expected_count in range(1, REGISTRATION_ATTEMPT_MAX_VERIFICATIONS + 1):
             claim = await claim_registration_attempt(token, PHONE)
-            state = json.loads(redis.values[key])
-            assert state["verification_count"] == expected_count
-            await release_registration_attempt_claim(token, PHONE, claim)
-            released = json.loads(redis.values[key])
-            assert released["verification_count"] == expected_count
-            assert released["state"] == "pending"
+            assert _state(redis)["verification_count"] == expected_count - 1
+
+            await record_registration_attempt_invalid_otp(token, PHONE, claim)
+            recorded = _state(redis)
+            assert recorded["verification_count"] == expected_count
+            assert recorded["state"] == (
+                "exhausted"
+                if expected_count == REGISTRATION_ATTEMPT_MAX_VERIFICATIONS
+                else "pending"
+            )
 
         with pytest.raises(RegistrationAttemptError) as exc_info:
             await claim_registration_attempt(token, PHONE)
 
-        exhausted = json.loads(redis.values[key])
-
     assert exc_info.value.code == "REGISTRATION_ATTEMPT_EXHAUSTED"
-    assert exhausted["state"] == "exhausted"
-    assert exhausted["verification_count"] == REGISTRATION_ATTEMPT_MAX_VERIFICATIONS
 
 
 @pytest.mark.asyncio
-async def test_exhausted_registration_attempt_cannot_be_recovered_by_release_or_reclaim() -> None:
+async def test_invalid_otp_recording_requires_exact_active_claim() -> None:
+    """A stale worker cannot charge or release a newer verifier's claim."""
+
+    redis = _Redis()
+    with (
+        _secret(),
+        patch(
+            "app.services.patient_registration_attempt_service.get_async_redis_client",
+            return_value=redis,
+        ),
+    ):
+        token = await issue_registration_attempt(PHONE)
+        stale_claim = await claim_registration_attempt(token, PHONE)
+        await release_registration_attempt_claim(token, PHONE, stale_claim)
+        active_claim = await claim_registration_attempt(token, PHONE)
+
+        with pytest.raises(RegistrationAttemptError) as exc_info:
+            await record_registration_attempt_invalid_otp(token, PHONE, stale_claim)
+
+        still_active = _state(redis)
+        assert exc_info.value.code == "REGISTRATION_ATTEMPT_INVALID"
+        assert still_active["state"] == "verifying"
+        assert still_active["claim_id"] == active_claim.claim_id
+        assert still_active["verification_count"] == 0
+
+        await record_registration_attempt_invalid_otp(token, PHONE, active_claim)
+        recorded = _state(redis)
+        assert recorded["state"] == "pending"
+        assert recorded["verification_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_exhausted_registration_attempt_cannot_be_resurrected_by_old_release() -> None:
     redis = _Redis()
     with (
         _secret(),
@@ -97,16 +156,16 @@ async def test_exhausted_registration_attempt_cannot_be_recovered_by_release_or_
         last_claim = None
         for _ in range(REGISTRATION_ATTEMPT_MAX_VERIFICATIONS):
             last_claim = await claim_registration_attempt(token, PHONE)
-            await release_registration_attempt_claim(token, PHONE, last_claim)
+            await record_registration_attempt_invalid_otp(token, PHONE, last_claim)
 
-        with pytest.raises(RegistrationAttemptError) as first:
-            await claim_registration_attempt(token, PHONE)
-        assert first.value.code == "REGISTRATION_ATTEMPT_EXHAUSTED"
+        exhausted = _state(redis)
+        assert exhausted["state"] == "exhausted"
+        assert exhausted["verification_count"] == REGISTRATION_ATTEMPT_MAX_VERIFICATIONS
 
-        # Releasing an old claim cannot replenish or resurrect the attempt.
         assert last_claim is not None
         await release_registration_attempt_claim(token, PHONE, last_claim)
 
-        with pytest.raises(RegistrationAttemptError) as second:
+        with pytest.raises(RegistrationAttemptError) as exc_info:
             await claim_registration_attempt(token, PHONE)
-        assert second.value.code == "REGISTRATION_ATTEMPT_EXHAUSTED"
+
+    assert exc_info.value.code == "REGISTRATION_ATTEMPT_EXHAUSTED"
