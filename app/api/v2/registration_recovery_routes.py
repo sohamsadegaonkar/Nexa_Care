@@ -370,18 +370,14 @@ async def registration_recovery_otp_verify(
             await db.commit()
         except PatientRegistrationRecoveryReviewError:
             await db.rollback()
-            try:
-                await release_registration_recovery_claim(
-                    payload.registration_recovery_attempt_token, phone, claim
-                )
-            except RegistrationRecoveryAuthorityUnavailable:
-                pass
+            await _consume_attempt_or_http_error(
+                token=payload.registration_recovery_attempt_token,
+                phone=phone,
+                claim=claim,
+            )
             raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={
-                    "error_code": "REGISTRATION_RECOVERY_REVIEW_UNAVAILABLE",
-                    "retryable": True,
-                },
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error_code": REGISTRATION_RECOVERY_STATE_CHANGED},
             ) from None
         except Exception:
             await db.rollback()
