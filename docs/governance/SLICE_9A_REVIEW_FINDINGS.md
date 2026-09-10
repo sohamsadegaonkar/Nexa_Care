@@ -34,6 +34,23 @@ The dependency order is now satisfied:
 
 `explicit recovery boundary -> verified patient recovery/classification -> durable manual-review cases -> reviewer repair authority`.
 
+## Finding 005 — parent classifier reasons do not equal the durable review vocabulary
+
+The merged patient registration-recovery classifier emits fine-grained internal reason codes such as `LINKED_PATIENT_MISSING`, `MULTIPLE_SOURCE_IDENTITIES`, merge-cycle/depth/tombstone failures, canonical-patient unavailability, canonical erasure, and canonical identity conflict. The durable Slice 9A schema intentionally accepts a smaller closed review vocabulary.
+
+Directly persisting the classifier string would either violate the database contract or tempt the review schema to grow around implementation-specific reason text.
+
+**Decision / status: REQUIRED FOR STEP 2.** Add one server-owned normalization function at the case-creation boundary. Exact mappings are:
+
+- `ERASURE_STATE_PRESENT`, `CANONICAL_ERASURE_STATE_PRESENT` -> `ERASURE_STATE_PRESENT`;
+- `IDENTITY_REVOKED` -> `IDENTITY_REVOKED`;
+- `MULTIPLE_SOURCE_IDENTITIES`, `CANONICAL_IDENTITY_CONFLICT` -> `MULTIPLE_IDENTITIES`;
+- `DELETED_PATIENT_WITHOUT_MERGE_TOMBSTONE` -> `PATIENT_DELETED_WITHOUT_MERGE`;
+- `MERGE_TOMBSTONE_CYCLE`, `MERGE_TOMBSTONE_CHAIN_TOO_DEEP`, `CANONICAL_PATIENT_UNAVAILABLE` -> `MERGE_AMBIGUOUS`;
+- `LINKED_PATIENT_MISSING` and any unknown future internal manual-review reason -> `SECURITY_CONCERN`.
+
+The patient-facing API must expose only the durable case reference/status and must not expose the provider subject, graph fingerprint, or internal classifier reason.
+
 ## Current review gate
 
-The reconstructed schema and reviewer authorization artifacts must be reviewed against the new parent baseline before Step 2 case creation is implemented. Any new finding is added here first.
+Reconstruction review is clean: the new branch is based directly on the verified post-PR-40 `main`, is 0 commits behind, and changes only the intended Slice 9A artifacts. Step 2 may proceed only with Finding 005 implemented and focused tests; it must be reviewed before Step 3 begins.
