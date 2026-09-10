@@ -226,7 +226,10 @@ class PolicyTests(unittest.TestCase):
         ).decode()
         token = sign_app_jwt(pem, "123", 1000)
         header, payload, signature = token.split(".")
-        decode = lambda x: base64.urlsafe_b64decode(x + "=" * (-len(x) % 4))
+
+        def decode(value):
+            return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
         self.assertEqual(json.loads(decode(header)), {"alg": "RS256", "typ": "JWT"})
         self.assertEqual(
             json.loads(decode(payload)), {"iat": 940, "exp": 1540, "iss": "123"}
