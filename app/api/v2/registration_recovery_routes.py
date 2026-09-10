@@ -42,7 +42,6 @@ from app.services.patient_registration_recovery_authority import (
     consume_registration_recovery_attempt,
     consume_registration_recovery_capability,
     issue_registration_recovery_attempt,
-    issue_registration_recovery_capability,
     record_registration_recovery_invalid_otp,
     release_registration_recovery_claim,
 )
@@ -55,6 +54,9 @@ from app.services.patient_registration_recovery_service import (
     audit_registration_recovery_required,
     inspect_patient_registration_recovery,
     repair_patient_registration_account,
+)
+from app.services.patient_registration_recovery_transition import (
+    exchange_registration_recovery_attempt_for_capability,
 )
 from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
 
@@ -132,9 +134,11 @@ async def _enforce_limits(request: Request, *, phone: str, action: str) -> None:
         ) from exc
 
 
-def _case_reference(attempt_id: str) -> str:
+def _recovery_reference(attempt_id: str) -> str:
+    """Return a non-authoritative support reference, not a durable case id."""
+
     digest = hashlib.sha256(attempt_id.encode("utf-8")).hexdigest()[:16].upper()
-    return f"RCR-{digest}"
+    return f"RR-{digest}"
 
 
 def _attempt_http_error(exc: RegistrationRecoveryAttemptError) -> HTTPException:
@@ -152,6 +156,23 @@ def _capability_http_error(exc: RegistrationRecoveryCapabilityError) -> HTTPExce
         else status.HTTP_401_UNAUTHORIZED
     )
     return HTTPException(status_code=code, detail={"error_code": exc.code})
+
+
+async def _consume_attempt_or_http_error(
+    *, token: str, phone: str, claim
+) -> None:
+    try:
+        await consume_registration_recovery_attempt(token, phone, claim)
+    except RegistrationRecoveryAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "REGISTRATION_RECOVERY_SECURITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+    except RegistrationRecoveryAttemptError as exc:
+        raise _attempt_http_error(exc) from exc
 
 
 @router.post(
@@ -330,20 +351,11 @@ async def registration_recovery_otp_verify(
 
     if inspection.disposition == "not_required":
         await db.rollback()
-        try:
-            await consume_registration_recovery_attempt(
-                payload.registration_recovery_attempt_token, phone, claim
-            )
-        except RegistrationRecoveryAuthorityUnavailable as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={
-                    "error_code": "REGISTRATION_RECOVERY_SECURITY_UNAVAILABLE",
-                    "retryable": True,
-                },
-            ) from exc
-        except RegistrationRecoveryAttemptError as exc:
-            raise _attempt_http_error(exc) from exc
+        await _consume_attempt_or_http_error(
+            token=payload.registration_recovery_attempt_token,
+            phone=phone,
+            claim=claim,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error_code": REGISTRATION_RECOVERY_NOT_REQUIRED},
@@ -367,37 +379,36 @@ async def registration_recovery_otp_verify(
             detail={"error_code": "REGISTRATION_RECOVERY_AUDIT_UNAVAILABLE", "retryable": True},
         ) from None
 
-    try:
-        await consume_registration_recovery_attempt(
-            payload.registration_recovery_attempt_token, phone, claim
-        )
-    except RegistrationRecoveryAuthorityUnavailable as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "error_code": "REGISTRATION_RECOVERY_SECURITY_UNAVAILABLE",
-                "retryable": True,
-            },
-        ) from exc
-    except RegistrationRecoveryAttemptError as exc:
-        raise _attempt_http_error(exc) from exc
-
     if inspection.disposition == "manual_review":
+        await _consume_attempt_or_http_error(
+            token=payload.registration_recovery_attempt_token,
+            phone=phone,
+            claim=claim,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
                 "error_code": REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
-                "case_reference": _case_reference(claim.attempt_id),
+                "recovery_reference": _recovery_reference(claim.attempt_id),
             },
         )
+
     if not inspection.repairable or inspection.repair_kind is None:
+        await _consume_attempt_or_http_error(
+            token=payload.registration_recovery_attempt_token,
+            phone=phone,
+            claim=claim,
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error_code": REGISTRATION_RECOVERY_STATE_CHANGED},
         )
 
     try:
-        capability = await issue_registration_recovery_capability(
+        capability = await exchange_registration_recovery_attempt_for_capability(
+            attempt_token=payload.registration_recovery_attempt_token,
+            phone=phone,
+            claim=claim,
             patient_id=inspection.patient_id,
             provider_subject=inspection.provider_subject,
             repair_kind=inspection.repair_kind,
@@ -411,6 +422,8 @@ async def registration_recovery_otp_verify(
                 "retryable": True,
             },
         ) from exc
+    except RegistrationRecoveryAttemptError as exc:
+        raise _attempt_http_error(exc) from exc
     except RegistrationRecoveryCapabilityError as exc:
         raise _capability_http_error(exc) from exc
 
@@ -453,20 +466,26 @@ async def registration_recovery_complete(
         repaired = await repair_patient_registration_account(db, capability=capability)
     except PatientRegistrationRecoveryError as exc:
         await db.rollback()
-        code = (
-            status.HTTP_409_CONFLICT
-            if exc.code == REGISTRATION_RECOVERY_STATE_CHANGED
-            else status.HTTP_503_SERVICE_UNAVAILABLE
-        )
-        detail: dict[str, object] = {"error_code": exc.code}
-        if code == status.HTTP_503_SERVICE_UNAVAILABLE:
-            detail["retryable"] = True
-        raise HTTPException(status_code=code, detail=detail) from None
+        if exc.code == REGISTRATION_RECOVERY_STATE_CHANGED:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error_code": exc.code},
+            ) from None
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "REGISTRATION_RECOVERY_RESTART_REQUIRED",
+                "retryable": False,
+            },
+        ) from None
     except Exception:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error_code": "REGISTRATION_RECOVERY_UNAVAILABLE", "retryable": True},
+            detail={
+                "error_code": "REGISTRATION_RECOVERY_RESTART_REQUIRED",
+                "retryable": False,
+            },
         ) from None
 
     try:
@@ -478,7 +497,8 @@ async def registration_recovery_complete(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
-                "retryable": True,
+                "retryable": False,
+                "account_repaired": True,
             },
         ) from exc
 
@@ -487,13 +507,15 @@ async def registration_recovery_complete(
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"error_code": "REGISTRATION_RECOVERY_STATE_CHANGED", "retryable": True},
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": False,
+                "account_repaired": True,
+            },
         ) from exc
 
     try:
-        has_device_history = await patient_has_device_history(
-            db, patient_id=patient_uuid
-        )
+        has_device_history = await patient_has_device_history(db, patient_id=patient_uuid)
         await db.rollback()
     except Exception:
         await db.rollback()
@@ -512,7 +534,8 @@ async def registration_recovery_complete(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail={
                     "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
-                    "retryable": True,
+                    "retryable": False,
+                    "account_repaired": True,
                 },
             ) from exc
         device_state = "bootstrap_enrollment"
