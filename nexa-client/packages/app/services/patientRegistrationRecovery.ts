@@ -34,6 +34,7 @@ export type RegistrationRecoveryClientErrorKind =
   | 'not_required'
   | 'not_available'
   | 'state_changed'
+  | 'sign_in_required'
   | 'invalid_otp'
   | 'expired_attempt'
   | 'rate_limited'
@@ -80,10 +81,21 @@ function mapRecoveryError(error: unknown): RegistrationRecoveryClientError {
         false
       )
     }
-    if (code === 'REGISTRATION_RECOVERY_STATE_CHANGED') {
+    if (
+      code === 'REGISTRATION_RECOVERY_STATE_CHANGED' ||
+      code === 'REGISTRATION_RECOVERY_RESTART_REQUIRED'
+    ) {
       return new RegistrationRecoveryClientError(
-        'The account changed while recovery was in progress. Restart account recovery.',
+        'The account could not be repaired with this one-time authority. Restart account recovery.',
         'state_changed',
+        code,
+        false
+      )
+    }
+    if (code === 'PATIENT_SESSION_AUTHORITY_UNAVAILABLE') {
+      return new RegistrationRecoveryClientError(
+        'The account repair completed, but a patient session could not be established. Sign in normally with a fresh OTP.',
+        'sign_in_required',
         code,
         false
       )
