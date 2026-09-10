@@ -36,6 +36,7 @@ def upgrade() -> None:
         sa.Column("case_reference", sa.String(32), nullable=False),
         sa.Column("provider", sa.String(32), nullable=False),
         sa.Column("provider_subject_hash", sa.String(64), nullable=False),
+        sa.Column("identity_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("patient_id", postgresql.UUID(as_uuid=True), nullable=True),
         sa.Column("graph_fingerprint", sa.String(64), nullable=False),
         sa.Column("reason_codes", postgresql.ARRAY(sa.String(64)), nullable=False),
@@ -52,6 +53,11 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
+        sa.ForeignKeyConstraint(
+            ["identity_id"],
+            ["patient_auth_identities.identity_id"],
+            ondelete="RESTRICT",
+        ),
         sa.ForeignKeyConstraint(
             ["patient_id"], ["patients.patient_uuid"], ondelete="RESTRICT"
         ),
@@ -110,6 +116,11 @@ def upgrade() -> None:
             "AND resolved_at IS NOT NULL)",
             name="ck_registration_recovery_review_assignment_state",
         ),
+    )
+    op.create_index(
+        "ix_registration_recovery_review_identity",
+        "patient_registration_recovery_review_cases",
+        ["identity_id"],
     )
     op.create_index(
         "ix_registration_recovery_review_status",
@@ -200,6 +211,10 @@ def downgrade() -> None:
     )
     op.drop_index(
         "ix_registration_recovery_review_status",
+        table_name="patient_registration_recovery_review_cases",
+    )
+    op.drop_index(
+        "ix_registration_recovery_review_identity",
         table_name="patient_registration_recovery_review_cases",
     )
     op.drop_table("patient_registration_recovery_review_cases")
