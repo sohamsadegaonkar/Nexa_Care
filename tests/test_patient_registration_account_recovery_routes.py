@@ -219,7 +219,7 @@ def test_repairable_verified_identity_exchanges_attempt_for_exact_repair_capabil
     issue_access.assert_not_awaited()
 
 
-def test_manual_review_state_returns_support_reference_and_no_repair_authority() -> None:
+def test_manual_review_state_opens_durable_case_and_returns_only_case_reference() -> None:
     db = AsyncMock()
     client, _ = _client(db)
     inspection = RegistrationRecoveryInspection(
@@ -227,8 +227,12 @@ def test_manual_review_state_returns_support_reference_and_no_repair_authority()
         provider_subject="subject-recovery",
         patient_id=PATIENT_ID,
         target_patient_id=PATIENT_ID,
-        graph_fingerprint="manual-graph",
+        graph_fingerprint="a" * 64,
         reason_code="IDENTITY_REVOKED",
+    )
+    audit_required = AsyncMock()
+    open_case = AsyncMock(
+        return_value=SimpleNamespace(case_reference="RRC-DURABLE000000000000001")
     )
     exchange = AsyncMock()
     issue_access = AsyncMock()
@@ -251,7 +255,11 @@ def test_manual_review_state_returns_support_reference_and_no_repair_authority()
         ),
         patch(
             "app.api.v2.registration_recovery_routes.audit_registration_recovery_required",
-            new=AsyncMock(),
+            new=audit_required,
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.open_registration_recovery_review_case",
+            new=open_case,
         ),
         patch(
             "app.api.v2.registration_recovery_routes.consume_registration_recovery_attempt",
@@ -272,9 +280,21 @@ def test_manual_review_state_returns_support_reference_and_no_repair_authority()
 
     assert response.status_code == 409
     detail = response.json()["detail"]
-    assert detail["error_code"] == REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED
-    assert detail["recovery_reference"].startswith("RR-")
-    assert "case_reference" not in detail
+    assert detail == {
+        "error_code": REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
+        "case_reference": "RRC-DURABLE000000000000001",
+    }
+    assert "recovery_reference" not in detail
+    assert "provider_subject" not in detail
+    assert "graph_fingerprint" not in detail
+    assert "reason_code" not in detail
+    audit_required.assert_awaited_once_with(
+        db, inspection=inspection, attempt_id=ATTEMPT.attempt_id
+    )
+    open_case.assert_awaited_once_with(
+        db, inspection=inspection, attempt_id=ATTEMPT.attempt_id
+    )
+    db.commit.assert_awaited_once()
     consume_attempt.assert_awaited_once_with("a" * 40, PHONE, ATTEMPT)
     exchange.assert_not_awaited()
     issue_access.assert_not_awaited()
