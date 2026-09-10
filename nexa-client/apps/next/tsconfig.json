@@ -7,7 +7,6 @@
       "esnext"
     ],
     "baseUrl": ".",
-    "ignoreDeprecations": "6.0",
     "paths": {
       "react-native": [
         "react-native-web"
