@@ -442,11 +442,16 @@ async def patient_registration_otp_send(
             get_supabase_client().auth.sign_in_with_otp,
             {"phone": phone, "options": {"should_create_user": True}},
         )
-    except Exception:
-        raise HTTPException(
-            status_code=503,
-            detail={"error_code": "REGISTRATION_SMS_UNAVAILABLE", "retryable": True},
-        ) from None
+    except Exception as exc:
+        # Preserve registration account non-enumeration. Provider-side 4xx
+        # identity/eligibility outcomes must be indistinguishable from a
+        # successful send; only genuine service failures are public failures.
+        code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
+        if code not in {400, 401, 403, 422}:
+            raise HTTPException(
+                status_code=503,
+                detail={"error_code": "REGISTRATION_SMS_UNAVAILABLE", "retryable": True},
+            ) from None
     try:
         attempt_token = await issue_registration_attempt(phone)
     except RegistrationAttemptError as exc:
