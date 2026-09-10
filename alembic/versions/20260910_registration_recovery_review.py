@@ -16,11 +16,23 @@ down_revision: Union[str, None] = "20260909_device_trust_lifecycle"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
+_REASON_SQL = (
+    "ARRAY['MISSING_RECORD_ANCHOR','MERGED_IDENTITY_REBIND_REQUIRED',"
+    "'IDENTITY_REVOKED','PATIENT_DELETED_WITHOUT_MERGE','ERASURE_STATE_PRESENT',"
+    "'MULTIPLE_IDENTITIES','MERGE_AMBIGUOUS','GRAPH_STATE_CHANGED',"
+    "'SECURITY_CONCERN']::varchar[]"
+)
+
 
 def upgrade() -> None:
     op.create_table(
         "patient_registration_recovery_review_cases",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("case_reference", sa.String(32), nullable=False),
         sa.Column("provider", sa.String(32), nullable=False),
         sa.Column("provider_subject_hash", sa.String(64), nullable=False),
@@ -31,6 +43,8 @@ def upgrade() -> None:
         sa.Column("version", sa.Integer(), nullable=False),
         sa.Column("assigned_reviewer_id", sa.String(128), nullable=True),
         sa.Column("assigned_reviewer_role", sa.String(64), nullable=True),
+        sa.Column("reviewer_authority_version", sa.String(64), nullable=True),
+        sa.Column("review_session_binding", sa.String(64), nullable=True),
         sa.Column("creation_idempotency_key", sa.String(192), nullable=False),
         sa.Column("creation_operation_hash", sa.String(64), nullable=False),
         sa.Column("contract_version", sa.String(64), nullable=False),
@@ -38,8 +52,12 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("claimed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["patient_id"], ["patients.patient_uuid"], ondelete="RESTRICT"),
-        sa.UniqueConstraint("case_reference", name="uq_registration_recovery_review_case_reference"),
+        sa.ForeignKeyConstraint(
+            ["patient_id"], ["patients.patient_uuid"], ondelete="RESTRICT"
+        ),
+        sa.UniqueConstraint(
+            "case_reference", name="uq_registration_recovery_review_case_reference"
+        ),
         sa.UniqueConstraint(
             "provider",
             "provider_subject_hash",
@@ -50,31 +68,46 @@ def upgrade() -> None:
             "creation_idempotency_key",
             name="uq_registration_recovery_review_creation_idempotency",
         ),
-        sa.CheckConstraint("provider = 'supabase'", name="ck_registration_recovery_review_provider"),
+        sa.CheckConstraint(
+            "provider = 'supabase'", name="ck_registration_recovery_review_provider"
+        ),
         sa.CheckConstraint(
             "status IN ('PENDING','IN_REVIEW','RESOLVED','REJECTED','SECURITY_ESCALATED')",
             name="ck_registration_recovery_review_status",
         ),
-        sa.CheckConstraint("version > 0", name="ck_registration_recovery_review_version"),
         sa.CheckConstraint(
-            "char_length(provider_subject_hash) = 64 AND char_length(graph_fingerprint) = 64 "
-            "AND char_length(creation_operation_hash) = 64",
+            "version > 0", name="ck_registration_recovery_review_version"
+        ),
+        sa.CheckConstraint(
+            "char_length(provider_subject_hash) = 64 AND "
+            "char_length(graph_fingerprint) = 64 AND "
+            "char_length(creation_operation_hash) = 64",
             name="ck_registration_recovery_review_hash_lengths",
         ),
         sa.CheckConstraint(
-            "cardinality(reason_codes) > 0",
-            name="ck_registration_recovery_review_reason_nonempty",
+            f"reason_codes <@ {_REASON_SQL} AND cardinality(reason_codes) > 0",
+            name="ck_registration_recovery_review_reasons",
         ),
         sa.CheckConstraint(
-            "(status = 'PENDING' AND assigned_reviewer_id IS NULL AND assigned_reviewer_role IS NULL "
-            "AND claimed_at IS NULL AND resolved_at IS NULL) OR "
+            "review_session_binding IS NULL OR char_length(review_session_binding) = 64",
+            name="ck_registration_recovery_review_session_binding",
+        ),
+        sa.CheckConstraint(
+            "(status = 'PENDING' AND assigned_reviewer_id IS NULL "
+            "AND assigned_reviewer_role IS NULL AND reviewer_authority_version IS NULL "
+            "AND review_session_binding IS NULL AND claimed_at IS NULL "
+            "AND resolved_at IS NULL) OR "
             "(status = 'IN_REVIEW' AND assigned_reviewer_id IS NOT NULL "
             "AND assigned_reviewer_role = 'registration_recovery_reviewer' "
-            "AND claimed_at IS NOT NULL AND resolved_at IS NULL) OR "
+            "AND reviewer_authority_version IS NOT NULL "
+            "AND review_session_binding IS NOT NULL AND claimed_at IS NOT NULL "
+            "AND resolved_at IS NULL) OR "
             "(status IN ('RESOLVED','REJECTED','SECURITY_ESCALATED') "
             "AND assigned_reviewer_id IS NOT NULL "
             "AND assigned_reviewer_role = 'registration_recovery_reviewer' "
-            "AND claimed_at IS NOT NULL AND resolved_at IS NOT NULL)",
+            "AND reviewer_authority_version IS NOT NULL "
+            "AND review_session_binding IS NOT NULL AND claimed_at IS NOT NULL "
+            "AND resolved_at IS NOT NULL)",
             name="ck_registration_recovery_review_assignment_state",
         ),
     )
@@ -96,10 +129,16 @@ def upgrade() -> None:
 
     op.create_table(
         "patient_registration_recovery_review_dispositions",
-        sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")),
+        sa.Column(
+            "id",
+            postgresql.UUID(as_uuid=True),
+            primary_key=True,
+            server_default=sa.text("gen_random_uuid()"),
+        ),
         sa.Column("case_id", postgresql.UUID(as_uuid=True), nullable=False),
         sa.Column("reviewer_id", sa.String(128), nullable=False),
         sa.Column("reviewer_role", sa.String(64), nullable=False),
+        sa.Column("reviewer_authority_version", sa.String(64), nullable=False),
         sa.Column("outcome", sa.String(64), nullable=False),
         sa.Column("reason_codes", postgresql.ARRAY(sa.String(64)), nullable=False),
         sa.Column("prior_case_version", sa.Integer(), nullable=False),
@@ -113,19 +152,25 @@ def upgrade() -> None:
             ["patient_registration_recovery_review_cases.id"],
             ondelete="RESTRICT",
         ),
-        sa.UniqueConstraint("case_id", name="uq_registration_recovery_review_disposition_case"),
-        sa.UniqueConstraint("idempotency_key", name="uq_registration_recovery_review_disposition_idempotency"),
+        sa.UniqueConstraint(
+            "case_id", name="uq_registration_recovery_review_disposition_case"
+        ),
+        sa.UniqueConstraint(
+            "idempotency_key",
+            name="uq_registration_recovery_review_disposition_idempotency",
+        ),
         sa.CheckConstraint(
             "reviewer_role = 'registration_recovery_reviewer'",
             name="ck_registration_recovery_disposition_role",
         ),
         sa.CheckConstraint(
-            "outcome IN ('RESTORE_MISSING_RECORD_ANCHOR','REBIND_MERGED_IDENTITY','NO_REPAIR','SECURITY_ESCALATION_REQUIRED')",
+            "outcome IN ('RESTORE_MISSING_RECORD_ANCHOR','REBIND_MERGED_IDENTITY',"
+            "'NO_REPAIR','SECURITY_ESCALATION_REQUIRED')",
             name="ck_registration_recovery_disposition_outcome",
         ),
         sa.CheckConstraint(
-            "cardinality(reason_codes) > 0",
-            name="ck_registration_recovery_disposition_reason_nonempty",
+            f"reason_codes <@ {_REASON_SQL} AND cardinality(reason_codes) > 0",
+            name="ck_registration_recovery_disposition_reasons",
         ),
         sa.CheckConstraint(
             "prior_case_version > 0 AND char_length(operation_hash) = 64",
