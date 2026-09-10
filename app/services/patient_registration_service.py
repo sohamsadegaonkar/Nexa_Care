@@ -130,17 +130,17 @@ async def _attempt_has_success_audit(
 async def recover_patient_registration_for_attempt(
     db: AsyncSession, *, attempt_id: str, patient_id: str | None = None
 ) -> PatientRegistrationAccount | None:
-    """Recover only a complete graph durably proven to belong to this attempt.
+    """Recover only a complete, unambiguous graph proven for this attempt.
 
     This handles the narrow crash window after the database commit but before
     Redis receives ``finalized``.  It never uses a provider subject supplied by
     the client and it cannot adopt an account created by another attempt.
 
     If durable attempt evidence exists but the linked graph is revoked,
-    deleted, incomplete, or no longer matches that evidence, the caller must
-    enter explicit registration recovery.  This function never repairs the
-    graph and never falls through into first-time registration, login, or device
-    recovery semantics.
+    deleted, incomplete, ambiguous, or no longer matches that evidence, the
+    caller must enter explicit registration recovery.  This function never
+    repairs the graph and never falls through into first-time registration,
+    login, or device recovery semantics.
     """
     durable_patient_id = patient_id or await db.scalar(
         text(
@@ -153,15 +153,23 @@ async def recover_patient_registration_for_attempt(
     )
     if durable_patient_id is None:
         return None
-    identity = await db.scalar(
-        select(PatientAuthIdentity).where(
-            PatientAuthIdentity.patient_id == durable_patient_id,
-            PatientAuthIdentity.provider == _SUPABASE_PROVIDER,
-        )
+
+    identities = list(
+        (
+            await db.scalars(
+                select(PatientAuthIdentity)
+                .where(
+                    PatientAuthIdentity.patient_id == durable_patient_id,
+                    PatientAuthIdentity.provider == _SUPABASE_PROVIDER,
+                )
+                .limit(2)
+            )
+        ).all()
     )
-    if identity is None:
+    if len(identities) != 1:
         raise PatientRegistrationError(REGISTRATION_RECOVERY_REQUIRED)
-    account = await _existing_account_or_error(db, identity)
+
+    account = await _existing_account_or_error(db, identities[0])
     if not await _attempt_has_success_audit(
         db, attempt_id=attempt_id, patient_id=account.patient_id
     ):
