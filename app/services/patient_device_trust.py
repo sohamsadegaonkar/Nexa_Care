@@ -423,7 +423,7 @@ async def revoke_patient_device(
     reason_code: str = "PATIENT_REVOKED",
     actor_context: str = "patient_current_session",
 ) -> PatientDeviceKey:
-    """Terminally revoke the current key of one logical patient device."""
+    """Terminally revoke the current key version for a logical device."""
 
     now = datetime.now(timezone.utc)
     async with db.begin():
