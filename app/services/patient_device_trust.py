@@ -161,12 +161,19 @@ async def enroll_patient_device_key(
     device_label: str | None,
     platform: str,
     actor_id: str,
+    require_no_history: bool = False,
 ) -> PatientDeviceKey:
     """Enroll version 1 of a new logical device under DB-safe invariants.
 
     A per-patient PostgreSQL transaction advisory lock serializes the active
     device-set count. Global fingerprint uniqueness is additionally enforced by
     a database unique index so different-patient races cannot reuse one key.
+
+    ``require_no_history`` is the bootstrap-only guard. When true, the same
+    transaction lock also proves the patient has no historical device row before
+    insertion. This closes the route-level check/use race where two distinct
+    bootstrap grants could otherwise both observe an empty device set and then
+    serialize into two trusted devices.
     """
 
     canonical = canonicalize_p256_public_key(raw_public_key)
@@ -176,6 +183,15 @@ async def enroll_patient_device_key(
     try:
         async with db.begin():
             await _lock_patient_device_set(db, patient_id)
+
+            if require_no_history:
+                historical = await db.scalar(
+                    select(PatientDeviceKey.id)
+                    .where(PatientDeviceKey.patient_id == patient_id)
+                    .limit(1)
+                )
+                if historical is not None:
+                    raise PatientDeviceTrustError("DEVICE_RECOVERY_REQUIRED")
 
             existing = await db.scalar(
                 select(PatientDeviceKey).where(
@@ -231,6 +247,28 @@ async def enroll_patient_device_key(
     except IntegrityError as exc:
         await db.rollback()
         raise PatientDeviceTrustError("DEVICE_KEY_ALREADY_ENROLLED") from exc
+
+
+async def enroll_bootstrap_patient_device_key(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    raw_public_key: bytes,
+    device_label: str | None,
+    platform: str,
+    actor_id: str,
+) -> PatientDeviceKey:
+    """Enroll the one bootstrap device while atomically proving no device history."""
+
+    return await enroll_patient_device_key(
+        db,
+        patient_id=patient_id,
+        raw_public_key=raw_public_key,
+        device_label=device_label,
+        platform=platform,
+        actor_id=actor_id,
+        require_no_history=True,
+    )
 
 
 async def rotate_patient_device_key(

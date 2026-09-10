@@ -126,6 +126,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/reviews/{review_id}/reject"),
     ("POST", "/api/v2/reviews/{review_id}/approve"),
     ("GET", "/api/v2/reviews/pending"),
+    ("POST", "/api/v2/patient/devices/enrollment-token"),
     ("POST", "/api/v2/patient/devices/enroll"),
     ("GET", "/api/v2/patient/devices"),
     ("POST", "/api/v2/patient/devices/{device_id}/revoke"),

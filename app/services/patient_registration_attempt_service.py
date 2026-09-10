@@ -1,7 +1,7 @@
 """Short-lived server-side capabilities for patient registration OTP flows.
 
 The opaque value returned to a registration client is deliberately not an
-authentication credential.  It is only a five-minute continuity proof for a
+authentication credential. It is only a five-minute continuity proof for a
 single registration attempt, and its Redis record never contains a plaintext
 phone number, OTP, provider access token, or the opaque value itself.
 """
@@ -23,8 +23,9 @@ from app.core.redis import get_async_redis_client
 
 
 # This matches the existing patient OTP limiter window and device-enrollment
-# capability lifetime.  The registration capability is never renewable.
+# capability lifetime. The registration capability is never renewable.
 REGISTRATION_ATTEMPT_TTL_SECONDS = 5 * 60
+REGISTRATION_ATTEMPT_MAX_VERIFICATIONS = 5
 _CLAIM_TTL_SECONDS = 60
 _PREFIX = "nexa:patient_registration_attempt:"
 _SCOPE = "patient_registration"
@@ -83,6 +84,7 @@ def _valid_state(state: dict[str, Any], phone: str) -> bool:
             str(state.get("phone_digest", "")), _phone_digest(phone)
         )
         and isinstance(state.get("attempt_id"), str)
+        and isinstance(state.get("verification_count", 0), int)
     )
 
 
@@ -97,6 +99,7 @@ async def issue_registration_attempt(phone: str) -> str:
             "provider": _PROVIDER,
             "phone_digest": _phone_digest(phone),
             "state": "pending",
+            "verification_count": 0,
         }
         written = await _maybe_await(
             get_async_redis_client().set(
@@ -118,9 +121,15 @@ async def issue_registration_attempt(phone: str) -> str:
 async def claim_registration_attempt(
     token: str, phone: str
 ) -> RegistrationAttemptClaim:
-    """Atomically claim a pending attempt or return its bounded finalization.
+    """Atomically claim one bounded verification attempt or return finalization.
 
-    The Lua path is the production path.  The guarded fallback exists only for
+    Every transition from pending to verifying consumes one verification from
+    the server-side budget. Releasing a failed claim never resets that budget,
+    which prevents repeated OTP guessing with one registration capability.
+    Finalized same-attempt recovery remains replayable without consuming the
+    verification budget.
+
+    The Lua path is the production path. The guarded fallback exists only for
     narrow in-process fakes that do not implement ``eval``.
     """
     if not token or len(token) > 512:
@@ -139,14 +148,27 @@ async def claim_registration_attempt(
     local now = tonumber(redis.call('TIME')[1])
     if state.state == 'pending' or (state.state == 'verifying' and
        tonumber(state.claim_until or 0) <= now) then
+        local verification_count = tonumber(state.verification_count or 0)
+        if verification_count >= tonumber(ARGV[6]) then
+            state.state = 'exhausted'
+            state.claim_id = nil
+            state.claim_until = nil
+            local ttl = redis.call('TTL', KEYS[1])
+            if ttl > 0 then
+                redis.call('SET', KEYS[1], cjson.encode(state), 'XX', 'EX', ttl)
+            end
+            return {'exhausted'}
+        end
         local ttl = redis.call('TTL', KEYS[1])
         if ttl <= 0 then return {'invalid'} end
+        state.verification_count = verification_count + 1
         state.state = 'verifying'
         state.claim_id = ARGV[4]
         state.claim_until = now + tonumber(ARGV[5])
         redis.call('SET', KEYS[1], cjson.encode(state), 'XX', 'EX', ttl)
         return {'claimed', state.attempt_id}
     end
+    if state.state == 'exhausted' then return {'exhausted'} end
     return {'in_progress'}
     """
     try:
@@ -165,6 +187,7 @@ async def claim_registration_attempt(
                     phone_digest,
                     claim_id,
                     _CLAIM_TTL_SECONDS,
+                    REGISTRATION_ATTEMPT_MAX_VERIFICATIONS,
                 )
             )
             result = [
@@ -177,18 +200,30 @@ async def claim_registration_attempt(
                 result = ["invalid"]
             elif state.get("state") == "finalized" and state.get("patient_id"):
                 result = ["finalized", state["attempt_id"], state["patient_id"]]
+            elif state.get("state") == "exhausted":
+                result = ["exhausted"]
             elif state.get("state") == "pending" or (
                 state.get("state") == "verifying"
                 and int(state.get("claim_until", 0)) <= int(time.time())
             ):
+                verification_count = int(state.get("verification_count", 0))
                 ttl = int(await _maybe_await(redis.ttl(key)))
                 if ttl <= 0:
                     result = ["invalid"]
+                elif verification_count >= REGISTRATION_ATTEMPT_MAX_VERIFICATIONS:
+                    state.pop("claim_id", None)
+                    state.pop("claim_until", None)
+                    state["state"] = "exhausted"
+                    await _maybe_await(
+                        redis.set(key, json.dumps(state, sort_keys=True), xx=True, ex=ttl)
+                    )
+                    result = ["exhausted"]
                 else:
                     state.update(
                         state="verifying",
                         claim_id=claim_id,
                         claim_until=int(time.time()) + _CLAIM_TTL_SECONDS,
+                        verification_count=verification_count + 1,
                     )
                     await _maybe_await(
                         redis.set(
@@ -205,6 +240,8 @@ async def claim_registration_attempt(
 
     if not result or result[0] == "invalid":
         raise RegistrationAttemptError("REGISTRATION_ATTEMPT_INVALID")
+    if result[0] == "exhausted":
+        raise RegistrationAttemptError("REGISTRATION_ATTEMPT_EXHAUSTED")
     if result[0] == "in_progress":
         raise RegistrationAttemptError("REGISTRATION_ATTEMPT_IN_PROGRESS")
     if result[0] == "finalized" and len(result) == 3:
@@ -221,7 +258,11 @@ async def claim_registration_attempt(
 async def release_registration_attempt_claim(
     token: str, phone: str, claim: RegistrationAttemptClaim
 ) -> None:
-    """Return only this worker's failed pre-commit claim to ``pending``."""
+    """Return only this worker's failed pre-commit claim to ``pending``.
+
+    The verification counter is intentionally retained. A release is a
+    concurrency/state transition only; it must never replenish OTP guesses.
+    """
     if claim.finalized or not claim.claim_id:
         return
     redis = get_async_redis_client()
@@ -243,7 +284,7 @@ async def release_registration_attempt_claim(
             redis.set(key, json.dumps(state, sort_keys=True), xx=True, ex=ttl)
         )
     except Exception:
-        # A failed release leaves a short claim lease.  It never authorizes a
+        # A failed release leaves a short claim lease. It never authorizes a
         # login and becomes claimable only after the bounded lease expires.
         return
 

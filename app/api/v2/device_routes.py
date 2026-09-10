@@ -31,8 +31,10 @@ from app.models.patient_device_keys import PatientDeviceKey
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.patient_auth_service import (
+    DEVICE_ENROLLMENT_TTL_SECONDS,
     claim_device_enrollment_token,
     finalize_device_enrollment_token,
+    issue_device_enrollment_token,
     issue_patient_access_session,
     normalize_indian_phone,
 )
@@ -67,7 +69,7 @@ from app.services.patient_device_trust import (
     PatientDeviceTrustError,
     assert_rotation_new_key_available,
     canonicalize_p256_public_key,
-    enroll_patient_device_key,
+    enroll_bootstrap_patient_device_key as enroll_patient_device_key,
     get_active_patient_device_key,
     revoke_patient_device,
     rotate_patient_device_key,
@@ -100,6 +102,12 @@ class DeviceEnrollResponse(BaseModel):
     status: str
     patient_id: str
     enrolled_at: str
+
+
+class DeviceEnrollmentGrantResponse(BaseModel):
+    device_enrollment_token: str
+    expires_in_seconds: int
+    device_authority_state: str = "bootstrap_enrollment"
 
 
 class EnrolledDeviceInfo(BaseModel):
@@ -362,6 +370,62 @@ async def _enforce_recovery_otp_limits(
 
 
 @router.post(
+    "/enrollment-token",
+    status_code=status.HTTP_201_CREATED,
+    response_model=DeviceEnrollmentGrantResponse,
+)
+async def refresh_bootstrap_device_enrollment_token(
+    patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
+    db: AsyncSession = Depends(get_db_session),
+) -> DeviceEnrollmentGrantResponse:
+    """Reissue bootstrap authority only for an active session with no device history.
+
+    This exists for the narrow case where the original five-minute enrollment grant
+    expires while the patient is still completing OS-level device setup. The access
+    session remains authentication authority only; any historical device lifecycle
+    moves the patient onto trusted-device enrollment or recovery instead.
+    """
+
+    try:
+        patient_id = uuid.UUID(patient.patient_id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": "INVALID_PATIENT_ID"},
+        ) from exc
+
+    if await patient_has_device_history(db, patient_id=patient_id):
+        await _audit_device_enrollment_denied(
+            patient_id=patient.patient_id,
+            reason_code="DEVICE_RECOVERY_REQUIRED",
+            operation="bootstrap_enrollment_grant_refresh",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "DEVICE_RECOVERY_REQUIRED"},
+        )
+    await db.rollback()
+
+    try:
+        token = await issue_device_enrollment_token(
+            patient.patient_id, patient.session_id
+        )
+    except PatientSessionAuthorityUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+
+    return DeviceEnrollmentGrantResponse(
+        device_enrollment_token=token,
+        expires_in_seconds=DEVICE_ENROLLMENT_TTL_SECONDS,
+    )
+
+
+@router.post(
     "/enroll", status_code=status.HTTP_201_CREATED, response_model=DeviceEnrollResponse
 )
 async def enroll_device(
@@ -458,6 +522,7 @@ async def enroll_device(
             "DEVICE_KEY_RESURRECTION_FORBIDDEN",
             "DEVICE_KEY_ALREADY_ENROLLED",
             "DEVICE_ACTIVE_LIMIT_REACHED",
+            "DEVICE_RECOVERY_REQUIRED",
         }:
             await _audit_device_enrollment_denied(
                 patient_id=patient_id,
