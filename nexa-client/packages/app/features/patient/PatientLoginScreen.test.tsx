@@ -6,8 +6,8 @@ import { requestPatientOtp, verifyPatientOtp } from '../../services/patientOtp'
 import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrollment'
 import { storePatientAuthSession } from '../../services/patientAuthSession'
 
-const { replace } = vi.hoisted(() => ({ replace: vi.fn() }))
-vi.mock('expo-router', () => ({ useRouter: () => ({ replace }) }))
+const { push, replace } = vi.hoisted(() => ({ push: vi.fn(), replace: vi.fn() }))
+vi.mock('expo-router', () => ({ useRouter: () => ({ push, replace }) }))
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }),
 }))
@@ -42,6 +42,13 @@ describe('patient sign-in presentation', () => {
     vi.resetAllMocks()
     vi.mocked(requestPatientOtp).mockResolvedValue('+910000000000')
     vi.mocked(ensureCurrentDeviceEnrollment).mockResolvedValue({} as never)
+  })
+
+  it('offers the separate registration account-repair journey before login', () => {
+    renderWithTamagui(<PatientLoginScreen />)
+    fireEvent.click(screen.getByRole('button', { name: 'Repair an existing account' }))
+    expect(push).toHaveBeenCalledWith('/patient/account-recovery')
+    expect(requestPatientOtp).not.toHaveBeenCalled()
   })
 
   it('clears the code when changing phone and preserves the two-step journey', async () => {
