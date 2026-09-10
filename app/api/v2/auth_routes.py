@@ -95,6 +95,7 @@ from app.services.patient_registration_attempt_service import (
     claim_registration_attempt,
     finalize_registration_attempt,
     issue_registration_attempt,
+    record_registration_attempt_invalid_otp,
     release_registration_attempt_claim,
 )
 from app.services.provider_registration_service import (
@@ -565,14 +566,30 @@ async def patient_registration_otp_verify(
                 )
             except Exception as exc:
                 code = getattr(exc, "status", None) or getattr(exc, "status_code", None)
-                await release_registration_attempt_claim(
-                    payload.registration_attempt_token, phone, attempt
-                )
                 if code in {400, 401, 403}:
+                    try:
+                        await record_registration_attempt_invalid_otp(
+                            payload.registration_attempt_token, phone, attempt
+                        )
+                    except RegistrationAttemptError as budget_exc:
+                        budget_status = (
+                            401
+                            if budget_exc.code == "REGISTRATION_ATTEMPT_INVALID"
+                            else 503
+                        )
+                        detail = {"error_code": budget_exc.code}
+                        if budget_status == 503:
+                            detail["retryable"] = True
+                        raise HTTPException(
+                            status_code=budget_status, detail=detail
+                        ) from None
                     raise HTTPException(
                         status_code=401,
                         detail={"error_code": "REGISTRATION_OTP_INVALID"},
                     ) from None
+                await release_registration_attempt_claim(
+                    payload.registration_attempt_token, phone, attempt
+                )
                 raise HTTPException(
                     status_code=503,
                     detail={
