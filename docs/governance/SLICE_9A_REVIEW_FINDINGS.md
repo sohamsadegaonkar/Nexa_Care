@@ -51,6 +51,14 @@ Directly persisting the classifier string would either violate the database cont
 
 The patient-facing API must expose only the durable case reference/status and must not expose the provider subject, graph fingerprint, or internal classifier reason.
 
+## Finding 006 — provider-subject hash alone is not a sufficient future graph anchor
+
+The initial case schema stored a privacy-safe `provider_subject_hash` plus an optional candidate `patient_id`. That is not enough to deterministically re-lock and recompute the same external-identity graph at terminal review time. In particular, the candidate patient may be missing, retired by merge, or changed after case creation, while the raw provider subject is deliberately not persisted in the case.
+
+Scanning all auth identities and comparing hashes would be inefficient, creates an unnecessary privacy surface, and would make the repair path depend on global-table enumeration. Trusting the stale candidate patient UUID would violate the requirement to recompute authority from current durable state.
+
+**Decision / status: REQUIRED BEFORE STEP 2.** Persist the stable non-secret `PatientAuthIdentity.identity_id` as a non-null foreign-key anchor on every review case. Case creation resolves the identity from the already-verified provider subject, verifies its provider/subject binding, stores only the UUID identity anchor plus the provider-subject hash, and never stores the raw provider subject. Future review/repair starts from this identity row under lock and recomputes the graph from current state.
+
 ## Current review gate
 
-Reconstruction review is clean: the new branch is based directly on the verified post-PR-40 `main`, is 0 commits behind, and changes only the intended Slice 9A artifacts. Step 2 may proceed only with Finding 005 implemented and focused tests; it must be reviewed before Step 3 begins.
+Reconstruction review is clean: the new branch is based directly on the verified post-PR-40 `main`, is 0 commits behind, and changes only the intended Slice 9A artifacts. Step 2 may proceed only after Findings 005 and 006 are implemented with focused tests; Step 2 itself must be reviewed before Step 3 begins.
