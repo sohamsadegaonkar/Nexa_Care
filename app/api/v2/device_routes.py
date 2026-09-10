@@ -516,12 +516,14 @@ async def enroll_device(
             device_label=payload.device_label,
             platform=payload.platform,
             actor_id=patient_id,
+            require_no_history=True,
         )
     except PatientDeviceTrustError as exc:
         if exc.code in {
             "DEVICE_KEY_RESURRECTION_FORBIDDEN",
             "DEVICE_KEY_ALREADY_ENROLLED",
             "DEVICE_ACTIVE_LIMIT_REACHED",
+            "DEVICE_RECOVERY_REQUIRED",
         }:
             await _audit_device_enrollment_denied(
                 patient_id=patient_id,
