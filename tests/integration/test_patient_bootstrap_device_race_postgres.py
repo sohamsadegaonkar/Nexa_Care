@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.models.patient_device_keys import PatientDeviceKey
 from app.services.patient_device_trust import (
     PatientDeviceTrustError,
-    enroll_patient_device_key,
+    enroll_bootstrap_patient_device_key,
 )
 from tests.helpers.qualification_infra import (
     create_disposable_database,
@@ -77,14 +77,13 @@ async def test_concurrent_bootstrap_enrollment_commits_exactly_one_device(sessio
     async def contender(raw_key: bytes) -> str:
         async with session_factory() as db:
             try:
-                await enroll_patient_device_key(
+                await enroll_bootstrap_patient_device_key(
                     db,
                     patient_id=patient_id,
                     raw_public_key=raw_key,
                     device_label="bootstrap-race-device",
                     platform="test",
                     actor_id=str(patient_id),
-                    require_no_history=True,
                 )
                 return "enrolled"
             except PatientDeviceTrustError as exc:
