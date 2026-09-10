@@ -249,6 +249,28 @@ async def enroll_patient_device_key(
         raise PatientDeviceTrustError("DEVICE_KEY_ALREADY_ENROLLED") from exc
 
 
+async def enroll_bootstrap_patient_device_key(
+    db: AsyncSession,
+    *,
+    patient_id: uuid.UUID,
+    raw_public_key: bytes,
+    device_label: str | None,
+    platform: str,
+    actor_id: str,
+) -> PatientDeviceKey:
+    """Enroll the one bootstrap device while atomically proving no device history."""
+
+    return await enroll_patient_device_key(
+        db,
+        patient_id=patient_id,
+        raw_public_key=raw_public_key,
+        device_label=device_label,
+        platform=platform,
+        actor_id=actor_id,
+        require_no_history=True,
+    )
+
+
 async def rotate_patient_device_key(
     db: AsyncSession,
     *,
@@ -401,7 +423,7 @@ async def revoke_patient_device(
     reason_code: str = "PATIENT_REVOKED",
     actor_context: str = "patient_current_session",
 ) -> PatientDeviceKey:
-    """Terminally revoke the current key version for a logical device."""
+    """Terminally revoke the current key of one logical patient device."""
 
     now = datetime.now(timezone.utc)
     async with db.begin():
