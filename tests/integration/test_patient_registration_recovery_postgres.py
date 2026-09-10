@@ -197,3 +197,45 @@ async def test_mismatched_attempt_evidence_cannot_adopt_complete_account() -> No
                 attempt_ids=[original_attempt, mismatched_attempt],
             )
         await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_same_attempt_recovery_rejects_multiple_supabase_identities() -> None:
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    subject = f"registration-recovery-primary-{uuid.uuid4().hex}"
+    second_subject = f"registration-recovery-secondary-{uuid.uuid4().hex}"
+    attempt_id = uuid.uuid4().hex
+    patient_id = None
+
+    try:
+        async with factory() as db:
+            account = await finalize_patient_registration(
+                db,
+                provider_subject=subject,
+                attempt_id=attempt_id,
+            )
+            patient_id = uuid.UUID(account.patient_id)
+
+        async with factory() as db:
+            db.add(
+                PatientAuthIdentity(
+                    patient_id=patient_id,
+                    provider="supabase",
+                    provider_subject=second_subject,
+                )
+            )
+            await db.commit()
+
+        async with factory() as db:
+            with pytest.raises(PatientRegistrationError) as exc_info:
+                await recover_patient_registration_for_attempt(
+                    db,
+                    attempt_id=attempt_id,
+                    patient_id=str(patient_id),
+                )
+        assert exc_info.value.code == REGISTRATION_RECOVERY_REQUIRED
+    finally:
+        if patient_id is not None:
+            await _cleanup(factory, patient_id=patient_id, attempt_ids=[attempt_id])
+        await engine.dispose()
