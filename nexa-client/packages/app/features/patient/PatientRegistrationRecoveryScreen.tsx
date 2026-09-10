@@ -41,6 +41,13 @@ export default function PatientRegistrationRecoveryScreen() {
     setStep('phone')
   }
 
+  const resetToStartWithError = (message: string) => {
+    setAttemptToken(null)
+    setOtp('')
+    setError(message)
+    setStep('phone')
+  }
+
   const sendOtp = async () => {
     if (busy || !phone.trim()) return
     setBusy(true)
@@ -92,16 +99,18 @@ export default function PatientRegistrationRecoveryScreen() {
       }
     } catch (requestError) {
       if (requestError instanceof RegistrationRecoveryClientError) {
+        if (requestError.kind === 'sign_in_required') {
+          router.replace('/patient/login')
+          return
+        }
         if (
           requestError.kind === 'expired_attempt' ||
-          requestError.kind === 'state_changed'
+          requestError.kind === 'state_changed' ||
+          requestError.kind === 'manual_review' ||
+          requestError.kind === 'not_available' ||
+          requestError.kind === 'not_required'
         ) {
-          setAttemptToken(null)
-          setOtp('')
-          setStep('phone')
-        } else if (requestError.kind === 'not_required') {
-          setError(requestError.message)
-          setStep('phone')
+          resetToStartWithError(requestError.message)
         } else {
           setError(requestError.message)
           setStep('otp')
