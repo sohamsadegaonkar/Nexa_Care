@@ -25,6 +25,7 @@ from app.services.patient_registration_attempt_service import (
     issue_registration_attempt,
 )
 from app.services.patient_registration_service import (
+    REGISTRATION_RECOVERY_REQUIRED,
     PatientRegistrationAccount,
     PatientRegistrationError,
     finalize_patient_registration,
@@ -491,18 +492,20 @@ async def test_outbox_failure_rolls_back_every_account_row() -> None:
     ]
 
 
-async def _assert_existing_graph_is_unavailable(identity, patient, record) -> None:
+async def _assert_existing_graph_requires_registration_recovery(
+    identity, patient, record
+) -> None:
     db = _FakeRegistrationDb([identity, patient, record])
     with pytest.raises(PatientRegistrationError) as exc_info:
         await finalize_patient_registration(
             db, provider_subject="subject-existing", attempt_id="fresh-attempt"
         )
-    assert exc_info.value.code == "REGISTRATION_IDENTITY_UNAVAILABLE"
+    assert exc_info.value.code == REGISTRATION_RECOVERY_REQUIRED
 
 
 @pytest.mark.asyncio
-async def test_revoked_identity_fails_closed_without_reactivation() -> None:
-    await _assert_existing_graph_is_unavailable(
+async def test_revoked_identity_requires_registration_recovery_without_reactivation() -> None:
+    await _assert_existing_graph_requires_registration_recovery(
         SimpleNamespace(patient_id=uuid4(), revoked_at=object(), provider_subject="s"),
         None,
         None,
@@ -510,8 +513,8 @@ async def test_revoked_identity_fails_closed_without_reactivation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_deleted_or_missing_linked_patient_fails_closed() -> None:
-    await _assert_existing_graph_is_unavailable(
+async def test_deleted_or_missing_linked_patient_requires_registration_recovery() -> None:
+    await _assert_existing_graph_requires_registration_recovery(
         SimpleNamespace(patient_id=uuid4(), revoked_at=None, provider_subject="s"),
         None,
         None,
@@ -519,9 +522,9 @@ async def test_deleted_or_missing_linked_patient_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_identity_with_missing_patient_record_fails_closed() -> None:
+async def test_identity_with_missing_patient_record_requires_registration_recovery() -> None:
     patient_id = uuid4()
-    await _assert_existing_graph_is_unavailable(
+    await _assert_existing_graph_requires_registration_recovery(
         SimpleNamespace(patient_id=patient_id, revoked_at=None, provider_subject="s"),
         SimpleNamespace(patient_uuid=patient_id),
         None,
