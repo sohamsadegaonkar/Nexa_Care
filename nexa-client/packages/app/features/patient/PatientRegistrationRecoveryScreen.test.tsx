@@ -105,6 +105,7 @@ describe('patient registration account recovery', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('manual review')
+    expect(await screen.findByLabelText('Phone number')).toBeVisible()
     expect(completePatientRegistrationRecovery).not.toHaveBeenCalled()
     expect(storePatientAuthSession).not.toHaveBeenCalled()
   })
@@ -145,5 +146,23 @@ describe('patient registration account recovery', () => {
 
     expect(await screen.findByLabelText('Phone number')).toBeVisible()
     expect(completePatientRegistrationRecovery).not.toHaveBeenCalled()
+  })
+
+  it('falls back to ordinary sign-in when repair committed but session authority failed', async () => {
+    vi.mocked(completePatientRegistrationRecovery).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'The account repair completed, but a patient session could not be established. Sign in normally with a fresh OTP.',
+        'sign_in_required',
+        'PATIENT_SESSION_AUTHORITY_UNAVAILABLE',
+        false
+      )
+    )
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/patient/login'))
+    expect(storePatientAuthSession).not.toHaveBeenCalled()
+    expect(ensureCurrentDeviceEnrollment).not.toHaveBeenCalled()
   })
 })
