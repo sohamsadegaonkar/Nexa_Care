@@ -69,32 +69,175 @@ export function DoctorDashboardScreen() {
   return (
     <ScreenContainer>
       <ScreenHeader
-        eyebrow="PROVIDER WORKSPACE"
+        eyebrow="CLINICAL COMMAND CENTER"
         title="Ready for your next patient"
-        description="Find a patient, request access, and bring the right information into focus."
+        description="Find a patient, request scoped consent, and review authentic clinical records with source provenance."
       />
-      <Surface>
+
+      {/* Provider Status & Trust Banner */}
+      <Surface
+        backgroundColor="$nexaSurface"
+        borderColor="$nexaBorder"
+        padding="$4"
+      >
         <XStack
           flexWrap="wrap"
           alignItems="center"
           justifyContent="space-between"
-          gap="$3"
+          gap="$4"
         >
-          <YStack gap="$1">
-            <Text
-              color="$nexaText"
-              fontWeight="700"
-              fontSize={18}
+          <XStack
+            alignItems="center"
+            gap="$3.5"
+            flexWrap="wrap"
+          >
+            <YStack
+              width={48}
+              height={48}
+              borderRadius={24}
+              backgroundColor="$nexaAccentSoft"
+              alignItems="center"
+              justifyContent="center"
             >
-              {displayName || 'Provider name unavailable'}
-            </Text>
-            <Paragraph color="$nexaSecondary">
-              {hospitalName || 'Facility name unavailable'}
-            </Paragraph>
-          </YStack>
-          <StatusBadge>{role ? `Session role: ${role}` : 'Session role unavailable'}</StatusBadge>
+              <Text
+                color="$nexaAccent"
+                fontSize={20}
+                fontWeight="800"
+              >
+                {(displayName || 'Dr')[0]?.toUpperCase()}
+              </Text>
+            </YStack>
+            <YStack gap="$0.5">
+              <Text
+                color="$nexaText"
+                fontWeight="800"
+                fontSize={19}
+              >
+                {displayName || 'Provider name unavailable'}
+              </Text>
+              <Paragraph
+                color="$nexaSecondary"
+                fontSize={14}
+              >
+                {hospitalName || 'Facility name unavailable'}
+              </Paragraph>
+            </YStack>
+          </XStack>
+          <XStack
+            gap="$2"
+            alignItems="center"
+            flexWrap="wrap"
+          >
+            <StatusBadge tone="success">
+              Provider session active
+            </StatusBadge>
+            <StatusBadge tone="info">
+              {role ? `Role: ${role}` : 'Role: Clinician'}
+            </StatusBadge>
+          </XStack>
         </XStack>
       </Surface>
+
+      {/* Clinical Operations Summary */}
+      <XStack
+        flexWrap="wrap"
+        gap="$3.5"
+      >
+        <Surface
+          flex={1}
+          minWidth={220}
+          padding="$3.5"
+          gap="$1"
+          backgroundColor="$nexaSurface"
+        >
+          <Text
+            color="$nexaSecondary"
+            fontSize={12}
+            fontWeight="700"
+            textTransform="uppercase"
+            letterSpacing={0.5}
+          >
+            Consent Security
+          </Text>
+          <Text
+            color="$nexaSuccess"
+            fontSize={20}
+            fontWeight="800"
+          >
+            Memory-Only
+          </Text>
+          <Paragraph
+            color="$nexaSecondary"
+            fontSize={12}
+          >
+            Capabilities held in memory only; never stored in URLs or browser storage
+          </Paragraph>
+        </Surface>
+
+        <Surface
+          flex={1}
+          minWidth={220}
+          padding="$3.5"
+          gap="$1"
+          backgroundColor="$nexaSurface"
+        >
+          <Text
+            color="$nexaSecondary"
+            fontSize={12}
+            fontWeight="700"
+            textTransform="uppercase"
+            letterSpacing={0.5}
+          >
+            Traceability
+          </Text>
+          <Text
+            color="$nexaAccent"
+            fontSize={20}
+            fontWeight="800"
+          >
+            Audited Access
+          </Text>
+          <Paragraph
+            color="$nexaSecondary"
+            fontSize={12}
+          >
+            Clinical and audit records recorded server-side
+          </Paragraph>
+        </Surface>
+
+        <Surface
+          flex={1}
+          minWidth={220}
+          padding="$3.5"
+          gap="$1"
+          backgroundColor="$nexaSurface"
+        >
+          <Text
+            color="$nexaSecondary"
+            fontSize={12}
+            fontWeight="700"
+            textTransform="uppercase"
+            letterSpacing={0.5}
+          >
+            AI Document Intake
+          </Text>
+          <Text
+            color="$nexaText"
+            fontSize={20}
+            fontWeight="800"
+          >
+            Clinician Adjudication
+          </Text>
+          <Paragraph
+            color="$nexaSecondary"
+            fontSize={12}
+          >
+            Model predictions require clinician approval
+          </Paragraph>
+        </Surface>
+      </XStack>
+
+      {/* Primary Workflows */}
       <YStack gap="$3">
         <SectionHeading>Start a care workflow</SectionHeading>
         <XStack
@@ -108,6 +251,11 @@ export function DoctorDashboardScreen() {
               flexGrow={1}
               flexShrink={1}
               minWidth={0}
+              padding="$4.5"
+              gap="$3"
+              hoverStyle={{
+                borderColor: '$nexaAccent',
+              }}
             >
               <XStack
                 alignItems="center"
@@ -128,41 +276,66 @@ export function DoctorDashboardScreen() {
                   color="$nexaSecondary"
                 />
               </XStack>
-              <SectionHeading>{title}</SectionHeading>
-              <Paragraph
-                color="$nexaSecondary"
-                fontSize={15}
-                lineHeight={24}
-                flex={1}
+              <YStack gap="$1">
+                <SectionHeading>{title}</SectionHeading>
+                <Paragraph
+                  color="$nexaSecondary"
+                  fontSize={14}
+                  lineHeight={22}
+                  flex={1}
+                >
+                  {description}
+                </Paragraph>
+              </YStack>
+              <ActionButton
+                intent="primary"
+                onPress={() => router.push(route)}
               >
-                {description}
-              </Paragraph>
-              <ActionButton onPress={() => router.push(route)}>{label}</ActionButton>
+                {label}
+              </ActionButton>
             </Surface>
           ))}
         </XStack>
       </YStack>
+
+      {/* Emergency Break-Glass Panel */}
       <Surface
         backgroundColor="$nexaDangerSoft"
         borderColor="$nexaDanger"
+        padding="$4.5"
+        gap="$3"
       >
         <XStack
           gap="$3"
           alignItems="center"
         >
-          <ShieldAlert
-            size={24}
-            color="$nexaDanger"
-          />
-          <SectionHeading>Emergency access</SectionHeading>
+          <YStack
+            padding="$2.5"
+            borderRadius={10}
+            backgroundColor="rgba(165,44,57,0.15)"
+          >
+            <ShieldAlert
+              size={26}
+              color="$nexaDanger"
+            />
+          </YStack>
+          <YStack gap="$0.5">
+            <SectionHeading>Emergency break-glass access</SectionHeading>
+            <Text
+              color="$nexaDanger"
+              fontSize={13}
+              fontWeight="700"
+            >
+              For life-threatening situations where routine patient consent is impossible
+            </Text>
+          </YStack>
         </XStack>
         <Paragraph
           color="$nexaDanger"
-          fontSize={15}
-          lineHeight={24}
+          fontSize={14}
+          lineHeight={22}
         >
-          For urgent care when routine consent cannot be obtained. Access is limited, time-bound,
-          and recorded in the patient's access history.
+          Requires an approved emergency reason code and clinical justification. Access is limited to minimum-necessary emergency categories, strictly time-bounded, and immediately recorded in the patient's permanent access history.
         </Paragraph>
         <ActionButton
           intent="danger"
@@ -172,10 +345,12 @@ export function DoctorDashboardScreen() {
           Review emergency access
         </ActionButton>
       </Surface>
+
       <InlineNotice title="Patient permission comes first">
-        Routine record access and document workflows require the patient's approval. Your current
-        permissions are checked for each protected action.
+        Routine record access and document workflows require the patient's explicit approval. Your current
+        permissions are verified server-side for each protected clinical action.
       </InlineNotice>
     </ScreenContainer>
   )
 }
+

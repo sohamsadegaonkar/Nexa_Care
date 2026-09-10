@@ -1,7 +1,16 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { ActionButton, Brand, Paragraph, SwitchThemeButton, XStack, YStack } from '@my/ui'
+import { ActionButton, Brand, Paragraph, StatusBadge, SwitchThemeButton, Text, XStack, YStack } from '@my/ui'
+import {
+  LayoutDashboard,
+  Users,
+  FileText,
+  ClipboardCheck,
+  ShieldAlert,
+  Building2,
+  UserCheck,
+} from '@tamagui/lucide-icons'
 import { usePathname, useRouter } from 'next/navigation'
 import { useProviderAuth } from './ProviderAuthContext'
 
@@ -9,22 +18,26 @@ const navigation = [
   {
     label: 'Workspace',
     path: '/doctor/dashboard',
+    icon: LayoutDashboard,
     matches: (path: string) => path === '/doctor/dashboard',
   },
   {
     label: 'Patients',
     path: '/doctor/patient-search',
+    icon: Users,
     matches: (path: string) => /\/doctor\/(patient|request-consent|waiting)/.test(path),
   },
   {
     label: 'Documents',
     path: '/doctor/patient-search?intent=document_upload',
+    icon: FileText,
     matches: (path: string) =>
       path.startsWith('/doctor/pipeline/') && !path.includes('adjudication'),
   },
   {
     label: 'Adjudication',
     path: '/doctor/pipeline/adjudication',
+    icon: ClipboardCheck,
     matches: (path: string) => path.includes('/adjudication'),
   },
 ]
@@ -33,7 +46,7 @@ const navigation = [
 export function ProviderShell({ children }: { children: ReactNode }) {
   const pathname = usePathname()
   const router = useRouter()
-  const { hydrated, isAuthenticated, hospitalName, logout } = useProviderAuth()
+  const { hydrated, isAuthenticated, displayName, hospitalName, role, logout } = useProviderAuth()
   if (pathname === '/doctor/login' || !hydrated || !isAuthenticated) return children
 
   return (
@@ -52,24 +65,73 @@ export function ProviderShell({ children }: { children: ReactNode }) {
         flexWrap="wrap"
         alignItems="center"
         justifyContent="space-between"
-        padding="$4"
+        paddingHorizontal="$4"
+        paddingVertical="$3"
         gap="$3"
         backgroundColor="$nexaSurface"
         borderBottomWidth={1}
         borderBottomColor="$nexaBorder"
+        elevation="$1"
       >
-        <Brand compact />
-        <Paragraph
-          color="$nexaSecondary"
-          flex={1}
-          minWidth={160}
-        >
-          {hospitalName || 'Facility name unavailable'}
-        </Paragraph>
         <XStack
-          gap="$2"
           alignItems="center"
+          gap="$4"
+          flexWrap="wrap"
         >
+          <Brand compact />
+          <XStack
+            alignItems="center"
+            gap="$2"
+            paddingHorizontal="$3"
+            paddingVertical="$1.5"
+            borderRadius={8}
+            backgroundColor="$nexaMuted"
+          >
+            <Building2
+              size={16}
+              color="$nexaSecondary"
+            />
+            <Text
+              color="$nexaText"
+              fontSize={13}
+              fontWeight="600"
+            >
+              {hospitalName || 'Facility'}
+            </Text>
+          </XStack>
+        </XStack>
+        <XStack
+          gap="$3"
+          alignItems="center"
+          flexWrap="wrap"
+        >
+          <XStack
+            alignItems="center"
+            gap="$2"
+            paddingHorizontal="$3"
+            paddingVertical="$1.5"
+            borderRadius={8}
+            borderWidth={1}
+            borderColor="$nexaBorder"
+            backgroundColor="$nexaSurface"
+          >
+            <UserCheck
+              size={15}
+              color="$nexaAccent"
+            />
+            <Text
+              color="$nexaText"
+              fontSize={13}
+              fontWeight="700"
+            >
+              {displayName || 'Provider'}
+            </Text>
+            {role && (
+              <StatusBadge tone="info">
+                {role}
+              </StatusBadge>
+            )}
+          </XStack>
           <SwitchThemeButton />
           <ActionButton
             onPress={() => {
@@ -95,32 +157,72 @@ export function ProviderShell({ children }: { children: ReactNode }) {
           backgroundColor="$nexaSurface"
           borderBottomWidth={1}
           borderColor="$nexaBorder"
-          $lg={{ width: 224, borderBottomWidth: 0, borderRightWidth: 1, padding: '$4' }}
+          $lg={{ width: 236, borderBottomWidth: 0, borderRightWidth: 1, padding: '$4' }}
         >
           <XStack
             flexWrap="wrap"
             gap="$2"
             $lg={{ flexDirection: 'column' }}
           >
-            {navigation.map((item) => (
-              <ActionButton
-                key={item.label}
-                justifyContent="flex-start"
-                aria-current={item.matches(pathname) ? 'page' : undefined}
-                backgroundColor={item.matches(pathname) ? '$nexaAccentSoft' : '$nexaSurface'}
-                borderColor={item.matches(pathname) ? '$nexaAccent' : 'transparent'}
-                onPress={() => router.push(item.path)}
-              >
-                {item.label}
-              </ActionButton>
-            ))}
+            {navigation.map((item) => {
+              const Icon = item.icon
+              const isCurrent = item.matches(pathname)
+              return (
+                <ActionButton
+                  key={item.label}
+                  justifyContent="flex-start"
+                  aria-current={isCurrent ? 'page' : undefined}
+                  backgroundColor={isCurrent ? '$nexaAccentSoft' : '$nexaSurface'}
+                  borderColor={isCurrent ? '$nexaAccent' : 'transparent'}
+                  hoverStyle={{
+                    backgroundColor: isCurrent ? '$nexaAccentSoft' : '$nexaMuted',
+                    borderColor: '$nexaAccent',
+                  }}
+                  onPress={() => router.push(item.path)}
+                >
+                  <XStack
+                    alignItems="center"
+                    gap="$2.5"
+                    width="100%"
+                  >
+                    <Icon
+                      size={18}
+                      color={isCurrent ? '$nexaAccent' : '$nexaSecondary'}
+                    />
+                    <Text
+                      color={isCurrent ? '$nexaAccent' : '$nexaText'}
+                      fontWeight={isCurrent ? '700' : '600'}
+                      fontSize={14}
+                    >
+                      {item.label}
+                    </Text>
+                  </XStack>
+                </ActionButton>
+              )
+            })}
             <ActionButton
               intent="danger"
               justifyContent="flex-start"
               aria-current={pathname === '/doctor/emergency-access' ? 'page' : undefined}
               onPress={() => router.push('/doctor/emergency-access')}
             >
-              Emergency access
+              <XStack
+                alignItems="center"
+                gap="$2.5"
+                width="100%"
+              >
+                <ShieldAlert
+                  size={18}
+                  color="$nexaDanger"
+                />
+                <Text
+                  color="$nexaDanger"
+                  fontWeight="700"
+                  fontSize={14}
+                >
+                  Emergency access
+                </Text>
+              </XStack>
             </ActionButton>
           </XStack>
         </YStack>
@@ -138,3 +240,4 @@ export function ProviderShell({ children }: { children: ReactNode }) {
     </YStack>
   )
 }
+
