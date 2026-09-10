@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.patient import Patient
@@ -41,9 +41,7 @@ async def _cleanup(factory, *, patient_id, attempt_ids: list[str]) -> None:
     async with factory() as db:
         for attempt_id in attempt_ids:
             await db.execute(
-                __import__("sqlalchemy").text(
-                    "DELETE FROM public.audit_outbox WHERE idempotency_key = :key"
-                ),
+                text("DELETE FROM public.audit_outbox WHERE idempotency_key = :key"),
                 {"key": registration_audit_idempotency_key(attempt_id)},
             )
         await db.execute(
@@ -61,7 +59,9 @@ async def _cleanup(factory, *, patient_id, attempt_ids: list[str]) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("historical_state", ["revoked_identity", "deleted_patient", "missing_record"])
+@pytest.mark.parametrize(
+    "historical_state", ["revoked_identity", "deleted_patient", "missing_record"]
+)
 async def test_historical_registration_graph_requires_explicit_recovery(
     historical_state: str,
 ) -> None:
