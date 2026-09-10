@@ -194,6 +194,14 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
                 Change phone number
               </ActionButton>
             )}
+            {step === 'phone' && (
+              <ActionButton
+                disabled={loading}
+                onPress={() => router.push('/patient/account-recovery')}
+              >
+                Repair an existing account
+              </ActionButton>
+            )}
           </YStack>
           <Paragraph
             color="$nexaSecondary"
