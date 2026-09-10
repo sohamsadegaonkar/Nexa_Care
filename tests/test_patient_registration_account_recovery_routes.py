@@ -19,10 +19,13 @@ from app.services.patient_registration_recovery_authority import (
 from app.services.patient_registration_recovery_service import (
     REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
     REGISTRATION_RECOVERY_NOT_REQUIRED,
+    REGISTRATION_RECOVERY_STATE_CHANGED,
+    PatientRegistrationRecoveryError,
     REPAIR_RESTORE_RECORD,
     RegistrationRecoveryInspection,
     RegistrationRecoveryResult,
 )
+from app.services.patient_session_authority import PatientSessionAuthorityUnavailable
 
 
 PHONE = "+918000000001"
@@ -62,6 +65,26 @@ def _repairable() -> RegistrationRecoveryInspection:
         repair_kind=REPAIR_RESTORE_RECORD,
         reason_code="PATIENT_RECORD_ANCHOR_MISSING",
     )
+
+
+def _capability() -> RegistrationRecoveryCapability:
+    return RegistrationRecoveryCapability(
+        token="repair-capability-token",
+        patient_id=PATIENT_ID,
+        provider_subject="subject-recovery",
+        repair_kind=REPAIR_RESTORE_RECORD,
+        graph_fingerprint="graph-fingerprint",
+        issued_at="2026-09-10T00:00:00+00:00",
+        expires_at="2026-09-10T00:05:00+00:00",
+    )
+
+
+def _verify_body() -> dict[str, str]:
+    return {
+        "phone": "8000000001",
+        "otp": "123456",
+        "registration_recovery_attempt_token": "a" * 40,
+    }
 
 
 def test_recovery_send_is_neutral_for_expected_provider_rejection() -> None:
@@ -123,12 +146,7 @@ def test_invalid_recovery_otp_charges_budget_and_never_releases_claim() -> None:
         ),
     ):
         response = client.post(
-            "/api/v2/auth/registration-recovery/otp/verify",
-            json={
-                "phone": "8000000001",
-                "otp": "123456",
-                "registration_recovery_attempt_token": "a" * 40,
-            },
+            "/api/v2/auth/registration-recovery/otp/verify", json=_verify_body()
         )
 
     assert response.status_code == 401
@@ -137,22 +155,13 @@ def test_invalid_recovery_otp_charges_budget_and_never_releases_claim() -> None:
     release.assert_not_awaited()
 
 
-def test_repairable_verified_identity_gets_only_exact_repair_capability() -> None:
+def test_repairable_verified_identity_exchanges_attempt_for_exact_repair_capability() -> None:
     db = AsyncMock()
     client, _ = _client(db)
-    capability = RegistrationRecoveryCapability(
-        token="repair-capability-token",
-        patient_id=PATIENT_ID,
-        provider_subject="subject-recovery",
-        repair_kind=REPAIR_RESTORE_RECORD,
-        graph_fingerprint="graph-fingerprint",
-        issued_at="2026-09-10T00:00:00+00:00",
-        expires_at="2026-09-10T00:05:00+00:00",
-    )
     audit_required = AsyncMock()
     consume_attempt = AsyncMock()
     issue_access = AsyncMock()
-    issue_device = AsyncMock()
+    exchange = AsyncMock(return_value=_capability())
     with (
         _allow_limits(),
         patch(
@@ -178,25 +187,16 @@ def test_repairable_verified_identity_gets_only_exact_repair_capability() -> Non
             new=consume_attempt,
         ),
         patch(
-            "app.api.v2.registration_recovery_routes.issue_registration_recovery_capability",
-            new=AsyncMock(return_value=capability),
-        ) as issue_capability,
+            "app.api.v2.registration_recovery_routes.exchange_registration_recovery_attempt_for_capability",
+            new=exchange,
+        ),
         patch(
             "app.api.v2.registration_recovery_routes.issue_patient_access_session",
             new=issue_access,
         ),
-        patch(
-            "app.api.v2.registration_recovery_routes.issue_device_enrollment_token",
-            new=issue_device,
-        ),
     ):
         response = client.post(
-            "/api/v2/auth/registration-recovery/otp/verify",
-            json={
-                "phone": "8000000001",
-                "otp": "123456",
-                "registration_recovery_attempt_token": "a" * 40,
-            },
+            "/api/v2/auth/registration-recovery/otp/verify", json=_verify_body()
         )
 
     assert response.status_code == 201
@@ -206,18 +206,20 @@ def test_repairable_verified_identity_gets_only_exact_repair_capability() -> Non
     assert body["repair_kind"] == REPAIR_RESTORE_RECORD
     audit_required.assert_awaited_once()
     db.commit.assert_awaited_once()
-    consume_attempt.assert_awaited_once_with("a" * 40, PHONE, ATTEMPT)
-    issue_capability.assert_awaited_once_with(
+    consume_attempt.assert_not_awaited()
+    exchange.assert_awaited_once_with(
+        attempt_token="a" * 40,
+        phone=PHONE,
+        claim=ATTEMPT,
         patient_id=PATIENT_ID,
         provider_subject="subject-recovery",
         repair_kind=REPAIR_RESTORE_RECORD,
         graph_fingerprint="graph-fingerprint",
     )
     issue_access.assert_not_awaited()
-    issue_device.assert_not_awaited()
 
 
-def test_manual_review_state_has_case_reference_and_no_authority() -> None:
+def test_manual_review_state_returns_support_reference_and_no_repair_authority() -> None:
     db = AsyncMock()
     client, _ = _client(db)
     inspection = RegistrationRecoveryInspection(
@@ -228,8 +230,9 @@ def test_manual_review_state_has_case_reference_and_no_authority() -> None:
         graph_fingerprint="manual-graph",
         reason_code="IDENTITY_REVOKED",
     )
-    issue_capability = AsyncMock()
+    exchange = AsyncMock()
     issue_access = AsyncMock()
+    consume_attempt = AsyncMock()
     with (
         _allow_limits(),
         patch(
@@ -252,11 +255,11 @@ def test_manual_review_state_has_case_reference_and_no_authority() -> None:
         ),
         patch(
             "app.api.v2.registration_recovery_routes.consume_registration_recovery_attempt",
-            new=AsyncMock(),
+            new=consume_attempt,
         ),
         patch(
-            "app.api.v2.registration_recovery_routes.issue_registration_recovery_capability",
-            new=issue_capability,
+            "app.api.v2.registration_recovery_routes.exchange_registration_recovery_attempt_for_capability",
+            new=exchange,
         ),
         patch(
             "app.api.v2.registration_recovery_routes.issue_patient_access_session",
@@ -264,39 +267,80 @@ def test_manual_review_state_has_case_reference_and_no_authority() -> None:
         ),
     ):
         response = client.post(
-            "/api/v2/auth/registration-recovery/otp/verify",
-            json={
-                "phone": "8000000001",
-                "otp": "123456",
-                "registration_recovery_attempt_token": "a" * 40,
-            },
+            "/api/v2/auth/registration-recovery/otp/verify", json=_verify_body()
         )
 
     assert response.status_code == 409
     detail = response.json()["detail"]
     assert detail["error_code"] == REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED
-    assert detail["case_reference"].startswith("RCR-")
-    issue_capability.assert_not_awaited()
+    assert detail["recovery_reference"].startswith("RR-")
+    assert "case_reference" not in detail
+    consume_attempt.assert_awaited_once_with("a" * 40, PHONE, ATTEMPT)
+    exchange.assert_not_awaited()
+    issue_access.assert_not_awaited()
+
+
+def test_not_required_consumes_attempt_and_issues_no_repair_or_login_authority() -> None:
+    db = AsyncMock()
+    client, _ = _client(db)
+    inspection = RegistrationRecoveryInspection(
+        disposition="not_required",
+        provider_subject="subject-recovery",
+        patient_id=PATIENT_ID,
+        target_patient_id=PATIENT_ID,
+        graph_fingerprint="complete-graph",
+    )
+    consume_attempt = AsyncMock()
+    exchange = AsyncMock()
+    issue_access = AsyncMock()
+    with (
+        _allow_limits(),
+        patch(
+            "app.api.v2.registration_recovery_routes.claim_registration_recovery_attempt",
+            new=AsyncMock(return_value=ATTEMPT),
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.get_supabase_client",
+            return_value=SimpleNamespace(
+                auth=SimpleNamespace(verify_otp=MagicMock(return_value=_provider_result()))
+            ),
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.inspect_patient_registration_recovery",
+            new=AsyncMock(return_value=inspection),
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.consume_registration_recovery_attempt",
+            new=consume_attempt,
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.exchange_registration_recovery_attempt_for_capability",
+            new=exchange,
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.issue_patient_access_session",
+            new=issue_access,
+        ),
+    ):
+        response = client.post(
+            "/api/v2/auth/registration-recovery/otp/verify", json=_verify_body()
+        )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"error_code": REGISTRATION_RECOVERY_NOT_REQUIRED}
+    consume_attempt.assert_awaited_once_with("a" * 40, PHONE, ATTEMPT)
+    exchange.assert_not_awaited()
     issue_access.assert_not_awaited()
 
 
 def test_complete_repair_with_device_history_never_mints_device_authority() -> None:
     db = AsyncMock()
     client, _ = _client(db)
-    capability = RegistrationRecoveryCapability(
-        token="repair-capability-token",
-        patient_id=PATIENT_ID,
-        provider_subject="subject-recovery",
-        repair_kind=REPAIR_RESTORE_RECORD,
-        graph_fingerprint="graph-fingerprint",
-        issued_at="2026-09-10T00:00:00+00:00",
-        expires_at="2026-09-10T00:05:00+00:00",
-    )
     issue_device = AsyncMock()
     with (
         patch(
             "app.api.v2.registration_recovery_routes.consume_registration_recovery_capability",
-            new=AsyncMock(return_value=capability),
+            new=AsyncMock(return_value=_capability()),
         ),
         patch(
             "app.api.v2.registration_recovery_routes.repair_patient_registration_account",
@@ -343,20 +387,11 @@ def test_complete_repair_with_device_history_never_mints_device_authority() -> N
 def test_complete_repair_without_device_history_mints_exact_session_bootstrap_grant() -> None:
     db = AsyncMock()
     client, _ = _client(db)
-    capability = RegistrationRecoveryCapability(
-        token="repair-capability-token",
-        patient_id=PATIENT_ID,
-        provider_subject="subject-recovery",
-        repair_kind=REPAIR_RESTORE_RECORD,
-        graph_fingerprint="graph-fingerprint",
-        issued_at="2026-09-10T00:00:00+00:00",
-        expires_at="2026-09-10T00:05:00+00:00",
-    )
     issue_device = AsyncMock(return_value="bootstrap-grant")
     with (
         patch(
             "app.api.v2.registration_recovery_routes.consume_registration_recovery_capability",
-            new=AsyncMock(return_value=capability),
+            new=AsyncMock(return_value=_capability()),
         ),
         patch(
             "app.api.v2.registration_recovery_routes.repair_patient_registration_account",
@@ -398,60 +433,70 @@ def test_complete_repair_without_device_history_mints_exact_session_bootstrap_gr
     issue_device.assert_awaited_once_with(PATIENT_ID, "session-id")
 
 
-def test_not_required_consumes_attempt_and_issues_no_repair_or_login_authority() -> None:
+def test_repair_state_change_burns_capability_and_requires_restart() -> None:
     db = AsyncMock()
     client, _ = _client(db)
-    inspection = RegistrationRecoveryInspection(
-        disposition="not_required",
-        provider_subject="subject-recovery",
-        patient_id=PATIENT_ID,
-        target_patient_id=PATIENT_ID,
-        graph_fingerprint="complete-graph",
-    )
-    issue_capability = AsyncMock()
-    issue_access = AsyncMock()
     with (
-        _allow_limits(),
         patch(
-            "app.api.v2.registration_recovery_routes.claim_registration_recovery_attempt",
-            new=AsyncMock(return_value=ATTEMPT),
+            "app.api.v2.registration_recovery_routes.consume_registration_recovery_capability",
+            new=AsyncMock(return_value=_capability()),
         ),
         patch(
-            "app.api.v2.registration_recovery_routes.get_supabase_client",
-            return_value=SimpleNamespace(
-                auth=SimpleNamespace(verify_otp=MagicMock(return_value=_provider_result()))
+            "app.api.v2.registration_recovery_routes.repair_patient_registration_account",
+            new=AsyncMock(
+                side_effect=PatientRegistrationRecoveryError(
+                    REGISTRATION_RECOVERY_STATE_CHANGED
+                )
             ),
-        ),
-        patch(
-            "app.api.v2.registration_recovery_routes.inspect_patient_registration_recovery",
-            new=AsyncMock(return_value=inspection),
-        ),
-        patch(
-            "app.api.v2.registration_recovery_routes.consume_registration_recovery_attempt",
-            new=AsyncMock(),
-        ),
-        patch(
-            "app.api.v2.registration_recovery_routes.issue_registration_recovery_capability",
-            new=issue_capability,
-        ),
-        patch(
-            "app.api.v2.registration_recovery_routes.issue_patient_access_session",
-            new=issue_access,
         ),
     ):
         response = client.post(
-            "/api/v2/auth/registration-recovery/otp/verify",
-            json={
-                "phone": "8000000001",
-                "otp": "123456",
-                "registration_recovery_attempt_token": "a" * 40,
-            },
+            "/api/v2/auth/registration-recovery/complete",
+            json={"registration_recovery_token": "x" * 40},
         )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == {"error_code": REGISTRATION_RECOVERY_NOT_REQUIRED}
-    issue_capability.assert_not_awaited()
-    issue_access.assert_not_awaited()
+    assert response.json()["detail"] == {
+        "error_code": REGISTRATION_RECOVERY_STATE_CHANGED
+    }
+
+
+def test_session_failure_after_committed_repair_reports_sign_in_fallback() -> None:
+    db = AsyncMock()
+    client, _ = _client(db)
+    with (
+        patch(
+            "app.api.v2.registration_recovery_routes.consume_registration_recovery_capability",
+            new=AsyncMock(return_value=_capability()),
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.repair_patient_registration_account",
+            new=AsyncMock(
+                return_value=RegistrationRecoveryResult(
+                    patient_id=PATIENT_ID,
+                    provider_subject="subject-recovery",
+                    repair_kind=REPAIR_RESTORE_RECORD,
+                )
+            ),
+        ),
+        patch(
+            "app.api.v2.registration_recovery_routes.issue_patient_access_session",
+            new=AsyncMock(
+                side_effect=PatientSessionAuthorityUnavailable("redis unavailable")
+            ),
+        ),
+    ):
+        response = client.post(
+            "/api/v2/auth/registration-recovery/complete",
+            json={"registration_recovery_token": "x" * 40},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == {
+        "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+        "retryable": False,
+        "account_repaired": True,
+    }
 
 
 def test_replayed_repair_capability_is_rejected_before_database_mutation() -> None:
