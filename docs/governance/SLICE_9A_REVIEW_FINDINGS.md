@@ -44,6 +44,12 @@ A patient may perform more than one successful OTP recovery attempt while the un
 
 **Decision:** the durable creation idempotency key and uniqueness semantics must bind to provider + one-way provider-subject digest + graph fingerprint, not to the transient OTP attempt. Repeated verified classification of the same graph returns the existing case. A genuinely changed graph fingerprint may create a new review case after server-side classification.
 
-## Review rule before Step 2
+## Finding 007 — Step 2 exact-head qualification stopped at reviewer-gate lint
 
-Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Step 2 may proceed only with the explicit reason normalization and graph-bound idempotency decisions from Findings 005–006, and the resulting case-creation service must be reviewed before route wiring proceeds.
+Backend CI #506 on Step 2 implementation/test head `64a1d17a9a48a9a16123581017b39e1c10757c91` stopped in Partition A before tests because Ruff reported one `F401`: `datetime.timedelta` is imported but unused in `app/core/registration_recovery_review_gate.py`. This is isolated to the Slice 9A reviewer gate and is not a parent-branch or unrelated baseline failure.
+
+**Decision:** remove only the unused `timedelta` import, then require a fresh exact-head lint/pure-unit qualification before starting Step 3. Do not use skipped Partition A tests from CI #506 as evidence. PostgreSQL/Redis jobs from that run may provide diagnostic information but do not override the failed Step 2 gate.
+
+## Review rule before Step 3
+
+Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 blocks Step 3 until the targeted lint fix is committed and a fresh exact-head lint/pure-unit run succeeds without Step 2 regression.
