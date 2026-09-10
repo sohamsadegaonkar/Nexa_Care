@@ -69,7 +69,7 @@ from app.services.patient_device_trust import (
     PatientDeviceTrustError,
     assert_rotation_new_key_available,
     canonicalize_p256_public_key,
-    enroll_patient_device_key,
+    enroll_bootstrap_patient_device_key as enroll_patient_device_key,
     get_active_patient_device_key,
     revoke_patient_device,
     rotate_patient_device_key,
@@ -516,7 +516,6 @@ async def enroll_device(
             device_label=payload.device_label,
             platform=payload.platform,
             actor_id=patient_id,
-            require_no_history=True,
         )
     except PatientDeviceTrustError as exc:
         if exc.code in {
