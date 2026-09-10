@@ -11,7 +11,15 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -20,6 +28,7 @@ from app.models.base import Base, UUIDPrimaryKeyMixin
 
 REGISTRATION_RECOVERY_REVIEW_CONTRACT_VERSION = "registration-recovery-review/1.0"
 REGISTRATION_RECOVERY_REVIEW_POLICY_VERSION = "registration-recovery-review-policy/1.0"
+REGISTRATION_RECOVERY_REVIEW_AUTHORITY_VERSION = "registration-recovery-review-auth/1.0"
 REGISTRATION_RECOVERY_REVIEWER_ROLE = "registration_recovery_reviewer"
 
 
@@ -50,6 +59,14 @@ class RegistrationRecoveryReviewReason(StrEnum):
     SECURITY_CONCERN = "SECURITY_CONCERN"
 
 
+_REASON_SQL = (
+    "ARRAY['MISSING_RECORD_ANCHOR','MERGED_IDENTITY_REBIND_REQUIRED',"
+    "'IDENTITY_REVOKED','PATIENT_DELETED_WITHOUT_MERGE','ERASURE_STATE_PRESENT',"
+    "'MULTIPLE_IDENTITIES','MERGE_AMBIGUOUS','GRAPH_STATE_CHANGED',"
+    "'SECURITY_CONCERN']::varchar[]"
+)
+
+
 class PatientRegistrationRecoveryReviewCase(Base, UUIDPrimaryKeyMixin):
     __tablename__ = "patient_registration_recovery_review_cases"
 
@@ -67,6 +84,8 @@ class PatientRegistrationRecoveryReviewCase(Base, UUIDPrimaryKeyMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     assigned_reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     assigned_reviewer_role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    reviewer_authority_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    review_session_binding: Mapped[str | None] = mapped_column(String(64), nullable=True)
     creation_idempotency_key: Mapped[str] = mapped_column(String(192), nullable=False)
     creation_operation_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -91,18 +110,25 @@ class PatientRegistrationRecoveryReviewCase(Base, UUIDPrimaryKeyMixin):
             name="ck_registration_recovery_review_hash_lengths",
         ),
         CheckConstraint(
-            "cardinality(reason_codes) > 0",
-            name="ck_registration_recovery_review_reason_nonempty",
+            f"reason_codes <@ {_REASON_SQL} AND cardinality(reason_codes) > 0",
+            name="ck_registration_recovery_review_reasons",
         ),
         CheckConstraint(
-            "(status = 'PENDING' AND assigned_reviewer_id IS NULL AND assigned_reviewer_role IS NULL "
-            "AND claimed_at IS NULL AND resolved_at IS NULL) OR "
+            "review_session_binding IS NULL OR char_length(review_session_binding) = 64",
+            name="ck_registration_recovery_review_session_binding",
+        ),
+        CheckConstraint(
+            "(status = 'PENDING' AND assigned_reviewer_id IS NULL "
+            "AND assigned_reviewer_role IS NULL AND reviewer_authority_version IS NULL "
+            "AND review_session_binding IS NULL AND claimed_at IS NULL AND resolved_at IS NULL) OR "
             "(status = 'IN_REVIEW' AND assigned_reviewer_id IS NOT NULL "
             "AND assigned_reviewer_role = 'registration_recovery_reviewer' "
+            "AND reviewer_authority_version IS NOT NULL AND review_session_binding IS NOT NULL "
             "AND claimed_at IS NOT NULL AND resolved_at IS NULL) OR "
             "(status IN ('RESOLVED','REJECTED','SECURITY_ESCALATED') "
             "AND assigned_reviewer_id IS NOT NULL "
             "AND assigned_reviewer_role = 'registration_recovery_reviewer' "
+            "AND reviewer_authority_version IS NOT NULL AND review_session_binding IS NOT NULL "
             "AND claimed_at IS NOT NULL AND resolved_at IS NOT NULL)",
             name="ck_registration_recovery_review_assignment_state",
         ),
@@ -118,7 +144,11 @@ class PatientRegistrationRecoveryReviewCase(Base, UUIDPrimaryKeyMixin):
         ),
         Index("ix_registration_recovery_review_status", "status"),
         Index("ix_registration_recovery_review_patient", "patient_id"),
-        Index("ix_registration_recovery_review_reviewer", "assigned_reviewer_id", "status"),
+        Index(
+            "ix_registration_recovery_review_reviewer",
+            "assigned_reviewer_id",
+            "status",
+        ),
     )
 
 
@@ -133,6 +163,7 @@ class PatientRegistrationRecoveryReviewDisposition(Base, UUIDPrimaryKeyMixin):
     )
     reviewer_id: Mapped[str] = mapped_column(String(128), nullable=False)
     reviewer_role: Mapped[str] = mapped_column(String(64), nullable=False)
+    reviewer_authority_version: Mapped[str] = mapped_column(String(64), nullable=False)
     outcome: Mapped[str] = mapped_column(String(64), nullable=False)
     reason_codes: Mapped[list[str]] = mapped_column(ARRAY(String(64)), nullable=False)
     prior_case_version: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -148,12 +179,13 @@ class PatientRegistrationRecoveryReviewDisposition(Base, UUIDPrimaryKeyMixin):
             name="ck_registration_recovery_disposition_role",
         ),
         CheckConstraint(
-            "outcome IN ('RESTORE_MISSING_RECORD_ANCHOR','REBIND_MERGED_IDENTITY','NO_REPAIR','SECURITY_ESCALATION_REQUIRED')",
+            "outcome IN ('RESTORE_MISSING_RECORD_ANCHOR','REBIND_MERGED_IDENTITY',"
+            "'NO_REPAIR','SECURITY_ESCALATION_REQUIRED')",
             name="ck_registration_recovery_disposition_outcome",
         ),
         CheckConstraint(
-            "cardinality(reason_codes) > 0",
-            name="ck_registration_recovery_disposition_reason_nonempty",
+            f"reason_codes <@ {_REASON_SQL} AND cardinality(reason_codes) > 0",
+            name="ck_registration_recovery_disposition_reasons",
         ),
         CheckConstraint(
             "prior_case_version > 0 AND char_length(operation_hash) = 64",
