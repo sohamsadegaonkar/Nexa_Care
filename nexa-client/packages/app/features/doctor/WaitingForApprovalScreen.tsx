@@ -731,25 +731,99 @@ export function WaitingForApprovalScreen() {
       justifyContent="center"
       alignItems="center"
     >
-      <Spinner
-        size="large"
-        color="$blue10"
-      />
+      {/* Radar pulse visual */}
+      <YStack
+        width={100}
+        height={100}
+        borderRadius={50}
+        backgroundColor="$nexaAccentSoft"
+        alignItems="center"
+        justifyContent="center"
+        borderWidth={2}
+        borderColor="$nexaAccent"
+      >
+        <Spinner
+          size="large"
+          color="$blue10"
+        />
+      </YStack>
+
       <H4
         textAlign="center"
         color="$color12"
+        fontSize={22}
+        fontWeight="800"
       >
         Waiting for Patient Approval
       </H4>
+
       <Paragraph
         textAlign="center"
         color="$color11"
-        maxWidth={400}
+        maxWidth={440}
+        fontSize={14}
+        lineHeight={22}
       >
         {deliveryStatus === 'sent'
           ? 'Notification sent. Waiting for the patient to approve or deny.'
           : 'Notification queued. Waiting for delivery and patient response.'}
       </Paragraph>
+
+      {/* Server Status Pipeline */}
+      <XStack
+        gap="$2"
+        alignItems="center"
+        flexWrap="wrap"
+        justifyContent="center"
+        paddingVertical="$2"
+      >
+        <XStack
+          alignItems="center"
+          gap="$1.5"
+          paddingHorizontal="$2.5"
+          paddingVertical="$1"
+          borderRadius={6}
+          backgroundColor="$nexaSuccessSoft"
+        >
+          <YStack width={6} height={6} borderRadius={3} backgroundColor="$nexaSuccess" />
+          <Text color="$nexaSuccess" fontSize={12} fontWeight="700">Request created</Text>
+        </XStack>
+        <Text color="$nexaSecondary">→</Text>
+        <XStack
+          alignItems="center"
+          gap="$1.5"
+          paddingHorizontal="$2.5"
+          paddingVertical="$1"
+          borderRadius={6}
+          backgroundColor={deliveryStatus === 'sent' ? '$nexaSuccessSoft' : '$nexaWarningSoft'}
+        >
+          <YStack
+            width={6}
+            height={6}
+            borderRadius={3}
+            backgroundColor={deliveryStatus === 'sent' ? '$nexaSuccess' : '$nexaWarning'}
+          />
+          <Text
+            color={deliveryStatus === 'sent' ? '$nexaSuccess' : '$nexaWarning'}
+            fontSize={12}
+            fontWeight="700"
+          >
+            {deliveryStatus === 'sent' ? 'Notification sent' : 'Notification queued'}
+          </Text>
+        </XStack>
+        <Text color="$nexaSecondary">→</Text>
+        <XStack
+          alignItems="center"
+          gap="$1.5"
+          paddingHorizontal="$2.5"
+          paddingVertical="$1"
+          borderRadius={6}
+          backgroundColor="$nexaAccentSoft"
+        >
+          <YStack width={6} height={6} borderRadius={3} backgroundColor="$nexaAccent" />
+          <Text color="$nexaAccent" fontSize={12} fontWeight="700">Waiting for patient decision</Text>
+        </XStack>
+      </XStack>
 
       {/* Request ID display */}
       <Card
@@ -757,7 +831,10 @@ export function WaitingForApprovalScreen() {
         backgroundColor="$color2"
         borderWidth={1}
         borderColor="$borderColor"
-        gap="$2"
+        borderRadius={12}
+        gap="$1.5"
+        minWidth={280}
+        alignItems="center"
       >
         <Paragraph
           color="$color10"
@@ -769,7 +846,7 @@ export function WaitingForApprovalScreen() {
         </Paragraph>
         <Text
           color="$color12"
-          fontSize={16}
+          fontSize={15}
           fontWeight="700"
         >
           {requestId || '—'}

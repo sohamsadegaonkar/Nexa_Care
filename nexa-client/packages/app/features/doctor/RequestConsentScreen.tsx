@@ -19,7 +19,7 @@
 
 'use client'
 
-import { Card, Text, YStack, Button, Input, XStack, Spinner, Paragraph, ScrollView } from '@my/ui'
+import { Card, Text, YStack, Button, Input, XStack, Spinner, Paragraph, ScrollView, StatusBadge } from '@my/ui'
 import { useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { ApiError, NexaApiClient } from '../../utils/apiClient'
@@ -171,68 +171,91 @@ export function RequestConsentScreen() {
         maxWidth={600}
         marginHorizontal="auto"
       >
-        <YStack>
+        <YStack gap="$1.5">
           <Text
-            fontSize={26}
+            fontSize={28}
             fontWeight="900"
-            color="$color12"
+            color="$nexaText"
+            letterSpacing={-0.6}
           >
             Request Consent
           </Text>
           <Paragraph
-            color="$color11"
+            color="$nexaSecondary"
             fontSize={15}
+            lineHeight={22}
           >
-            Request access to patient health data. The patient will receive a push notification to
-            approve or deny.
+            Request scoped access to patient health records. The patient will receive a notification on their enrolled device to review and approve.
           </Paragraph>
         </YStack>
 
-        {/* Patient info */}
+        {/* Patient info card */}
         <Card
           padding="$4"
-          backgroundColor="$color2"
+          backgroundColor="$nexaSurface"
           borderWidth={1}
-          borderColor="$borderColor"
+          borderColor="$nexaBorder"
+          borderRadius={14}
           gap="$2"
         >
-          <Paragraph
-            color="$color10"
-            fontSize={12}
-            fontWeight="700"
-            textTransform="uppercase"
-          >
-            Patient
-          </Paragraph>
-          <Text
-            color="$color12"
-            fontSize={18}
-            fontWeight="700"
-          >
-            {discoverySelection?.displayIdentifier ?? 'Patient selection expired'}
-          </Text>
+          <XStack justifyContent="space-between" alignItems="center">
+            <Paragraph
+              color="$nexaSecondary"
+              fontSize={12}
+              fontWeight="700"
+              textTransform="uppercase"
+              letterSpacing={0.5}
+            >
+              Patient Target
+            </Paragraph>
+            <StatusBadge tone="success">Discovered</StatusBadge>
+          </XStack>
+          <XStack alignItems="center" gap="$2.5">
+            <YStack
+              width={32}
+              height={32}
+              borderRadius={16}
+              backgroundColor="$nexaAccentSoft"
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Text color="$nexaAccent" fontWeight="800" fontSize={14}>P</Text>
+            </YStack>
+            <Text
+              color="$nexaText"
+              fontSize={18}
+              fontWeight="800"
+            >
+              {discoverySelection?.displayIdentifier ?? 'Patient selection expired'}
+            </Text>
+          </XStack>
         </Card>
 
-        {/* Provider info */}
+        {/* Provider info card */}
         <Card
           padding="$4"
-          backgroundColor="$color2"
+          backgroundColor="$nexaSurface"
           borderWidth={1}
-          borderColor="$borderColor"
+          borderColor="$nexaBorder"
+          borderRadius={14}
           gap="$2"
         >
-          <Paragraph
-            color="$color10"
-            fontSize={12}
-            fontWeight="700"
-            textTransform="uppercase"
-          >
-            Provider
-          </Paragraph>
+          <XStack justifyContent="space-between" alignItems="center">
+            <Paragraph
+              color="$nexaSecondary"
+              fontSize={12}
+              fontWeight="700"
+              textTransform="uppercase"
+              letterSpacing={0.5}
+            >
+              Requesting Clinician
+            </Paragraph>
+            <StatusBadge tone="info">Authorized Session</StatusBadge>
+          </XStack>
           <Text
-            color="$color12"
+            color="$nexaText"
             fontSize={16}
-            fontWeight="600"
+            fontWeight="700"
           >
             {providerId || 'Unknown'} · {hospitalName || 'Hospital'}
           </Text>

@@ -717,14 +717,25 @@ export function PatientRecordViewerScreen() {
         <XStack
           alignItems="center"
           justifyContent="space-between"
+          flexWrap="wrap"
+          gap="$3"
         >
-          <Text
-            fontSize={26}
-            fontWeight="900"
-            color="$color12"
-          >
-            Patient Record
-          </Text>
+          <YStack gap="$0.5">
+            <Text
+              fontSize={28}
+              fontWeight="900"
+              color="$nexaText"
+              letterSpacing={-0.6}
+            >
+              Patient Record
+            </Text>
+            <Text
+              color="$nexaSecondary"
+              fontSize={14}
+            >
+              Consent-gated clinical health record
+            </Text>
+          </YStack>
           <Button
             size="$3"
             chromeless
@@ -737,30 +748,33 @@ export function PatientRecordViewerScreen() {
         {/* Emergency access banner — break-glass grants only */}
         {isBreakGlassGrant(accessGrant?.purpose) && (
           <Card
-            backgroundColor="$red3"
+            backgroundColor="$nexaDangerSoft"
             borderWidth={2}
-            borderColor="$red9"
-            padding="$3"
+            borderColor="$nexaDanger"
+            borderRadius={14}
+            padding="$3.5"
           >
             <XStack
               alignItems="center"
-              gap="$2"
+              gap="$3"
             >
               <AlertOctagon
-                size={20}
-                color="$red10"
+                size={24}
+                color="$nexaDanger"
               />
-              <YStack>
+              <YStack gap="$0.5">
                 <Text
-                  color="$red10"
+                  color="$nexaDanger"
                   fontSize={15}
                   fontWeight="800"
+                  letterSpacing={0.5}
                 >
                   EMERGENCY (BREAK-GLASS) ACCESS
                 </Text>
                 <Text
-                  color="$red10"
-                  fontSize={12}
+                  color="$nexaDanger"
+                  fontSize={13}
+                  lineHeight={18}
                 >
                   Showing only the clinical categories approved for this emergency grant. This
                   access is audited.
@@ -773,35 +787,58 @@ export function PatientRecordViewerScreen() {
         {/* Consent expiry countdown bar */}
         {secondsRemaining !== null && (
           <XStack
-            backgroundColor={secondsRemaining < 60 ? '$red2' : '$blue2'}
-            borderRadius="$3"
-            padding="$3"
+            backgroundColor={secondsRemaining < 120 ? '$nexaDangerSoft' : '$nexaAccentSoft'}
+            borderWidth={1}
+            borderColor={secondsRemaining < 120 ? '$nexaDanger' : '$nexaAccent'}
+            borderRadius={12}
+            paddingVertical="$2.5"
+            paddingHorizontal="$4"
             alignItems="center"
             justifyContent="space-between"
+            flexWrap="wrap"
+            gap="$2"
           >
-            <Text
-              color={secondsRemaining < 60 ? '$red10' : '$blue10'}
-              fontSize={14}
-              fontWeight="600"
-            >
-              {secondsRemaining < 60 ? '⚠️ Consent expiring soon' : 'Consent active'}
-            </Text>
-            <Text
-              color={secondsRemaining < 60 ? '$red10' : '$blue10'}
-              fontSize={18}
-              fontWeight="800"
-            >
-              {formatCountdown(secondsRemaining)}
-            </Text>
+            <XStack alignItems="center" gap="$2">
+              <Clock
+                size={16}
+                color={secondsRemaining < 120 ? '$nexaDanger' : '$nexaAccent'}
+              />
+              <Text
+                color={secondsRemaining < 120 ? '$nexaDanger' : '$nexaAccent'}
+                fontSize={14}
+                fontWeight="700"
+              >
+                {secondsRemaining < 60
+                  ? '⚠️ Consent expiring soon'
+                  : 'Consent session active and verified'}
+              </Text>
+            </XStack>
+            <XStack alignItems="baseline" gap="$1">
+              <Text
+                color="$nexaSecondary"
+                fontSize={12}
+                fontWeight="600"
+              >
+                Expires in
+              </Text>
+              <Text
+                color={secondsRemaining < 120 ? '$nexaDanger' : '$nexaAccent'}
+                fontSize={20}
+                fontWeight="900"
+              >
+                {formatCountdown(secondsRemaining)}
+              </Text>
+            </XStack>
           </XStack>
         )}
 
         {/* Allergies banner — visible when in scope */}
         {allergiesInScope && allergies.length > 0 && (
           <Card
-            backgroundColor="$red2"
+            backgroundColor="$nexaDangerSoft"
             borderWidth={1}
-            borderColor="$red8"
+            borderColor="$nexaDanger"
+            borderRadius={10}
             padding="$3"
           >
             <XStack
@@ -810,12 +847,12 @@ export function PatientRecordViewerScreen() {
             >
               <AlertTriangle
                 size={18}
-                color="$red10"
+                color="$nexaDanger"
               />
               <Text
-                color="$red10"
+                color="$nexaDanger"
                 fontSize={14}
-                fontWeight="700"
+                fontWeight="800"
               >
                 ALLERGIES: {allergies.join(' · ')}
               </Text>
@@ -825,18 +862,34 @@ export function PatientRecordViewerScreen() {
 
         {/* Tab navigation — only tabs in consent scope */}
         <XStack
-          gap="$1"
+          gap="$2"
           flexWrap="wrap"
+          paddingVertical="$1"
         >
           {visibleTabs.map((tab) => (
             <Button
               key={tab.key}
-              size="$2"
-              theme={activeTab === tab.key ? 'blue' : undefined}
-              chromeless={activeTab !== tab.key}
+              size="$3"
+              borderRadius={10}
+              borderWidth={1}
+              backgroundColor={activeTab === tab.key ? '$nexaAccent' : '$nexaSurface'}
+              borderColor={activeTab === tab.key ? '$nexaAccent' : '$nexaBorder'}
+              hoverStyle={{
+                backgroundColor: activeTab === tab.key ? '$nexaAccentHover' : '$nexaMuted',
+                borderColor: '$nexaAccent',
+              }}
               onPress={() => setActiveTab(tab.key)}
             >
-              {tab.label}
+              <XStack alignItems="center" gap="$2">
+                {tab.icon}
+                <Button.Text
+                  color={activeTab === tab.key ? '$nexaOnAccent' : '$nexaText'}
+                  fontWeight={activeTab === tab.key ? '700' : '600'}
+                  fontSize={14}
+                >
+                  {tab.label}
+                </Button.Text>
+              </XStack>
             </Button>
           ))}
         </XStack>

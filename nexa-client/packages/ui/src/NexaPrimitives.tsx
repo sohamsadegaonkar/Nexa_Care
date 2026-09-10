@@ -94,6 +94,7 @@ export function ActionButton({ children, intent, ...props }: GetProps<typeof Act
 
 const tones = {
   info: { color: '$nexaAccent', backgroundColor: '$nexaAccentSoft' },
+  accent: { color: '$nexaAccent', backgroundColor: '$nexaAccentSoft' },
   neutral: { color: '$nexaSecondary', backgroundColor: '$nexaMuted' },
   success: { color: '$nexaSuccess', backgroundColor: '$nexaSuccessSoft' },
   warning: { color: '$nexaWarning', backgroundColor: '$nexaWarningSoft' },
@@ -102,6 +103,7 @@ const tones = {
 type Tone = keyof typeof tones
 
 export function StatusBadge({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {
+  const selectedTone = tones[tone] ?? tones.neutral
   return (
     <XStack
       alignSelf="flex-start"
@@ -109,10 +111,10 @@ export function StatusBadge({ children, tone = 'neutral' }: { children: ReactNod
       borderRadius={6}
       paddingHorizontal="$2"
       paddingVertical="$1"
-      backgroundColor={tones[tone].backgroundColor}
+      backgroundColor={selectedTone.backgroundColor}
     >
       <Text
-        color={tones[tone].color}
+        color={selectedTone.color}
         fontSize={13}
         lineHeight={20}
         fontWeight="700"
@@ -127,8 +129,10 @@ export function StatusBadge({ children, tone = 'neutral' }: { children: ReactNod
 export function InlineNotice({
   title,
   children,
+  description,
   tone = 'info',
-}: { title: string; children?: ReactNode; tone?: Tone }) {
+}: { title: string; children?: ReactNode; description?: ReactNode; tone?: Tone }) {
+  const content = children ?? description
   return (
     <YStack
       role={tone === 'danger' ? 'alert' : 'status'}
@@ -146,13 +150,13 @@ export function InlineNotice({
       >
         {title}
       </Text>
-      {children ? (
+      {content ? (
         <Paragraph
           color={tones[tone].color}
           fontSize={15}
           lineHeight={23}
         >
-          {children}
+          {content}
         </Paragraph>
       ) : null}
     </YStack>
@@ -386,3 +390,202 @@ export function AuthFrame({ children, ...props }: YStackProps) {
     </YStack>
   )
 }
+
+export function StatCard({
+  title,
+  label,
+  value,
+  unit,
+  subtitle,
+  description,
+  tone = 'neutral',
+  icon,
+}: {
+  title?: string
+  label?: string
+  value: string | number
+  unit?: string
+  subtitle?: string
+  description?: string
+  tone?: Tone
+  icon?: ReactNode
+}) {
+  const displayTitle = label ?? title ?? ''
+  const displaySubtitle = description ?? subtitle
+  const selectedTone = tones[tone] ?? tones.neutral
+  return (
+    <Surface
+      flex={1}
+      minWidth={160}
+      padding="$3.5"
+      gap="$2"
+      backgroundColor={selectedTone.backgroundColor}
+      borderColor={tone === 'neutral' ? '$nexaBorder' : selectedTone.color}
+    >
+      <XStack
+        justifyContent="space-between"
+        alignItems="center"
+      >
+        <Text
+          color="$nexaSecondary"
+          fontSize={12}
+          fontWeight="700"
+          textTransform="uppercase"
+          letterSpacing={0.5}
+        >
+          {displayTitle}
+        </Text>
+        {icon}
+      </XStack>
+      <XStack
+        alignItems="baseline"
+        gap="$1.5"
+      >
+        <Text
+          color={tone === 'neutral' ? '$nexaText' : selectedTone.color}
+          fontSize={26}
+          fontWeight="800"
+          lineHeight={32}
+        >
+          {value}
+        </Text>
+        {unit && (
+          <Text
+            color="$nexaSecondary"
+            fontSize={14}
+            fontWeight="600"
+          >
+            {unit}
+          </Text>
+        )}
+      </XStack>
+      {displaySubtitle && (
+        <Text
+          color="$nexaSecondary"
+          fontSize={12}
+          fontWeight="500"
+        >
+          {displaySubtitle}
+        </Text>
+      )}
+    </Surface>
+  )
+}
+
+export function TabPill({
+  label,
+  active,
+  badge,
+  icon,
+  onPress,
+}: {
+  label: string
+  active: boolean
+  badge?: string | number
+  icon?: ReactNode
+  onPress: () => void
+}) {
+  return (
+    <Button
+      size="$3"
+      borderRadius={10}
+      borderWidth={1}
+      backgroundColor={active ? '$nexaAccent' : '$nexaSurface'}
+      borderColor={active ? '$nexaAccent' : '$nexaBorder'}
+      hoverStyle={{
+        backgroundColor: active ? '$nexaAccentHover' : '$nexaMuted',
+        borderColor: '$nexaAccent',
+      }}
+      pressStyle={{
+        backgroundColor: active ? '$nexaAccentHover' : '$nexaAccentSoft',
+      }}
+      onPress={onPress}
+      paddingHorizontal="$3"
+      height={40}
+    >
+      <XStack
+        alignItems="center"
+        gap="$2"
+      >
+        {icon}
+        <Button.Text
+          color={active ? '$nexaOnAccent' : '$nexaText'}
+          fontWeight={active ? '700' : '600'}
+          fontSize={14}
+        >
+          {label}
+        </Button.Text>
+        {badge !== undefined && (
+          <XStack
+            borderRadius={10}
+            paddingHorizontal="$1.5"
+            paddingVertical={2}
+            backgroundColor={active ? 'rgba(255,255,255,0.25)' : '$nexaMuted'}
+          >
+            <Text
+              color={active ? '$nexaOnAccent' : '$nexaSecondary'}
+              fontSize={11}
+              fontWeight="700"
+            >
+              {badge}
+            </Text>
+          </XStack>
+        )}
+      </XStack>
+    </Button>
+  )
+}
+
+export function NexaCardHeader({
+  title,
+  subtitle,
+  badge,
+  action,
+}: {
+  title: string
+  subtitle?: string
+  badge?: ReactNode
+  action?: ReactNode
+}) {
+  return (
+    <XStack
+      justifyContent="space-between"
+      alignItems="flex-start"
+      flexWrap="wrap"
+      gap="$2"
+      width="100%"
+    >
+      <YStack
+        gap="$1"
+        flex={1}
+        minWidth={160}
+      >
+        <XStack
+          alignItems="center"
+          gap="$2"
+        >
+          <Text
+            color="$nexaText"
+            fontSize={18}
+            fontWeight="800"
+            letterSpacing={-0.3}
+          >
+            {title}
+          </Text>
+          {badge}
+        </XStack>
+        {subtitle && (
+          <Paragraph
+            color="$nexaSecondary"
+            fontSize={13}
+            lineHeight={18}
+          >
+            {subtitle}
+          </Paragraph>
+        )}
+      </YStack>
+      {action}
+    </XStack>
+  )
+}
+

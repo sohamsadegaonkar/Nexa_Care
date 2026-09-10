@@ -123,6 +123,12 @@ export function getCurrentPatientAccessToken(): string | null {
   return snapshot.status === 'authenticated' ? accessToken : null
 }
 
+export function getCurrentPatientId(): string | null {
+  if (snapshot.status !== 'authenticated' || !accessToken) return null
+  const claims = readPatientClaims(accessToken)
+  return claims?.patient_id ?? null
+}
+
 export function hydratePatientAuthSession(): Promise<PatientAuthSnapshot> {
   if (snapshot.hydrated) return Promise.resolve(snapshot)
   if (hydrationInFlight) return hydrationInFlight

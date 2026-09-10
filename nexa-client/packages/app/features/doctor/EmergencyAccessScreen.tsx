@@ -143,106 +143,188 @@ export function EmergencyAccessScreen() {
       <YStack
         p="$5"
         gap="$5"
-        maxW={600}
+        maxW={660}
         mx="auto"
       >
         <XStack
-          gap="$2"
+          gap="$3"
           items="center"
         >
-          <AlertTriangle
-            size={36}
-            color="$red10"
-          />
-          <Text
-            fontSize={26}
-            fontWeight="900"
-            color="$red10"
+          <YStack
+            padding="$2.5"
+            borderRadius={12}
+            backgroundColor="$nexaDangerSoft"
           >
-            Emergency access
-          </Text>
+            <AlertTriangle
+              size={36}
+              color="$nexaDanger"
+            />
+          </YStack>
+          <YStack gap="$0.5">
+            <Text
+              fontSize={26}
+              fontWeight="900"
+              color="$nexaDanger"
+              letterSpacing={-0.6}
+            >
+              Emergency access
+            </Text>
+            <Text
+              color="$nexaSecondary"
+              fontSize={14}
+            >
+              Controlled Break-Glass Protocol
+            </Text>
+          </YStack>
         </XStack>
+
         <Card
-          bg="$red2"
+          bg="$nexaDangerSoft"
           borderWidth={1}
-          borderColor="$red8"
-          p="$4"
+          borderColor="$nexaDanger"
+          borderRadius={14}
+          p="$4.5"
+          gap="$2"
         >
-          <Paragraph color="$red10">
+          <Text color="$nexaDanger" fontWeight="800" fontSize={15}>
+            Strict Audit & Urgent Care Boundary
+          </Text>
+          <Paragraph color="$nexaDanger" fontSize={13} lineHeight={20}>
             Limited, 15-minute access. This access is permanently recorded in the audit ledger, rate
-            limited to 3 per hour, and may trigger patient notification and compliance review.
+            limited to 3 per hour, and recorded in the patient's audit history for clinical review.
           </Paragraph>
         </Card>
+
         {authorizationRef && (
           <Card
-            bg="$green2"
+            bg="$nexaSuccessSoft"
             borderWidth={1}
-            borderColor="$green8"
+            borderColor="$nexaSuccess"
+            borderRadius={14}
             p="$4"
           >
-            <Paragraph color="$green10">
+            <Paragraph color="$nexaSuccess" fontWeight="700">
               Authorization reference: {maskToken(authorizationRef)}
             </Paragraph>
           </Card>
         )}
-        <Input
-          value={patientId}
-          onChangeText={setPatientId}
-          placeholder="Canonical patient UUID"
-        />
-        <Select
-          value={reasonCode}
-          onValueChange={(value) => setReasonCode(value as BreakGlassReasonCode)}
-        >
-          <Select.Trigger iconAfter={ChevronDown}>
-            <Select.Value />
-          </Select.Trigger>
-          <Select.Content zIndex={200000}>
-            <Select.Viewport
-              unstyled
-              minWidth={280}
-              maxHeight={320}
-              backgroundColor="$background"
-              borderWidth={1}
-              borderColor="$borderColor"
-              borderRadius="$4"
-              padding="$1"
+
+        <YStack gap="$2">
+          <Text color="$nexaText" fontSize={14} fontWeight="700">
+            Patient Target Identifier
+          </Text>
+          <Input
+            value={patientId}
+            onChangeText={setPatientId}
+            placeholder="Canonical patient UUID"
+            minHeight={50}
+            borderRadius={10}
+            borderColor="$nexaBorder"
+            backgroundColor="$nexaSurface"
+          />
+        </YStack>
+
+        <YStack gap="$2">
+          <Text color="$nexaText" fontSize={14} fontWeight="700">
+            Approved Emergency Reason Code
+          </Text>
+          <Select
+            value={reasonCode}
+            onValueChange={(value) => setReasonCode(value as BreakGlassReasonCode)}
+          >
+            <Select.Trigger
+              iconAfter={ChevronDown}
+              minHeight={50}
+              borderRadius={10}
+              borderColor="$nexaBorder"
+              backgroundColor="$nexaSurface"
             >
-              <Select.Group>
-                {REASON_OPTIONS.map((option, index) => (
-                  <Select.Item
-                    key={option.value}
-                    index={index}
-                    value={option.value}
-                  >
-                    <Select.ItemText>{option.label}</Select.ItemText>
-                  </Select.Item>
-                ))}
-              </Select.Group>
-            </Select.Viewport>
-          </Select.Content>
-        </Select>
-        <Input
-          value={justification}
-          onChangeText={setJustification}
-          placeholder="Clinical justification"
-          multiline
-          maxLength={MAX_JUSTIFICATION_LENGTH}
-        />
+              <Select.Value />
+            </Select.Trigger>
+            <Select.Content zIndex={200000}>
+              <Select.Viewport
+                unstyled
+                minWidth={280}
+                maxHeight={320}
+                backgroundColor="$background"
+                borderWidth={1}
+                borderColor="$borderColor"
+                borderRadius="$4"
+                padding="$1"
+              >
+                <Select.Group>
+                  {REASON_OPTIONS.map((option, index) => (
+                    <Select.Item
+                      key={option.value}
+                      index={index}
+                      value={option.value}
+                    >
+                      <Select.ItemText>{option.label}</Select.ItemText>
+                    </Select.Item>
+                  ))}
+                </Select.Group>
+              </Select.Viewport>
+            </Select.Content>
+          </Select>
+        </YStack>
+
+        <YStack gap="$2">
+          <XStack justifyContent="space-between" alignItems="center">
+            <Text color="$nexaText" fontSize={14} fontWeight="700">
+              Clinical Justification (Mandatory)
+            </Text>
+            <Text
+              color={
+                justification.trim().length >=
+                (reasonCode === 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY' ? 80 : 20)
+                  ? '$nexaSuccess'
+                  : '$nexaWarning'
+              }
+              fontSize={12}
+              fontWeight="700"
+            >
+              {justification.length}/{MAX_JUSTIFICATION_LENGTH} chars (min {reasonCode === 'OTHER_CLINICALLY_JUSTIFIED_EMERGENCY' ? 80 : 20})
+            </Text>
+          </XStack>
+          <Input
+            value={justification}
+            onChangeText={setJustification}
+            placeholder="Clinical justification"
+            multiline
+            numberOfLines={4}
+            minHeight={100}
+            borderRadius={10}
+            borderColor="$nexaBorder"
+            backgroundColor="$nexaSurface"
+            maxLength={MAX_JUSTIFICATION_LENGTH}
+          />
+        </YStack>
+
         {needsStepUp && (
           <Card
             p="$4"
             gap="$3"
+            borderRadius={12}
+            borderWidth={1}
+            borderColor="$nexaWarning"
+            backgroundColor="$nexaWarningSoft"
           >
-            <Text fontWeight="700">Step-up MFA required</Text>
+            <Text fontWeight="800" color="$nexaWarning">Step-up MFA required</Text>
+            <Paragraph color="$nexaText" fontSize={13}>
+              Enter the current 6-digit authenticator code to authorize emergency access.
+            </Paragraph>
             <Input
               value={mfaCode}
               onChangeText={setMfaCode}
+              placeholder="000000"
               keyboardType="numeric"
               maxLength={6}
+              minHeight={48}
               secureTextEntry
+              backgroundColor="$nexaSurface"
             />
             <Button
+              theme="blue"
               onPress={verifyStepUp}
               disabled={submitting}
             >
@@ -250,16 +332,31 @@ export function EmergencyAccessScreen() {
             </Button>
           </Card>
         )}
-        {error && <Text color="$red10">{error}</Text>}
+
+        {error && (
+          <Card
+            p="$3"
+            borderRadius={8}
+            backgroundColor="$nexaDangerSoft"
+            borderLeftWidth={4}
+            borderLeftColor="$nexaDanger"
+          >
+            <Text color="$nexaDanger" fontWeight="700">{error}</Text>
+          </Card>
+        )}
+
         {!needsStepUp && (
           <Button
             theme="red"
+            size="$5"
+            borderRadius={10}
             onPress={issueEmergencyAccess}
             disabled={submitting || !justification.trim()}
           >
-            {submitting ? <Spinner /> : 'Issue minimum-necessary emergency access'}
+            {submitting ? <Spinner color="$nexaOnAccent" /> : 'Issue minimum-necessary emergency access'}
           </Button>
         )}
+
         <Button
           chromeless
           onPress={() => router.push('/doctor/dashboard')}
