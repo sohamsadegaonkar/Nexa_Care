@@ -98,7 +98,7 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260910_registration_recovery_review"
+HEAD = "20260909_device_trust_lifecycle"
 _USER_AGENT = "Nexa-Slice4-Qual-Agent/1.0"
 _CLIENT_IP = "127.0.0.1"
 _DB_NAME = "nexa_qual_slice4_e2e"
@@ -327,6 +327,8 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 1: Zero root state
         # -------------------------------------------------------------------
+        # Manager is fully eligible (active, verified email/phone, MFA enabled)
+        # but owns ZERO TRUST_PERMISSION_MANAGE grants.
         manager_id, manager_token, manager_secret = await _create_provider(factory)
         target_id, _, _ = await _create_provider(factory)
 
@@ -349,6 +351,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp1.status_code == 403
             assert resp1.json() == {"error_code": "AUTHORIZATION_DENIED"}
 
+        # Verify zero mutations
         async with factory() as db:
             grant_count = await db.scalar(
                 text("SELECT count(*) FROM public.provider_trust_permission_grant")
@@ -371,6 +374,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 2: Offline root provisioning
         # -------------------------------------------------------------------
+        # Provision manager's root using real Phase-4F governance CLI
         valid_until_dt = now + timedelta(days=30)
         cli_key = _key("step2-cli-root")
         argv = [
@@ -398,6 +402,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         exit_code = await run_governance(argv)
         assert exit_code == 0
 
+        # Verify root grant in DB
         async with factory() as db:
             root_grant = (
                 await db.execute(
@@ -414,6 +419,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert root_grant.granted_by_actor_id == "secops-operator-1"
             manager_root_grant_id = root_grant.id
 
+            # Verify audit outbox
             outbox_row = (
                 await db.execute(
                     text(
@@ -430,6 +436,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 3: Root alone does not bypass MFA
         # -------------------------------------------------------------------
+        # Update manager session in Redis to have stale MFA (>15 minutes)
         stale_mfa_time = now - timedelta(minutes=20)
         redis = get_async_redis_client()
         session_data = await resolve_provider_session_context(manager_token)
@@ -463,6 +470,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp3.status_code == 428
             assert _extract_error(resp3) == "MFA_STEP_UP_REQUIRED"
 
+        # Verify no subordinate permission was created and no idempotency reservation remained
         async with factory() as db:
             sub_count = await db.scalar(
                 text(
@@ -496,11 +504,13 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp4.status_code == 200
             assert resp4.json() == {"verified": True}
 
+        # Verify session mfa_verified_at was refreshed on same token in Redis
         refreshed_sess = await resolve_provider_session_context(manager_token)
         assert refreshed_sess is not None
         refreshed_mfa_dt = datetime.fromisoformat(refreshed_sess["mfa_verified_at"])
         assert (datetime.now(timezone.utc) - refreshed_mfa_dt).total_seconds() < 10
 
+        # Verify step-up audit logged in audit_ledger (AUTH domain)
         async with factory() as db:
             step_up_audit = (
                 await db.execute(
@@ -517,6 +527,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 5: Same-key retry after step-up
         # -------------------------------------------------------------------
+        # Retry the exact request from Step 3 with the SAME idempotency key
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
@@ -543,6 +554,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 6: PROFESSIONAL_REVIEW clinical separation proof
         # -------------------------------------------------------------------
+        # Target has PROFESSIONAL_REVIEW; verify zero clinical access
         async with factory() as db:
             aff_count = await db.scalar(
                 text(
@@ -559,6 +571,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             )
             assert prof_verif_count == 0
 
+            # ClinicalEligibilityService must deny
             target_identity = await db.get(ProviderIdentity, target_id)
             assert target_identity is not None
             eligibility_svc = ClinicalEligibilityService()
@@ -606,6 +619,8 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert data7["facility_id"] == str(fac_a_id)
             assert "grant_id" in data7
 
+            # Malformed scope combinations fail closed
+            # A. GLOBAL with facility_id
             resp_bad1 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -622,6 +637,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp_bad1.status_code == 400
             assert _extract_error(resp_bad1) == "GLOBAL_PERMISSION_FACILITY_PROHIBITED"
 
+            # B. FACILITY without facility_id
             resp_bad2 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -673,6 +689,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
+            # 1. Exact same grant request and same key -> 200 replay
             resp9_replay = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -690,6 +707,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp9_replay.json()["grant_id"] == aff_man_grant_id
             assert resp9_replay.json()["idempotent_replay"] is True
 
+            # 2. Different semantics same key -> 409 IDEMPOTENCY_KEY_REUSED
             resp9_conflict = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -705,6 +723,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp9_conflict.status_code == 409
             assert resp9_conflict.json() == {"error_code": "IDEMPOTENCY_KEY_REUSED"}
 
+            # 3. Second independent grant of active same slot -> 409 ACTIVE_GRANT_EXISTS
             resp9_dup = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -741,6 +760,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp10.json()["grant_id"] == prof_grant_id
             assert resp10.json()["idempotent_replay"] is False
 
+            # Same-key replay -> 200 replay
             resp10_rep = await client.post(
                 f"/api/v2/provider-trust/permissions/{prof_grant_id}/revoke",
                 headers={
@@ -753,6 +773,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             assert resp10_rep.status_code == 200
             assert resp10_rep.json()["idempotent_replay"] is True
 
+            # Second independent revoke of already-revoked grant -> 409 GRANT_ALREADY_REVOKED
             resp10_dup = await client.post(
                 f"/api/v2/provider-trust/permissions/{prof_grant_id}/revoke",
                 headers={
@@ -795,6 +816,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         exit_code_rev = await run_governance(argv_rev)
         assert exit_code_rev == 0
 
+        # Verify root grant revoked in DB
         async with factory() as db:
             rev_root = (
                 await db.execute(
@@ -805,6 +827,7 @@ async def test_canonical_full_journey_steps_1_to_14():
             ).scalar_one()
             assert rev_root.revoked_at is not None
 
+            # Verify generic PROVIDER_TRUST_PERMISSION_REVOKED audit with OFFLINE_ROOT
             rev_audit = (
                 await db.execute(
                     text(
@@ -823,6 +846,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 12: Fresh MFA does not survive authority loss
         # -------------------------------------------------------------------
+        # Manager's session in Redis is still live and has fresh MFA
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
@@ -844,6 +868,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 13: Zero root recovery
         # -------------------------------------------------------------------
+        # Create Provider 2 (eligible) and provision root with expected_active_root_count=0
         mgr2_id, mgr2_token, mgr2_secret = await _create_provider(factory)
         mgr2_valid_until = now + timedelta(days=60)
         step13_key = _key("step13-zero-recovery")
@@ -875,6 +900,7 @@ async def test_canonical_full_journey_steps_1_to_14():
         # -------------------------------------------------------------------
         # STEP 14: New root administration
         # -------------------------------------------------------------------
+        # Manager 2 possesses active root and fresh MFA; grants subordinate permission
         target2_id, _, _ = await _create_provider(factory)
         step14_key = _key("step14-new-root-admin")
         async with AsyncClient(
@@ -913,6 +939,7 @@ async def test_public_root_attack_matrix():
 
     try:
         now = datetime.now(timezone.utc)
+        # Manager has active root and fresh MFA
         mgr_id, mgr_token, _ = await _create_provider(factory)
         target_id, _, _ = await _create_provider(factory)
         root_grant_id = uuid.uuid4()
@@ -939,6 +966,7 @@ async def test_public_root_attack_matrix():
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
+            # 1. Attempt to GRANT root authority via HTTP -> 403 ROOT_PERMISSION_OFFLINE_ONLY
             resp_grant = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -954,6 +982,7 @@ async def test_public_root_attack_matrix():
             assert resp_grant.status_code == 403
             assert resp_grant.json() == {"error_code": "ROOT_PERMISSION_OFFLINE_ONLY"}
 
+            # 2. Attempt to REVOKE root authority via HTTP -> 403 ROOT_PERMISSION_OFFLINE_ONLY
             resp_rev = await client.post(
                 f"/api/v2/provider-trust/permissions/{root_grant_id}/revoke",
                 headers={
@@ -966,6 +995,7 @@ async def test_public_root_attack_matrix():
             assert resp_rev.status_code == 403
             assert resp_rev.json() == {"error_code": "ROOT_PERMISSION_OFFLINE_ONLY"}
 
+            # 3. Verify no GET/PATCH/DELETE endpoints exist on permission routes
             resp_get = await client.get("/api/v2/provider-trust/permissions/grant")
             assert resp_get.status_code in (404, 405)
 
@@ -979,6 +1009,7 @@ async def test_public_root_attack_matrix():
             )
             assert resp_delete.status_code in (404, 405)
 
+            # 4. Verify no bootstrap endpoint exists
             resp_boot = await client.post("/api/v2/provider-trust/bootstrap")
             assert resp_boot.status_code == 404
 
@@ -1037,6 +1068,7 @@ async def test_legacy_role_confusion_matrix():
         for role_name in roles:
             prov_id, token, _ = await _create_provider(factory)
 
+            # Seed affiliation with legacy role
             async with factory() as db:
                 db.add(
                     ProviderHospitalAffiliation(
@@ -1051,6 +1083,7 @@ async def test_legacy_role_confusion_matrix():
             async with AsyncClient(
                 transport=transport, base_url="http://testserver"
             ) as client:
+                # 1. Grant attempt -> 403 AUTHORIZATION_DENIED
                 resp_g = await client.post(
                     "/api/v2/provider-trust/permissions/grant",
                     headers={
@@ -1066,6 +1099,7 @@ async def test_legacy_role_confusion_matrix():
                 assert resp_g.status_code == 403
                 assert resp_g.json() == {"error_code": "AUTHORIZATION_DENIED"}
 
+                # 2. Revoke attempt -> 403 AUTHORIZATION_DENIED
                 resp_r = await client.post(
                     f"/api/v2/provider-trust/permissions/{sub_grant_id}/revoke",
                     headers={
@@ -1098,6 +1132,7 @@ async def test_authentication_confusion_matrix():
         mgr_id, mgr_token, _ = await _create_provider(factory)
         target_id, _, _ = await _create_provider(factory)
 
+        # Give mgr active root
         async with factory() as db:
             db.add(
                 ProviderTrustPermissionGrant(
@@ -1120,6 +1155,7 @@ async def test_authentication_confusion_matrix():
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
+            # 1. Missing session (no Authorization header, no cookie)
             r1 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={"Idempotency-Key": _key("auth-none")},
@@ -1134,6 +1170,7 @@ async def test_authentication_confusion_matrix():
                 "PROVIDER_SESSION_REQUIRED",
             }
 
+            # 2. Basic auth
             r2 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -1151,6 +1188,7 @@ async def test_authentication_confusion_matrix():
                 "PROVIDER_SESSION_REQUIRED",
             }
 
+            # 3. Invalid opaque session token
             r3 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -1169,6 +1207,7 @@ async def test_authentication_confusion_matrix():
                 "PROVIDER_SESSION_REQUIRED",
             }
 
+            # 4. Expired session in Redis
             exp_id, exp_token, _ = await _create_provider(factory)
             redis = get_async_redis_client()
             import json
@@ -1196,6 +1235,7 @@ async def test_authentication_confusion_matrix():
                 "PROVIDER_SESSION_REQUIRED",
             }
 
+            # 5. User-Agent mismatch
             r5 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -1214,6 +1254,7 @@ async def test_authentication_confusion_matrix():
                 "PROVIDER_SESSION_REQUIRED",
             }
 
+            # 6. Malformed JSON session in Redis
             malformed_token = "malformed-session-token-999"
             await redis.set(f"provider_session:{malformed_token}", "not-valid-json{{")
             r6 = await client.post(
@@ -1234,6 +1275,7 @@ async def test_authentication_confusion_matrix():
                 "PROVIDER_SESSION_REQUIRED",
             }
 
+            # 7. Stale MFA -> 428 Precondition Required
             stale_mgr_id, stale_token, _ = await _create_provider(
                 factory, session_mfa_time=now - timedelta(minutes=16)
             )
@@ -1270,6 +1312,7 @@ async def test_authentication_confusion_matrix():
             assert r7.status_code == 428
             assert r7.json() == {"error_code": "MFA_STEP_UP_REQUIRED"}
 
+            # 8. IP rotation -> permitted (warning-only in logs)
             r8 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -1285,6 +1328,7 @@ async def test_authentication_confusion_matrix():
             )
             assert r8.status_code == 200
 
+            # 9. Missing MFA timestamp in Redis session -> 428 MFA_SESSION_ASSURANCE_REQUIRED
             no_mfa_token = await issue_provider_session_token(
                 provider_id=mgr_id,
                 user_agent=_USER_AGENT,
@@ -1309,6 +1353,7 @@ async def test_authentication_confusion_matrix():
                 "MFA_STEP_UP_REQUIRED",
             }
 
+            # 10. Fresh MFA but no root grant -> 403 AUTHORIZATION_DENIED
             noroot_id, noroot_token, _ = await _create_provider(factory)
             r10 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
@@ -1365,6 +1410,7 @@ async def test_target_disclosure_matrix():
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
+            # 1. Nonexistent target provider UUID
             r1 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={
@@ -1380,6 +1426,7 @@ async def test_target_disclosure_matrix():
             assert r1.status_code == 404
             assert r1.json() == {"error_code": "TARGET_PROVIDER_UNAVAILABLE"}
 
+            # 2. Inactive account (status='inactive', is_active=False)
             inact_prov_id, _, _ = await _create_provider(
                 factory, is_active=False, status="inactive"
             )
@@ -1398,6 +1445,7 @@ async def test_target_disclosure_matrix():
             assert r2.status_code == 404
             assert r2.json() == {"error_code": "TARGET_PROVIDER_UNAVAILABLE"}
 
+            # 3. Inactive credential (credential_active=False)
             inact_cred_id, _, _ = await _create_provider(
                 factory, credential_active=False
             )
@@ -1464,6 +1512,7 @@ async def test_request_shape_adversarial_matrix():
                 "User-Agent": _USER_AGENT,
             }
 
+            # 1. Unknown permission -> 422
             r1 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-1")},
@@ -1474,6 +1523,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r1.status_code == 422
 
+            # 2. Malformed target UUID -> 422
             r2 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-2")},
@@ -1484,6 +1534,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r2.status_code == 422
 
+            # 3. Extra grant body field -> 422
             r3 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-3")},
@@ -1495,6 +1546,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r3.status_code == 422
 
+            # 4. Missing Idempotency-Key header -> 422
             r4 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers=headers,
@@ -1505,6 +1557,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r4.status_code == 422
 
+            # 5. Naive validity timestamp (no tz) -> 400 INVALID_DATETIME_TIMEZONE
             r5 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-5")},
@@ -1517,6 +1570,7 @@ async def test_request_shape_adversarial_matrix():
             assert r5.status_code == 400
             assert _extract_error(r5) == "INVALID_DATETIME_TIMEZONE"
 
+            # 6. GLOBAL permission with facility -> 400 GLOBAL_PERMISSION_FACILITY_PROHIBITED
             r6 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-6")},
@@ -1529,6 +1583,7 @@ async def test_request_shape_adversarial_matrix():
             assert r6.status_code == 400
             assert _extract_error(r6) == "GLOBAL_PERMISSION_FACILITY_PROHIBITED"
 
+            # 7. FACILITY permission without facility -> 400 FACILITY_PERMISSION_FACILITY_REQUIRED
             r7 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-7")},
@@ -1543,6 +1598,7 @@ async def test_request_shape_adversarial_matrix():
                 "INVALID_REQUEST",
             }
 
+            # 8. Invalid facility UUID -> 422
             r8 = await client.post(
                 "/api/v2/provider-trust/permissions/grant",
                 headers={**headers, "Idempotency-Key": _key("sh-8")},
@@ -1554,6 +1610,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r8.status_code == 422
 
+            # 9. Unknown revoke reason -> 422
             r9 = await client.post(
                 f"/api/v2/provider-trust/permissions/{uuid.uuid4()}/revoke",
                 headers={**headers, "Idempotency-Key": _key("sh-9")},
@@ -1561,6 +1618,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r9.status_code == 422
 
+            # 10. EXPIRED_SUPERSEDED submitted by client -> 422
             r10 = await client.post(
                 f"/api/v2/provider-trust/permissions/{uuid.uuid4()}/revoke",
                 headers={**headers, "Idempotency-Key": _key("sh-10")},
@@ -1568,6 +1626,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r10.status_code == 422
 
+            # 11. Extra revoke body field -> 422
             r11 = await client.post(
                 f"/api/v2/provider-trust/permissions/{uuid.uuid4()}/revoke",
                 headers={**headers, "Idempotency-Key": _key("sh-11")},
@@ -1578,6 +1637,7 @@ async def test_request_shape_adversarial_matrix():
             )
             assert r11.status_code == 422
 
+            # 12. Malformed grant path UUID -> 422
             r12 = await client.post(
                 "/api/v2/provider-trust/permissions/not-a-uuid/revoke",
                 headers={**headers, "Idempotency-Key": _key("sh-12")},
@@ -1628,16 +1688,19 @@ async def test_root_cli_adversarial_matrix(monkeypatch):
             valid_until_str,
         ]
 
+        # 1. Missing NEXA_TRUST_ROOT_DATABASE_URL
         monkeypatch.setenv("NEXA_TRUST_ROOT_DATABASE_URL", "")
         code1 = await run_governance(base_grant_args)
         assert code1 != 0
         monkeypatch.setenv("NEXA_TRUST_ROOT_DATABASE_URL", db_url)
 
+        # 2. Database name mismatch
         args2 = list(base_grant_args)
         args2[2] = "wrong_database_name"
         code2 = await run_governance(args2)
         assert code2 != 0
 
+        # 3. Schema revision mismatch
         with patch(
             "scripts.governance_trust_root._derive_repository_heads",
             return_value=("nonexistent_revision",),
@@ -1645,46 +1708,55 @@ async def test_root_cli_adversarial_matrix(monkeypatch):
             code3 = await run_governance(base_grant_args)
             assert code3 != 0
 
+        # 4. Missing --apply
         args4 = [a for a in base_grant_args if a != "--apply"]
         code4 = await run_governance(args4)
         assert code4 != 0
 
+        # 5. Target provider confirmation mismatch
         args5 = list(base_grant_args)
         args5[16] = str(uuid.uuid4())
         code5 = await run_governance(args5)
         assert code5 != 0
 
+        # 6. Same operator and approver
         args6 = list(base_grant_args)
         args6[6] = "op-1"
         args6[8] = "op-1"
         code6 = await run_governance(args6)
         assert code6 != 0
 
+        # 7. Invalid governance reference (whitespace)
         args7 = list(base_grant_args)
         args7[10] = "   "
         code7 = await run_governance(args7)
         assert code7 != 0
 
+        # 8. valid_until naive (no tz)
         args8 = list(base_grant_args)
         args8[18] = "2026-12-31T23:59:59"
         code8 = await run_governance(args8)
         assert code8 != 0
 
+        # 9. valid_until expired
         args9 = list(base_grant_args)
         args9[18] = (now - timedelta(days=1)).isoformat()
         code9 = await run_governance(args9)
         assert code9 != 0
 
+        # 10. valid_until > 90 days
         args10 = list(base_grant_args)
         args10[18] = (now + timedelta(days=91)).isoformat()
         code10 = await run_governance(args10)
         assert code10 != 0
 
+        # 11. Wrong expected active root count
         args11 = list(base_grant_args)
         args11[12] = "5"
         code11 = await run_governance(args11)
         assert code11 != 0
 
+        # 12. Revoke grant confirmation mismatch
         revoke_mismatch_args = [
             "revoke-root",
             "--expected-database-name",
@@ -1710,12 +1782,15 @@ async def test_root_cli_adversarial_matrix(monkeypatch):
         code12 = await run_governance(revoke_mismatch_args)
         assert code12 != 0
 
+        # Verify zero roots were created across all failure cases
         async with factory() as db:
             count = await db.scalar(
                 text("SELECT count(*) FROM public.provider_trust_permission_grant")
             )
             assert count == 0
 
+        # Successful CLI cases:
+        # A. Governed grant
         valid_grant_code = await run_governance(base_grant_args)
         assert valid_grant_code == 0
         async with factory() as db:
@@ -1724,9 +1799,11 @@ async def test_root_cli_adversarial_matrix(monkeypatch):
             ).scalar_one()
             root_gid = grant_row.id
 
+        # B. Exact idempotent grant replay
         code_replay = await run_governance(base_grant_args)
         assert code_replay == 0
 
+        # 13. Final-root revoke without --acknowledge-zero-active-roots
         revoke_no_ack_args = [
             "revoke-root",
             "--expected-database-name",
@@ -1752,6 +1829,7 @@ async def test_root_cli_adversarial_matrix(monkeypatch):
         code13 = await run_governance(revoke_no_ack_args)
         assert code13 != 0
 
+        # C. Governed revoke with zero-root acknowledgment
         revoke_ack_args = [
             "revoke-root",
             "--expected-database-name",
@@ -1778,6 +1856,7 @@ async def test_root_cli_adversarial_matrix(monkeypatch):
         code_ack = await run_governance(revoke_ack_args)
         assert code_ack == 0
 
+        # Verify root was revoked
         async with factory() as db:
             rev_row = await db.get(ProviderTrustPermissionGrant, root_gid)
             assert rev_row.revoked_at is not None
@@ -1867,6 +1946,7 @@ async def test_ordinary_duplicate_concurrency():
         mgr_id, mgr_token, _ = await _create_provider(factory)
         target_id, _, _ = await _create_provider(factory)
 
+        # Manager gets active root
         async with factory() as db:
             db.add(
                 ProviderTrustPermissionGrant(
@@ -1915,6 +1995,7 @@ async def test_ordinary_duplicate_concurrency():
         error_resp = r1 if r1.status_code == 409 else r2
         assert error_resp.json() == {"error_code": "ACTIVE_GRANT_EXISTS"}
 
+        # Exactly 1 subordinate grant row in DB
         async with factory() as db:
             sub_count = await db.scalar(
                 text(
@@ -1943,6 +2024,7 @@ async def test_reciprocal_manager_concurrency():
         mgr_a_id, mgr_a_token, _ = await _create_provider(factory)
         mgr_b_id, mgr_b_token, _ = await _create_provider(factory)
 
+        # Both managers get active root grants
         async with factory() as db:
             for mgr in (mgr_a_id, mgr_b_id):
                 db.add(
@@ -2121,6 +2203,7 @@ async def test_root_revocation_linearization_a():
             )
             await db.commit()
 
+        # 4F revokes root first
         async with factory() as db:
             rev_res = await ProviderTrustRootGovernanceService(db).revoke_root(
                 operator_actor_id="op1",
@@ -2135,6 +2218,7 @@ async def test_root_revocation_linearization_a():
             )
             assert rev_res.command == "REVOKE_ROOT"
 
+        # Manager attempts subordinate grant via HTTP
         transport = ASGITransport(app=main_app)
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
@@ -2242,15 +2326,24 @@ async def test_root_revocation_linearization_b():
 
         mgr_task = asyncio.create_task(_run_manager_grant())
         await m_holding_lock.wait()
+
+        # Manager is holding row lock on Manager and root grant; start 4F revoke task
         rev_task = asyncio.create_task(_run_offline_revoke())
         await asyncio.sleep(0.1)
+
+        # Verify 4F is blocked waiting for Manager lock
         assert not rev_task.done()
+
+        # Allow Manager to commit
         allow_m_commit.set()
         m_res = await mgr_task
         assert m_res.command == "GRANT"
+
+        # 4F unblocks and commits revocation
         rev_res = await rev_task
         assert rev_res.command == "REVOKE_ROOT"
 
+        # Subsequent manager operation immediately returns AUTHORIZATION_DENIED
         transport = ASGITransport(app=main_app)
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
@@ -2312,6 +2405,7 @@ async def test_contact_assurance_revocation():
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
         ) as client:
+            # 1. Clear phone verification -> 403
             async with factory() as db:
                 await db.execute(
                     text(
@@ -2336,6 +2430,7 @@ async def test_contact_assurance_revocation():
             assert r1.status_code == 403
             assert r1.json() == {"error_code": "AUTHORIZATION_DENIED"}
 
+            # 2. Restore phone, clear email verification -> 403
             async with factory() as db:
                 await db.execute(
                     text(
@@ -2393,6 +2488,7 @@ async def test_account_deactivation():
             )
             await db.commit()
 
+        # Deactivate manager account
         async with factory() as db:
             await db.execute(
                 text(
@@ -2454,6 +2550,7 @@ async def test_credential_deactivation():
             )
             await db.commit()
 
+        # Deactivate manager credential
         async with factory() as db:
             await db.execute(
                 text(
@@ -2497,6 +2594,7 @@ async def test_root_expiry():
         mgr_id, mgr_token, _ = await _create_provider(factory)
         target_id, _, _ = await _create_provider(factory)
 
+        # Seed root grant that expired 1 second ago
         async with factory() as db:
             db.add(
                 ProviderTrustPermissionGrant(
@@ -2549,6 +2647,7 @@ async def test_future_root():
         mgr_id, mgr_token, _ = await _create_provider(factory)
         target_id, _, _ = await _create_provider(factory)
 
+        # Seed root grant with future valid_from
         async with factory() as db:
             db.add(
                 ProviderTrustPermissionGrant(
@@ -2605,6 +2704,7 @@ async def test_mfa_freshness_boundary():
         now = datetime.now(timezone.utc)
         transport = ASGITransport(app=main_app)
 
+        # Helper to setup a manager with specific session MFA time
         async def _test_session_mfa(mfa_time: datetime, expected_status: int):
             mid, mtoken, _ = await _create_provider(factory, session_mfa_time=mfa_time)
             tid, _, _ = await _create_provider(factory)
@@ -2643,8 +2743,13 @@ async def test_mfa_freshness_boundary():
                 )
                 assert resp.status_code == expected_status
 
+        # 1. Now -> 200 passes
         await _test_session_mfa(now, 200)
+
+        # 2. 14 minutes 59 seconds ago -> 200 passes
         await _test_session_mfa(now - timedelta(minutes=14, seconds=59), 200)
+
+        # 3. 15 minutes 01 seconds ago -> 428 MFA_STEP_UP_REQUIRED
         await _test_session_mfa(now - timedelta(minutes=15, seconds=1), 428)
 
     finally:
@@ -2668,6 +2773,7 @@ async def test_audit_chain_and_partitions():
         target_id, _, _ = await _create_provider(factory)
         fac_id = await _create_facility(factory)
 
+        # 1. Root grant via 4F
         async with factory() as db:
             grant_res = await ProviderTrustRootGovernanceService(db).grant_root(
                 operator_actor_id="secops-1",
@@ -2681,6 +2787,7 @@ async def test_audit_chain_and_partitions():
             )
             assert grant_res.grant_id is not None
 
+        # 2. Subordinate grants via HTTP: Global and Facility
         transport = ASGITransport(app=main_app)
         async with AsyncClient(
             transport=transport, base_url="http://testserver"
@@ -2714,6 +2821,7 @@ async def test_audit_chain_and_partitions():
             )
             assert resp_fac.status_code == 200
 
+        # Verify audit partitions in audit_outbox
         async with factory() as db:
             rows = (
                 await db.execute(
@@ -2723,6 +2831,7 @@ async def test_audit_chain_and_partitions():
                 )
             ).fetchall()
 
+            # Global root event
             root_events = [
                 r
                 for r in rows
@@ -2734,6 +2843,7 @@ async def test_audit_chain_and_partitions():
             assert root_events[0].payload["audit_domain"] == "platform"
             assert root_events[0].chain_partition == "platform:platform"
 
+            # Global subordinate event
             glob_sub = [
                 r
                 for r in rows
@@ -2745,6 +2855,7 @@ async def test_audit_chain_and_partitions():
             assert glob_sub[0].payload["audit_domain"] == "platform"
             assert glob_sub[0].chain_partition == "platform:platform"
 
+            # Facility subordinate event
             fac_sub = [
                 r
                 for r in rows
@@ -2755,6 +2866,7 @@ async def test_audit_chain_and_partitions():
             assert fac_sub[0].payload["audit_domain"] == "platform"
             assert fac_sub[0].chain_partition == f"hospital:{fac_id}:platform"
 
+            # Strict prohibition of raw root event vocabulary
             forbidden_count = await db.scalar(
                 text(
                     "SELECT count(*) FROM public.audit_outbox WHERE event_type IN ('PROVIDER_TRUST_ROOT_GRANTED', 'PROVIDER_TRUST_ROOT_REVOKED')"
@@ -2783,6 +2895,7 @@ async def test_atomicity_qualification():
         target_id, _, _ = await _create_provider(factory)
         valid_until = now + timedelta(days=30)
 
+        # 1. Root grant audit failure rolls back root grant
         async with factory() as db:
             with patch(
                 "app.services.provider_trust_root_governance.enqueue_audit_event",
@@ -2811,6 +2924,8 @@ async def test_atomicity_qualification():
             )
             assert cnt == 0
 
+        # 2. Ordinary grant audit failure rolls back grant
+        # Provision manager root grant
         async with factory() as db:
             await ProviderTrustRootGovernanceService(db).grant_root(
                 operator_actor_id="op1",
@@ -2876,6 +2991,7 @@ async def test_clinical_separation_matrix():
         prov_id, token, _ = await _create_provider(factory)
         fac_id = await _create_facility(factory)
 
+        # Grant all 4 permissions to prov_id
         async with factory() as db:
             for perm, scope, fac in (
                 (
@@ -2916,6 +3032,7 @@ async def test_clinical_separation_matrix():
                 )
             await db.commit()
 
+        # Verify zero clinical artifacts
         async with factory() as db:
             aff_count = await db.scalar(
                 text(
@@ -2933,6 +3050,7 @@ async def test_clinical_separation_matrix():
             )
             assert prof_count == 0
 
+            # Evaluate clinical access via ClinicalEligibilityService
             prov_identity = await db.get(ProviderIdentity, prov_id)
             assert prov_identity is not None
             clin_svc = ClinicalEligibilityService()
@@ -2980,9 +3098,11 @@ async def test_route_surface_freeze():
     post_routes = [r for r in routes if "POST" in getattr(r, "methods", set())]
     assert len(post_routes) == 26
 
+    # Verify zero GET, PATCH, DELETE, PUT
     non_post = [r for r in routes if "POST" not in getattr(r, "methods", set())]
     assert len(non_post) == 0
 
+    # Verify zero root, bootstrap, or search routes
     for r in routes:
         path = getattr(r, "path", "")
         assert "root" not in path.lower()
@@ -3014,10 +3134,12 @@ async def test_architecture_static_guards():
         for pat in bypass_patterns:
             assert pat not in content, f"Prohibited pattern {pat!r} found in {py}"
 
+    # Route import boundaries: Phase 4E must not import ProviderTrustRootGovernanceService
     import app.api.v2.provider_trust_permission_routes as p_routes
 
     assert not hasattr(p_routes, "ProviderTrustRootGovernanceService")
 
+    # Offline governance service and CLI must not import FastAPI, Starlette, Redis, or ClinicalEligibilityService
     import app.services.provider_trust_root_governance as p_gov
     import scripts.governance_trust_root as gov_cli
 
