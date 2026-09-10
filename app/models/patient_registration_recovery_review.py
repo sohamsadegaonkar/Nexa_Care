@@ -73,6 +73,11 @@ class PatientRegistrationRecoveryReviewCase(Base, UUIDPrimaryKeyMixin):
     case_reference: Mapped[str] = mapped_column(String(32), nullable=False, unique=True)
     provider: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_subject_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        PG_UUID(as_uuid=True),
+        ForeignKey("patient_auth_identities.identity_id", ondelete="RESTRICT"),
+        nullable=False,
+    )
     patient_id: Mapped[uuid.UUID | None] = mapped_column(
         PG_UUID(as_uuid=True),
         ForeignKey("patients.patient_uuid", ondelete="RESTRICT"),
@@ -142,6 +147,7 @@ class PatientRegistrationRecoveryReviewCase(Base, UUIDPrimaryKeyMixin):
             "creation_idempotency_key",
             name="uq_registration_recovery_review_creation_idempotency",
         ),
+        Index("ix_registration_recovery_review_identity", "identity_id"),
         Index("ix_registration_recovery_review_status", "status"),
         Index("ix_registration_recovery_review_patient", "patient_id"),
         Index(
