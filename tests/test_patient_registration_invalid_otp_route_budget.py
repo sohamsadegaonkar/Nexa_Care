@@ -14,7 +14,10 @@ from app.services.patient_registration_attempt_service import (
     RegistrationAttemptClaim,
     RegistrationAttemptError,
 )
-from app.services.patient_registration_service import PatientRegistrationError
+from app.services.patient_registration_service import (
+    REGISTRATION_RECOVERY_REQUIRED,
+    PatientRegistrationError,
+)
 
 client = TestClient(app)
 PHONE = "+918000000001"
@@ -150,7 +153,9 @@ def test_registration_recovery_failure_releases_without_provider_or_budget_charg
             patch(
                 "app.api.v2.auth_routes.recover_patient_registration_for_attempt",
                 new=AsyncMock(
-                    side_effect=PatientRegistrationError("REGISTRATION_IDENTITY_UNAVAILABLE")
+                    side_effect=PatientRegistrationError(
+                        REGISTRATION_RECOVERY_REQUIRED
+                    )
                 ),
             ),
             patch("app.api.v2.auth_routes.get_supabase_client", return_value=provider),
@@ -167,9 +172,9 @@ def test_registration_recovery_failure_releases_without_provider_or_budget_charg
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 
-    assert response.status_code == 403
+    assert response.status_code == 409
     assert response.json()["detail"] == {
-        "error_code": "REGISTRATION_IDENTITY_UNAVAILABLE"
+        "error_code": REGISTRATION_RECOVERY_REQUIRED
     }
     provider.auth.verify_otp.assert_not_called()
     record_invalid.assert_not_awaited()
