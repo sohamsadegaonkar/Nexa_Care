@@ -48,8 +48,16 @@ A patient may perform more than one successful OTP recovery attempt while the un
 
 Backend CI #506 on Step 2 implementation/test head `64a1d17a9a48a9a16123581017b39e1c10757c91` stopped in Partition A before tests because Ruff reported one `F401`: `datetime.timedelta` is imported but unused in `app/core/registration_recovery_review_gate.py`. This is isolated to the Slice 9A reviewer gate and is not a parent-branch or unrelated baseline failure.
 
-**Decision:** remove only the unused `timedelta` import, then require a fresh exact-head lint/pure-unit qualification before starting Step 3. Do not use skipped Partition A tests from CI #506 as evidence. PostgreSQL/Redis jobs from that run may provide diagnostic information but do not override the failed Step 2 gate.
+**Resolution:** the unused import was removed at `9a6badd944b373b7740d3cfe1e3e9e0bc6994c3a`. Fresh Backend CI #509 confirmed Ruff passes and Partition A proceeds to tests.
+
+## Finding 008 — new migration makes deferred head-contract work a qualification prerequisite
+
+Backend CI #509 real PostgreSQL+Redis Partition C failed two existing provider-trust CLI qualification tests with `SCHEMA_REVISION_MISMATCH`. The CI shared-database preparation still migrates to `20260909_device_trust_lifecycle`, while this Slice legitimately adds `20260910_registration_recovery_review`. Consequently any runtime/CLI guard that requires the repository's canonical Alembic head sees the shared CI database as stale.
+
+This is not a Redis authority regression in Step 2. It is a branch-wide migration contract mismatch introduced by adding the Slice 9A migration while deferring repository head constants until the original Step 9.
+
+**Decision / sequence correction:** advance only the migration-head-contract portion of Step 9 now as a prerequisite qualification repair. Update every authoritative executable/test contract that declares the canonical migration head from `20260909_device_trust_lifecycle` to `20260910_registration_recovery_review`, while leaving route-registry changes deferred until routes are actually added. Review that exact diff and rerun Backend CI before Step 3. No application authority semantics are to change as part of this fix.
 
 ## Review rule before Step 3
 
-Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 blocks Step 3 until the targeted lint fix is committed and a fresh exact-head lint/pure-unit run succeeds without Step 2 regression.
+Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 is fixed but still requires successful Partition A completion. Finding 008 additionally blocks Step 3 until the canonical migration-head contracts are updated, reviewed, and the fresh Backend qualification no longer reports schema-revision mismatch.
