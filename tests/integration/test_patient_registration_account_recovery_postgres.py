@@ -20,7 +20,6 @@ from app.services.patient_registration_recovery_authority import (
     RegistrationRecoveryCapability,
 )
 from app.services.patient_registration_recovery_service import (
-    REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
     REGISTRATION_RECOVERY_STATE_CHANGED,
     REPAIR_REBIND_MERGED_IDENTITY,
     REPAIR_RESTORE_RECORD,
@@ -29,10 +28,7 @@ from app.services.patient_registration_recovery_service import (
     inspect_patient_registration_recovery,
     repair_patient_registration_account,
 )
-from app.services.patient_registration_service import (
-    finalize_patient_registration,
-    registration_audit_idempotency_key,
-)
+from app.services.patient_registration_service import finalize_patient_registration
 
 
 pytestmark = pytest.mark.postgres
@@ -413,7 +409,6 @@ async def test_graph_change_after_capability_issuance_fails_closed_without_repai
             )
             assert inspection.repair_kind == REPAIR_RESTORE_RECORD
 
-        # A concurrent reconciler changes the graph after capability issuance.
         async with factory() as db:
             db.add(PatientRecord(patient_id=patient_id))
             await db.commit()
