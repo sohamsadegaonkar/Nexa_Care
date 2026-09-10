@@ -157,14 +157,14 @@ export function EmergencyAccessScreen() {
           >
             <AlertTriangle
               size={36}
-              color="$nexaDanger"
+              color="$red10"
             />
           </YStack>
           <YStack gap="$0.5">
             <Text
               fontSize={26}
               fontWeight="900"
-              color="$nexaDanger"
+              color="$red10"
               letterSpacing={-0.6}
             >
               Emergency access
@@ -181,17 +181,18 @@ export function EmergencyAccessScreen() {
         <Card
           bg="$nexaDangerSoft"
           borderWidth={1}
-          borderColor="$nexaDanger"
+          borderColor="$red10"
           borderRadius={14}
           p="$4.5"
           gap="$2"
         >
-          <Text color="$nexaDanger" fontWeight="800" fontSize={15}>
+          <Text color="$red10" fontWeight="800" fontSize={15}>
             Strict Audit & Urgent Care Boundary
           </Text>
-          <Paragraph color="$nexaDanger" fontSize={13} lineHeight={20}>
+          <Paragraph color="$red10" fontSize={13} lineHeight={20}>
             Limited, 15-minute access. This access is permanently recorded in the audit ledger, rate
-            limited to 3 per hour, and recorded in the patient's audit history for clinical review.
+            limited to 3 per hour, and may trigger patient and compliance notifications. Unauthorized
+            or non-emergency use is a compliance violation and is subject to clinical review.
           </Paragraph>
         </Card>
 
@@ -226,7 +227,7 @@ export function EmergencyAccessScreen() {
 
         <YStack gap="$2">
           <Text color="$nexaText" fontSize={14} fontWeight="700">
-            Approved Emergency Reason Code
+            Emergency Reason Code
           </Text>
           <Select
             value={reasonCode}
