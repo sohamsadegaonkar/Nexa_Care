@@ -74,7 +74,7 @@ python scripts/run_pilot_migrations.py
 ```
 
 The current exact repository migration head is
-`20260909_device_trust_lifecycle`. The migration task upgrades and verifies that
+`20260910_registration_recovery_review`. The migration task upgrades and verifies that
 exact single repository head. API containers never run migrations. In a
 production-like runtime, API startup then independently refuses to start unless:
 
