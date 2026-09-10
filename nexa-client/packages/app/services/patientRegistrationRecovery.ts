@@ -58,7 +58,7 @@ function mapRecoveryError(error: unknown): RegistrationRecoveryClientError {
     const code = error.code
     if (code === 'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED') {
       return new RegistrationRecoveryClientError(
-        error.message || 'This account needs manual review before it can be repaired.',
+        'This account needs manual review before it can be repaired.',
         'manual_review',
         code,
         false
@@ -144,7 +144,8 @@ export async function requestPatientRegistrationRecoveryOtp(
   try {
     const { data } = await apiClient.post<RegistrationRecoveryOtpSendResponse>(
       '/api/v2/auth/registration-recovery/otp/send',
-      { phone }
+      { phone },
+      { noAuth: true }
     )
     return data
   } catch (error) {
@@ -164,7 +165,8 @@ export async function verifyPatientRegistrationRecoveryOtp(params: {
         phone: params.phone,
         otp: params.otp,
         registration_recovery_attempt_token: params.registrationRecoveryAttemptToken,
-      }
+      },
+      { noAuth: true }
     )
     if (data.operation !== 'repair_patient_registration_account') {
       throw new RegistrationRecoveryClientError(
@@ -186,7 +188,8 @@ export async function completePatientRegistrationRecovery(
   try {
     const { data } = await apiClient.post<RegistrationRecoveryCompleteResponse>(
       '/api/v2/auth/registration-recovery/complete',
-      { registration_recovery_token: registrationRecoveryToken }
+      { registration_recovery_token: registrationRecoveryToken },
+      { noAuth: true }
     )
     return data
   } catch (error) {
