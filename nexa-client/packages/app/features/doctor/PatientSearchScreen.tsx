@@ -2,7 +2,7 @@
 
 import {
   ActionButton,
-  FormField,
+  FormField as SearchInputField,
   InlineNotice,
   LoadingState,
   Paragraph,
@@ -61,9 +61,7 @@ export function PatientSearchScreen() {
         displayIdentifier: mode === 'manual' ? input.toUpperCase() : 'NFC card',
         source: mode === 'manual' ? 'public_id' : 'nfc',
       })
-      router.push(
-        `/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`
-      )
+      router.push(`/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`)
     } catch (caught) {
       setError(
         caught instanceof ApiError
@@ -140,7 +138,7 @@ export function PatientSearchScreen() {
               color={mode === 'nfc' ? '$nexaOnAccent' : '$nexaText'}
               fontWeight="700"
             >
-              NFC Bedside Scan
+              NFC Scan
             </Text>
           </XStack>
         </ActionButton>
@@ -157,7 +155,7 @@ export function PatientSearchScreen() {
             <Paragraph color="$nexaSecondary" fontSize={14}>
               Enter the patient's public identifier shown on their Nexa Care app or printed health card.
             </Paragraph>
-            <FormField
+            <SearchInputField
               id="patient-search-id"
               label="Patient Public ID"
               placeholder="NC-..."
@@ -196,7 +194,7 @@ export function PatientSearchScreen() {
                 Or manually enter the hardware UID from the card below:
               </Paragraph>
             </YStack>
-            <FormField
+            <SearchInputField
               id="patient-search-nfc"
               label="NFC Card UID"
               placeholder="Enter NFC card UID..."
@@ -255,4 +253,3 @@ export function PatientSearchScreen() {
     </ScreenContainer>
   )
 }
-
