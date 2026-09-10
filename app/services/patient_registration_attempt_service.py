@@ -25,6 +25,9 @@ from app.core.redis import get_async_redis_client
 # This matches the existing patient OTP limiter window and device-enrollment
 # capability lifetime. The registration capability is never renewable.
 REGISTRATION_ATTEMPT_TTL_SECONDS = 5 * 60
+# The counter is charged only after the OTP provider has established an invalid
+# OTP result. Claim/release cycles caused by DB or provider availability failures
+# do not consume this per-attempt security budget.
 REGISTRATION_ATTEMPT_MAX_VERIFICATIONS = 5
 _CLAIM_TTL_SECONDS = 60
 _PREFIX = "nexa:patient_registration_attempt:"
@@ -76,6 +79,7 @@ def _decode(raw: Any) -> dict[str, Any] | None:
 
 
 def _valid_state(state: dict[str, Any], phone: str) -> bool:
+    verification_count = state.get("verification_count", 0)
     return (
         state.get("version") == 1
         and state.get("scope") == _SCOPE
@@ -84,7 +88,8 @@ def _valid_state(state: dict[str, Any], phone: str) -> bool:
             str(state.get("phone_digest", "")), _phone_digest(phone)
         )
         and isinstance(state.get("attempt_id"), str)
-        and isinstance(state.get("verification_count", 0), int)
+        and isinstance(verification_count, int)
+        and verification_count >= 0
     )
 
 
@@ -121,13 +126,15 @@ async def issue_registration_attempt(phone: str) -> str:
 async def claim_registration_attempt(
     token: str, phone: str
 ) -> RegistrationAttemptClaim:
-    """Atomically claim one bounded verification attempt or return finalization.
+    """Atomically serialize one verifier or return bounded finalization.
 
-    Every transition from pending to verifying consumes one verification from
-    the server-side budget. Releasing a failed claim never resets that budget,
-    which prevents repeated OTP guessing with one registration capability.
-    Finalized same-attempt recovery remains replayable without consuming the
-    verification budget.
+    A claim is concurrency authority only: it does not consume the OTP-guess
+    budget. Only ``record_registration_attempt_invalid_otp`` charges that budget
+    after the provider has established an invalid OTP result. This prevents DB
+    recovery errors or provider outages from exhausting a legitimate user's
+    short-lived registration attempt while still allowing only one verifier at
+    a time. Finalized same-attempt recovery remains replayable without consuming
+    the budget.
 
     The Lua path is the production path. The guarded fallback exists only for
     narrow in-process fakes that do not implement ``eval``.
@@ -149,6 +156,9 @@ async def claim_registration_attempt(
     if state.state == 'pending' or (state.state == 'verifying' and
        tonumber(state.claim_until or 0) <= now) then
         local verification_count = tonumber(state.verification_count or 0)
+        if not verification_count or verification_count < 0 then
+            return {'invalid'}
+        end
         if verification_count >= tonumber(ARGV[6]) then
             state.state = 'exhausted'
             state.claim_id = nil
@@ -161,7 +171,6 @@ async def claim_registration_attempt(
         end
         local ttl = redis.call('TTL', KEYS[1])
         if ttl <= 0 then return {'invalid'} end
-        state.verification_count = verification_count + 1
         state.state = 'verifying'
         state.claim_id = ARGV[4]
         state.claim_until = now + tonumber(ARGV[5])
@@ -223,7 +232,6 @@ async def claim_registration_attempt(
                         state="verifying",
                         claim_id=claim_id,
                         claim_until=int(time.time()) + _CLAIM_TTL_SECONDS,
-                        verification_count=verification_count + 1,
                     )
                     await _maybe_await(
                         redis.set(
@@ -255,13 +263,119 @@ async def claim_registration_attempt(
     raise RegistrationAttemptError("REGISTRATION_ATTEMPT_INVALID")
 
 
+async def record_registration_attempt_invalid_otp(
+    token: str, phone: str, claim: RegistrationAttemptClaim
+) -> None:
+    """Charge one confirmed invalid OTP and atomically release/exhaust its claim.
+
+    The exact active claim, attempt id, phone digest, scope, and provider must all
+    match. On the fifth invalid OTP the state becomes terminal ``exhausted``;
+    the response to that fifth provider rejection can remain the normal invalid
+    OTP response, while any subsequent claim is rejected as exhausted.
+
+    If this transition cannot be durably recorded, the caller must fail closed
+    and must not separately release the claim as a free retry.
+    """
+    if not token or len(token) > 512 or claim.finalized or not claim.claim_id:
+        raise RegistrationAttemptError("REGISTRATION_ATTEMPT_INVALID")
+
+    script = """
+    local raw = redis.call('GET', KEYS[1])
+    if not raw then return {'invalid'} end
+    local state = cjson.decode(raw)
+    if state.version ~= 1 or state.scope ~= ARGV[1] or state.provider ~= ARGV[2]
+       or state.phone_digest ~= ARGV[3] or state.attempt_id ~= ARGV[5]
+       or state.state ~= 'verifying' or state.claim_id ~= ARGV[4] then
+        return {'invalid'}
+    end
+    local verification_count = tonumber(state.verification_count or 0)
+    if not verification_count or verification_count < 0 then
+        return {'invalid'}
+    end
+    local ttl = redis.call('TTL', KEYS[1])
+    if ttl <= 0 then return {'invalid'} end
+    verification_count = verification_count + 1
+    state.verification_count = verification_count
+    state.claim_id = nil
+    state.claim_until = nil
+    if verification_count >= tonumber(ARGV[6]) then
+        state.state = 'exhausted'
+    else
+        state.state = 'pending'
+    end
+    redis.call('SET', KEYS[1], cjson.encode(state), 'XX', 'EX', ttl)
+    return {'recorded'}
+    """
+
+    try:
+        redis = get_async_redis_client()
+        key = _token_key(token)
+        phone_digest = _phone_digest(phone)
+        if hasattr(redis, "eval"):
+            result = await _maybe_await(
+                redis.eval(
+                    script,
+                    1,
+                    key,
+                    _SCOPE,
+                    _PROVIDER,
+                    phone_digest,
+                    claim.claim_id,
+                    claim.attempt_id,
+                    REGISTRATION_ATTEMPT_MAX_VERIFICATIONS,
+                )
+            )
+            result = [
+                item.decode() if isinstance(item, bytes) else item for item in result
+            ]
+        else:
+            raw = await _maybe_await(redis.get(key))
+            state = _decode(raw)
+            if (
+                state is None
+                or not _valid_state(state, phone)
+                or state.get("attempt_id") != claim.attempt_id
+                or state.get("state") != "verifying"
+                or state.get("claim_id") != claim.claim_id
+            ):
+                result = ["invalid"]
+            else:
+                ttl = int(await _maybe_await(redis.ttl(key)))
+                if ttl <= 0:
+                    result = ["invalid"]
+                else:
+                    verification_count = int(state.get("verification_count", 0)) + 1
+                    state["verification_count"] = verification_count
+                    state.pop("claim_id", None)
+                    state.pop("claim_until", None)
+                    state["state"] = (
+                        "exhausted"
+                        if verification_count >= REGISTRATION_ATTEMPT_MAX_VERIFICATIONS
+                        else "pending"
+                    )
+                    written = await _maybe_await(
+                        redis.set(key, json.dumps(state, sort_keys=True), xx=True, ex=ttl)
+                    )
+                    result = ["recorded"] if written else ["unavailable"]
+    except RegistrationAttemptError:
+        raise
+    except Exception as exc:
+        raise RegistrationAttemptError("REGISTRATION_ATTEMPT_UNAVAILABLE") from exc
+
+    if not result or result[0] == "invalid":
+        raise RegistrationAttemptError("REGISTRATION_ATTEMPT_INVALID")
+    if result[0] != "recorded":
+        raise RegistrationAttemptError("REGISTRATION_ATTEMPT_UNAVAILABLE")
+
+
 async def release_registration_attempt_claim(
     token: str, phone: str, claim: RegistrationAttemptClaim
 ) -> None:
-    """Return only this worker's failed pre-commit claim to ``pending``.
+    """Return only this worker's non-OTP-failure claim to ``pending``.
 
-    The verification counter is intentionally retained. A release is a
-    concurrency/state transition only; it must never replenish OTP guesses.
+    A release is a concurrency/state transition only and never changes the
+    confirmed-invalid-OTP counter. Invalid OTP outcomes must use
+    ``record_registration_attempt_invalid_otp`` instead.
     """
     if claim.finalized or not claim.claim_id:
         return
