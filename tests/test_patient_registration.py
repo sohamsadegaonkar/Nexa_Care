@@ -235,19 +235,18 @@ def test_verify_requires_a_valid_attempt_before_provider_otp() -> None:
     provider.assert_not_called()
 
 
-def test_invalid_provider_otp_releases_only_its_pending_attempt() -> None:
+def test_invalid_provider_otp_records_only_its_claim_and_does_not_generic_release() -> None:
     db = AsyncMock()
     provider_error = RuntimeError("provider diagnostics must not leak")
     provider_error.status = 401
+    claim = RegistrationAttemptClaim("attempt-a", "claim-a")
     app.dependency_overrides[get_db_session] = lambda: db
     try:
         with (
             _allow_limits(),
             patch(
                 "app.api.v2.auth_routes.claim_registration_attempt",
-                new=AsyncMock(
-                    return_value=RegistrationAttemptClaim("attempt-a", "claim-a")
-                ),
+                new=AsyncMock(return_value=claim),
             ),
             patch(
                 "app.api.v2.auth_routes.recover_patient_registration_for_attempt",
@@ -261,6 +260,10 @@ def test_invalid_provider_otp_releases_only_its_pending_attempt() -> None:
                     )
                 ),
             ),
+            patch(
+                "app.api.v2.auth_routes.record_registration_attempt_invalid_otp",
+                new=AsyncMock(),
+            ) as record_invalid,
             patch(
                 "app.api.v2.auth_routes.release_registration_attempt_claim",
                 new=AsyncMock(),
@@ -279,7 +282,8 @@ def test_invalid_provider_otp_releases_only_its_pending_attempt() -> None:
     assert response.status_code == 401
     assert response.json()["detail"]["error_code"] == "REGISTRATION_OTP_INVALID"
     assert "diagnostics" not in response.text
-    release.assert_awaited_once()
+    record_invalid.assert_awaited_once_with("attempt-token", PHONE, claim)
+    release.assert_not_awaited()
 
 
 def test_existing_account_new_attempt_is_rejected_not_logged_in() -> None:
