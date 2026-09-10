@@ -937,3 +937,40 @@ Search hits require review; their existence is not automatically a defect. A gre
 Review this register every 90 days and whenever a security defect, invariant, enforcement point, dependency, migration, or validation requirement changes. Reinspect implementation and adversarial tests, update status only from current evidence, record infrastructure/device evidence separately, obtain the named security owner’s review, and update related regulatory or constitutional controls in the same patch. Never retire a finding merely because its original test was removed.
 
 [Repository agent contract](../../AGENTS.md) · [India regulatory baseline](INDIA_REGULATORY_BASELINE.md) · [Engineering constitution](NEXA_CARE_ENGINEERING_CONSTITUTION.md)
+
+
+## SEC-053 — Engineering GPT gateway repository boundary
+
+- Status: IMPLEMENTED locally; live GitHub, hosting and GPT qualification NOT_RUN.
+  Proposed register addition; security-owner review pending. Not a closed finding.
+- Owner: repository owner; deployment/security operator to be assigned before activation.
+- Last local verification: 2026-09-10. Scope: tools/orchestrator_gateway only.
+- Failure mode/assets: a model-facing repository API could expose credentials or
+  health data, rewrite its own controls, mutate stale commits, repeat an uncertain
+  write, or merge without valid provider enforcement.
+- Corrected invariant: one server-owned repository, authenticated bounded typed
+  operations, allowlisted text paths and orchestrator/ branches, immutable read
+  pagination, expected head/blob/base checks, durable write intent and metadata-only
+  results. Sensitive content heuristics supplement a secret-free/patient-free
+  engineering repository; they are not a complete DLP claim.
+- Prohibited regression: arbitrary GitHub/shell/SQL/URL proxies, patient/clinical
+  credentials in this runtime, self/CI/governance writes, automatic replay of an
+  uncertain mutation, unqualified merge enablement, bypassing native protection,
+  or claiming mocked evidence as live provider qualification.
+- Enforcement: gateway/policy.py, models.py, api.py, journal.py and service.py under
+  tools/orchestrator_gateway. Production enforcement is pending deployment.
+- Adversarial coverage: tests/test_gateway.py covers missing/bad authentication,
+  path/branch bypasses, nonregular files, whole-file scanning before pagination,
+  stale write/merge preconditions, check provenance, stale reviews/unresolved
+  threads, journal outages and uncertain replay, redirect rejection, upstream
+  response bounds, and exact 13-operation schema with body retry identifiers.
+- Remaining gate: live no-bypass branch-protection/ruleset semantics, GitHub App
+  installation permissions, host/TLS/secrets/journal operations, dependency and
+  container review, and real GPT import/authentication. Merge remains disabled.
+  PR metadata head checks are preflight-only and require a post-update read.
+- Clinical/regulatory scope: no clinical runtime, schema migration, patient data,
+  consent, identity, erasure, extraction or emergency-access behavior changes.
+  No existing rule is weakened; this adds a scoped engineering boundary record.
+- Cross-references: [decisions](../../tools/orchestrator_gateway/DECISIONS.md),
+  [deployment and limitations](../../tools/orchestrator_gateway/README.md),
+  [validation report](../../tools/orchestrator_gateway/VALIDATION.md).

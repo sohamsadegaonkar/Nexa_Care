@@ -1,0 +1,42 @@
+name: Orchestrator Gateway
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'tools/orchestrator_gateway/**'
+      - '.github/workflows/ci-orchestrator-gateway.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'tools/orchestrator_gateway/**'
+      - '.github/workflows/ci-orchestrator-gateway.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  gateway:
+    name: Gateway Unit and HTTP
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tools/orchestrator_gateway
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install gateway dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Unit and local HTTP tests
+        run: python -m unittest discover -s tests -v
+      - name: Compile and export schema
+        run: |
+          python -m compileall -q gateway tests export_schema.py
+          python export_schema.py --output /tmp/actions.openapi.draft.json
+      - name: Build isolated container
+        run: docker build -t nexa-orchestrator-gateway:test .
