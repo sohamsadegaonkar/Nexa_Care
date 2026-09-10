@@ -89,7 +89,7 @@ async def test_real_redis_lua_charges_only_confirmed_invalid_otps() -> None:
         keys = await redis.keys(f"{prefix}*")
         if keys:
             await redis.delete(*keys)
-        await redis.aclose()
+        await redis.close()
 
 
 async def test_real_redis_lua_rejects_stale_claim_without_charging_active_claim() -> None:
@@ -136,4 +136,4 @@ async def test_real_redis_lua_rejects_stale_claim_without_charging_active_claim(
         keys = await redis.keys(f"{prefix}*")
         if keys:
             await redis.delete(*keys)
-        await redis.aclose()
+        await redis.close()
