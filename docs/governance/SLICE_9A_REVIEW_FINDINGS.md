@@ -67,12 +67,16 @@ Backend CI #515 on head `a1e17ba3bfbc9390f9bba3ccffb3cac90c013966` passed Ruff b
 
 These are contract-maintenance failures caused by adding the Slice 9A review migration and reviewer rejection audit event. They are not justification to remove the audit event, weaken reviewer fail-closed behavior, or rewrite historical revision IDs.
 
-**Decision:**
-- add `PATIENT_REGISTRATION_RECOVERY_REVIEW_ACCESS_REJECTED` to the canonical audit-event documentation/registry; also verify whether `PATIENT_REGISTRATION_RECOVERY_REVIEW_OPENED` belongs there even though the current literal scanner did not flag its constant indirection;
-- update the Engineering Constitution to name `20260910_registration_recovery_review` as the current exact head;
-- update the two provider-trust migration tests so they preserve their feature-specific ancestry/forward-only checks while comparing repository single-head state against the new Slice 9A head;
-- rerun exact-head Backend CI and require Partition A green before Step 3.
+**Resolution:** the canonical audit-event coverage now registers both `PATIENT_REGISTRATION_RECOVERY_REVIEW_OPENED` and `PATIENT_REGISTRATION_RECOVERY_REVIEW_ACCESS_REJECTED`; the Engineering Constitution names `20260910_registration_recovery_review`; and the two provider-trust migration tests retain their feature ancestry checks while comparing the repository head against the Slice 9A revision.
+
+## Finding 010 — Slice 4 end-to-end qualification fixture still migrates its private database to the old head
+
+Backend CI #521 on exact Step 2 head `0544c3128c1e3c7a6e0db5f6cb49a17e7c1da5c3` confirmed that the shared CI database itself now upgrades successfully to `20260910_registration_recovery_review`, but PostgreSQL+Redis Partition C reported exactly **2 failures / 128 passes / 4061 deselected**. Both failures are in `tests/integration/test_provider_trust_slice4_e2e_postgres_redis.py` and occur when the provider-trust root governance CLI dynamically verifies the repository head against that test module's separately created disposable database.
+
+The test module still declares `HEAD = "20260909_device_trust_lifecycle"` and therefore intentionally migrates its own private database one revision behind the current repository. The resulting `SCHEMA_REVISION_MISMATCH` is correct fail-closed behavior by the governance CLI, not a Slice 9A Redis or reviewer-authority regression.
+
+**Decision:** update only that fixture's current repository-head constant to `20260910_registration_recovery_review`. Preserve every Slice 4 provider-trust authority, CLI, concurrency and adversarial assertion unchanged. Then rerun exact-head Backend CI and require Partition A, PostgreSQL B, and PostgreSQL+Redis C all green before Step 3.
 
 ## Review rule before Step 3
 
-Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 is resolved. Findings 008–009 remain Step 3 blockers until all current executable/governance migration-head contracts and the new reviewer audit vocabulary agree with the Slice 9A branch and fresh Backend CI proves the correction.
+Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 is resolved. Findings 008–009 are resolved in the branch contracts. Finding 010 now blocks Step 3 until the private Slice 4 qualification database is migrated to the same repository head and fresh exact-head Backend CI is green across all partitions.
