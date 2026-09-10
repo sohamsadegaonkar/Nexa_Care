@@ -52,12 +52,27 @@ Backend CI #506 on Step 2 implementation/test head `64a1d17a9a48a9a16123581017b3
 
 ## Finding 008 — new migration makes deferred head-contract work a qualification prerequisite
 
-Backend CI #509 real PostgreSQL+Redis Partition C failed two existing provider-trust CLI qualification tests with `SCHEMA_REVISION_MISMATCH`. The CI shared-database preparation still migrates to `20260909_device_trust_lifecycle`, while this Slice legitimately adds `20260910_registration_recovery_review`. Consequently any runtime/CLI guard that requires the repository's canonical Alembic head sees the shared CI database as stale.
+Backend CI #509 real PostgreSQL+Redis Partition C failed two existing provider-trust CLI qualification tests with `SCHEMA_REVISION_MISMATCH`. The CI shared-database preparation still migrated to `20260909_device_trust_lifecycle`, while this Slice legitimately adds `20260910_registration_recovery_review`. Consequently any runtime/CLI guard that requires the repository's canonical Alembic head saw the shared CI database as stale.
 
-This is not a Redis authority regression in Step 2. It is a branch-wide migration contract mismatch introduced by adding the Slice 9A migration while deferring repository head constants until the original Step 9.
+**Partial resolution:** the CI shared DB target, production migration runner, migration-graph contract, pilot operations runbook, and current-authority documentation test were advanced to `20260910_registration_recovery_review`. Backend CI #515 then confirmed the shared CI database preparation itself succeeds against the new migration.
 
-**Decision / sequence correction:** advance only the migration-head-contract portion of Step 9 now as a prerequisite qualification repair. Update every authoritative executable/test contract that declares the canonical migration head from `20260909_device_trust_lifecycle` to `20260910_registration_recovery_review`, while leaving route-registry changes deferred until routes are actually added. Review that exact diff and rerun Backend CI before Step 3. No application authority semantics are to change as part of this fix.
+## Finding 009 — Step 2 contract qualification exposed one audit-registry gap and three stale current-head assertions
+
+Backend CI #515 on head `a1e17ba3bfbc9390f9bba3ccffb3cac90c013966` passed Ruff but Partition A reported exactly **4 failures / 3770 passes / 415 deselected**:
+
+1. `test_no_undocumented_audit_events` found `PATIENT_REGISTRATION_RECOVERY_REVIEW_ACCESS_REJECTED` in code but not in the canonical documented audit-event vocabulary.
+2. `test_governance_contract_names_current_migration_head` found the Engineering Constitution still names the old migration head.
+3. `test_trust_authorization_migration_is_single_head_and_forward_only` still treats `20260909_device_trust_lifecycle` as the repository head rather than as the provider/device-trust revision whose lineage must remain asserted.
+4. `test_provider_trust_migration_is_current_single_head` has the same stale repository-head assumption.
+
+These are contract-maintenance failures caused by adding the Slice 9A review migration and reviewer rejection audit event. They are not justification to remove the audit event, weaken reviewer fail-closed behavior, or rewrite historical revision IDs.
+
+**Decision:**
+- add `PATIENT_REGISTRATION_RECOVERY_REVIEW_ACCESS_REJECTED` to the canonical audit-event documentation/registry; also verify whether `PATIENT_REGISTRATION_RECOVERY_REVIEW_OPENED` belongs there even though the current literal scanner did not flag its constant indirection;
+- update the Engineering Constitution to name `20260910_registration_recovery_review` as the current exact head;
+- update the two provider-trust migration tests so they preserve their feature-specific ancestry/forward-only checks while comparing repository single-head state against the new Slice 9A head;
+- rerun exact-head Backend CI and require Partition A green before Step 3.
 
 ## Review rule before Step 3
 
-Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 is fixed but still requires successful Partition A completion. Finding 008 additionally blocks Step 3 until the canonical migration-head contracts are updated, reviewed, and the fresh Backend qualification no longer reports schema-revision mismatch.
+Findings 001–003 remain enforced in ORM/migration. Finding 004 is resolved. Findings 005–006 govern Step 2 semantics. Finding 007 is resolved. Findings 008–009 remain Step 3 blockers until all current executable/governance migration-head contracts and the new reviewer audit vocabulary agree with the Slice 9A branch and fresh Backend CI proves the correction.
