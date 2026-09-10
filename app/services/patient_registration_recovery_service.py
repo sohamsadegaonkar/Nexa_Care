@@ -342,6 +342,13 @@ async def audit_registration_recovery_required(
 ) -> None:
     """Durably record recovery detection after fresh identity proof."""
 
+    if inspection.disposition == "manual_review":
+        from app.services.patient_registration_recovery_review_service import (
+            create_registration_recovery_review_case,
+        )
+
+        await create_registration_recovery_review_case(db, inspection=inspection)
+
     await enqueue_audit_event(
         db,
         audit_context=current_audit_context(AuditDomain.AUTH),
