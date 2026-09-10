@@ -18,6 +18,12 @@ The Python model defines a closed `RegistrationRecoveryReviewReason` enum, but t
 
 **Decision:** add PostgreSQL CHECK constraints restricting case and disposition reason arrays to the closed server-owned vocabulary and requiring them to be non-empty. Application validation will remain in addition to the database constraint.
 
+## Finding 003 — claimed case is not bound to the reviewer session
+
+The initial case model records reviewer identity but not the authenticated reviewer session. A second concurrent/stolen session belonging to the same provider identity could otherwise attempt terminal mutation without proving continuity with the session that claimed the case.
+
+**Decision:** add a one-way `review_session_binding` SHA-256 value to `IN_REVIEW` and terminal cases. It is derived only from the current server-authenticated provider session, never supplied as trusted input by the client. Claim stores it; session recovery may rotate it only through an explicit high-risk operation by the same authorized reviewer; terminal disposition requires an exact constant-time match.
+
 ## Review rule
 
-Do not proceed to reviewer mutation routes until Findings 001 and 002 are fixed in both ORM model and migration and the resulting diff is reviewed.
+Do not proceed to reviewer mutation routes until Findings 001–003 are fixed in both ORM model and migration and the resulting diff is reviewed.
