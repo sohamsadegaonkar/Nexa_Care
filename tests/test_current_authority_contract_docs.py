@@ -65,7 +65,7 @@ def test_pilot_operations_migration_head_matches_runtime_migration_tool() -> Non
     assert match is not None
     expected_head = match.group(1)
 
-    assert expected_head == "20260909_device_trust_lifecycle"
+    assert expected_head == "20260910_registration_recovery_review"
     assert f"`{expected_head}`" in runbook
     assert "`20260906_verification_scheduler`" not in runbook
 
