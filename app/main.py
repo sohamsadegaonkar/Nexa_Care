@@ -55,6 +55,9 @@ from app.api.v2.provider_trust_routes import (
 from app.api.v2.registration_recovery_routes import (
     router as registration_recovery_v2_router,
 )
+from app.api.v2.registration_recovery_review_routes import (
+    router as registration_recovery_review_v2_router,
+)
 from app.api.v2.review_routes import router as review_v2_router
 from app.api.v2.role_routes import router as role_v2_router
 from app.core.client_ip import trusted_proxy_networks
@@ -416,6 +419,7 @@ app.add_middleware(GlobalLoggingMiddleware)
 app.include_router(api_router)
 app.include_router(auth_v2_router)
 app.include_router(registration_recovery_v2_router)
+app.include_router(registration_recovery_review_v2_router)
 app.include_router(consent_v2_router)
 app.include_router(consent_v3_router)
 app.include_router(document_v2_router)

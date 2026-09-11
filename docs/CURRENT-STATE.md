@@ -1,8 +1,8 @@
 # Nexa Care — Current Engineering State
 
-**Last reconciled:** 2026-09-10  
-**Reconciliation base:** `7d55cfa47991b8e577b09e30ddcd5a0074a839b3`  
-**Purpose:** repository-attested current state. Historical alpha and earlier Slice-7 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
+**Last reconciled:** 2026-09-11  
+**Reconciliation base:** `54351f9a55ba94665420961cfe766bdcc84a5398`  
+**Purpose:** repository-attested current state. Historical alpha and earlier Slice-7/8 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
 
 ## 1. Current authority boundaries
 
@@ -14,11 +14,12 @@ account authentication
 != provider clinical eligibility
 != patient session authority
 != patient device authority
+!= registration-recovery reviewer authority
 != patient consent
 != record-access capability
 ```
 
-Patient consent cannot repair failed provider trust, and a valid account login cannot create fresh device authority once device history exists.
+Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, and registration-recovery review cannot independently mint patient session, device, or consent authority.
 
 ## 2. Provider trust and external registry boundary
 
@@ -59,6 +60,14 @@ Current patient authority includes:
 
 Current consent signing uses explicit protocol `nexa-consent-v3`; newly created V2 requests cannot mint current access authority and the legacy V2 claim path is retired. Provider professional/facility/affiliation/capability trust is re-evaluated before protected access is issued.
 
+### Slice 9A — registration recovery manual review
+
+The patient registration-account recovery path now has a durable manual-review continuation for account graphs that automatic recovery intentionally refuses. Fresh patient OTP proof can open an opaque review case only after server-side graph classification. Review authority is independently derived from a live provider session, recent MFA, a current ACTIVE affiliation, and the server-owned `registration_recovery_reviewer` role.
+
+Reviewer claim and terminal resolution are versioned and session-bound. Terminal resolution revalidates the registration graph under the same PostgreSQL advisory-lock domain used by automatic recovery and rejects graph-fingerprint drift. The repair vocabulary remains closed to the already-bounded automatic repair kinds; erasure, revocation, ambiguity and security concerns cannot be silently resurrected. Audit-outbox insertion and any terminal mutation share the database transaction. Reviewer routes never issue patient access sessions, device authority, or consent authority; after a safe repair the patient returns through the normal patient-facing recovery path.
+
+Patient status polling exposes only the opaque case reference, public status, terminal flag, next action and timestamps. Provider subject, graph fingerprint, reviewer identity/session binding and internal authority metadata remain server-side.
+
 ## 4. Native mobile key custody
 
 Routine patient signing no longer depends on a JavaScript-readable raw P-256 private scalar.
@@ -75,7 +84,7 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 The current single Alembic head is:
 
-`20260909_device_trust_lifecycle`
+`20260910_registration_recovery_review`
 
 Pilot/staging/production startup must not silently migrate, stamp, or downgrade the database.
 
@@ -159,7 +168,7 @@ Therefore live rollback/runtime qualification remains **BLOCKED BY PILOT AWS/TAR
 
 ## 11. Backend closure state
 
-The internally executable repository work defined for the current backend closure through Slices **8A–8G** is complete once the reconciliation containing this file is merged. This statement is deliberately narrower than saying the backend is deployed or every external qualification is complete.
+The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** adds the repository-defined registration-recovery manual-review lifecycle needed before UI integration. Its implementation is exact-head CI-gated; repository qualification does not claim a live deployment or remove any external Slice-8/6I blocker.
 
 Current matrix:
 
@@ -172,8 +181,9 @@ Current matrix:
 | 8E | operational audit gate MERGED / INTERNALLY QUALIFIED | authorized DB wiring missing; retention approvals PENDING |
 | 8F | rollback/monitoring gate MERGED / INTERNALLY QUALIFIED | seven pilot inputs missing; live runtime drill NOT_RUN |
 | 8G | registry boundary ready / contract gate enforced | official HPR/HFR machine contract + sandbox missing |
+| 9A | registration-recovery review IMPLEMENTED / exact-head CI-gated | live deployment not claimed; UI integration follows repository merge |
 
-The remaining backend gates require real prerequisites that repository code cannot manufacture:
+The remaining live backend gates still require real prerequisites that repository code cannot manufacture:
 
 1. protected AWS OIDC plus ECS/ECR/KMS/S3/Redis/PostgreSQL/API/operations wiring to execute 8B, 8C and 8F live;
 2. an authorized operational PostgreSQL connection to execute 8E evidence capture;
@@ -185,8 +195,6 @@ Slice 6I supported-handset execution remains a separate physical-platform gate o
 
 ## 12. Next safe action
 
-There is no repository-defined Slice 9 in this reconciliation, and none is invented here.
+Slice 9A is now repository-defined. Its merge gate is fully green exact-head Backend and Frontend CI. After that gate is satisfied and the reviewed head is merged, the next internally executable product step is UI integration against the stable registration-recovery and review contracts.
 
-For now, backend repository/software closure is complete. The next action is whichever genuine prerequisite becomes available first: wire the protected pilot AWS environment, wire the authorized operational database, obtain retention approvals, obtain the authoritative HPR/HFR machine contract/sandbox, execute a partner FHIR exchange target, or perform the separate Slice 6I physical-device qualification.
-
-Until one of those prerequisites exists, claiming deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS would be inaccurate.
+The live/external blockers above remain unchanged. Moving to UI must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS.

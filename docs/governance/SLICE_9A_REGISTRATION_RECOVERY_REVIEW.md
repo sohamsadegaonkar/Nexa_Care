@@ -1,6 +1,6 @@
 # Slice 9A — Patient Registration Recovery Manual Review
 
-Status: **IN PROGRESS / NOT QUALIFIED / NOT MERGE-ELIGIBLE**
+Status: **IMPLEMENTED / MERGE GATED ON EXACT-HEAD QUALIFICATION**
 
 Base: `main` `54351f9a55ba94665420961cfe766bdcc84a5398`
 
@@ -39,7 +39,7 @@ Terminal states are immutable except through a separately designed security-admi
 Every case records only the minimum metadata necessary to investigate the registration graph:
 
 - case UUID and opaque patient-visible case reference;
-- external provider (`supabase`) and provider-subject hash, never phone or OTP;
+- stable auth-identity UUID plus external provider (`supabase`) and provider-subject hash, never phone or OTP;
 - candidate patient UUID when known;
 - graph fingerprint captured when the case was opened;
 - closed reason codes that caused manual review;
@@ -50,29 +50,48 @@ Every case records only the minimum metadata necessary to investigate the regist
 
 No OTP, access token, refresh token, device private key, raw medical data, national identifier, or full audit payload belongs in the case table.
 
+## Patient-safe and reviewer API surfaces
+
+Patient status:
+
+- `GET /api/v2/auth/registration-recovery/review/cases/{case_reference}`
+
+The response is intentionally limited to the opaque case reference, public case status, terminal flag, next action and timestamps. Provider subject, graph fingerprint, reason internals, reviewer identity and session binding are not exposed.
+
+Reviewer operations require the dedicated reviewer gate:
+
+- `GET /api/v2/auth/registration-recovery/review/reviewer/cases`
+- `GET /api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}`
+- `POST /api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}/claim`
+- `POST /api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}/recover-session`
+- `POST /api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}/resolve`
+
+A reviewer sees pending work plus cases assigned to that reviewer; claimed or terminal cases assigned to another reviewer are not exposed through the reviewer detail surface.
+
 ## Permitted terminal outcomes
 
 The initial closed vocabulary is intentionally conservative:
 
-- `RESTORE_MISSING_RECORD_ANCHOR` — permitted only when the patient and exactly one live matching auth identity remain valid and the erasure registry is clear.
-- `REBIND_MERGED_IDENTITY` — permitted only when a single unambiguous tombstone chain resolves to one live canonical patient and no active conflicting identity exists.
+- `RESTORE_MISSING_RECORD_ANCHOR` — only when the current locked graph still exactly satisfies the already-bounded automatic missing-record repair policy.
+- `REBIND_MERGED_IDENTITY` — only when the current locked graph still exactly satisfies the already-bounded automatic deterministic merge-rebind policy.
 - `NO_REPAIR` — investigation confirms the durable graph should remain unchanged.
 - `SECURITY_ESCALATION_REQUIRED` — suspected identity collision, tampering, privacy incident, erasure inconsistency, or other state outside safe repair rules.
 
 Forbidden in Slice 9A: clearing erasure state, undeleting unexplained deletion, un-revoking identity, assigning one external identity to two live patients, moving clinical records, generating patient private keys, granting provider access or consent, or bypassing merge/tombstone invariants.
 
-## Mandatory checks before any repair
+## Mandatory checks before terminal resolution
 
-1. Re-read and lock the relevant patient/auth-identity/tombstone graph.
-2. Recompute the graph fingerprint and compare it with the case binding.
-3. Verify the case is `IN_REVIEW`, version matches, and the caller is the assigned current reviewer with exact session binding.
-4. Verify erasure state is reachable and clear for every patient row that would become authoritative.
-5. Re-evaluate the requested outcome against the closed server-side policy.
-6. Stage mutation and `PATIENT_REGISTRATION_RECOVERY_REVIEW_RESOLVED` audit event in one database transaction.
-7. Commit once; audit or invariant failure rolls back repair.
-8. Never issue patient session, device, or consent authority from an operator-review route.
+1. Lock the durable case and verify optimistic version.
+2. Verify `IN_REVIEW`, assigned reviewer identity and exact reviewer-session binding.
+3. Resolve the stable auth-identity anchor and verify the provider-subject hash.
+4. Acquire the same PostgreSQL advisory-lock domain used by automatic registration recovery.
+5. Re-run the server-side registration graph classifier and require the exact stored graph fingerprint.
+6. Re-evaluate any repair request against the closed server-side automatic-repair vocabulary.
+7. Persist the one terminal disposition row, case transition and required audit-outbox event in the same database transaction.
+8. Roll back the complete transition if audit insertion or any invariant fails.
+9. Never issue patient session, device, or consent authority from an operator-review route.
 
-The patient returns through the normal patient-facing recovery/authentication path after an approved repair.
+After an approved repair, the patient returns through the normal patient-facing recovery/authentication path.
 
 ## Audit vocabulary
 
@@ -85,16 +104,37 @@ The patient returns through the normal patient-facing recovery/authentication pa
 
 Events must not contain phone, OTP, raw provider tokens, device private material, or clinical content.
 
-## Adversarial qualification gates
+## Qualification gates
 
-Before merge, tests must prove duplicate-case prevention, verified-origin case creation, reviewer isolation, stale-version rejection, terminal idempotency, graph-change rejection, erasure and revocation fail-closed behavior, conflicting-identity rejection, deterministic merge handling, transactional audit rollback, patient-status privacy, absence of operator-issued patient authority, and real PostgreSQL linearization of claim/resolution races.
+Merge requires exact-head qualification proving, at minimum:
+
+- duplicate durable case prevention;
+- verified-origin case creation and patient-safe case reference transport;
+- dedicated reviewer authorization with session, recent MFA, live affiliation and server-owned role;
+- reviewer claim isolation and stale-version rejection;
+- terminal idempotency with one disposition and one terminal audit event;
+- graph-fingerprint change rejection under the shared recovery lock domain;
+- erasure/revocation/ambiguity remaining non-repairable;
+- audit failure rolling terminal state back;
+- patient status responses containing no internal authority material;
+- no reviewer route issuing patient session/device/consent authority; and
+- real PostgreSQL concurrency linearizing claim and terminal resolution races.
 
 ## Current implementation state
 
-- parent patient-facing recovery workflow is merged and qualified on `main`;
-- durable case/disposition model and migration are re-established on this exact base;
-- reviewer authority version, closed reason vocabulary, and exact reviewer-session binding are persisted;
-- dedicated fail-closed reviewer authorization gate and focused security tests are re-established;
-- Step 2, verified manual-review classification to idempotent case creation, is next and must be reviewed before Step 3 begins.
+Implemented on PR #43:
 
-No merge or completion claim is valid until final exact-head gates are green.
+- durable case/disposition schema and migration `20260910_registration_recovery_review`;
+- verified patient manual-review classification to idempotent durable case creation;
+- stable auth-identity UUID anchoring and closed reason normalization;
+- dedicated fail-closed `registration_recovery_reviewer` gate;
+- patient-safe status API;
+- reviewer list/detail, claim, session recovery and terminal resolution APIs;
+- reviewer visibility isolation;
+- graph revalidation using the automatic-recovery advisory-lock domain;
+- closed bounded repair mapping, terminal no-repair and security escalation;
+- transactional terminal disposition/audit coupling;
+- audit vocabulary registration and migration-head reconciliation; and
+- disposable PostgreSQL claim-race, terminal replay and audit-rollback qualification coverage.
+
+Implementation alone is not a completion claim. Slice 9A is merge-eligible only when Backend and Frontend CI are green on the exact frozen PR head and that exact head is merged.

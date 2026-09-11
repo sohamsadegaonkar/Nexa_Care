@@ -1,70 +1,71 @@
 # Slice 9A — Rolling Review Findings
 
-Status: **ACTIVE REVIEW LOG**
+Status: **ACTIVE REVIEW LOG / CLOSURE GATED ON EXACT-HEAD CI**
 
 Base: `54351f9a55ba94665420961cfe766bdcc84a5398`
 
-This file is updated whenever implementation review discovers a material authority, schema, concurrency, privacy, migration, or qualification finding. Findings are recorded before proceeding to dependent work.
+This file records material authority, schema, concurrency, privacy, migration, and qualification findings discovered while implementing Slice 9A. Findings are resolved before dependent work proceeds; historical findings remain here as evidence.
 
 ## Finding 001 — reviewer authority version not persisted
 
 The initial case schema persisted reviewer identity/role but not the exact server-owned reviewer authority version.
 
-**Decision / status: RESOLVED.** `reviewer_authority_version` is required for claimed and terminal cases and is also recorded on terminal disposition rows.
+**Decision / status: RESOLVED.** `reviewer_authority_version` is required for claimed and terminal cases and is recorded on terminal disposition rows.
 
 ## Finding 002 — reason-code vocabulary not closed in PostgreSQL
 
 The Python model defined a closed reason enum while the initial database constraint only required a non-empty array.
 
-**Decision / status: RESOLVED.** PostgreSQL case/disposition constraints now require non-empty arrays whose values are subsets of the closed server-owned recovery-review reason vocabulary.
+**Decision / status: RESOLVED.** PostgreSQL case/disposition constraints require non-empty arrays whose values are subsets of the closed server-owned recovery-review reason vocabulary.
 
 ## Finding 003 — claimed case was not bound to the reviewer session
 
 Reviewer identity alone would allow another concurrent session for the same provider identity to attempt terminal mutation.
 
-**Decision / status: RESOLVED.** Claimed and terminal cases persist a one-way SHA-256 `review_session_binding`, derived only from the current authenticated provider session. Terminal mutation must match it; explicit reviewer-session recovery may rotate it only under dedicated high-risk semantics.
+**Decision / status: RESOLVED.** Claimed and terminal cases persist a one-way SHA-256 `review_session_binding`, derived from the current authenticated provider session. Terminal mutation must match it; explicit reviewer-session recovery may rotate it only under the dedicated high-risk reviewer authority gate.
 
 ## Finding 004 — Slice 9A depended on an unmerged patient-facing recovery workflow
 
-Step 2 requires the patient-facing flow to verify the external identity and classify the registration graph as manual-review-required.
+Durable manual review requires the patient-facing flow to verify the external identity and classify the registration graph as manual-review-required.
 
-**Decision / status: RESOLVED AS A DEPENDENCY.** PR #40 was independently reviewed, qualified, and exact-head merged. `main` now contains that workflow at merge commit `54351f9a55ba94665420961cfe766bdcc84a5398`. This Slice 9A branch was recreated directly from that verified `main`; the stale branch was not merged into the new lineage.
-
-The dependency order is now satisfied:
-
-`explicit recovery boundary -> verified patient recovery/classification -> durable manual-review cases -> reviewer repair authority`.
+**Decision / status: RESOLVED AS A DEPENDENCY.** PR #40 was independently reviewed, qualified, and merged. `main` contains that workflow at merge commit `54351f9a55ba94665420961cfe766bdcc84a5398`. PR #43 was recreated directly from that verified parent; the stale pre-parent Slice 9A branch is not merged into this lineage.
 
 ## Finding 005 — parent classifier reasons do not equal the durable review vocabulary
 
-The merged patient registration-recovery classifier emits fine-grained internal reason codes such as `LINKED_PATIENT_MISSING`, `MULTIPLE_SOURCE_IDENTITIES`, merge-cycle/depth/tombstone failures, canonical-patient unavailability, canonical erasure, and canonical identity conflict. The durable Slice 9A schema intentionally accepts a smaller closed review vocabulary.
+The patient registration-recovery classifier emits finer-grained internal reasons than the durable Slice 9A schema.
 
-Directly persisting the classifier string would either violate the database contract or tempt the review schema to grow around implementation-specific reason text.
+**Decision / status: RESOLVED.** Case creation owns a server-side normalization boundary. Erasure, revocation, identity conflict, unexplained deletion and merge ambiguity map into the closed durable vocabulary; unknown future internal manual-review reasons fail closed to `SECURITY_CONCERN`. Patient responses expose the durable case reference and stable public error code, not provider subject, graph fingerprint or classifier internals.
 
-**Decision / status: RESOLVED IN STEP 2.** The case-creation service owns the normalization boundary. Exact mappings are:
+## Finding 006 — provider-subject hash alone is not a sufficient graph anchor
 
-- `ERASURE_STATE_PRESENT`, `CANONICAL_ERASURE_STATE_PRESENT` -> `ERASURE_STATE_PRESENT`;
-- `IDENTITY_REVOKED` -> `IDENTITY_REVOKED`;
-- `MULTIPLE_SOURCE_IDENTITIES`, `CANONICAL_IDENTITY_CONFLICT` -> `MULTIPLE_IDENTITIES`;
-- `DELETED_PATIENT_WITHOUT_MERGE_TOMBSTONE` -> `PATIENT_DELETED_WITHOUT_MERGE`;
-- `MERGE_TOMBSTONE_CYCLE`, `MERGE_TOMBSTONE_CHAIN_TOO_DEEP`, `CANONICAL_PATIENT_UNAVAILABLE` -> `MERGE_AMBIGUOUS`;
-- `LINKED_PATIENT_MISSING` and any unknown future internal manual-review reason -> `SECURITY_CONCERN`.
+A privacy-safe provider-subject hash plus optional patient UUID does not deterministically identify the exact external-auth identity row after graph movement.
 
-The patient-facing API exposes only the durable case reference and stable public error code, not the provider subject, graph fingerprint, internal classifier reason, identity anchor, or reviewer state.
+**Decision / status: RESOLVED.** Review cases persist the stable non-secret `PatientAuthIdentity.identity_id` as a non-null foreign-key anchor. Case opening locks and verifies that row from the already-verified provider subject; the raw provider subject is not stored on the review case.
 
-## Finding 006 — provider-subject hash alone is not a sufficient future graph anchor
+## Finding 007 — identity movement during case opening is stale graph state, not a retryable outage
 
-The initial case schema stored a privacy-safe `provider_subject_hash` plus an optional candidate `patient_id`. That is not enough to deterministically re-lock and recompute the same external-identity graph at terminal review time. In particular, the candidate patient may be missing, retired by merge, or changed after case creation, while the raw provider subject is deliberately not persisted in the case.
+Treating every durable case-open failure as retryable could preserve a stale mental model after the identity graph had changed.
 
-Scanning all auth identities and comparing hashes would be inefficient, creates an unnecessary privacy surface, and would make the repair path depend on global-table enumeration. Trusting the stale candidate patient UUID would violate the requirement to recompute authority from current durable state.
+**Decision / status: RESOLVED at `ca135e1ae4d32db8f06a769814b73e78f77fee2b`.** A durable review conflict/invalid origin rolls back the case/audit transaction, consumes the exact verified recovery attempt, and returns `REGISTRATION_RECOVERY_STATE_CHANGED` with HTTP 409. Unexpected infrastructure failure remains retryable and releases the verifier claim when safe.
 
-**Decision / status: RESOLVED IN STEP 2.** Review cases persist the stable non-secret `PatientAuthIdentity.identity_id` as a non-null foreign-key anchor. Case creation locks and resolves that row from the already-verified provider subject, verifies its provider/subject/patient binding, stores only the UUID anchor plus the provider-subject hash, and never stores the raw provider subject.
+## Finding 008 — reviewer list/detail could expose another reviewer's claimed case metadata
 
-## Finding 007 — identity movement during case opening is stale graph state, not a retryable review outage
+A global reviewer listing would unnecessarily disclose claimed or terminal case metadata across reviewers even though mutation authority was assignment-bound.
 
-Step 2 initially mapped every `PatientRegistrationRecoveryReviewError` during durable case opening to retryable `REGISTRATION_RECOVERY_REVIEW_UNAVAILABLE`. That is incorrect for an identity-binding mismatch or malformed stale inspection discovered after OTP verification. Those conditions mean the just-inspected registration graph is no longer authoritative; blindly retrying the same verified attempt can preserve a stale mental model.
+**Decision / status: RESOLVED IN CLOSURE IMPLEMENTATION.** Reviewer listing returns pending work plus cases assigned to the current reviewer. Reviewer detail denies claimed/terminal cases assigned to another reviewer. Patient status remains a separate minimal opaque-handle surface.
 
-**Decision / status: FIX BEFORE STEP 3.** On a durable case conflict/invalid-origin result, roll back the case/audit transaction, consume the exact verified recovery attempt, and return the existing public `REGISTRATION_RECOVERY_STATE_CHANGED` 409 response. Reserve retryable `REGISTRATION_RECOVERY_REVIEW_UNAVAILABLE` for unexpected database/audit infrastructure failure, where the transaction is rolled back and the verifier claim is released when safe.
+## Finding 009 — terminal manual repair must not become a second, weaker repair engine
 
-## Current review gate
+A bespoke operator repair implementation could bypass the constraints already established by automatic registration recovery.
 
-Step 2 implementation exists and lint is green on CI #498. Finding 007 must be fixed and the Step 2 tests/CI re-reviewed before Step 3 begins.
+**Decision / status: RESOLVED IN CLOSURE IMPLEMENTATION.** Terminal resolution acquires the same PostgreSQL advisory-lock domain used by automatic registration recovery, resolves the stable auth-identity anchor, recomputes the live registration graph and requires the exact stored fingerprint. Repair outcomes map only to the already-bounded automatic repair kinds. Revocation, erasure, ambiguity and security concerns are not silently repaired. Reviewer routes never issue patient session, device or consent authority.
+
+## Finding 010 — migration-head and audit contracts lagged the Slice 9A schema
+
+Backend CI #500 showed seven pure-unit failures after the new migration became the actual repository head. Ruff was green; the failures were stale migration-head, audit-event and pre-durable-reference assertions.
+
+**Decision / status: RESOLVED IN CLOSURE CHANGESET, QUALIFICATION PENDING.** CI preparation/release tooling, migration graph tests, provider-trust ancestry tests, audit vocabulary, recovery-review contract guards, pilot operations documentation and current-state documentation are reconciled to `20260910_registration_recovery_review`. Historical security-governance policy text is not silently rewritten merely to chase a head string; the deployment test continues enforcing its substantive no-auto-migration invariant while current operational head authority lives in the current-state/constitution/release tooling.
+
+## Final merge gate
+
+The implementation includes patient status, reviewer list/detail, claim, reviewer-session recovery, terminal resolution, transactional audit coupling, and disposable PostgreSQL race/rollback qualification. No completion or merge claim is valid until Backend and Frontend CI are both green on one frozen PR #43 head and that exact reviewed head is merged.
