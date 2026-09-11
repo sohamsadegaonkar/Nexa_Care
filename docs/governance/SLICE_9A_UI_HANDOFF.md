@@ -1,6 +1,6 @@
 # Slice 9A UI Handoff Contract
 
-Status: **backend contract; merge subject to PR #43 exact-head qualification**
+Status: **backend merged into main; frontend integration implemented and qualified**
 
 This note is the compact consumer contract for the UI work that follows Slice 9A. Runtime schemas and server code remain authoritative.
 

@@ -432,13 +432,21 @@ export class ApiError extends Error {
   public status: number
   public code?: string
   public isRetryable: boolean
+  public details?: unknown
 
-  constructor(message: string, status: number, code?: string, isRetryable = false) {
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    isRetryable = false,
+    details?: unknown
+  ) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.isRetryable = isRetryable
+    this.details = details
   }
 }
 
@@ -685,9 +693,11 @@ async function request<T>(
   if (!response.ok) {
     let errorMsg = `HTTP Error ${response.status}`
     let errorCode = statusCode(response.status)
+    let errorData: unknown = undefined
 
     try {
       const data = await response.json()
+      errorData = data
       errorMsg = backendMessage(data, errorMsg)
       errorCode = backendErrorCode(data) ?? errorCode
     } catch {
@@ -706,20 +716,21 @@ async function request<T>(
         errorMsg || 'Authentication required or session expired',
         401,
         'REAUTH_REQUIRED',
-        false
+        false,
+        errorData
       )
     }
 
     if (response.status === 403) {
-      throw new ApiError(errorMsg || 'Consent required or access denied', 403, errorCode, false)
+      throw new ApiError(errorMsg || 'Consent required or access denied', 403, errorCode, false, errorData)
     }
 
     if (response.status >= 500) {
       if (onErrorToast) onErrorToast(`Server error: ${errorMsg}`, true)
-      throw new ApiError(errorMsg, response.status, errorCode, true)
+      throw new ApiError(errorMsg, response.status, errorCode, true, errorData)
     }
 
-    throw new ApiError(errorMsg, response.status, errorCode, response.status === 429)
+    throw new ApiError(errorMsg, response.status, errorCode, response.status === 429, errorData)
   }
 
   if (response.status === 204) {

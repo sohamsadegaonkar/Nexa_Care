@@ -1,18 +1,34 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { post } = vi.hoisted(() => ({ post: vi.fn() }))
+const { get, post } = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 
 vi.mock('../utils/apiClient', () => ({
   ApiError: class ApiError extends Error {
     status = 0
     code: string | undefined
     isRetryable = false
+    details: unknown = undefined
+    constructor(
+      message: string,
+      status: number,
+      code?: string,
+      isRetryable = false,
+      details?: unknown
+    ) {
+      super(message)
+      this.status = status
+      this.code = code
+      this.isRetryable = isRetryable
+      this.details = details
+    }
   },
-  apiClient: { post },
+  apiClient: { get, post },
 }))
 
 import {
+  RegistrationRecoveryClientError,
   completePatientRegistrationRecovery,
+  getPatientRegistrationRecoveryReviewStatus,
   requestPatientRegistrationRecoveryOtp,
   verifyPatientRegistrationRecoveryOtp,
 } from './patientRegistrationRecovery'
@@ -89,4 +105,94 @@ describe('patient registration recovery transport', () => {
       { noAuth: true }
     )
   })
+
+  it('captures case_reference and manual_review error kind when verify returns 409 manual review required', async () => {
+    const error = new (await import('../utils/apiClient')).ApiError(
+      'Manual review required',
+      409,
+      'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+      false,
+      {
+        detail: {
+          error_code: 'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+          case_reference: 'RRC-TEST123456789012345678',
+        },
+      }
+    )
+    post.mockRejectedValueOnce(error)
+
+    try {
+      await verifyPatientRegistrationRecoveryOtp({
+        phone: '+918000000001',
+        otp: '123456',
+        registrationRecoveryAttemptToken: 'attempt-token',
+      })
+      expect.unreachable('Should have thrown')
+    } catch (err) {
+      expect(err).toBeInstanceOf(RegistrationRecoveryClientError)
+      const clientErr = err as RegistrationRecoveryClientError
+      expect(clientErr.kind).toBe('manual_review')
+      expect(clientErr.code).toBe('REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED')
+      expect(clientErr.retryable).toBe(false)
+      expect(clientErr.caseReference).toBe('RRC-TEST123456789012345678')
+    }
+  })
+
+  it('queries patient review status with noAuth and validates the response', async () => {
+    const mockCase = {
+      case_reference: 'RRC-TEST123456789012345678',
+      status: 'PENDING' as const,
+      terminal: false,
+      next_action: 'WAIT_FOR_REVIEW' as const,
+      created_at: '2026-09-11T10:00:00+00:00',
+      resolved_at: null,
+    }
+    get.mockResolvedValueOnce({ data: mockCase })
+
+    const res = await getPatientRegistrationRecoveryReviewStatus('RRC-TEST123456789012345678')
+
+    expect(get).toHaveBeenCalledWith(
+      '/api/v2/auth/registration-recovery/review/cases/RRC-TEST123456789012345678',
+      { noAuth: true }
+    )
+    expect(res).toEqual(mockCase)
+  })
+
+  it('maps review case not found (404) to not_found error kind with caseReference', async () => {
+    const error = new (await import('../utils/apiClient')).ApiError(
+      'Case not found',
+      404,
+      'REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND',
+      false
+    )
+    get.mockRejectedValueOnce(error)
+
+    await expect(
+      getPatientRegistrationRecoveryReviewStatus('RRC-NOTFOUND1234567890123')
+    ).rejects.toMatchObject({
+      kind: 'not_found',
+      code: 'REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND',
+      retryable: false,
+      caseReference: 'RRC-NOTFOUND1234567890123',
+    })
+  })
+
+  it('maps review service unavailable (503) to retryable network error', async () => {
+    const error = new (await import('../utils/apiClient')).ApiError(
+      'Service unavailable',
+      503,
+      'REGISTRATION_RECOVERY_REVIEW_UNAVAILABLE',
+      true
+    )
+    get.mockRejectedValueOnce(error)
+
+    await expect(
+      getPatientRegistrationRecoveryReviewStatus('RRC-UNAVAIL1234567890123')
+    ).rejects.toMatchObject({
+      kind: 'network',
+      retryable: true,
+      caseReference: 'RRC-UNAVAIL1234567890123',
+    })
+  })
 })
+

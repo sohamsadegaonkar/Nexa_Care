@@ -21,6 +21,7 @@ import {
   ClipboardCheck,
   ArrowUpRight,
   ShieldAlert,
+  UserCheck,
 } from '@tamagui/lucide-icons'
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
@@ -54,6 +55,13 @@ const actions = [
     label: 'Source adjudication workspace',
     icon: ClipboardCheck,
     route: '/doctor/pipeline/adjudication',
+  },
+  {
+    title: 'Registration recovery review',
+    description: 'Review and adjudicate flagged patient account registration-recovery cases.',
+    label: 'Open Review Queue',
+    icon: UserCheck,
+    route: '/doctor/recovery-review',
   },
 ]
 

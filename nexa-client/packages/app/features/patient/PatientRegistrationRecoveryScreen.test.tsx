@@ -5,6 +5,7 @@ import PatientRegistrationRecoveryScreen from './PatientRegistrationRecoveryScre
 import {
   RegistrationRecoveryClientError,
   completePatientRegistrationRecovery,
+  getPatientRegistrationRecoveryReviewStatus,
   requestPatientRegistrationRecoveryOtp,
   verifyPatientRegistrationRecoveryOtp,
 } from '../../services/patientRegistrationRecovery'
@@ -12,7 +13,7 @@ import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrol
 import { storePatientAuthSession } from '../../services/patientAuthSession'
 
 const { replace } = vi.hoisted(() => ({ replace: vi.fn() }))
-vi.mock('expo-router', () => ({ useRouter: () => ({ replace }) }))
+vi.mock('solito/navigation', () => ({ useRouter: () => ({ replace }) }))
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 24, bottom: 24, left: 0, right: 0 }),
 }))
@@ -27,20 +28,28 @@ vi.mock('../../services/currentDeviceEnrollment', () => ({
   },
   ensureCurrentDeviceEnrollment: vi.fn(),
 }))
-vi.mock('../../services/patientAuthSession', () => ({ storePatientAuthSession: vi.fn() }))
+vi.mock('../../services/patientAuthSession', () => ({
+  storePatientAuthSession: vi.fn(),
+}))
 vi.mock('../../services/patientRegistrationRecovery', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../services/patientRegistrationRecovery')>()
+  const actual =
+    await importOriginal<
+      typeof import('../../services/patientRegistrationRecovery')
+    >()
   return {
     ...actual,
     requestPatientRegistrationRecoveryOtp: vi.fn(),
     verifyPatientRegistrationRecoveryOtp: vi.fn(),
     completePatientRegistrationRecovery: vi.fn(),
+    getPatientRegistrationRecoveryReviewStatus: vi.fn(),
   }
 })
 
 async function sendRecoveryCode() {
   renderWithTamagui(<PatientRegistrationRecoveryScreen />)
-  fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '+918000000001' } })
+  fireEvent.change(screen.getByLabelText('Phone number'), {
+    target: { value: '+918000000001' },
+  })
   fireEvent.click(screen.getByRole('button', { name: 'Send recovery OTP' }))
   return screen.findByLabelText('Verification code')
 }
@@ -69,15 +78,27 @@ describe('patient registration account recovery', () => {
       device_enrollment_token: 'enrollment-token',
       device_enrollment_expires_in_seconds: 300,
     })
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockResolvedValue({
+      case_reference: 'RRC-TEST123456789012345678',
+      status: 'PENDING',
+      terminal: false,
+      next_action: 'WAIT_FOR_REVIEW',
+      created_at: '2026-09-11T10:00:00+00:00',
+      resolved_at: null,
+    })
     vi.mocked(ensureCurrentDeviceEnrollment).mockResolvedValue({} as never)
   })
 
   it('uses the bounded attempt, repair capability, existing session store, and device reconciliation', async () => {
     const code = await sendRecoveryCode()
     fireEvent.change(code, { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/patient/access-history'))
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith('/patient/access-history')
+    )
     expect(verifyPatientRegistrationRecoveryOtp).toHaveBeenCalledWith({
       phone: '+918000000001',
       otp: '123456',
@@ -91,23 +112,204 @@ describe('patient registration account recovery', () => {
     expect(ensureCurrentDeviceEnrollment).toHaveBeenCalledOnce()
   })
 
-  it('does not receive repair authority when the verified graph requires manual review', async () => {
+  it('captures case_reference, transitions to waiting state, and never mints session or enrolls device on manual review', async () => {
     vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
       new RegistrationRecoveryClientError(
         'This account needs manual review before it can be repaired.',
         'manual_review',
         'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
-        false
+        false,
+        'RRC-TEST123456789012345678'
       )
     )
     const code = await sendRecoveryCode()
     fireEvent.change(code, { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
 
-    expect(await screen.findByRole('alert')).toHaveTextContent('manual review')
-    expect(await screen.findByLabelText('Phone number')).toBeVisible()
+    expect(await screen.findByText('Account review in progress')).toBeVisible()
+    expect(await screen.findByText('RRC-TEST123456789012345678')).toBeVisible()
     expect(completePatientRegistrationRecovery).not.toHaveBeenCalled()
     expect(storePatientAuthSession).not.toHaveBeenCalled()
+    expect(ensureCurrentDeviceEnrollment).not.toHaveBeenCalled()
+  })
+
+  it('displays PENDING waiting state without exposing internal metadata', async () => {
+    vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'This account needs manual review before it can be repaired.',
+        'manual_review',
+        'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+        false,
+        'RRC-TEST123456789012345678'
+      )
+    )
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
+
+    expect(await screen.findByText(/Account review: pending/i)).toBeVisible()
+    expect(screen.queryByText(/graph_fingerprint/i)).toBeNull()
+    expect(screen.queryByText(/reviewer_id/i)).toBeNull()
+    expect(screen.queryByText(/policy_version/i)).toBeNull()
+  })
+
+  it('displays IN_REVIEW state when review is claimed', async () => {
+    vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'This account needs manual review before it can be repaired.',
+        'manual_review',
+        'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+        false,
+        'RRC-TEST123456789012345678'
+      )
+    )
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockResolvedValue({
+      case_reference: 'RRC-TEST123456789012345678',
+      status: 'IN_REVIEW',
+      terminal: false,
+      next_action: 'WAIT_FOR_REVIEW',
+      created_at: '2026-09-11T10:00:00+00:00',
+      resolved_at: null,
+    })
+
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/Account review: in review/i)).toBeVisible()
+    })
+  })
+
+  it('handles RESOLVED + RESTART_ACCOUNT_RECOVERY and allows restarting from phone step', async () => {
+    vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'This account needs manual review before it can be repaired.',
+        'manual_review',
+        'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+        false,
+        'RRC-TEST123456789012345678'
+      )
+    )
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockResolvedValue({
+      case_reference: 'RRC-TEST123456789012345678',
+      status: 'RESOLVED',
+      terminal: true,
+      next_action: 'RESTART_ACCOUNT_RECOVERY',
+      created_at: '2026-09-11T10:00:00+00:00',
+      resolved_at: '2026-09-11T10:05:00+00:00',
+    })
+
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
+
+    expect(await screen.findByText('Account review resolved')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /Verify and repair account/i })).toBeNull()
+    expect(storePatientAuthSession).not.toHaveBeenCalled()
+
+    const restartButton = screen.getByRole('button', {
+      name: 'Restart account recovery',
+    })
+    fireEvent.click(restartButton)
+
+    expect(await screen.findByLabelText('Phone number')).toBeVisible()
+  })
+
+  it('handles REJECTED terminal review state with contact support instructions and no repair CTA', async () => {
+    vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'This account needs manual review before it can be repaired.',
+        'manual_review',
+        'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+        false,
+        'RRC-TEST123456789012345678'
+      )
+    )
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockResolvedValue({
+      case_reference: 'RRC-TEST123456789012345678',
+      status: 'REJECTED',
+      terminal: true,
+      next_action: 'CONTACT_SUPPORT',
+      created_at: '2026-09-11T10:00:00+00:00',
+      resolved_at: '2026-09-11T10:05:00+00:00',
+    })
+
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
+
+    expect(await screen.findByText('Account recovery rejected')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /repair/i })).toBeNull()
+    expect(screen.queryByRole('button', { name: /Restart account recovery/i })).toBeNull()
+  })
+
+  it('handles SECURITY_ESCALATED terminal state with security escalation notice', async () => {
+    vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'This account needs manual review before it can be repaired.',
+        'manual_review',
+        'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+        false,
+        'RRC-TEST123456789012345678'
+      )
+    )
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockResolvedValue({
+      case_reference: 'RRC-TEST123456789012345678',
+      status: 'SECURITY_ESCALATED',
+      terminal: true,
+      next_action: 'CONTACT_SUPPORT',
+      created_at: '2026-09-11T10:00:00+00:00',
+      resolved_at: '2026-09-11T10:05:00+00:00',
+    })
+
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
+
+    expect(await screen.findByText('Account security escalation')).toBeVisible()
+    expect(screen.queryByRole('button', { name: /repair/i })).toBeNull()
+  })
+
+  it('retains case_reference when manual check status returns temporary error', async () => {
+    vi.mocked(verifyPatientRegistrationRecoveryOtp).mockRejectedValue(
+      new RegistrationRecoveryClientError(
+        'This account needs manual review before it can be repaired.',
+        'manual_review',
+        'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED',
+        false,
+        'RRC-TEST123456789012345678'
+      )
+    )
+    const code = await sendRecoveryCode()
+    fireEvent.change(code, { target: { value: '123456' } })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
+
+    expect(await screen.findByText('RRC-TEST123456789012345678')).toBeVisible()
+
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockRejectedValueOnce(
+      new Error('Temporary timeout')
+    )
+
+    const checkButton = screen.getByRole('button', { name: 'Check status' })
+    fireEvent.click(checkButton)
+
+    expect(await screen.findByText('Temporary timeout')).toBeVisible()
+    expect(screen.getByText('RRC-TEST123456789012345678')).toBeVisible()
   })
 
   it('routes an account with historical device authority into the separate device recovery flow', async () => {
@@ -116,15 +318,22 @@ describe('patient registration account recovery', () => {
     })
     Object.setPrototypeOf(
       deviceRecoveryError,
-      (await import('../../services/currentDeviceEnrollment')).CurrentDeviceError.prototype
+      (await import('../../services/currentDeviceEnrollment')).CurrentDeviceError
+        .prototype
     )
-    vi.mocked(ensureCurrentDeviceEnrollment).mockRejectedValue(deviceRecoveryError)
+    vi.mocked(ensureCurrentDeviceEnrollment).mockRejectedValue(
+      deviceRecoveryError
+    )
 
     const code = await sendRecoveryCode()
     fireEvent.change(code, { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/patient/recovery'))
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith('/patient/recovery')
+    )
     expect(storePatientAuthSession).toHaveBeenCalledWith(
       'patient-access-token',
       'enrollment-token'
@@ -142,7 +351,9 @@ describe('patient registration account recovery', () => {
     )
     const code = await sendRecoveryCode()
     fireEvent.change(code, { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
 
     expect(await screen.findByLabelText('Phone number')).toBeVisible()
     expect(completePatientRegistrationRecovery).not.toHaveBeenCalled()
@@ -159,10 +370,15 @@ describe('patient registration account recovery', () => {
     )
     const code = await sendRecoveryCode()
     fireEvent.change(code, { target: { value: '123456' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Verify and repair account' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Verify and repair account' })
+    )
 
-    await waitFor(() => expect(replace).toHaveBeenCalledWith('/patient/login'))
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith('/patient/login')
+    )
     expect(storePatientAuthSession).not.toHaveBeenCalled()
     expect(ensureCurrentDeviceEnrollment).not.toHaveBeenCalled()
   })
 })
+
