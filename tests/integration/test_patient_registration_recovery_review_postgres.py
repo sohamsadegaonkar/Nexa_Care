@@ -92,7 +92,7 @@ async def _cleanup(factory, *, patient_id: uuid.UUID, case_id: uuid.UUID) -> Non
         await db.execute(
             text(
                 "DELETE FROM public.audit_outbox "
-                "WHERE target_id IN (SELECT case_reference FROM "
+                "WHERE payload->>'target_id' IN (SELECT case_reference FROM "
                 "patient_registration_recovery_review_cases WHERE id = :case_id)"
             ),
             {"case_id": case_id},
@@ -201,7 +201,7 @@ async def test_claim_race_reviewer_isolation_and_terminal_replay_are_linearizabl
                 await db.scalar(
                     text(
                         "SELECT count(*) FROM public.audit_outbox "
-                        "WHERE target_id = :target AND "
+                        "WHERE payload->>'target_id' = :target AND "
                         "event_type = 'PATIENT_REGISTRATION_RECOVERY_REVIEW_REJECTED'"
                     ),
                     {"target": case_reference},
