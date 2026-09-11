@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 EXPECTED_SCHEMA = "nexa-slice-7b-pilot-runtime-evidence-v1"
-EXPECTED_MIGRATION_HEAD = "20260909_device_trust_lifecycle"
+EXPECTED_MIGRATION_HEAD = "20260910_registration_recovery_review"
 EXPECTED_REGION = "ap-south-1"
 SHA256_IMAGE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:/@+=-]{3,256}$")

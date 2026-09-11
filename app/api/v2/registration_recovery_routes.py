@@ -9,7 +9,6 @@ authority, but never silently grants historical device authority.
 
 from __future__ import annotations
 
-import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -44,6 +43,10 @@ from app.services.patient_registration_recovery_authority import (
     issue_registration_recovery_attempt,
     record_registration_recovery_invalid_otp,
     release_registration_recovery_claim,
+)
+from app.services.patient_registration_recovery_review_service import (
+    PatientRegistrationRecoveryReviewError,
+    open_registration_recovery_review_case,
 )
 from app.services.patient_registration_recovery_service import (
     REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
@@ -132,13 +135,6 @@ async def _enforce_limits(request: Request, *, phone: str, action: str) -> None:
                 "retryable": True,
             },
         ) from exc
-
-
-def _recovery_reference(attempt_id: str) -> str:
-    """Return a non-authoritative support reference, not a durable case id."""
-
-    digest = hashlib.sha256(attempt_id.encode("utf-8")).hexdigest()[:16].upper()
-    return f"RR-{digest}"
 
 
 def _attempt_http_error(exc: RegistrationRecoveryAttemptError) -> HTTPException:
@@ -361,6 +357,57 @@ async def registration_recovery_otp_verify(
             detail={"error_code": REGISTRATION_RECOVERY_NOT_REQUIRED},
         )
 
+    if inspection.disposition == "manual_review":
+        try:
+            await audit_registration_recovery_required(
+                db, inspection=inspection, attempt_id=claim.attempt_id
+            )
+            review_case = await open_registration_recovery_review_case(
+                db,
+                inspection=inspection,
+                attempt_id=claim.attempt_id,
+            )
+            await db.commit()
+        except PatientRegistrationRecoveryReviewError:
+            await db.rollback()
+            await _consume_attempt_or_http_error(
+                token=payload.registration_recovery_attempt_token,
+                phone=phone,
+                claim=claim,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={"error_code": REGISTRATION_RECOVERY_STATE_CHANGED},
+            ) from None
+        except Exception:
+            await db.rollback()
+            try:
+                await release_registration_recovery_claim(
+                    payload.registration_recovery_attempt_token, phone, claim
+                )
+            except RegistrationRecoveryAuthorityUnavailable:
+                pass
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error_code": "REGISTRATION_RECOVERY_REVIEW_UNAVAILABLE",
+                    "retryable": True,
+                },
+            ) from None
+
+        await _consume_attempt_or_http_error(
+            token=payload.registration_recovery_attempt_token,
+            phone=phone,
+            claim=claim,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error_code": REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
+                "case_reference": review_case.case_reference,
+            },
+        )
+
     try:
         await audit_registration_recovery_required(
             db, inspection=inspection, attempt_id=claim.attempt_id
@@ -378,20 +425,6 @@ async def registration_recovery_otp_verify(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"error_code": "REGISTRATION_RECOVERY_AUDIT_UNAVAILABLE", "retryable": True},
         ) from None
-
-    if inspection.disposition == "manual_review":
-        await _consume_attempt_or_http_error(
-            token=payload.registration_recovery_attempt_token,
-            phone=phone,
-            claim=claim,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={
-                "error_code": REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED,
-                "recovery_reference": _recovery_reference(claim.attempt_id),
-            },
-        )
 
     if not inspection.repairable or inspection.repair_kind is None:
         await _consume_attempt_or_http_error(

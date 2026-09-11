@@ -36,33 +36,24 @@ gets built at import time from the route decorators in app/api/routes.py.
 from app.main import app
 
 
-# Reconciled 2026-07-06 against the actual router registrations in
-# app/main.py after a full audit of a 16-test CI failure (see the PR that
-# added this comment for the full breakdown). Two things changed since this
-# set was last updated:
+# Reconciled against the actual router registrations in app/main.py.
+# Material additions are documented so route drift remains reviewable:
 #
 #   1. The old /api/v2/assurance/push/request and
 #      /api/v2/assurance/biometric/verify endpoints were retired when the
 #      notification rework replaced them with the Expo-push + signed-response
-#      design now living under /api/v2/push/* (assurance_routes.py). There is
-#      no standalone biometric/verify route any more -- verification is
-#      legacy three-field push response was removed; canonical signed consent
-#      approval is POST /api/v2/consent/approve-signed.
-#   2. Several routers shipped after this set was last touched and were
-#      never added: merge-challenge auth (auth_routes.py), break-glass
-#      revoke (consent_routes.py), consent validation (consent_routes.py),
-#      and cryptographic erasure (patient_routes.py).
-#   3. Slice 8A intentionally added two protected operational GET routes:
-#      /ops/health and /metrics. They are hidden from OpenAPI and protected by
-#      the independent operations token in production-like environments.
-#   4. Patient registration recovery adds three intentional unauthenticated
-#      auth endpoints. Their own OTP/Redis authority is distinct from login
-#      and device authority.
+#      design now living under /api/v2/push/* (assurance_routes.py).
+#   2. Merge-challenge auth, break-glass revoke, consent validation and
+#      cryptographic erasure were added deliberately.
+#   3. Slice 8A added protected /ops/health and /metrics routes.
+#   4. Patient registration recovery added three unauthenticated OTP/repair
+#      endpoints whose authority is distinct from login and device authority.
+#   5. Slice 9A adds one patient-safe opaque-case status endpoint plus five
+#      reviewer endpoints protected by the independent registration-recovery
+#      reviewer authority gate.
 #
-# If this file goes red again: don't just delete the offending entries to
-# make it pass. Confirm with whoever owns the route in question whether the
-# route was intentionally added/removed, then update this set with a note
-# like this one so the next drift has a breadcrumb instead of a guess.
+# If this file goes red again, confirm the owning route was intentionally
+# added or removed before updating this set.
 EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/otp/send"),
     ("POST", "/api/v2/auth/otp/verify"),
@@ -73,6 +64,12 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/auth/registration-recovery/otp/send"),
     ("POST", "/api/v2/auth/registration-recovery/otp/verify"),
     ("POST", "/api/v2/auth/registration-recovery/complete"),
+    ("GET", "/api/v2/auth/registration-recovery/review/cases/{case_reference}"),
+    ("GET", "/api/v2/auth/registration-recovery/review/reviewer/cases"),
+    ("GET", "/api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}"),
+    ("POST", "/api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}/claim"),
+    ("POST", "/api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}/recover-session"),
+    ("POST", "/api/v2/auth/registration-recovery/review/reviewer/cases/{case_reference}/resolve"),
     ("POST", "/api/v2/auth/provider/register"),
     ("POST", "/api/v1/handshake"),
     ("POST", "/api/v1/enroll-biometric"),

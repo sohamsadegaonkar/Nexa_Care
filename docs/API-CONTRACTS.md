@@ -373,7 +373,27 @@ canonical:
 - Arbitrary UUID, bearer token, legacy role, consent alone, or stale device key
   possession does not independently authorize clinical access.
 - The current single database migration head is
-  `20260909_device_trust_lifecycle`.
+  `20260910_registration_recovery_review`.
+
+### Registration recovery manual review (Slice 9A)
+
+Verified manual-review classification returns a durable opaque `case_reference`.
+`GET /api/v2/auth/registration-recovery/review/cases/{case_reference}` accepts
+that handle without a patient session and returns only status, terminal flag,
+next action and timestamps. It grants no repair or authentication authority.
+
+The separate `/api/v2/auth/registration-recovery/review/reviewer/cases` surface
+requires the live dedicated reviewer gate. List/detail expose pending cases and
+the reviewer's assigned cases only. Claim and recover-session POSTs accept
+`expected_version`; resolve accepts that version, `idempotency_key` (8–192
+characters), a closed `outcome`, and closed `reason_codes`. All mutation schemas
+reject unknown fields. Terminal replay requires the assigned reviewer and exact
+claimed session as well as the original operation tuple. A changed operation
+conflicts. Disposition, permitted repair and audit commit atomically.
+
+See [the UI handoff](governance/SLICE_9A_UI_HANDOFF.md) for exact routes, response
+fields and patient next actions. Reviewer resolution never issues patient,
+trusted-device, provider-access or consent authority.
 
 ## 12. Explicit nonclaims
 

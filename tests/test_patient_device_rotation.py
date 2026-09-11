@@ -106,9 +106,10 @@ def test_canonical_rotation_payload_is_versioned_and_binds_every_authority_field
     assert decoded["current_key_version"] == 3
     assert decoded["new_public_key_fingerprint"] == "a" * 64
     assert decoded["challenge_nonce"] == "n" * 43
-    assert decoded["session_binding_sha256"] == hashlib.sha256(
-        str(kwargs["session_id"]).encode("utf-8")
-    ).hexdigest()
+    assert (
+        decoded["session_binding_sha256"]
+        == hashlib.sha256(str(kwargs["session_id"]).encode("utf-8")).hexdigest()
+    )
 
     mutations = {
         "patient_id": str(uuid.uuid4()),
@@ -117,8 +118,12 @@ def test_canonical_rotation_payload_is_versioned_and_binds_every_authority_field
         "current_key_version": 4,
         "new_public_key_fingerprint": "b" * 64,
         "challenge_nonce": "m" * 43,
-        "issued_at": datetime.now(timezone.utc).isoformat(),
-        "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=3)).isoformat(),
+        "issued_at": (
+            datetime.fromisoformat(kwargs["issued_at"]) + timedelta(seconds=1)
+        ).isoformat(),
+        "expires_at": (
+            datetime.fromisoformat(kwargs["expires_at"]) + timedelta(minutes=1)
+        ).isoformat(),
     }
     for field, value in mutations.items():
         changed = dict(kwargs)
