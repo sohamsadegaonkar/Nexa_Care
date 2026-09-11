@@ -12,7 +12,7 @@ def _valid_manifest() -> dict:
         "repository_commit": "0" * 40,
         "backend_image_digest": "sha256:" + "a" * 64,
         "frontend_deployment_identity": "vercel:pilot-deployment-20260909",
-        "migration_head": "20260909_device_trust_lifecycle",
+        "migration_head": "20260910_registration_recovery_review",
         "aws_region": "ap-south-1",
         "data_classification": "synthetic-only",
         "aws_identity": {
@@ -34,7 +34,7 @@ def _valid_manifest() -> dict:
         "database": {
             "engine": "postgresql",
             "dedicated": True,
-            "migration_head": "20260909_device_trust_lifecycle",
+            "migration_head": "20260910_registration_recovery_review",
         },
         "redis": {"tls": True, "dedicated": True},
         "checks": {name: "PASS" for name in REQUIRED_CHECKS},
@@ -97,7 +97,7 @@ def test_wrong_migration_head_is_rejected() -> None:
 
     errors = validate_manifest(manifest)
 
-    assert any("20260909_device_trust_lifecycle" in error for error in errors)
+    assert any("20260910_registration_recovery_review" in error for error in errors)
 
 
 def test_non_tls_redis_is_rejected() -> None:

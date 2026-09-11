@@ -52,6 +52,11 @@ Reviewer routes are independently authorized by the backend and must never be un
 
 Claim/session-recovery requests carry `expected_version`. Terminal resolution carries `expected_version`, a durable `idempotency_key`, one closed `outcome`, and closed `reason_codes`.
 
+Unknown mutation fields are rejected with 422. Exact terminal retries must use
+the original assigned reviewer session and unchanged operation fields. A different
+session returns `REGISTRATION_RECOVERY_REVIEW_SESSION_MISMATCH`; session recovery
+is available only while the case is nonterminal.
+
 Reviewer responses never provide patient login, device, or consent authority. The backend remains authoritative for assignment, current session binding, recent MFA, live affiliation, optimistic version, graph revalidation and repair policy.
 
 ## UI security invariants

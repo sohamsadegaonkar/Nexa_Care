@@ -239,4 +239,5 @@ def test_governance_contract_names_current_migration_head() -> None:
     )
 
     assert f"Current head is `{run_pilot_migrations.EXPECTED_HEAD}`" in constitution
+    assert f"current head `{run_pilot_migrations.EXPECTED_HEAD}`" in security
     assert "API containers never run migrations during startup" in security

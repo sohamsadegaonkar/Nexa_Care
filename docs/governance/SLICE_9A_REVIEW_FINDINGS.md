@@ -64,7 +64,34 @@ A bespoke operator repair implementation could bypass the constraints already es
 
 Backend CI #500 showed seven pure-unit failures after the new migration became the actual repository head. Ruff was green; the failures were stale migration-head, audit-event and pre-durable-reference assertions.
 
-**Decision / status: RESOLVED IN CLOSURE CHANGESET, QUALIFICATION PENDING.** CI preparation/release tooling, migration graph tests, provider-trust ancestry tests, audit vocabulary, recovery-review contract guards, pilot operations documentation and current-state documentation are reconciled to `20260910_registration_recovery_review`. Historical security-governance policy text is not silently rewritten merely to chase a head string; the deployment test continues enforcing its substantive no-auto-migration invariant while current operational head authority lives in the current-state/constitution/release tooling.
+**Decision / status: RESOLVED IN CLOSURE CHANGESET; FINAL CI RECEIPT IN PR #43.** CI preparation/release tooling, migration graph tests, provider-trust ancestry tests, audit vocabulary, recovery-review contract guards, pilot operations documentation and current-state documentation are reconciled to `20260910_registration_recovery_review`. Historical security-governance policy text is not silently rewritten merely to chase a head string; the deployment test continues enforcing its substantive no-auto-migration invariant while current operational head authority lives in the current-state/constitution/release tooling.
+
+## Finding 011 — terminal audit key exceeds the durable outbox limit
+
+Backend CI #529 and a local fresh PostgreSQL reproduction failed because the
+terminal key repeated a case UUID already bound into its full operation digest,
+producing 139 characters for a `VARCHAR(128)` column.
+
+**Decision / status: RESOLVED IN CODE AND FOCUSED QUALIFICATION; FINAL CI RECEIPT IN PR #43.** Keep the existing
+schema and full SHA-256, using `registration-recovery-review:terminal:<digest>`
+(102 characters). Regression coverage asserts the unchanged database limit,
+full digest, one disposition/audit across concurrent retries and 192-character
+input idempotency keys. A real PostgreSQL NOT NULL audit failure proves rollback.
+
+## Finding 012 — exact terminal replay bypassed the claimed-session check
+
+The durable replay return preceded assignment/session validation, allowing a
+second session for the same reviewer to retrieve the original terminal result.
+
+**Decision / status: RESOLVED IN CODE AND FOCUSED QUALIFICATION; FINAL CI RECEIPT IN PR #43.** Check assignment
+and session before replay lookup. PostgreSQL tests deny the other reviewer and
+another session, preserve exact replay, and exercise nonterminal session recovery.
+
+## Finding 013 — mutation schemas silently ignored unknown fields
+
+**Decision / status: RESOLVED IN CODE AND FOCUSED QUALIFICATION; FINAL CI RECEIPT IN PR #43.** Mutation schemas
+now forbid extra fields; eight parameterized regressions reject client-supplied
+patient, reviewer, session and authority-version fields on both request models.
 
 ## Final merge gate
 

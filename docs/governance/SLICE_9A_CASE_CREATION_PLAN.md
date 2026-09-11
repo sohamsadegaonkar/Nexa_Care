@@ -1,6 +1,6 @@
 # Slice 9A — Verified Manual-Review Case Creation Plan
 
-Status: **DESIGN FROZEN FOR STEP 2 / IMPLEMENTATION NEXT**
+Status: **IMPLEMENTED — historical design contract; current qualification tracked in SLICE_9A_CLOSURE_QUALIFICATION.md and PR #43**
 
 Base: `54351f9a55ba94665420961cfe766bdcc84a5398`
 

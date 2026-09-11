@@ -67,6 +67,7 @@ def test_pilot_operations_migration_head_matches_runtime_migration_tool() -> Non
 
     assert expected_head == "20260910_registration_recovery_review"
     assert f"`{expected_head}`" in runbook
+    assert f"`{expected_head}`" in _read("docs/API-CONTRACTS.md")
     assert "`20260906_verification_scheduler`" not in runbook
 
 

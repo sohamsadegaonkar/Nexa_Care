@@ -1,6 +1,6 @@
 # Slice 9A — Registration Recovery Review Baseline and Plan
 
-Status: **ACTIVE / DRAFT / NOT MERGE-ELIGIBLE**
+Status: **HISTORICAL STARTING PLAN — implementation and merge evidence tracked in SLICE_9A_CLOSURE_QUALIFICATION.md and PR #43**
 
 Established: 2026-09-11
 

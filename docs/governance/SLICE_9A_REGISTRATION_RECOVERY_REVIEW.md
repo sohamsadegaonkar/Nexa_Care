@@ -16,7 +16,7 @@ The following remain distinct:
 
 `phone OTP proof != account session != manual recovery review authority != repair authorization != device authority != consent authority`
 
-A patient may initiate and inspect the status of their own recovery case only after the patient-facing recovery flow has verified the external identity and classified the graph as manual-review-required. The patient cannot choose the repair action.
+Case creation requires the patient-facing recovery flow to verify the external identity and classify the graph as manual-review-required. Minimal status polling accepts the resulting opaque case handle without a patient session; possession of that handle grants no repair or authentication authority. The patient cannot choose the repair action.
 
 The existing `identity_reviewer` document-review role is deliberately **not reused as the complete authorization contract**. Registration recovery must work when ordinary account/device authority is unavailable and must not manufacture consent to unlock the review path.
 
@@ -103,6 +103,19 @@ After an approved repair, the patient returns through the normal patient-facing 
 - `PATIENT_REGISTRATION_RECOVERY_REVIEW_ACCESS_REJECTED`
 
 Events must not contain phone, OTP, raw provider tokens, device private material, or clinical content.
+
+Terminal audit keys use `registration-recovery-review:terminal:<full SHA-256>`
+(102 ASCII characters), within the unchanged `audit_outbox.idempotency_key`
+`VARCHAR(128)` limit. The canonical operation digest includes the case UUID,
+reviewer, expected version, original idempotency key, outcome and sorted reasons.
+No digest bits are truncated. Exact terminal replay retains the assigned
+reviewer's session binding and returns the durable disposition without another
+audit insertion or repair. Mutation schemas reject unknown fields.
+
+The current automatic classifier routes repairable graphs through automatic
+recovery. It opens manual cases for nonrepairable graphs only; a graph change
+cannot promote an existing case to repair authority. The two repair outcomes
+remain bounded policy vocabulary, not a way to override a manual-review blocker.
 
 ## Qualification gates
 

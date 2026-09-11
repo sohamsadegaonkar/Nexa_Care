@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
@@ -73,6 +73,8 @@ class ReviewerCaseListResponse(BaseModel):
 
 
 class ReviewerMutationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     expected_version: int = Field(..., ge=1)
 
 
@@ -168,7 +170,9 @@ async def registration_recovery_reviewer_cases(
             limit=limit,
         )
         await db.rollback()
-        return ReviewerCaseListResponse(cases=[ReviewerCaseResponse(**row) for row in rows])
+        return ReviewerCaseListResponse(
+            cases=[ReviewerCaseResponse(**row) for row in rows]
+        )
     except PatientRegistrationRecoveryReviewError as exc:
         await _rollback_and_raise(db, exc)
     except Exception:

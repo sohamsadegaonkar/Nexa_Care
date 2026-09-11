@@ -43,20 +43,36 @@ from app.services.patient_registration_recovery_service import (
     inspect_patient_registration_recovery,
 )
 
-REGISTRATION_RECOVERY_REVIEW_CASE_CONFLICT = "REGISTRATION_RECOVERY_REVIEW_CASE_CONFLICT"
+REGISTRATION_RECOVERY_REVIEW_CASE_CONFLICT = (
+    "REGISTRATION_RECOVERY_REVIEW_CASE_CONFLICT"
+)
 REGISTRATION_RECOVERY_REVIEW_CASE_INVALID_ORIGIN = (
     "REGISTRATION_RECOVERY_REVIEW_CASE_INVALID_ORIGIN"
 )
-REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND = "REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND"
-REGISTRATION_RECOVERY_REVIEW_VERSION_CONFLICT = "REGISTRATION_RECOVERY_REVIEW_VERSION_CONFLICT"
-REGISTRATION_RECOVERY_REVIEW_ACCESS_DENIED = "REGISTRATION_RECOVERY_REVIEW_ACCESS_DENIED"
-REGISTRATION_RECOVERY_REVIEW_SESSION_MISMATCH = "REGISTRATION_RECOVERY_REVIEW_SESSION_MISMATCH"
-REGISTRATION_RECOVERY_REVIEW_ALREADY_RESOLVED = "REGISTRATION_RECOVERY_REVIEW_ALREADY_RESOLVED"
-REGISTRATION_RECOVERY_REVIEW_STATE_CHANGED = "REGISTRATION_RECOVERY_REVIEW_STATE_CHANGED"
+REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND = (
+    "REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND"
+)
+REGISTRATION_RECOVERY_REVIEW_VERSION_CONFLICT = (
+    "REGISTRATION_RECOVERY_REVIEW_VERSION_CONFLICT"
+)
+REGISTRATION_RECOVERY_REVIEW_ACCESS_DENIED = (
+    "REGISTRATION_RECOVERY_REVIEW_ACCESS_DENIED"
+)
+REGISTRATION_RECOVERY_REVIEW_SESSION_MISMATCH = (
+    "REGISTRATION_RECOVERY_REVIEW_SESSION_MISMATCH"
+)
+REGISTRATION_RECOVERY_REVIEW_ALREADY_RESOLVED = (
+    "REGISTRATION_RECOVERY_REVIEW_ALREADY_RESOLVED"
+)
+REGISTRATION_RECOVERY_REVIEW_STATE_CHANGED = (
+    "REGISTRATION_RECOVERY_REVIEW_STATE_CHANGED"
+)
 REGISTRATION_RECOVERY_REVIEW_IDEMPOTENCY_CONFLICT = (
     "REGISTRATION_RECOVERY_REVIEW_IDEMPOTENCY_CONFLICT"
 )
-REGISTRATION_RECOVERY_REVIEW_PAYLOAD_INVALID = "REGISTRATION_RECOVERY_REVIEW_PAYLOAD_INVALID"
+REGISTRATION_RECOVERY_REVIEW_PAYLOAD_INVALID = (
+    "REGISTRATION_RECOVERY_REVIEW_PAYLOAD_INVALID"
+)
 REGISTRATION_RECOVERY_REVIEW_REPAIR_NOT_AUTHORIZED = (
     "REGISTRATION_RECOVERY_REVIEW_REPAIR_NOT_AUTHORIZED"
 )
@@ -156,11 +172,15 @@ def _case_reference() -> str:
 
 
 def _valid_case_reference(value: str) -> bool:
-    if len(value) != _CASE_REFERENCE_LENGTH or not value.startswith(_CASE_REFERENCE_PREFIX):
+    if len(value) != _CASE_REFERENCE_LENGTH or not value.startswith(
+        _CASE_REFERENCE_PREFIX
+    ):
         return False
     suffix = value[len(_CASE_REFERENCE_PREFIX) :]
-    return len(suffix) == 24 and suffix.upper() == suffix and all(
-        char in "0123456789ABCDEF" for char in suffix
+    return (
+        len(suffix) == 24
+        and suffix.upper() == suffix
+        and all(char in "0123456789ABCDEF" for char in suffix)
     )
 
 
@@ -288,9 +308,9 @@ async def _load_and_lock_identity_graph(
 ) -> tuple[PatientAuthIdentity, RegistrationRecoveryInspection]:
     subject_row = (
         await db.execute(
-            select(PatientAuthIdentity.provider, PatientAuthIdentity.provider_subject).where(
-                PatientAuthIdentity.identity_id == case.identity_id
-            )
+            select(
+                PatientAuthIdentity.provider, PatientAuthIdentity.provider_subject
+            ).where(PatientAuthIdentity.identity_id == case.identity_id)
         )
     ).one_or_none()
     if subject_row is None or subject_row.provider != SUPABASE_PROVIDER:
@@ -431,7 +451,8 @@ async def open_registration_recovery_review_case(
             await db.execute(
                 select(PatientRegistrationRecoveryReviewCase).where(
                     PatientRegistrationRecoveryReviewCase.provider == SUPABASE_PROVIDER,
-                    PatientRegistrationRecoveryReviewCase.provider_subject_hash == subject_hash,
+                    PatientRegistrationRecoveryReviewCase.provider_subject_hash
+                    == subject_hash,
                     PatientRegistrationRecoveryReviewCase.graph_fingerprint
                     == inspection.graph_fingerprint,
                 )
@@ -535,7 +556,9 @@ async def list_reviewer_cases(
         query = query.where(
             PatientRegistrationRecoveryReviewCase.status == status_filter.value
         )
-    query = query.order_by(PatientRegistrationRecoveryReviewCase.created_at).limit(limit)
+    query = query.order_by(PatientRegistrationRecoveryReviewCase.created_at).limit(
+        limit
+    )
     cases = list((await db.scalars(query)).all())
     return [reviewer_case_metadata(case, reviewer=reviewer) for case in cases]
 
@@ -706,13 +729,17 @@ async def resolve_reviewer_case(
     idempotency_key: str,
     outcome: RegistrationRecoveryReviewOutcome,
     reason_codes: Iterable[RegistrationRecoveryReviewReason],
-) -> tuple[PatientRegistrationRecoveryReviewCase, PatientRegistrationRecoveryReviewDisposition]:
+) -> tuple[
+    PatientRegistrationRecoveryReviewCase, PatientRegistrationRecoveryReviewDisposition
+]:
     if not idempotency_key or len(idempotency_key) > 192:
         raise PatientRegistrationRecoveryReviewError(
             REGISTRATION_RECOVERY_REVIEW_PAYLOAD_INVALID
         )
     normalized_reasons = _normalize_reason_codes(reason_codes)
     case = await _load_case(db, case_reference, lock=True)
+    # Replays disclose a durable result and must retain the claim's session gate.
+    _assert_reviewer_assignment(case, reviewer)
     operation_hash = _operation_hash(
         {
             "case_id": str(case.id),
@@ -750,22 +777,16 @@ async def resolve_reviewer_case(
         raise PatientRegistrationRecoveryReviewError(
             REGISTRATION_RECOVERY_REVIEW_CASE_CONFLICT
         )
-    _assert_reviewer_assignment(case, reviewer)
     if case.version != expected_version:
         raise PatientRegistrationRecoveryReviewError(
             REGISTRATION_RECOVERY_REVIEW_VERSION_CONFLICT
         )
-    _validate_resolution_policy(
-        case, outcome=outcome, reason_codes=normalized_reasons
-    )
+    _validate_resolution_policy(case, outcome=outcome, reason_codes=normalized_reasons)
 
     identity, inspection = await _load_and_lock_identity_graph(db, case=case)
     target_patient_id = uuid.UUID(inspection.target_patient_id)
     if outcome is RegistrationRecoveryReviewOutcome.RESTORE_MISSING_RECORD_ANCHOR:
-        if (
-            not inspection.repairable
-            or inspection.repair_kind != REPAIR_RESTORE_RECORD
-        ):
+        if not inspection.repairable or inspection.repair_kind != REPAIR_RESTORE_RECORD:
             raise PatientRegistrationRecoveryReviewError(
                 REGISTRATION_RECOVERY_REVIEW_REPAIR_NOT_AUTHORIZED
             )
@@ -825,7 +846,9 @@ async def resolve_reviewer_case(
     await enqueue_audit_event(
         db,
         audit_context=_audit_context(),
-        idempotency_key=f"registration-recovery-review:{case.id}:terminal:{operation_hash}",
+        # The full SHA-256 already binds case_id and the exact operation tuple.
+        # Repeating the UUID would exceed audit_outbox's VARCHAR(128) contract.
+        idempotency_key=f"registration-recovery-review:terminal:{operation_hash}",
         actor_id=reviewer.reviewer_id,
         event_type=event_type,
         target_id=case.case_reference,

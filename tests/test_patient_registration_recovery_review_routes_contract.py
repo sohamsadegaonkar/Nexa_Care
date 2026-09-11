@@ -2,6 +2,34 @@
 
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
+from app.api.v2.registration_recovery_review_routes import (
+    ReviewerMutationRequest,
+    ReviewerResolveRequest,
+)
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["patient_id", "reviewer_id", "review_session_binding", "authority_version"],
+)
+@pytest.mark.parametrize("resolve", [False, True])
+def test_reviewer_mutations_reject_client_authority_fields(field, resolve) -> None:
+    payload = {"expected_version": 1, field: "client-controlled"}
+    model = ReviewerMutationRequest
+    if resolve:
+        model = ReviewerResolveRequest
+        payload.update(
+            idempotency_key="test-key-123",
+            outcome="NO_REPAIR",
+            reason_codes=["IDENTITY_REVOKED"],
+        )
+    with pytest.raises(ValidationError) as error:
+        model.model_validate(payload)
+    assert any(item["type"] == "extra_forbidden" for item in error.value.errors())
+
 
 ROOT = Path(__file__).resolve().parents[1]
 

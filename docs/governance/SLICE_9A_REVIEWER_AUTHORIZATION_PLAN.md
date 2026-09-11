@@ -30,7 +30,7 @@ The reviewer role does not itself grant clinical patient access, document-proces
 
 ## Operation classes
 
-- Read/list case metadata: authenticated reviewer authority; route-specific read policy may relax recent-MFA while retaining live session and trusted affiliation.
+- Read/list case metadata: the same live reviewer authority and recent-MFA gate as mutations; no read-route relaxation is implemented.
 - Claim/recover reviewer session: reviewer authority plus recent MFA.
 - Terminal disposition/repair: reviewer authority plus recent MFA and exact assigned-reviewer/session/version binding.
 
