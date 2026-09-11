@@ -9,7 +9,7 @@ Privacy/legal reviewer: Human owner required
 Clinical reviewer: Human owner required  
 Last reviewed: 2026-09-09
 Next review: 2026-10-25 or sooner after a constitutional change  
-Repository baseline: `aa091e14cf38124ca81e32438b49bdad4d79be8b` on `main`; Alembic head `20260909_device_trust_lifecycle`
+Repository baseline: `aa091e14cf38124ca81e32438b49bdad4d79be8b` on `main`; Alembic head `20260910_registration_recovery_review`
 
 ## 1. Product mission
 
@@ -163,7 +163,7 @@ Validation query:
 Forward-fix strategy:
 ```
 
-Current head is `20260909_device_trust_lifecycle`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
+Current head is `20260910_registration_recovery_review`; changing it requires updating architecture contracts and validating ancestry, identifier length, and a single head.
 
 ## 11. Frontend standard
 
