@@ -29,6 +29,27 @@ export interface RegistrationRecoveryCompleteResponse {
   device_enrollment_expires_in_seconds: number | null
 }
 
+export type RegistrationRecoveryReviewStatus =
+  | 'PENDING'
+  | 'IN_REVIEW'
+  | 'RESOLVED'
+  | 'REJECTED'
+  | 'SECURITY_ESCALATED'
+
+export type RegistrationRecoveryReviewNextAction =
+  | 'WAIT_FOR_REVIEW'
+  | 'RESTART_ACCOUNT_RECOVERY'
+  | 'CONTACT_SUPPORT'
+
+export interface RegistrationRecoveryReviewStatusResponse {
+  case_reference: string
+  status: RegistrationRecoveryReviewStatus
+  terminal: boolean
+  next_action: RegistrationRecoveryReviewNextAction
+  created_at: string
+  resolved_at: string | null
+}
+
 export type RegistrationRecoveryClientErrorKind =
   | 'manual_review'
   | 'not_required'
@@ -39,6 +60,7 @@ export type RegistrationRecoveryClientErrorKind =
   | 'expired_attempt'
   | 'rate_limited'
   | 'network'
+  | 'not_found'
   | 'unknown'
 
 export class RegistrationRecoveryClientError extends Error {
@@ -46,15 +68,47 @@ export class RegistrationRecoveryClientError extends Error {
     message: string,
     public readonly kind: RegistrationRecoveryClientErrorKind,
     public readonly code: string | undefined,
-    public readonly retryable: boolean
+    public readonly retryable: boolean,
+    public readonly caseReference?: string
   ) {
     super(message)
     this.name = 'RegistrationRecoveryClientError'
   }
 }
 
-function mapRecoveryError(error: unknown): RegistrationRecoveryClientError {
+function extractCaseReference(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined
+  const direct =
+    (error as Record<string, unknown>).case_reference ||
+    (error as Record<string, unknown>).caseReference
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+
+  const details = (error as { details?: unknown }).details
+  if (details && typeof details === 'object') {
+    const rec = details as Record<string, unknown>
+    if (typeof rec.case_reference === 'string' && rec.case_reference.trim()) {
+      return rec.case_reference.trim()
+    }
+    const inner = rec.detail as Record<string, unknown> | undefined
+    if (
+      inner &&
+      typeof inner === 'object' &&
+      typeof inner.case_reference === 'string' &&
+      inner.case_reference.trim()
+    ) {
+      return inner.case_reference.trim()
+    }
+  }
+  return undefined
+}
+
+function mapRecoveryError(
+  error: unknown,
+  defaultCaseReference?: string
+): RegistrationRecoveryClientError {
   if (error instanceof RegistrationRecoveryClientError) return error
+  const caseReference = extractCaseReference(error) ?? defaultCaseReference
+
   if (error instanceof ApiError) {
     const code = error.code
     if (code === 'REGISTRATION_RECOVERY_MANUAL_REVIEW_REQUIRED') {
@@ -62,7 +116,8 @@ function mapRecoveryError(error: unknown): RegistrationRecoveryClientError {
         'This account needs manual review before it can be repaired.',
         'manual_review',
         code,
-        false
+        false,
+        caseReference
       )
     }
     if (code === 'REGISTRATION_RECOVERY_NOT_REQUIRED') {
@@ -127,26 +182,45 @@ function mapRecoveryError(error: unknown): RegistrationRecoveryClientError {
         false
       )
     }
-    if (error.status === 0 || error.isRetryable) {
+    if (
+      code === 'REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND' ||
+      error.status === 404
+    ) {
+      return new RegistrationRecoveryClientError(
+        'The requested review case could not be found.',
+        'not_found',
+        code ?? 'REGISTRATION_RECOVERY_REVIEW_CASE_NOT_FOUND',
+        false,
+        caseReference
+      )
+    }
+    if (
+      code === 'REGISTRATION_RECOVERY_REVIEW_UNAVAILABLE' ||
+      error.status === 0 ||
+      error.isRetryable
+    ) {
       return new RegistrationRecoveryClientError(
         'Nexa Care could not complete account recovery right now. Check your connection and retry.',
         'network',
         code,
-        true
+        true,
+        caseReference
       )
     }
     return new RegistrationRecoveryClientError(
       error.message || 'Account recovery was rejected.',
       'unknown',
       code,
-      false
+      false,
+      caseReference
     )
   }
   return new RegistrationRecoveryClientError(
     error instanceof Error ? error.message : 'Account recovery failed.',
     'unknown',
     undefined,
-    false
+    false,
+    caseReference
   )
 }
 
@@ -208,3 +282,48 @@ export async function completePatientRegistrationRecovery(
     throw mapRecoveryError(error)
   }
 }
+
+export async function getPatientRegistrationRecoveryReviewStatus(
+  caseReference: string
+): Promise<RegistrationRecoveryReviewStatusResponse> {
+  const normalizedCaseRef = caseReference?.trim()
+  if (!normalizedCaseRef) {
+    throw new RegistrationRecoveryClientError(
+      'A case reference is required to check review status.',
+      'unknown',
+      'CASE_REFERENCE_REQUIRED',
+      false
+    )
+  }
+
+  try {
+    const { data } =
+      await apiClient.get<RegistrationRecoveryReviewStatusResponse>(
+        `/api/v2/auth/registration-recovery/review/cases/${encodeURIComponent(normalizedCaseRef)}`,
+        { noAuth: true }
+      )
+
+    if (
+      !data ||
+      typeof data !== 'object' ||
+      typeof data.case_reference !== 'string' ||
+      typeof data.status !== 'string' ||
+      typeof data.terminal !== 'boolean' ||
+      typeof data.next_action !== 'string' ||
+      typeof data.created_at !== 'string'
+    ) {
+      throw new RegistrationRecoveryClientError(
+        'The review status response was malformed.',
+        'unknown',
+        'MALFORMED_REVIEW_STATUS_RESPONSE',
+        true,
+        normalizedCaseRef
+      )
+    }
+
+    return data
+  } catch (error) {
+    throw mapRecoveryError(error, normalizedCaseRef)
+  }
+}
+
