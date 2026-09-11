@@ -33,7 +33,7 @@ jobs:
       - name: Install gateway dependencies
         run: python -m pip install -r requirements.txt
       - name: Unit and local HTTP tests
-        run: python -m unittest discover -s tests -v
+        run: python -m unittest discover -s tests -p '*_suite.py' -v
       - name: Compile and export schema
         run: |
           python -m compileall -q gateway tests export_schema.py

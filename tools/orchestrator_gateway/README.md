@@ -34,7 +34,7 @@ Requires Python 3.11+; the Docker runtime uses Python 3.12. From this directory:
 
 ```sh
 python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+python -m unittest discover -s tests -p '*_suite.py' -v
 python -m compileall -q gateway tests export_schema.py
 ```
 

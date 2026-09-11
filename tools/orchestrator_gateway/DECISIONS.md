@@ -47,3 +47,10 @@ unresolved threads, journal failure/replay/collision, upstream errors/timeouts,
 response redaction, schema parity, and a disposable local HTTP smoke test.
 Live GitHub App, protected-branch merge, hosting and GPT editor validation remain
 separate gates; synthetic HTTP mocks prove no live provider behavior.
+
+CI discovery boundary (2026-09-11): the clinical partition audit recursively
+collects pytest's test_*.py files from the whole repository. The gateway is a
+separate application with separate dependencies, so its unchanged unittest
+suite uses gateway_suite.py and explicit *_suite.py discovery in its dedicated
+CI job. All 55 tests remain mandatory there; no assertions or tests are removed,
+skipped, or marked xfail. Clinical CI and its partition invariant stay unchanged.

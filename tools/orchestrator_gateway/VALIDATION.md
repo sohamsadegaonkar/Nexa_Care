@@ -25,7 +25,7 @@ editor access. The existing GPT has not been edited.
 
 ## Passed locally
 
-`python -m unittest discover -s tests -q`: 55 tests passed, 0 failed, 0 skipped.
+`python -m unittest discover -s tests -p '*_suite.py' -q`: 55 tests passed, 0 failed, 0 skipped.
 Tests include synthetic service calls, local aiohttp HTTP integration, real
 SQLite persistence/restart, RSA signing verification, stale-SHA/path/content
 rejections, uncertain replay, journal failure, redirect and response bounds,

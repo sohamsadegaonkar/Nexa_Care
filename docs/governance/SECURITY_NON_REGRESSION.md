@@ -959,7 +959,7 @@ Review this register every 90 days and whenever a security defect, invariant, en
   or claiming mocked evidence as live provider qualification.
 - Enforcement: gateway/policy.py, models.py, api.py, journal.py and service.py under
   tools/orchestrator_gateway. Production enforcement is pending deployment.
-- Adversarial coverage: tests/test_gateway.py covers missing/bad authentication,
+- Adversarial coverage: tests/gateway_suite.py covers missing/bad authentication,
   path/branch bypasses, nonregular files, whole-file scanning before pagination,
   stale write/merge preconditions, check provenance, stale reviews/unresolved
   threads, journal outages and uncertain replay, redirect rejection, upstream
