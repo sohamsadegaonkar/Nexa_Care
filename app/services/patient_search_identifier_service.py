@@ -36,6 +36,16 @@ IDENTIFIER_PHONE = "PHONE"
 PHONE_NORMALIZATION_VERSION = 1
 _INDEX_DOMAIN = "nexa-care:patient-discovery-index:v1"
 _AUDIT_ACTOR = "PATIENT_IDENTITY_AUTHORITY"
+_ALLOWED_REVOCATION_REASONS = frozenset(
+    {
+        "IDENTITY_REVOKED",
+        "IDENTITY_REBOUND",
+        "PATIENT_ERASED",
+        "AUTHORITY_CONFLICT",
+        "SOURCE_REVERIFICATION_FAILED",
+        "ADMINISTRATIVE",
+    }
+)
 
 
 class PatientSearchIdentifierError(RuntimeError):
@@ -323,38 +333,15 @@ async def synchronize_verified_phone_identifier(
     return replacement
 
 
-async def revoke_active_identifiers_for_identity(
+async def _revoke_rows(
     db: AsyncSession,
     *,
-    identity_id: UUID,
-    reason: str = "IDENTITY_REVOKED",
-    revoked_at: datetime | None = None,
+    rows: list[PatientSearchIdentifier],
+    reason: str,
+    revoked_at: datetime,
 ) -> int:
-    """Revoke search authority when its authentication source is revoked.
-
-    Revocation and its audit-outbox evidence share the caller's transaction.
-    """
-
-    if reason not in {"IDENTITY_REVOKED", "PATIENT_ERASED", "ADMINISTRATIVE"}:
-        raise PatientSearchIdentifierError("PATIENT_SEARCH_IDENTIFIER_INVALID")
-    now = revoked_at or datetime.now(timezone.utc)
-    if now.tzinfo is None:
-        raise PatientSearchIdentifierError("PATIENT_SEARCH_IDENTIFIER_INVALID")
-
-    rows = list(
-        (
-            await db.scalars(
-                select(PatientSearchIdentifier)
-                .where(
-                    PatientSearchIdentifier.identity_id == identity_id,
-                    PatientSearchIdentifier.revoked_at.is_(None),
-                )
-                .with_for_update()
-            )
-        ).all()
-    )
     for row in rows:
-        row.revoked_at = now
+        row.revoked_at = revoked_at
         row.revocation_reason = reason
         await enqueue_audit_event(
             db,
@@ -372,6 +359,92 @@ async def revoke_active_identifiers_for_identity(
     if rows:
         await db.flush()
     return len(rows)
+
+
+async def revoke_active_identifiers_for_identity(
+    db: AsyncSession,
+    *,
+    identity_id: UUID,
+    reason: str = "IDENTITY_REVOKED",
+    revoked_at: datetime | None = None,
+) -> int:
+    """Revoke search authority when its authentication source changes.
+
+    Revocation and its audit-outbox evidence share the caller's transaction.
+    Reasons distinguish identity revocation, canonical rebind, erasure, and
+    other fail-closed authority invalidations without recording raw PII.
+    """
+
+    if reason not in _ALLOWED_REVOCATION_REASONS:
+        raise PatientSearchIdentifierError("PATIENT_SEARCH_IDENTIFIER_INVALID")
+    now = revoked_at or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise PatientSearchIdentifierError("PATIENT_SEARCH_IDENTIFIER_INVALID")
+
+    rows = list(
+        (
+            await db.scalars(
+                select(PatientSearchIdentifier)
+                .where(
+                    PatientSearchIdentifier.identity_id == identity_id,
+                    PatientSearchIdentifier.revoked_at.is_(None),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    return await _revoke_rows(db, rows=rows, reason=reason, revoked_at=now)
+
+
+async def quarantine_verified_phone_conflict(
+    db: AsyncSession,
+    *,
+    identity_id: UUID,
+    verified_phone: str,
+    revoked_at: datetime | None = None,
+) -> int:
+    """Disable every active authority implicated by one verified-phone conflict.
+
+    A newly verified phone that collides with another patient must never be
+    reassigned by winner selection. The current identity's old search authority
+    and every active row matching the newly verified phone are revoked together.
+    A later, separately authorized source event may establish a new binding.
+    """
+
+    try:
+        normalized = normalize_indian_phone(verified_phone)
+    except ValueError as exc:
+        raise PatientSearchIdentifierError("PATIENT_SEARCH_IDENTIFIER_INVALID") from exc
+    _, fingerprints = _phone_fingerprints(normalized)
+    await _assert_active_rows_covered_by_keyring(
+        db, configured_versions=set(fingerprints)
+    )
+    now = revoked_at or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise PatientSearchIdentifierError("PATIENT_SEARCH_IDENTIFIER_INVALID")
+
+    rows = list(
+        (
+            await db.scalars(
+                select(PatientSearchIdentifier)
+                .where(
+                    PatientSearchIdentifier.identifier_type == IDENTIFIER_PHONE,
+                    PatientSearchIdentifier.revoked_at.is_(None),
+                    or_(
+                        PatientSearchIdentifier.identity_id == identity_id,
+                        _candidate_predicate(fingerprints),
+                    ),
+                )
+                .with_for_update()
+            )
+        ).all()
+    )
+    return await _revoke_rows(
+        db,
+        rows=rows,
+        reason="AUTHORITY_CONFLICT",
+        revoked_at=now,
+    )
 
 
 async def resolve_verified_phone_patient(
