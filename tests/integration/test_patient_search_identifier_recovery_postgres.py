@@ -118,14 +118,14 @@ async def test_merge_rebind_revokes_premerge_phone_search_authority(monkeypatch)
             source_id = uuid.UUID(account.patient_id)
 
         async with factory() as db:
-            identity = await db.scalar(
-                select(PatientAuthIdentity).where(
-                    PatientAuthIdentity.provider == "supabase",
-                    PatientAuthIdentity.provider_subject == subject,
-                )
-            )
-            assert identity is not None
             async with db.begin():
+                identity = await db.scalar(
+                    select(PatientAuthIdentity).where(
+                        PatientAuthIdentity.provider == "supabase",
+                        PatientAuthIdentity.provider_subject == subject,
+                    )
+                )
+                assert identity is not None
                 await synchronize_verified_phone_identifier(
                     db,
                     patient_id=source_id,
@@ -172,12 +172,12 @@ async def test_merge_rebind_revokes_premerge_phone_search_authority(monkeypatch)
                     PatientAuthIdentity.provider_subject == subject,
                 )
             )
+            assert identity is not None and identity.patient_id == canonical_id
             row = await db.scalar(
                 select(PatientSearchIdentifier).where(
                     PatientSearchIdentifier.identity_id == identity.identity_id
                 )
             )
-            assert identity is not None and identity.patient_id == canonical_id
             assert row is not None
             assert row.revoked_at is not None
             assert row.revocation_reason == "IDENTITY_REBOUND"
@@ -219,18 +219,18 @@ async def test_verified_phone_conflict_quarantines_old_and_new_identity_authorit
             second_id = uuid.UUID(second.patient_id)
 
         async with factory() as db:
-            first_identity = await db.scalar(
-                select(PatientAuthIdentity).where(
-                    PatientAuthIdentity.provider_subject == first_subject
-                )
-            )
-            second_identity = await db.scalar(
-                select(PatientAuthIdentity).where(
-                    PatientAuthIdentity.provider_subject == second_subject
-                )
-            )
-            assert first_identity is not None and second_identity is not None
             async with db.begin():
+                first_identity = await db.scalar(
+                    select(PatientAuthIdentity).where(
+                        PatientAuthIdentity.provider_subject == first_subject
+                    )
+                )
+                second_identity = await db.scalar(
+                    select(PatientAuthIdentity).where(
+                        PatientAuthIdentity.provider_subject == second_subject
+                    )
+                )
+                assert first_identity is not None and second_identity is not None
                 await synchronize_verified_phone_identifier(
                     db,
                     patient_id=first_id,
@@ -245,13 +245,13 @@ async def test_verified_phone_conflict_quarantines_old_and_new_identity_authorit
                 )
 
         async with factory() as db:
-            second_identity = await db.scalar(
-                select(PatientAuthIdentity).where(
-                    PatientAuthIdentity.provider_subject == second_subject
-                )
-            )
-            assert second_identity is not None
             async with db.begin():
+                second_identity = await db.scalar(
+                    select(PatientAuthIdentity).where(
+                        PatientAuthIdentity.provider_subject == second_subject
+                    )
+                )
+                assert second_identity is not None
                 with pytest.raises(PatientSearchIdentifierConflict):
                     await synchronize_verified_phone_identifier(
                         db,
