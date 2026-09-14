@@ -42,7 +42,8 @@ class PatientSearchIdentifier(Base):
         CheckConstraint(
             "(revoked_at IS NULL AND revocation_reason IS NULL) OR "
             "(revoked_at IS NOT NULL AND revocation_reason IN "
-            "('SUPERSEDED','IDENTITY_REVOKED','PATIENT_ERASED','ADMINISTRATIVE'))",
+            "('SUPERSEDED','IDENTITY_REVOKED','IDENTITY_REBOUND','PATIENT_ERASED',"
+            "'AUTHORITY_CONFLICT','SOURCE_REVERIFICATION_FAILED','ADMINISTRATIVE'))",
             name="ck_patient_search_identifier_lifecycle",
         ),
         Index(
