@@ -7,7 +7,7 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.patient import Patient
@@ -53,6 +53,21 @@ def _keyring(monkeypatch) -> None:
         json.dumps({"1": "a" * 48, "2": "b" * 48}),
     )
     monkeypatch.setenv("PATIENT_DISCOVERY_INDEX_ACTIVE_KEY_VERSION", "2")
+
+
+@pytest.fixture(autouse=True)
+async def _isolate_search_identifiers() -> None:
+    """Prevent one key-rotation case from weakening or poisoning another."""
+
+    engine = create_async_engine(_database_url())
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(delete(PatientSearchIdentifier))
+        yield
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(delete(PatientSearchIdentifier))
+        await engine.dispose()
 
 
 async def _create_authority(db) -> tuple[Patient, PatientAuthIdentity]:
