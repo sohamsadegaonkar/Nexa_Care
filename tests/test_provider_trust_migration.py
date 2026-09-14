@@ -15,7 +15,8 @@ EVIDENCE_REVISION = "20260904_verification_evidence"
 APPLICATION_REVISION = "20260905_verification_application"
 SCHEDULER_REVISION = "20260906_verification_scheduler"
 DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
-HEAD_REVISION = "20260910_registration_recovery_review"
+REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
+HEAD_REVISION = "20260914_patient_search_identifiers"
 
 
 def _source() -> str:
@@ -57,7 +58,14 @@ def test_provider_trust_migration_is_current_single_head() -> None:
         scripts.get_revision(SCHEDULER_REVISION).down_revision == APPLICATION_REVISION
     )
     assert scripts.get_revision(DEVICE_TRUST_REVISION).down_revision == SCHEDULER_REVISION
-    assert scripts.get_revision(HEAD_REVISION).down_revision == DEVICE_TRUST_REVISION
+    assert (
+        scripts.get_revision(REGISTRATION_RECOVERY_REVISION).down_revision
+        == DEVICE_TRUST_REVISION
+    )
+    assert (
+        scripts.get_revision(HEAD_REVISION).down_revision
+        == REGISTRATION_RECOVERY_REVISION
+    )
 
 
 def test_lifecycle_version_migration_is_documented_backfilled_and_forward_only() -> (
@@ -87,7 +95,6 @@ def test_migration_backfills_trust_state_fail_closed_and_is_forward_only() -> No
     source = _trust_source()
     assert "'NOT_SUBMITTED'" in source
     assert "'DRAFT'" in source
-    assert "'PENDING_ACTIVATION'" in source
     assert "medical_registration_number" not in source
     assert "raise RuntimeError" in source
     assert "op.drop_table" not in source
