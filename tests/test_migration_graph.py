@@ -8,7 +8,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
 DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
-EXPECTED_HEAD = "20260910_registration_recovery_review"
+REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
+EXPECTED_HEAD = "20260914_patient_search_identifiers"
 
 
 def _scripts() -> ScriptDirectory:
@@ -98,9 +99,15 @@ def test_device_trust_lifecycle_descends_from_verification_scheduler() -> None:
 
 
 def test_registration_recovery_review_descends_from_device_trust() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision(REGISTRATION_RECOVERY_REVISION)
     assert revision is not None
     assert revision.down_revision == DEVICE_TRUST_REVISION
+
+
+def test_patient_search_identifiers_descend_from_registration_recovery() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == REGISTRATION_RECOVERY_REVISION
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:
