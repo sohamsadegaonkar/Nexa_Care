@@ -50,6 +50,14 @@ prohibited. Set `TRUSTED_HOSTS` to explicit deployed API hosts and
   `OPERATIONS_AUTH_TOKEN` secrets supplied through managed secret references
 - `DATABASE_ECHO_SQL=false` and `AUTO_COMMIT=false`
 
+Slice 10A's private searchable-identifier schema does not itself enable provider
+phone discovery. Before any low-entropy provider-facing discovery mode is
+activated, production wiring must additionally supply an independently generated
+`PATIENT_DISCOVERY_INDEX_HMAC_KEYS_JSON` keyring and
+`PATIENT_DISCOVERY_INDEX_ACTIVE_KEY_VERSION`, add them to production preflight
+and deployment secret-reference contracts, and qualify rotation/reindexing and
+anti-enumeration behavior. They must not reuse any secret listed above.
+
 Static `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
 environment variables are prohibited. Runtime AWS access comes only from the ECS
 task role.
@@ -74,8 +82,8 @@ python scripts/run_pilot_migrations.py
 ```
 
 The current exact repository migration head is
-`20260910_registration_recovery_review`. The migration task upgrades and verifies that
-exact single repository head. API containers never run migrations. In a
+`20260914_patient_search_identifiers`. The migration task upgrades and verifies
+that exact single repository head. API containers never run migrations. In a
 production-like runtime, API startup then independently refuses to start unless:
 
 1. static production configuration is valid;
