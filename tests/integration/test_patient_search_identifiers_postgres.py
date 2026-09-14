@@ -291,6 +291,7 @@ async def test_retiring_key_with_active_rows_fails_closed(monkeypatch) -> None:
             with pytest.raises(PatientSearchIdentifierUnavailable):
                 await resolve_verified_phone_patient(db, phone=phone)
 
+        async with factory() as db:
             async with db.begin():
                 other_patient, other_identity = await _create_authority(db)
                 with pytest.raises(PatientSearchIdentifierUnavailable):
