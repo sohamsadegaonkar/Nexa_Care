@@ -150,7 +150,7 @@ async def drop_disposable_database(db_name: str, base_url: str | None = None) ->
 
 def migrate_database_to_head(
     db_url: str,
-    target_head: str = "20260910_registration_recovery_review",
+    target_head: str = "20260914_patient_search_identifiers",
     alembic_ini_path: str = "alembic.ini",
 ) -> None:
     """Run Alembic upgrade to target head on the specified database URL."""
