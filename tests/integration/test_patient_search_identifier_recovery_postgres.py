@@ -28,9 +28,13 @@ from app.services.patient_registration_service import finalize_patient_registrat
 from app.services.patient_search_identifier_service import (
     PatientSearchIdentifierConflict,
     PatientSearchIdentifierNoMatch,
+    PatientSearchIdentifierUnavailable,
     quarantine_verified_phone_conflict,
     resolve_verified_phone_patient,
     synchronize_verified_phone_identifier,
+)
+from app.services.patient_verified_phone_authority import (
+    reconcile_verified_supabase_phone_authority,
 )
 
 pytestmark = pytest.mark.postgres
@@ -286,4 +290,68 @@ async def test_verified_phone_conflict_quarantines_old_and_new_identity_authorit
     finally:
         if first_id is not None and second_id is not None:
             await _cleanup(factory, first_id, second_id)
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_verified_source_adapter_binds_changes_and_checks_patient(monkeypatch) -> None:
+    _configure_index(monkeypatch)
+    engine = create_async_engine(_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    subject = f"search-source-{uuid.uuid4().hex}"
+    patient_id: uuid.UUID | None = None
+    first_phone = "+919876543243"
+    second_phone = "+919876543244"
+
+    try:
+        async with factory() as db:
+            account = await finalize_patient_registration(
+                db,
+                provider_subject=subject,
+                attempt_id=uuid.uuid4().hex,
+            )
+            patient_id = uuid.UUID(account.patient_id)
+
+        async with factory() as db:
+            async with db.begin():
+                first = await reconcile_verified_supabase_phone_authority(
+                    db,
+                    provider_subject=subject,
+                    expected_patient_id=patient_id,
+                    verified_phone=first_phone,
+                )
+                assert first.disposition == "BOUND"
+
+        async with factory() as db:
+            resolved, _ = await resolve_verified_phone_patient(db, phone=first_phone)
+            assert resolved.patient_uuid == patient_id
+
+        async with factory() as db:
+            async with db.begin():
+                replacement = await reconcile_verified_supabase_phone_authority(
+                    db,
+                    provider_subject=subject,
+                    expected_patient_id=patient_id,
+                    verified_phone=second_phone,
+                )
+                assert replacement.disposition == "BOUND"
+
+        async with factory() as db:
+            with pytest.raises(PatientSearchIdentifierNoMatch):
+                await resolve_verified_phone_patient(db, phone=first_phone)
+            resolved, _ = await resolve_verified_phone_patient(db, phone=second_phone)
+            assert resolved.patient_uuid == patient_id
+
+        async with factory() as db:
+            async with db.begin():
+                with pytest.raises(PatientSearchIdentifierUnavailable):
+                    await reconcile_verified_supabase_phone_authority(
+                        db,
+                        provider_subject=subject,
+                        expected_patient_id=uuid.uuid4(),
+                        verified_phone=second_phone,
+                    )
+    finally:
+        if patient_id is not None:
+            await _cleanup(factory, patient_id)
         await engine.dispose()
