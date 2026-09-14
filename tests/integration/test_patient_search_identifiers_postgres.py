@@ -7,7 +7,7 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.patient import Patient
@@ -16,6 +16,7 @@ from app.models.patient_search_identifier import PatientSearchIdentifier
 from app.services.patient_search_identifier_service import (
     PatientSearchIdentifierConflict,
     PatientSearchIdentifierNoMatch,
+    PatientSearchIdentifierUnavailable,
     resolve_verified_phone_patient,
     revoke_active_identifiers_for_identity,
     synchronize_verified_phone_identifier,
@@ -106,6 +107,20 @@ async def test_verified_phone_is_stored_only_as_keyed_index_and_resolves() -> No
             resolved, redirected = await resolve_verified_phone_patient(db, phone=phone)
             assert resolved.patient_uuid == patient_id
             assert redirected is False
+
+            audit_rows = (
+                await db.execute(
+                    text(
+                        "SELECT event_type, payload::text FROM public.audit_outbox "
+                        "WHERE patient_id = :patient_id "
+                        "AND event_type = 'PATIENT_SEARCH_IDENTIFIER_BOUND'"
+                    ),
+                    {"patient_id": str(patient_id)},
+                )
+            ).all()
+            assert len(audit_rows) == 1
+            assert phone not in audit_rows[0][1]
+            assert "PHONE" in audit_rows[0][1]
     finally:
         await engine.dispose()
 
@@ -165,6 +180,21 @@ async def test_reverification_is_idempotent_and_phone_change_supersedes() -> Non
                 await resolve_verified_phone_patient(db, phone=first_phone)
             resolved, _ = await resolve_verified_phone_patient(db, phone=second_phone)
             assert resolved.patient_uuid == patient_id
+
+            events = list(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT event_type FROM public.audit_outbox "
+                            "WHERE patient_id = :patient_id "
+                            "AND event_type LIKE 'PATIENT_SEARCH_IDENTIFIER_%'"
+                        ),
+                        {"patient_id": str(patient_id)},
+                    )
+                ).scalars()
+            )
+            assert events.count("PATIENT_SEARCH_IDENTIFIER_BOUND") == 2
+            assert events.count("PATIENT_SEARCH_IDENTIFIER_SUPERSEDED") == 1
     finally:
         await engine.dispose()
 
@@ -183,14 +213,15 @@ async def test_same_phone_cannot_silently_move_to_another_patient(monkeypatch) -
         async with factory() as db:
             async with db.begin():
                 first_patient, first_identity = await _create_authority(db)
+                first_patient_id = first_patient.patient_uuid
                 await synchronize_verified_phone_identifier(
                     db,
-                    patient_id=first_patient.patient_uuid,
+                    patient_id=first_patient_id,
                     identity_id=first_identity.identity_id,
                     verified_phone=phone,
                 )
 
-        # Rotate to a new active key while retaining the old key for lookup.
+        # Rotate to a new active key while retaining the old key for collision checks.
         monkeypatch.setenv(
             "PATIENT_DISCOVERY_INDEX_HMAC_KEYS_JSON",
             json.dumps({"1": "a" * 48, "2": "b" * 48}),
@@ -209,7 +240,93 @@ async def test_same_phone_cannot_silently_move_to_another_patient(monkeypatch) -
 
         async with factory() as db:
             resolved, _ = await resolve_verified_phone_patient(db, phone=phone)
-            assert resolved.patient_uuid == first_patient.patient_uuid
+            assert resolved.patient_uuid == first_patient_id
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_retiring_key_with_active_rows_fails_closed(monkeypatch) -> None:
+    engine = create_async_engine(_database_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    phone = "+919876543215"
+    try:
+        monkeypatch.setenv(
+            "PATIENT_DISCOVERY_INDEX_HMAC_KEYS_JSON",
+            json.dumps({"1": "a" * 48}),
+        )
+        monkeypatch.setenv("PATIENT_DISCOVERY_INDEX_ACTIVE_KEY_VERSION", "1")
+        async with factory() as db:
+            async with db.begin():
+                patient, identity = await _create_authority(db)
+                await synchronize_verified_phone_identifier(
+                    db,
+                    patient_id=patient.patient_uuid,
+                    identity_id=identity.identity_id,
+                    verified_phone=phone,
+                )
+
+        # Removing v1 before its active row is reverified/reindexed is unsafe.
+        monkeypatch.setenv(
+            "PATIENT_DISCOVERY_INDEX_HMAC_KEYS_JSON",
+            json.dumps({"2": "b" * 48}),
+        )
+        monkeypatch.setenv("PATIENT_DISCOVERY_INDEX_ACTIVE_KEY_VERSION", "2")
+        async with factory() as db:
+            with pytest.raises(PatientSearchIdentifierUnavailable):
+                await resolve_verified_phone_patient(db, phone=phone)
+
+            async with db.begin():
+                other_patient, other_identity = await _create_authority(db)
+                with pytest.raises(PatientSearchIdentifierUnavailable):
+                    await synchronize_verified_phone_identifier(
+                        db,
+                        patient_id=other_patient.patient_uuid,
+                        identity_id=other_identity.identity_id,
+                        verified_phone="+919876543216",
+                    )
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_audit_failure_rolls_back_identifier_binding(monkeypatch) -> None:
+    engine = create_async_engine(_database_url())
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    phone = "+919876543217"
+    patient_id = None
+    try:
+        async with factory() as db:
+            async with db.begin():
+                patient, identity = await _create_authority(db)
+                patient_id = patient.patient_uuid
+
+                async def _fail_audit(*args, **kwargs):
+                    raise RuntimeError("synthetic audit failure")
+
+                monkeypatch.setattr(
+                    "app.services.patient_search_identifier_service.enqueue_audit_event",
+                    _fail_audit,
+                )
+                with pytest.raises(RuntimeError, match="synthetic audit failure"):
+                    await synchronize_verified_phone_identifier(
+                        db,
+                        patient_id=patient_id,
+                        identity_id=identity.identity_id,
+                        verified_phone=phone,
+                    )
+
+        async with factory() as db:
+            rows = list(
+                (
+                    await db.scalars(
+                        select(PatientSearchIdentifier).where(
+                            PatientSearchIdentifier.patient_id == patient_id
+                        )
+                    )
+                ).all()
+            )
+            assert rows == []
     finally:
         await engine.dispose()
 
@@ -230,6 +347,7 @@ async def test_identity_revocation_removes_search_authority() -> None:
                     verified_phone=phone,
                 )
                 identity_id = identity.identity_id
+                patient_id = patient.patient_uuid
 
         async with factory() as db:
             async with db.begin():
@@ -241,5 +359,18 @@ async def test_identity_revocation_removes_search_authority() -> None:
         async with factory() as db:
             with pytest.raises(PatientSearchIdentifierNoMatch):
                 await resolve_verified_phone_patient(db, phone=phone)
+            events = list(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT event_type FROM public.audit_outbox "
+                            "WHERE patient_id = :patient_id "
+                            "AND event_type = 'PATIENT_SEARCH_IDENTIFIER_REVOKED'"
+                        ),
+                        {"patient_id": str(patient_id)},
+                    )
+                ).scalars()
+            )
+            assert events == ["PATIENT_SEARCH_IDENTIFIER_REVOKED"]
     finally:
         await engine.dispose()
