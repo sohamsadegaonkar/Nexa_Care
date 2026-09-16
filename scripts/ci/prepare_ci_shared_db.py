@@ -22,6 +22,8 @@ from tests.helpers.qualification_infra import (  # noqa: E402
 )
 
 SHARED_DB_NAME = "nexa_qual_ci_shared"
+# Feature-branch qualification follows the repository schema head. Production
+# pilot deployment remains independently pinned by scripts/run_pilot_migrations.py.
 HEAD = "20260916_patient_external_record_import"
 
 
