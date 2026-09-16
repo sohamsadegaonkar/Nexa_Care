@@ -50,6 +50,21 @@ class DocumentStorage(ABC):
         self, storage_ref: str, *, tenant_id: str, patient_id: str
     ) -> None: ...
 
+    @abstractmethod
+    async def put_patient_document(
+        self, data: bytes, *, patient_id: str, mime_type: str
+    ) -> StoredDocument: ...
+
+    @abstractmethod
+    async def get_patient_document_bytes(
+        self, storage_ref: str, *, patient_id: str
+    ) -> bytes: ...
+
+    @abstractmethod
+    async def delete_patient_document(
+        self, storage_ref: str, *, patient_id: str
+    ) -> None: ...
+
 
 def _key_bytes(value: str) -> bytes:
     try:
@@ -69,6 +84,14 @@ def _aad(tenant_id: str, patient_id: str, object_key: str) -> bytes:
     return f"nexa-document-v1\0{tenant_id}\0{patient_id}\0{object_key}".encode()
 
 
+def _patient_aad(patient_id: str, object_key: str) -> bytes:
+    return f"nexa-patient-document-v1\0{patient_id}\0{object_key}".encode()
+
+
+def _patient_object_prefix(patient_id: str) -> str:
+    return f"patient-self/{patient_id}/"
+
+
 class LocalEncryptedDocumentStorage(DocumentStorage):
     def __init__(self, config: DocumentStorageConfig) -> None:
         assert config.local_root is not None and config.encryption_key is not None
@@ -81,15 +104,12 @@ class LocalEncryptedDocumentStorage(DocumentStorage):
             raise DocumentStorageError("Invalid object key")
         return candidate
 
-    async def put_document(
-        self, data: bytes, *, tenant_id: str, patient_id: str, mime_type: str
+    async def _write_encrypted(
+        self, data: bytes, *, object_key: str, aad: bytes, mime_type: str
     ) -> StoredDocument:
         content_hash = hashlib.sha256(data).hexdigest()
-        object_key = f"{tenant_id}/{patient_id}/{uuid.uuid4().hex}.bin"
         nonce = os.urandom(12)
-        encrypted = nonce + AESGCM(self.key).encrypt(
-            nonce, data, _aad(tenant_id, patient_id, object_key)
-        )
+        encrypted = nonce + AESGCM(self.key).encrypt(nonce, data, aad)
         path = self._path(object_key)
 
         def write() -> None:
@@ -106,40 +126,86 @@ class LocalEncryptedDocumentStorage(DocumentStorage):
             object_key,
         )
 
-    async def get_document_bytes(
-        self, storage_ref: str, *, tenant_id: str, patient_id: str
-    ) -> bytes:
+    async def put_document(
+        self, data: bytes, *, tenant_id: str, patient_id: str, mime_type: str
+    ) -> StoredDocument:
+        object_key = f"{tenant_id}/{patient_id}/{uuid.uuid4().hex}.bin"
+        return await self._write_encrypted(
+            data,
+            object_key=object_key,
+            aad=_aad(tenant_id, patient_id, object_key),
+            mime_type=mime_type,
+        )
+
+    async def put_patient_document(
+        self, data: bytes, *, patient_id: str, mime_type: str
+    ) -> StoredDocument:
+        object_key = f"{_patient_object_prefix(patient_id)}{uuid.uuid4().hex}.bin"
+        return await self._write_encrypted(
+            data,
+            object_key=object_key,
+            aad=_patient_aad(patient_id, object_key),
+            mime_type=mime_type,
+        )
+
+    def _local_object_key(self, storage_ref: str) -> str:
         prefix = "local+encrypted://"
         if not storage_ref.startswith(prefix):
             raise DocumentStorageError("Unsupported local storage reference")
-        object_key = storage_ref[len(prefix) :]
-        expected_prefix = f"{tenant_id}/{patient_id}/"
-        if not object_key.startswith(expected_prefix):
-            raise DocumentStorageError("Document ownership mismatch")
+        return storage_ref[len(prefix) :]
+
+    async def _read_encrypted(self, object_key: str, *, aad: bytes) -> bytes:
         encrypted = await asyncio.to_thread(self._path(object_key).read_bytes)
         if len(encrypted) < 13:
             raise DocumentStorageError("Stored document is corrupt")
         try:
-            return AESGCM(self.key).decrypt(
-                encrypted[:12], encrypted[12:], _aad(tenant_id, patient_id, object_key)
-            )
+            return AESGCM(self.key).decrypt(encrypted[:12], encrypted[12:], aad)
         except Exception as exc:
             raise DocumentStorageError("Stored document authentication failed") from exc
 
-    async def delete_document(
+    async def get_document_bytes(
         self, storage_ref: str, *, tenant_id: str, patient_id: str
-    ) -> None:
-        prefix = "local+encrypted://"
-        if not storage_ref.startswith(prefix):
-            raise DocumentStorageError("Unsupported local storage reference")
-        object_key = storage_ref[len(prefix) :]
-        if not object_key.startswith(f"{tenant_id}/{patient_id}/"):
+    ) -> bytes:
+        object_key = self._local_object_key(storage_ref)
+        expected_prefix = f"{tenant_id}/{patient_id}/"
+        if not object_key.startswith(expected_prefix):
             raise DocumentStorageError("Document ownership mismatch")
+        return await self._read_encrypted(
+            object_key, aad=_aad(tenant_id, patient_id, object_key)
+        )
+
+    async def get_patient_document_bytes(
+        self, storage_ref: str, *, patient_id: str
+    ) -> bytes:
+        object_key = self._local_object_key(storage_ref)
+        if not object_key.startswith(_patient_object_prefix(patient_id)):
+            raise DocumentStorageError("Document ownership mismatch")
+        return await self._read_encrypted(
+            object_key, aad=_patient_aad(patient_id, object_key)
+        )
+
+    async def _delete_local(self, object_key: str) -> None:
         path = self._path(object_key)
         try:
             await asyncio.to_thread(path.unlink)
         except FileNotFoundError:
             return
+
+    async def delete_document(
+        self, storage_ref: str, *, tenant_id: str, patient_id: str
+    ) -> None:
+        object_key = self._local_object_key(storage_ref)
+        if not object_key.startswith(f"{tenant_id}/{patient_id}/"):
+            raise DocumentStorageError("Document ownership mismatch")
+        await self._delete_local(object_key)
+
+    async def delete_patient_document(
+        self, storage_ref: str, *, patient_id: str
+    ) -> None:
+        object_key = self._local_object_key(storage_ref)
+        if not object_key.startswith(_patient_object_prefix(patient_id)):
+            raise DocumentStorageError("Document ownership mismatch")
+        await self._delete_local(object_key)
 
 
 class S3EncryptedDocumentStorage(DocumentStorage):
@@ -164,15 +230,12 @@ class S3EncryptedDocumentStorage(DocumentStorage):
         self.kms_key_id = config.s3_kms_key_id
         self.key = _key_bytes(config.encryption_key)
 
-    async def put_document(
-        self, data: bytes, *, tenant_id: str, patient_id: str, mime_type: str
+    async def _put_s3(
+        self, data: bytes, *, object_key: str, aad: bytes, mime_type: str
     ) -> StoredDocument:
         digest = hashlib.sha256(data).hexdigest()
-        object_key = f"{tenant_id}/{patient_id}/{uuid.uuid4().hex}.bin"
         nonce = os.urandom(12)
-        body = nonce + AESGCM(self.key).encrypt(
-            nonce, data, _aad(tenant_id, patient_id, object_key)
-        )
+        body = nonce + AESGCM(self.key).encrypt(nonce, data, aad)
         await asyncio.to_thread(
             self.client.put_object,
             Bucket=self.bucket,
@@ -187,34 +250,80 @@ class S3EncryptedDocumentStorage(DocumentStorage):
             f"s3://{self.bucket}/{object_key}", digest, len(data), mime_type, object_key
         )
 
-    def _object_key(self, storage_ref: str, tenant_id: str, patient_id: str) -> str:
+    async def put_document(
+        self, data: bytes, *, tenant_id: str, patient_id: str, mime_type: str
+    ) -> StoredDocument:
+        object_key = f"{tenant_id}/{patient_id}/{uuid.uuid4().hex}.bin"
+        return await self._put_s3(
+            data,
+            object_key=object_key,
+            aad=_aad(tenant_id, patient_id, object_key),
+            mime_type=mime_type,
+        )
+
+    async def put_patient_document(
+        self, data: bytes, *, patient_id: str, mime_type: str
+    ) -> StoredDocument:
+        object_key = f"{_patient_object_prefix(patient_id)}{uuid.uuid4().hex}.bin"
+        return await self._put_s3(
+            data,
+            object_key=object_key,
+            aad=_patient_aad(patient_id, object_key),
+            mime_type=mime_type,
+        )
+
+    def _raw_object_key(self, storage_ref: str) -> str:
         prefix = f"s3://{self.bucket}/"
         if not storage_ref.startswith(prefix):
             raise DocumentStorageError("Unexpected S3 bucket")
-        key = storage_ref[len(prefix) :]
+        return storage_ref[len(prefix) :]
+
+    def _object_key(self, storage_ref: str, tenant_id: str, patient_id: str) -> str:
+        key = self._raw_object_key(storage_ref)
         if not key.startswith(f"{tenant_id}/{patient_id}/"):
             raise DocumentStorageError("Document ownership mismatch")
         return key
+
+    def _patient_object_key(self, storage_ref: str, patient_id: str) -> str:
+        key = self._raw_object_key(storage_ref)
+        if not key.startswith(_patient_object_prefix(patient_id)):
+            raise DocumentStorageError("Document ownership mismatch")
+        return key
+
+    async def _get_s3_bytes(self, key: str, *, aad: bytes) -> bytes:
+        response = await asyncio.to_thread(
+            self.client.get_object, Bucket=self.bucket, Key=key
+        )
+        body = await asyncio.to_thread(response["Body"].read)
+        if len(body) < 13:
+            raise DocumentStorageError("Stored document is corrupt")
+        try:
+            return AESGCM(self.key).decrypt(body[:12], body[12:], aad)
+        except Exception as exc:
+            raise DocumentStorageError("Stored document authentication failed") from exc
 
     async def get_document_bytes(
         self, storage_ref: str, *, tenant_id: str, patient_id: str
     ) -> bytes:
         key = self._object_key(storage_ref, tenant_id, patient_id)
-        response = await asyncio.to_thread(
-            self.client.get_object, Bucket=self.bucket, Key=key
-        )
-        body = await asyncio.to_thread(response["Body"].read)
-        try:
-            return AESGCM(self.key).decrypt(
-                body[:12], body[12:], _aad(tenant_id, patient_id, key)
-            )
-        except Exception as exc:
-            raise DocumentStorageError("Stored document authentication failed") from exc
+        return await self._get_s3_bytes(key, aad=_aad(tenant_id, patient_id, key))
+
+    async def get_patient_document_bytes(
+        self, storage_ref: str, *, patient_id: str
+    ) -> bytes:
+        key = self._patient_object_key(storage_ref, patient_id)
+        return await self._get_s3_bytes(key, aad=_patient_aad(patient_id, key))
 
     async def delete_document(
         self, storage_ref: str, *, tenant_id: str, patient_id: str
     ) -> None:
         key = self._object_key(storage_ref, tenant_id, patient_id)
+        await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
+
+    async def delete_patient_document(
+        self, storage_ref: str, *, patient_id: str
+    ) -> None:
+        key = self._patient_object_key(storage_ref, patient_id)
         await asyncio.to_thread(self.client.delete_object, Bucket=self.bucket, Key=key)
 
 
