@@ -1,7 +1,7 @@
 # Nexa Care — Current Engineering State
 
 **Last reconciled:** 2026-09-16  
-**Reconciliation basis:** Slice 10A PR #46 release candidate; exact qualified SHA is recorded in the PR rather than embedded here.  
+**Reconciliation basis:** Slice 10A merged/qualified baseline plus active Slice 10B bounded clinical-access-session implementation on `main`.  
 **Purpose:** repository-attested current state. Historical alpha and earlier Slice-7/8/9 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
 
 ## 1. Current authority boundaries
@@ -18,10 +18,12 @@ account authentication
 != patient discovery identifier match
 != patient discovery capability
 != patient consent
-!= record-access capability
+!= approved Redis record-access capability
+!= durable ClinicalAccessSession authority
+!= encounter/write authority
 ```
 
-Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, registration-recovery review cannot independently mint patient session/device/consent authority, and an identifier match never grants patient authentication, consent, or clinical access.
+Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, registration-recovery review cannot independently mint patient session/device/consent authority, and an identifier match never grants patient authentication, consent, or clinical access. The current Signed Consent V3 treatment bridge is intentionally read-only: it may establish `READ_CLINICAL_HISTORY`, but it does not authorize encounter creation, prescriptions, diagnoses, vitals, notes, investigations, or any other write operation.
 
 ## 2. Provider trust and external registry boundary
 
@@ -74,9 +76,9 @@ The remaining frontend `baseUrl` migration is explicitly deferred in `docs/gover
 
 ### Slice 10A — secure patient discovery V2
 
-Slice 10A implementation is **RELEASE-CANDIDATE COMPLETE / EXACT-HEAD QUALIFICATION REQUIRED** on PR #46. Merge remains prohibited until the same frozen head passes every required backend, frontend and deployment gate.
+Slice 10A is **MERGED / QUALIFIED**. PR #46 was merged from its exact qualified head and post-merge `main` backend, frontend/native, and Vercel gates were verified.
 
-Provider-facing discovery in the candidate supports exactly four bounded transports:
+Provider-facing discovery supports exactly four bounded transports:
 
 - exact opaque `NEXA_PUBLIC_ID`;
 - exact patient-opted-in `PHONE`;
@@ -93,9 +95,23 @@ PHONE lookup additionally requires the exact live provider session binding and r
 
 `QR_PUBLIC_ID` accepts only `nexa://patient-discovery/v1/NC-...` and is merely a transport for the opaque public ID. Raw UUIDs, access/consent tokens, device credentials, arbitrary URLs and sensitive profile payloads are rejected.
 
-Name-only search, prefix/fuzzy search, ranked candidate lists, broad directory search, MRN and generic external-ID discovery remain prohibited in Slice 10A.
+Name-only search, prefix/fuzzy search, ranked candidate lists, broad directory search, MRN and generic external-ID discovery remain prohibited in Slice 10A and remain prohibited after Slice 10A unless a later explicit contract changes that boundary.
 
 The patient frontend exposes Phone Discoverability as a visible privacy control on web and native clients; the provider client exposes only qualified discovery modes. Discovery capabilities remain memory-only and do not travel in URLs or durable client storage.
+
+### Slice 10B — bounded clinical access session
+
+Slice 10B is **IN PROGRESS / BACKEND HARDENING** on `main`; it is not yet a completed release slice.
+
+The current server-owned operation vocabulary includes read and future treatment-write operation names, but current Signed Consent V3 maps only to `READ_CLINICAL_HISTORY`. The existing V3 patient signature does not bind a write-operation set, so it must not be reinterpreted as write consent.
+
+Canonical routine V3 access claims are bound to the exact provider session and issue a short-lived Redis `clinical_access_session` capability containing only server-owned session metadata. The raw provider session binding is not stored; only a one-way binding hash is carried. Routine clinical reads revalidate that exact provider-session binding and the closed current operation set.
+
+Slice 10B.3 adds the durable PostgreSQL `clinical_access_sessions` authority. The raw record-access bearer is never stored in PostgreSQL; only its SHA-256 digest and server-owned patient/provider/hospital/request/session/policy bindings are persisted. The current database contract locks v1 sessions to exactly `READ_CLINICAL_HISTORY`, positive lifetime, active/revoked lifecycle consistency, and a closed revocation vocabulary.
+
+The current read boundary requires Redis capability state and PostgreSQL durable session state to agree. Neither store alone is sufficient authority. V3 claim finalization stages the durable session in the same database transaction as the durable consent grant log; post-commit finalization failure invalidates Redis and compensates the durable authority fail-closed.
+
+Patient-revocation integration and final adversarial/exact-head qualification remain active work. No Slice 10B completion claim is made yet, and no `CREATE_ENCOUNTER` or `WRITE_*` authority is enabled.
 
 ## 4. Native mobile key custody
 
@@ -111,11 +127,11 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 ## 5. Persistence and migrations
 
-The current single Alembic head on the Slice-10A release candidate is:
+The current single Alembic head on `main` is:
 
-`20260914_patient_search_identifiers`
+`20260916_clinical_access_sessions`
 
-It descends linearly from `20260910_registration_recovery_review`. The migration creates no plaintext search columns and performs no unsafe backfill from unauthoritative PII sources.
+It descends linearly from `20260914_patient_search_identifiers`, which descends from `20260910_registration_recovery_review`. The Slice 10B migration adds only durable server-owned clinical-session authority; it stores bearer digests rather than raw access tokens.
 
 Pilot/staging/production startup must not silently migrate, stamp, or downgrade the database.
 
@@ -199,7 +215,7 @@ Therefore live rollback/runtime qualification remains **BLOCKED BY PILOT AWS/TAR
 
 ## 11. Backend closure state
 
-The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is implementation-complete on its release candidate but remains unmerged until exact-head qualification proves every repository and deployment gate.
+The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is merged and qualified. Slice **10B** is active backend work and remains incomplete until its durable session lifecycle, revocation paths, adversarial qualification and exact-head release gates are green.
 
 Current matrix:
 
@@ -213,7 +229,8 @@ Current matrix:
 | 8F | rollback/monitoring gate MERGED / INTERNALLY QUALIFIED | seven pilot inputs missing; live runtime drill NOT_RUN |
 | 8G | registry boundary ready / contract gate enforced | official HPR/HFR machine contract + sandbox missing |
 | 9A | backend + UI MERGED / QUALIFIED | live deployment not claimed |
-| 10A | implementation complete on PR #46 / exact-head release gate pending | merge and post-merge `main` verification pending |
+| 10A | MERGED / QUALIFIED | no remaining repository closure gate |
+| 10B | IN PROGRESS / read-only durable clinical-session hardening | revocation + adversarial/exact-head qualification pending |
 
 The remaining live backend gates still require real prerequisites that repository code cannot manufacture:
 
@@ -227,14 +244,14 @@ Slice 6I supported-handset execution remains a separate physical-platform gate o
 
 ## 12. Next safe action
 
-Freeze one final Slice-10A PR head and require, on that exact SHA:
+Continue Slice 10B backend hardening without broadening write authority:
 
-- Backend CI Partitions A/B/C all green with each partition's zero-skip assertion green;
-- full Frontend CI green, including frontend tests, Next production build, workspace build, Android generation/compile and iOS generation/CocoaPods/compile;
-- exact-head Vercel deployment green.
+1. finish patient-revocation propagation into the durable `ClinicalAccessSession` lifecycle;
+2. reconcile current migration-head/runtime evidence contracts to `20260916_clinical_access_sessions`;
+3. prove Redis/PostgreSQL exact agreement, revocation, expiry, wrong-session/wrong-provider/wrong-hospital/tampered-operation denial, and post-claim failure compensation under adversarial tests;
+4. freeze one exact `main` SHA only after the implementation and current governance contracts agree; and
+5. require Backend CI Partitions A/B/C with each zero-skip assertion green before treating the durable backend increment as qualified.
 
-Only then may PR #46 be marked ready and merged using exact-head protection. After merge, verify the new `main` SHA and its repository/deployment checks before calling Slice 10A closed.
-
-Name-only, fuzzy/prefix, candidate-list, broad-directory, MRN and generic external-ID search remain prohibited after Slice 10A. The next roadmap slice after secure discovery closure is the bounded clinical treatment/access-session model.
+Current Signed Consent V3 remains read-only. A future patient-signed treatment context must explicitly bind any write-operation set before `CREATE_ENCOUNTER`, `WRITE_PRESCRIPTION`, `WRITE_DIAGNOSIS`, `WRITE_VITALS`, `WRITE_CLINICAL_NOTES`, or `ORDER_INVESTIGATION` can become valid authority.
 
 The live/external blockers above remain unchanged and must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS.

@@ -151,6 +151,10 @@ async def test_patient_revoke_invalidates_capability_and_next_validation_is_forb
                 "app.api.v2.consent_routes.current_audit_context",
                 return_value=audit_context,
             ),
+            patch(
+                "app.api.v2.consent_routes.revoke_clinical_access_session_by_request",
+                AsyncMock(),
+            ) as revoke_session,
         ):
             response = await revoke_patient_approved_access(
                 request_id,
@@ -168,6 +172,10 @@ async def test_patient_revoke_invalidates_capability_and_next_validation_is_forb
         )
         assert grant.revoked_at is not None
         assert grant.revoked_reason == "patient_revoked"
+        revoke_session.assert_awaited_once()
+        assert revoke_session.await_args.kwargs["consent_request_id"] == request_id
+        assert revoke_session.await_args.kwargs["reason"] == "PATIENT_REVOKED"
+        assert revoke_session.await_args.kwargs["revoked_at"].isoformat() == response.revoked_at
         db.commit.assert_awaited_once()
         assert audit.await_args.kwargs["event_type"] == "PATIENT_CONSENT_REVOKED"
         assert audit.await_args.kwargs["target_id"] == request_id
@@ -252,6 +260,10 @@ async def test_patient_revoke_is_idempotent():
                 domain=AuditDomain.CONSENT,
             ),
         ),
+        patch(
+            "app.api.v2.consent_routes.revoke_clinical_access_session_by_request",
+            AsyncMock(),
+        ) as revoke_session,
     ):
         first = await revoke_patient_approved_access(request_id, patient_id, db)
         second = await revoke_patient_approved_access(request_id, patient_id, db)
@@ -260,6 +272,12 @@ async def test_patient_revoke_is_idempotent():
     assert second.revoked_at == first.revoked_at
     assert grant.revoked_at == revoked_at
     assert audit.await_count == 2
+    assert revoke_session.await_count == 2
+    assert all(
+        call.kwargs["reason"] == "PATIENT_REVOKED"
+        and call.kwargs["consent_request_id"] == request_id
+        for call in revoke_session.await_args_list
+    )
     assert {call.kwargs["idempotency_key"] for call in audit.await_args_list} == {
         f"patient-consent-revoked:{request_id}"
     }

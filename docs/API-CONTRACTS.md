@@ -1,13 +1,13 @@
 # Nexa Care — Canonical Authority-Critical API Contracts
 
 **Reconciled:** 2026-09-16  
-**Source:** Slice 10A release-candidate contract; the exact qualified release SHA is recorded in PR #46 rather than embedded here.
+**Source:** Slice 10A merged/qualified authority contract plus active Slice 10B bounded clinical-access-session hardening on `main`.
 
 ## Scope
 
 This document is the current canonical contract for authority-critical patient
-discovery, Signed Consent V3, patient cryptographic-device lifecycle/recovery,
-and consent-gated FHIR export.
+discovery, Signed Consent V3, bounded routine clinical read authority, patient
+cryptographic-device lifecycle/recovery, and consent-gated FHIR export.
 
 Historical V2/raw-ID/direct-issuance contracts are not current authority even
 when compatibility code still exists. Endpoint-specific pipeline/emergency
@@ -24,7 +24,9 @@ account authentication
 != patient discovery identifier match
 != patient discovery capability
 != patient consent
-!= approved record-access capability
+!= approved Redis record-access capability
+!= durable ClinicalAccessSession authority
+!= encounter/write authority
 ```
 
 ## 1. Patient discovery — Slice 10A
@@ -295,6 +297,11 @@ A valid patient signature is necessary but not sufficient for provider access.
 Current provider professional verification, facility verification, affiliation,
 and clinical capability are re-evaluated before protected authority is issued.
 
+The current V3 signing domain does not bind an explicit clinical-write operation
+set. It therefore cannot be reinterpreted as consent to create an encounter,
+prescription, diagnosis, vital, clinical note, investigation order, or any
+other clinical write. Current routine V3 treatment authority is read-only.
+
 Response intentionally remains minimal:
 
 ```json
@@ -308,7 +315,7 @@ Response intentionally remains minimal:
 
 Approval itself does not disclose a provider record-access capability.
 
-## 5. Approved-access claim
+## 5. Approved-access claim and bounded routine read session
 
 **Endpoint:** `POST /api/v2/consent/v3/{request_id}/claim-access`  
 **Authentication:** the provider that owns the approved V3 request and remains
@@ -330,6 +337,40 @@ Response:
 The claim is one-time. Provider trust is re-evaluated at claim time. The exact
 approving device key must still satisfy the V3 authority rules when required by
 the current claim path.
+
+For canonical routine V3 clinical/full scopes, a successful claim creates two
+cooperating server authorities:
+
+1. a short-lived Redis `clinical_access_session` capability bound to patient,
+   provider, hospital, request, exact provider session, policy version, and
+   closed operation set; and
+2. a durable PostgreSQL `clinical_access_sessions` lifecycle row containing
+   only the SHA-256 bearer digest plus those server-owned bindings and lifecycle
+   metadata.
+
+The raw bearer capability and the raw provider-session binding are not stored in
+PostgreSQL. Routine clinical reads require the Redis capability and durable
+PostgreSQL row to agree exactly on the session/request/patient/provider/hospital,
+policy, operation set, token digest, provider-session binding hash, expiry, and
+revocation state. Either store missing, stale, revoked, tampered, or disagreeing
+causes access to fail closed.
+
+The current policy version permits exactly:
+
+```text
+READ_CLINICAL_HISTORY
+```
+
+It does not permit `CREATE_ENCOUNTER`, `WRITE_PRESCRIPTION`, `WRITE_DIAGNOSIS`,
+`WRITE_VITALS`, `WRITE_CLINICAL_NOTES`, or `ORDER_INVESTIGATION`.
+
+The document-processing purpose remains a separate grant type and operation
+vocabulary; it does not silently become a routine `ClinicalAccessSession`.
+
+Patient revocation must invalidate live Redis capability state and durable
+routine authority. Claim-finalization failures invalidate Redis and compensate
+any durable session/grant state fail-closed; an unaudited successful claim must
+not remain usable.
 
 ## 6. Legacy consent compatibility boundary
 
@@ -486,10 +527,11 @@ canonical:
 - Device/recovery/rotation one-time authority is not resurrected after a later
   PostgreSQL failure; retry requires a fresh authority according to the
   qualified operation ordering.
-- Arbitrary UUID, bearer token, legacy role, consent alone, stale device key, or
-  search-index match does not independently authorize clinical access.
+- Arbitrary UUID, bearer token, legacy role, consent alone, stale device key,
+  search-index match, Redis capability alone, or durable session row alone does
+  not independently authorize routine clinical access.
 - The current single database migration head is
-  `20260914_patient_search_identifiers`.
+  `20260916_clinical_access_sessions`.
 
 ### Registration recovery manual review (Slice 9A)
 
@@ -519,6 +561,10 @@ This contract does not claim:
   external-ID patient discovery;
 - that phone discoverability is enabled for a patient who has not explicitly
   opted in or whose current binding cannot be revalidated;
+- current Signed Consent V3 write authority, encounter creation authority, or
+  prescription/diagnosis/vitals/clinical-note write authority;
+- Slice 10B completion before its revocation and exact-head adversarial gates are
+  green;
 - completion of Slice 6I physical handset qualification;
 - physical StrongBox/Secure Enclave/native NFC execution;
 - external FHIR certification;

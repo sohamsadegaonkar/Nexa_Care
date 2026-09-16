@@ -1,6 +1,6 @@
 # Slice 10B — Bounded Clinical Access Session
 
-Status: **OPEN — BACKEND SECURITY FOUNDATION STARTED**
+Status: **10B.3 IMPLEMENTED — FINAL EXACT-HEAD QUALIFICATION IN PROGRESS**
 
 Authoritative baseline before this slice started:
 `f68bad3d157e7dcdf7716a9bf0b74fc0b7991f25` on `main`.
@@ -58,28 +58,29 @@ ORDER_INVESTIGATION
 ```
 
 However, **existing Signed Consent V3 does not sign an explicit write-operation
-set**.  Therefore Slice 10B must not silently reinterpret an existing V3
+set**. Therefore Slice 10B must not silently reinterpret an existing V3
 `clinical`/`full` approval as permission to write clinical data.
 
-The first implementation increment consequently maps current routine V3
-approvals to `READ_CLINICAL_HISTORY` only.  Write operations are vocabulary only
-until a patient-signed context explicitly binds them.  The separate
+The current implementation consequently maps routine V3 approvals to
+`READ_CLINICAL_HISTORY` only. Write operations are vocabulary only until a
+patient-signed context explicitly binds them. The separate
 `document_processing`/`documents` grant remains outside the treatment-session
 contract.
 
 ## Provider-session binding
 
-A clinical session must be bound to the exact authenticated provider session,
-not merely the stable provider identity and hospital.  The raw provider session
-binding must never be persisted or logged.  Only a one-way hash may be retained,
-and validation must compare the live session binding in constant time.
+A clinical session is bound to the exact authenticated provider session, not
+merely the stable provider identity and hospital. The raw provider session
+binding is never persisted or logged. Only a one-way hash is retained, and
+validation compares the live session binding in constant time.
 
-A provider re-login/new authenticated session must not automatically inherit a
+A provider re-login/new authenticated session does not automatically inherit a
 previous bearer capability merely because the provider UUID and hospital match.
 
 ## Session lifecycle target
 
-The authoritative session model must ultimately contain at least:
+The authoritative session model contains the bounded authority fields required
+for the current read-only phase:
 
 ```text
 session_id
@@ -94,64 +95,73 @@ provider_session_binding_hash
 issued_at
 expires_at
 status / revocation state
-encounter_id (once bound)
+encounter_id (reserved for later binding)
 policy_version
 ```
 
-The session must be:
-
-- server-created;
-- patient-bound;
-- provider-bound;
-- hospital/organization-bound;
-- exact-provider-session-bound;
-- purpose-bound;
-- operation-bound;
-- expiring;
-- revocable;
-- canonical-patient aware;
-- erasure/deletion aware;
-- auditable;
-- fail-closed when the authority store is unavailable or inconsistent.
+The session is server-created, patient/provider/hospital/exact-session bound,
+purpose- and operation-bound, expiring, revocable, audited through the existing
+consent boundary, and fail-closed when Redis/PostgreSQL authority disagrees.
 
 ## Slice sequence
 
 ### 10B.1 — authority vocabulary and pure constructor
 
+Implemented:
+
 - closed server-owned operation vocabulary;
 - fail-closed Signed Consent V3 -> bounded read-session mapping;
 - exact provider-session binding hash primitive;
 - no raw session-binding persistence;
-- no write-authority escalation;
-- adversarial unit qualification.
+- no write-authority escalation.
 
 ### 10B.2 — live capability binding
 
-- bind the one-time V3 claim to an opaque `session_id`;
-- bind the live capability to the exact provider session;
-- require the same provider session on every routine read validation;
-- preserve one-time claim and existing patient/provider/hospital/expiry checks;
-- preserve document-processing authority as a distinct grant type.
+Implemented:
+
+- one-time V3 routine claim binds an opaque `session_id`;
+- live routine capability binds the exact provider session;
+- routine reads require the same provider session;
+- patient/provider/hospital/request/expiry checks remain mandatory;
+- document-processing authority remains a distinct grant type.
 
 ### 10B.3 — durable session lifecycle
 
-- add one linear Alembic migration and a durable session row;
-- persist token hash/reference only, never a bearer token;
-- transactional issuance/audit evidence;
-- patient revocation, provider trust loss, canonical merge, deletion, erasure,
-  and expiry terminate authority fail closed;
-- define idempotent/atomic revocation behavior.
+Implemented for the current read-only authority:
+
+- linear Alembic migration `20260916_clinical_access_sessions`;
+- durable session row stores token/session-binding hashes only;
+- routine V3 claim stages `ConsentGrantLog` and `ClinicalAccessSession` in the
+  same PostgreSQL transaction;
+- routine read validation requires Redis capability + exact provider session +
+  durable active session + matching unrevoked/unexpired consent grant;
+- patient revocation invalidates Redis capability, revokes the durable grant,
+  and explicitly marks the matching durable clinical session
+  `REVOKED / PATIENT_REVOKED` in the same database transaction;
+- duplicate patient revocation remains idempotent;
+- current provider trust remains independently re-evaluated at protected
+  clinical boundaries;
+- expiry fails closed without requiring authority resurrection or mutation.
+
+Canonical merge/deletion/erasure integration remains governed by the existing
+patient lifecycle boundaries and must continue to fail closed. Additional
+explicit lifecycle metadata reconciliation can be added only without weakening
+the current validation gate.
 
 ### 10B.4 — signed write-authority protocol
+
+**NOT STARTED / NO WRITE AUTHORITY ENABLED.**
 
 Do not add writes to existing Signed Consent V3 bytes in place.
 
 Before `CREATE_ENCOUNTER` or any `WRITE_*` operation can be issued, the patient
 must sign a versioned context that explicitly includes the exact operation set
-(or an equivalently precise server-owned treatment-session policy digest).  The
+(or an equivalently precise server-owned treatment-session policy digest). The
 protocol must prevent operation widening after signature.
 
 ### 10B.5 — clinical gates and encounter binding
+
+Future work after a signed write-authority protocol exists:
 
 - central `require_clinical_session(operation)` gate;
 - no client-selected patient UUID as an independent authority source;
@@ -162,34 +172,61 @@ protocol must prevent operation widening after signature.
 
 ### 10B.6 — qualification
 
-Backend release gates must include:
+Backend release gates include:
 
 - pure security/unit tests;
 - PostgreSQL lifecycle/migration tests with zero skips;
 - PostgreSQL + Redis concurrency/replay tests with zero skips;
 - wrong provider/session/hospital/patient tests;
-- expiry/revocation/merge/deletion/erasure tests;
+- expiry/revocation tests;
 - duplicate/concurrent claim tests;
-- audit-failure rollback tests;
+- audit/failure rollback tests;
 - migration graph single-head assertion.
 
-Frontend work is not the first step.  Any later UI integration must preserve the
+Frontend work is not the first step. Any later UI integration must preserve the
 bounded session in memory/approved state and must not place bearer authority or
 patient identifiers in URLs.
 
-## Out of scope for the opening increment
+## 10B.3 qualification checkpoints — 2026-09-16
 
-The opening 10B.1 work does **not**:
+The current single repository migration head is
+`20260916_clinical_access_sessions`.
 
-- expose a new endpoint;
-- create a new bearer token;
-- mint any write operation;
+Backend CI run #654 on parent head
+`be5a08c0fdb60b2aa511a5e634d526f79f0eb1d5` exposed two stale qualification
+markers only: the security non-regression migration-head declaration and the
+historical Slice-4 disposable database target. Commit
+`17a6058ce106bd61c530d0d2e2ef4d3dd34c7b30` reconciled exactly those markers.
+
+The next direct checkpoint, `0e32854a43cd6e2d675a8047b406f874fd4ede2f`,
+then passed Backend CI #656 across Partition A, PostgreSQL Partition B, and
+PostgreSQL + Redis Partition C, including all three zero-skip assertions. Its
+frontend test/Next/workspace job also passed and exact-head Vercel deployment
+succeeded. Those results are intermediate evidence only because the subsequent
+patient-revocation lifecycle hardening changed code.
+
+Commit `55bb0a25ecd71b70d5212052cfde184d018ad50c` adds explicit durable-session
+revocation to the patient consent-revocation transaction and adds focused
+idempotency/call-contract regression assertions. It was applied from an exact
+SHA-pinned one-shot maintenance branch that deleted itself after the
+fast-forward. Because workflow-token pushes do not provide the ordinary push CI
+signal, this documentation commit deliberately creates a new direct `main`
+head. **Only the exact SHA produced by this documentation update may be used as
+the final 10B.3 qualification target.** Older CI must not be reused as final
+proof.
+
+## Nonclaims
+
+The current 10B.3 checkpoint does **not**:
+
+- mint any clinical write operation;
 - create encounters;
 - change prescription/diagnosis/vitals/note persistence;
+- broaden Signed Consent V3;
 - weaken document-processing consent;
 - modify physical-device assurance claims;
-- claim the overall product is fully secure.
+- claim production deployment or that Nexa Care is fully secure.
 
-The next concrete engineering step after 10B.1 qualification is wiring the
-existing one-time V3 approved-access claim into this session authority without
-widening permissions.
+If the final exact-head gates are green, the next engineering phase is 10B.4:
+a separately versioned patient-signed write-authority protocol design. Existing
+V3 read approval must remain incapable of silently authorizing writes.

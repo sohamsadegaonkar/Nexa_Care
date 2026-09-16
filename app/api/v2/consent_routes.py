@@ -56,6 +56,9 @@ from app.services.approved_access_capability import (
     invalidate_request,
     issue_from_approved_request,
 )
+from app.services.clinical_access_session_store import (
+    revoke_by_request as revoke_clinical_access_session_by_request,
+)
 
 # EXPLICITLY ALIAS THE IMPORT SO MOCK PATCHING MATCHES THE ATTRIBUTE NAME
 import app.services.consent_engine as consent_engine
@@ -1379,10 +1382,17 @@ async def revoke_patient_approved_access(
 
     try:
         await invalidate_request(request_id)
+        revoked_when = datetime.fromisoformat(revoked_at)
         for grant in grant_rows:
             if grant.revoked_at is None:
-                grant.revoked_at = datetime.fromisoformat(revoked_at)
+                grant.revoked_at = revoked_when
                 grant.revoked_reason = "patient_revoked"
+        await revoke_clinical_access_session_by_request(
+            db,
+            consent_request_id=request_id,
+            reason="PATIENT_REVOKED",
+            revoked_at=revoked_when,
+        )
 
         if request_data is not None:
             request_data["status"] = "revoked"
