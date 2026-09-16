@@ -5,7 +5,7 @@ from copy import deepcopy
 from scripts.validate_pilot_runtime_evidence import REQUIRED_CHECKS, validate_manifest
 
 
-CURRENT_HEAD = "20260914_patient_search_identifiers"
+CURRENT_HEAD = "20260916_clinical_access_sessions"
 
 
 def _valid_manifest() -> dict:
