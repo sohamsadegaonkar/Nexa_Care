@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.clinical_access_session import ClinicalAccessSessionRecord
+from app.models.consent_grant import ConsentGrantLog
 from app.security.clinical_access_policy import CLINICAL_ACCESS_POLICY_VERSION
 
 
@@ -137,7 +138,7 @@ async def validate_active_session(
     policy_version: str,
     now: datetime | None = None,
 ) -> bool:
-    """Fail closed unless Redis capability and durable authority agree exactly."""
+    """Fail closed unless Redis capability and all durable authority agree exactly."""
 
     try:
         sid = _uuid(session_id, code="CLINICAL_ACCESS_SESSION_ID_INVALID")
@@ -175,11 +176,38 @@ async def validate_active_session(
         or row.consent_request_id != consent_request_id
         or row.policy_version != policy_version
         or tuple(row.allowed_operations) != allowed_operations
+        or not secrets.compare_digest(row.token_hash, digest)
+        or not secrets.compare_digest(row.provider_session_binding_hash, binding_hash)
     ):
         return False
-    return secrets.compare_digest(row.token_hash, digest) and secrets.compare_digest(
-        row.provider_session_binding_hash, binding_hash
-    )
+
+    # The durable session row is necessary but not independently sufficient.
+    # Revalidate the same token/request against the durable consent-grant
+    # lifecycle so an already-revoked grant cannot be resurrected by stale
+    # Redis or by a stale ACTIVE session row.
+    grant = (
+        await db.execute(
+            select(ConsentGrantLog).where(
+                ConsentGrantLog.token_hash == digest,
+                ConsentGrantLog.request_id == consent_request_id,
+            )
+        )
+    ).scalar_one_or_none()
+    if grant is None:
+        return False
+    grant_expires_at = grant.expires_at
+    if grant_expires_at.tzinfo is None:
+        grant_expires_at = grant_expires_at.replace(tzinfo=timezone.utc)
+    if (
+        grant.is_break_glass
+        or grant.revoked_at is not None
+        or current >= grant_expires_at
+        or str(grant.patient_id) != str(pid)
+        or str(grant.clinician_id) != str(clinician)
+        or grant.hospital_id != hospital
+    ):
+        return False
+    return True
 
 
 async def revoke_by_request(
