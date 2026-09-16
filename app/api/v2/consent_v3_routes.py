@@ -45,6 +45,7 @@ from app.services.approved_access_capability import (
     invalidate_request,
     issue_from_approved_request,
 )
+from app.services.clinical_access_session import ClinicalAccessSessionError
 from app.services.consent_v3_authority import (
     ConsentV3AuthorityUnavailable,
     ConsentV3ProviderIneligible,
@@ -753,7 +754,10 @@ async def claim_consent_v3_access(
 
     grant_row = None
     try:
-        token, capability = await issue_from_approved_request(request_data=data)
+        token, capability = await issue_from_approved_request(
+            request_data=data,
+            provider_session_binding=provider.session_binding,
+        )
         now = datetime.now(timezone.utc)
         prior_rows = (
             (
@@ -805,8 +809,16 @@ async def claim_consent_v3_access(
                 "scope": capability.scope,
                 "device_id": str(key_row.device_id),
                 "key_version": key_row.key_version,
+                "clinical_session_id": capability.clinical_session_id,
+                "clinical_access_policy_version": capability.clinical_access_policy_version,
+                "allowed_operations": list(capability.allowed_operations),
             },
         )
+    except ClinicalAccessSessionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": exc.code},
+        ) from exc
     except ApprovedAccessClaimInProgress as exc:
         raise HTTPException(status_code=409, detail={"error_code": "CONSENT_ACCESS_CLAIM_IN_PROGRESS"}) from exc
     except ApprovedAccessStoreUnavailable as exc:
