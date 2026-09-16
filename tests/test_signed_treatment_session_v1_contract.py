@@ -1,9 +1,10 @@
 """Adversarial contract tests for patient-signed treatment-session V1 bytes.
 
 These tests deliberately lock the cryptographic contract before any clinical
-write route consumes it.  Signed Consent V3 must remain read-only; the new
-protocol must bind an exact, closed treatment-operation set so a server/client
-cannot widen authority after patient signature.
+write route consumes it. Signed Consent V3 must remain read-only; the new
+protocol must bind an exact, closed treatment-operation set and the exact
+initiating provider session so authority cannot be widened or rebound after
+patient signature.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ CONTEXT = {
     "patient_id": "22222222-2222-4222-8222-222222222222",
     "provider_id": "33333333-3333-4333-8333-333333333333",
     "hospital_id": "44444444-4444-4444-8444-444444444444",
+    "provider_session_binding_hash": "b" * 64,
     "challenge_nonce": "treatment-session-nonce-original",
     "purpose": "treatment",
     "allowed_operations": (
@@ -86,7 +88,7 @@ def test_treatment_protocol_is_cryptographically_domain_separated_from_v3() -> N
         access_duration=CONTEXT["access_duration"],
         issued_at=CONTEXT["issued_at"],
         expires_at=CONTEXT["expires_at"],
-        consent_context_hash="b" * 64,
+        consent_context_hash="c" * 64,
         device_id="55555555-5555-4555-8555-555555555555",
         key_id="66666666-6666-4666-8666-666666666666",
         key_version=3,
@@ -131,7 +133,9 @@ def test_operation_widening_changes_context_hash_and_signed_bytes() -> None:
         "allowed_operations": widened["allowed_operations"],
         "treatment_context_hash": widened_hash,
     }
-    assert canonical_signed_treatment_v1_payload(**widened_signed) != canonical_signed_treatment_v1_payload(**signed)
+    assert canonical_signed_treatment_v1_payload(
+        **widened_signed
+    ) != canonical_signed_treatment_v1_payload(**signed)
 
 
 def test_operation_narrowing_changes_context_hash() -> None:
@@ -146,14 +150,37 @@ def test_operation_narrowing_changes_context_hash() -> None:
     assert treatment_context_hash_v1(**narrowed) != original
 
 
+def test_provider_session_rebinding_changes_context_hash_and_signed_bytes() -> None:
+    original = _signed_fields()
+    rebound_context = {
+        **CONTEXT,
+        "provider_session_binding_hash": "d" * 64,
+    }
+    rebound_hash = treatment_context_hash_v1(**rebound_context)
+    rebound_signed = {
+        **original,
+        "provider_session_binding_hash": rebound_context["provider_session_binding_hash"],
+        "treatment_context_hash": rebound_hash,
+    }
+
+    assert rebound_hash != original["treatment_context_hash"]
+    assert canonical_signed_treatment_v1_payload(
+        **rebound_signed
+    ) != canonical_signed_treatment_v1_payload(**original)
+
+
 def test_unknown_operation_is_rejected_fail_closed() -> None:
-    with pytest.raises(TreatmentSessionV1ProtocolError, match="unknown treatment operation"):
+    with pytest.raises(
+        TreatmentSessionV1ProtocolError, match="unknown treatment operation"
+    ):
         normalize_treatment_operations(("WRITE_ANYTHING",))
 
 
 def test_duplicate_operation_is_rejected_fail_closed() -> None:
     operation = ClinicalAccessOperation.WRITE_VITALS.value
-    with pytest.raises(TreatmentSessionV1ProtocolError, match="duplicate treatment operation"):
+    with pytest.raises(
+        TreatmentSessionV1ProtocolError, match="duplicate treatment operation"
+    ):
         normalize_treatment_operations((operation, operation))
 
 
@@ -170,7 +197,9 @@ def test_string_is_not_accepted_as_operation_sequence() -> None:
 @pytest.mark.parametrize("access_duration", [0, 299, 3601, 999999])
 def test_out_of_policy_access_duration_is_rejected(access_duration: int) -> None:
     with pytest.raises(TreatmentSessionV1ProtocolError, match="outside"):
-        canonical_treatment_context_v1(**{**CONTEXT, "access_duration": access_duration})
+        canonical_treatment_context_v1(
+            **{**CONTEXT, "access_duration": access_duration}
+        )
 
 
 def test_boolean_access_duration_is_rejected_even_though_bool_is_int_subclass() -> None:
@@ -184,12 +213,29 @@ def test_noncanonical_purpose_whitespace_is_rejected() -> None:
 
 
 @pytest.mark.parametrize(
+    "provider_session_binding_hash",
+    ["", "A" * 64, "g" * 64, "a" * 63],
+)
+def test_invalid_provider_session_binding_hash_is_rejected(
+    provider_session_binding_hash: str,
+) -> None:
+    with pytest.raises(TreatmentSessionV1ProtocolError, match="binding hash"):
+        canonical_treatment_context_v1(
+            **{
+                **CONTEXT,
+                "provider_session_binding_hash": provider_session_binding_hash,
+            }
+        )
+
+
+@pytest.mark.parametrize(
     ("field", "replacement"),
     [
         ("request_id", "aaaaaaaa-1111-4111-8111-111111111111"),
         ("patient_id", "bbbbbbbb-2222-4222-8222-222222222222"),
         ("provider_id", "cccccccc-3333-4333-8333-333333333333"),
         ("hospital_id", "dddddddd-4444-4444-8444-444444444444"),
+        ("provider_session_binding_hash", "d" * 64),
         ("challenge_nonce", "treatment-session-nonce-substituted"),
         ("purpose", "care_coordination"),
         ("access_duration", 1200),
@@ -197,7 +243,9 @@ def test_noncanonical_purpose_whitespace_is_rejected() -> None:
         ("expires_at", "2026-09-17T00:02:01+00:00"),
     ],
 )
-def test_every_scalar_context_field_changes_context_hash(field: str, replacement: object) -> None:
+def test_every_scalar_context_field_changes_context_hash(
+    field: str, replacement: object
+) -> None:
     mutated = {**CONTEXT, field: replacement}
     assert treatment_context_hash_v1(**mutated) != treatment_context_hash_v1(**CONTEXT)
 
@@ -213,10 +261,14 @@ def test_every_scalar_context_field_changes_context_hash(field: str, replacement
         ("public_key_fingerprint", "d" * 64),
     ],
 )
-def test_every_decision_only_field_changes_signed_bytes(field: str, replacement: object) -> None:
+def test_every_decision_only_field_changes_signed_bytes(
+    field: str, replacement: object
+) -> None:
     original = _signed_fields()
     mutated = {**original, field: replacement}
-    assert canonical_signed_treatment_v1_payload(**mutated) != canonical_signed_treatment_v1_payload(**original)
+    assert canonical_signed_treatment_v1_payload(
+        **mutated
+    ) != canonical_signed_treatment_v1_payload(**original)
 
 
 def test_context_hash_matches_sha256_of_canonical_context() -> None:
@@ -238,7 +290,9 @@ def test_signed_payload_carries_exact_context_and_no_scope_alias() -> None:
 
 def test_canonical_bytes_are_compact_and_deterministic() -> None:
     first = canonical_signed_treatment_v1_payload(**_signed_fields())
-    second = canonical_signed_treatment_v1_payload(**dict(reversed(list(_signed_fields().items()))))
+    second = canonical_signed_treatment_v1_payload(
+        **dict(reversed(list(_signed_fields().items())))
+    )
 
     assert first == second
     assert b" " not in first

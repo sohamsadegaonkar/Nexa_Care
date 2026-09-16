@@ -16,6 +16,7 @@ Treatment Session V1 is therefore a distinct cryptographic protocol:
 - signing operation: `TREATMENT_SESSION_DECISION`;
 - policy version: current server-owned `clinical-access-v1`;
 - exact patient/provider/hospital/request binding;
+- one-way binding to the exact initiating provider session;
 - exact challenge nonce and expiry binding;
 - exact patient device/key-version binding;
 - exact, closed operation-set binding.
@@ -35,6 +36,14 @@ The signed operation set is drawn only from the server-owned `ClinicalAccessOper
 
 Unknown, duplicate, empty, or non-sequence operation sets fail closed. The operation set is semantically unordered and therefore sorted during canonicalization. Adding or removing an operation changes the treatment-context hash and the patient-signed decision bytes.
 
+## Exact provider-session binding
+
+The server hashes the initiating provider's authenticated session binding before it enters the patient-signed treatment context. The raw session binding is never placed in signed bytes, persistence, logs, or API payloads.
+
+The resulting lowercase SHA-256 value is itself signed by the patient. A later claim/issuance stage must compare the live provider session against this signed hash in constant time before any treatment authority can be minted. This prevents a patient approval created for provider session A from being silently rebound to a later provider session B after re-login.
+
+The cryptographic foundation validates only the signed hash format. The later server-created request and claim boundaries are responsible for deriving the hash from the authenticated provider session and enforcing the live match.
+
 ## Canonical signed context
 
 The server-created treatment context binds:
@@ -44,6 +53,7 @@ request_id
 patient_id
 provider_id
 hospital_id
+provider_session_binding_hash
 challenge_nonce
 purpose
 allowed_operations
@@ -77,9 +87,11 @@ Implemented in this increment:
 - deterministic canonical signed-decision bytes;
 - exact closed operation-set normalization;
 - anti-substitution SHA-256 context hash;
+- signed one-way provider-session binding;
 - exact active patient device/key-version signature verification;
 - signature-failure audit reuse through the canonical `SIGNATURE_VERIFICATION_FAILED` event;
 - adversarial contract tests proving operation widening/narrowing changes authority bytes;
+- adversarial proof that provider-session rebinding changes authority bytes;
 - domain separation from Signed Consent V3.
 
 Not implemented in this increment:
@@ -96,4 +108,4 @@ Therefore **no new clinical write authority exists yet**. Existing Signed Consen
 
 ## Next implementation step
 
-Add the server-created treatment-session request/challenge/approval lifecycle that uses these exact bytes, preserves one-time/replay protections and provider/patient/device trust checks, and produces no write-capable session until a verified patient signature is durably finalized.
+Add the server-created treatment-session request/challenge/approval lifecycle that derives the provider-session binding hash from the authenticated provider context, uses these exact bytes, preserves one-time/replay protections and provider/patient/device trust checks, and produces no write-capable session until a verified patient signature is durably finalized.

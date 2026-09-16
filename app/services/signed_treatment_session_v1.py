@@ -59,6 +59,16 @@ def _canonical_json(payload: dict) -> bytes:
     ).encode("utf-8")
 
 
+def _is_sha256_hex(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != 64 or value != value.lower():
+        return False
+    try:
+        bytes.fromhex(value)
+    except ValueError:
+        return False
+    return True
+
+
 def normalize_treatment_operations(
     operations: Sequence[str | ClinicalAccessOperation],
 ) -> tuple[str, ...]:
@@ -94,13 +104,23 @@ def normalize_treatment_operations(
     return tuple(sorted(normalized))
 
 
-def _validate_context_inputs(*, purpose: str, access_duration: int) -> None:
+def _validate_context_inputs(
+    *, purpose: str, access_duration: int, provider_session_binding_hash: str
+) -> None:
     if not isinstance(purpose, str) or not purpose or purpose != purpose.strip():
-        raise TreatmentSessionV1ProtocolError("treatment purpose must be a canonical non-empty string")
+        raise TreatmentSessionV1ProtocolError(
+            "treatment purpose must be a canonical non-empty string"
+        )
     if isinstance(access_duration, bool) or not isinstance(access_duration, int):
         raise TreatmentSessionV1ProtocolError("access duration must be an integer")
     if not _MIN_ACCESS_DURATION_SECONDS <= access_duration <= _MAX_ACCESS_DURATION_SECONDS:
-        raise TreatmentSessionV1ProtocolError("access duration is outside the treatment-session policy")
+        raise TreatmentSessionV1ProtocolError(
+            "access duration is outside the treatment-session policy"
+        )
+    if not _is_sha256_hex(provider_session_binding_hash):
+        raise TreatmentSessionV1ProtocolError(
+            "provider session binding hash must be lowercase SHA-256 hex"
+        )
 
 
 def canonical_treatment_context_v1(
@@ -109,6 +129,7 @@ def canonical_treatment_context_v1(
     patient_id: str,
     provider_id: str,
     hospital_id: str,
+    provider_session_binding_hash: str,
     challenge_nonce: str,
     purpose: str,
     allowed_operations: Sequence[str | ClinicalAccessOperation],
@@ -118,7 +139,11 @@ def canonical_treatment_context_v1(
 ) -> bytes:
     """Canonicalize the immutable operation-bound treatment request context."""
 
-    _validate_context_inputs(purpose=purpose, access_duration=access_duration)
+    _validate_context_inputs(
+        purpose=purpose,
+        access_duration=access_duration,
+        provider_session_binding_hash=provider_session_binding_hash,
+    )
     operations = normalize_treatment_operations(allowed_operations)
     return _canonical_json(
         {
@@ -134,6 +159,7 @@ def canonical_treatment_context_v1(
             "policy_version": CLINICAL_ACCESS_POLICY_VERSION,
             "protocol_version": SIGNED_TREATMENT_SESSION_V1_PROTOCOL_VERSION,
             "provider_id": provider_id,
+            "provider_session_binding_hash": provider_session_binding_hash,
             "purpose": purpose,
             "request_id": request_id,
         }
@@ -152,6 +178,7 @@ def canonical_signed_treatment_v1_payload(
     patient_id: str,
     provider_id: str,
     hospital_id: str,
+    provider_session_binding_hash: str,
     challenge_nonce: str,
     decision: str,
     purpose: str,
@@ -167,7 +194,11 @@ def canonical_signed_treatment_v1_payload(
 ) -> bytes:
     """Serialize every treatment-session decision field as canonical JSON."""
 
-    _validate_context_inputs(purpose=purpose, access_duration=access_duration)
+    _validate_context_inputs(
+        purpose=purpose,
+        access_duration=access_duration,
+        provider_session_binding_hash=provider_session_binding_hash,
+    )
     operations = normalize_treatment_operations(allowed_operations)
     return _canonical_json(
         {
@@ -187,6 +218,7 @@ def canonical_signed_treatment_v1_payload(
             "policy_version": CLINICAL_ACCESS_POLICY_VERSION,
             "protocol_version": SIGNED_TREATMENT_SESSION_V1_PROTOCOL_VERSION,
             "provider_id": provider_id,
+            "provider_session_binding_hash": provider_session_binding_hash,
             "public_key_fingerprint": public_key_fingerprint,
             "purpose": purpose,
             "request_id": request_id,
@@ -200,6 +232,7 @@ class SignedTreatmentSessionV1Result:
     verified: bool
     patient_id: str
     allowed_operations: tuple[str, ...] = ()
+    provider_session_binding_hash: str | None = None
     device_id: str | None = None
     key_id: str | None = None
     key_version: int | None = None
@@ -218,6 +251,7 @@ class SignedTreatmentSessionV1Verifier:
         request_id: str,
         provider_id: str,
         hospital_id: str,
+        provider_session_binding_hash: str,
         challenge_nonce: str,
         decision: str,
         signature_b64: str,
@@ -235,16 +269,24 @@ class SignedTreatmentSessionV1Verifier:
         start_time = time.monotonic()
 
         if decision not in {"approved", "denied"} or key_version < 1:
-            return await self._fail(start_time, patient_id, "Invalid treatment approval context")
+            return await self._fail(
+                start_time, patient_id, "Invalid treatment approval context"
+            )
 
         try:
             operations = normalize_treatment_operations(allowed_operations)
-            _validate_context_inputs(purpose=purpose, access_duration=access_duration)
+            _validate_context_inputs(
+                purpose=purpose,
+                access_duration=access_duration,
+                provider_session_binding_hash=provider_session_binding_hash,
+            )
             patient_uuid = uuid.UUID(patient_id)
             logical_device_uuid = uuid.UUID(device_id)
             key_uuid = uuid.UUID(key_id)
         except (TreatmentSessionV1ProtocolError, TypeError, ValueError):
-            return await self._fail(start_time, patient_id, "Invalid treatment approval context")
+            return await self._fail(
+                start_time, patient_id, "Invalid treatment approval context"
+            )
 
         try:
             issued_dt = datetime.fromisoformat(issued_at.replace("Z", "+00:00"))
@@ -260,13 +302,16 @@ class SignedTreatmentSessionV1Verifier:
             if issued_dt > now or now >= expires_dt or issued_dt >= expires_dt:
                 return await self._fail(start_time, patient_id, "Challenge expired")
         except (TypeError, ValueError):
-            return await self._fail(start_time, patient_id, "Invalid challenge expiry")
+            return await self._fail(
+                start_time, patient_id, "Invalid challenge expiry"
+            )
 
         expected_context_hash = treatment_context_hash_v1(
             request_id=request_id,
             patient_id=patient_id,
             provider_id=provider_id,
             hospital_id=hospital_id,
+            provider_session_binding_hash=provider_session_binding_hash,
             challenge_nonce=challenge_nonce,
             purpose=purpose,
             allowed_operations=operations,
@@ -275,24 +320,29 @@ class SignedTreatmentSessionV1Verifier:
             expires_at=expires_at,
         )
         if not (
-            isinstance(treatment_context_hash, str)
-            and len(treatment_context_hash) == 64
-            and secrets.compare_digest(treatment_context_hash.lower(), expected_context_hash)
+            _is_sha256_hex(treatment_context_hash)
+            and secrets.compare_digest(
+                str(treatment_context_hash), expected_context_hash
+            )
         ):
-            return await self._fail(start_time, patient_id, "Treatment context integrity failure")
+            return await self._fail(
+                start_time, patient_id, "Treatment context integrity failure"
+            )
 
-        if not (
-            isinstance(public_key_fingerprint, str)
-            and len(public_key_fingerprint) == 64
-            and public_key_fingerprint == public_key_fingerprint.lower()
-        ):
-            return await self._fail(start_time, patient_id, "Invalid treatment device binding")
+        if not _is_sha256_hex(public_key_fingerprint):
+            return await self._fail(
+                start_time, patient_id, "Invalid treatment device binding"
+            )
 
         try:
             raw_signature = base64.b64decode(signature_b64, validate=True)
         except Exception:
-            await self._audit_failure(patient_id, request_id, "invalid_base64_signature")
-            return await self._fail(start_time, patient_id, "Signature verification failed")
+            await self._audit_failure(
+                patient_id, request_id, "invalid_base64_signature"
+            )
+            return await self._fail(
+                start_time, patient_id, "Signature verification failed"
+            )
 
         result = await db.execute(
             select(PatientDeviceKey).where(
@@ -307,14 +357,19 @@ class SignedTreatmentSessionV1Verifier:
         )
         key_row = result.scalar_one_or_none()
         if key_row is None:
-            await self._audit_failure(patient_id, request_id, "exact_key_version_not_active")
-            return await self._fail(start_time, patient_id, "Signature verification failed")
+            await self._audit_failure(
+                patient_id, request_id, "exact_key_version_not_active"
+            )
+            return await self._fail(
+                start_time, patient_id, "Signature verification failed"
+            )
 
         signing_input = canonical_signed_treatment_v1_payload(
             request_id=request_id,
             patient_id=patient_id,
             provider_id=provider_id,
             hospital_id=hospital_id,
+            provider_session_binding_hash=provider_session_binding_hash,
             challenge_nonce=challenge_nonce,
             decision=decision,
             purpose=purpose,
@@ -331,9 +386,9 @@ class SignedTreatmentSessionV1Verifier:
 
         try:
             public_key = serialization.load_der_public_key(key_row.device_public_key)
-            if not isinstance(public_key, ec.EllipticCurvePublicKey) or not isinstance(
-                public_key.curve, ec.SECP256R1
-            ):
+            if not isinstance(
+                public_key, ec.EllipticCurvePublicKey
+            ) or not isinstance(public_key.curve, ec.SECP256R1):
                 raise ValueError("unexpected key type")
             public_key.verify(
                 raw_signature,
@@ -342,20 +397,25 @@ class SignedTreatmentSessionV1Verifier:
             )
         except Exception:
             await self._audit_failure(patient_id, request_id, "key_mismatch")
-            return await self._fail(start_time, patient_id, "Signature verification failed")
+            return await self._fail(
+                start_time, patient_id, "Signature verification failed"
+            )
 
         await self._pad_time(start_time)
         return SignedTreatmentSessionV1Result(
             verified=True,
             patient_id=patient_id,
             allowed_operations=operations,
+            provider_session_binding_hash=provider_session_binding_hash,
             device_id=str(key_row.device_id),
             key_id=str(key_row.id),
             key_version=key_row.key_version,
             public_key_fingerprint=key_row.public_key_fingerprint,
         )
 
-    async def _audit_failure(self, patient_id: str, request_id: str, reason: str) -> None:
+    async def _audit_failure(
+        self, patient_id: str, request_id: str, reason: str
+    ) -> None:
         await append_audit_log_or_503(
             audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=patient_id,
@@ -379,6 +439,8 @@ class SignedTreatmentSessionV1Verifier:
         )
 
     async def _pad_time(self, start_time: float) -> None:
-        remaining = _MIN_VERIFY_DURATION_SECONDS - (time.monotonic() - start_time)
+        remaining = _MIN_VERIFY_DURATION_SECONDS - (
+            time.monotonic() - start_time
+        )
         if remaining > 0:
             await asyncio.sleep(remaining)
