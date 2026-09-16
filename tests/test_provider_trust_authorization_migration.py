@@ -10,7 +10,8 @@ APPLICATION_REVISION = "20260905_verification_application"
 SCHEDULER_REVISION = "20260906_verification_scheduler"
 DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
 REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
-HEAD_REVISION = "20260914_patient_search_identifiers"
+PATIENT_SEARCH_REVISION = "20260914_patient_search_identifiers"
+HEAD_REVISION = "20260916_clinical_access_sessions"
 
 
 def test_trust_authorization_migration_is_single_head_and_forward_only() -> None:
@@ -37,11 +38,13 @@ def test_trust_authorization_migration_is_single_head_and_forward_only() -> None
         recovery_revision is not None
         and recovery_revision.down_revision == DEVICE_TRUST_REVISION
     )
-    head_revision = scripts.get_revision(HEAD_REVISION)
+    patient_search_revision = scripts.get_revision(PATIENT_SEARCH_REVISION)
     assert (
-        head_revision is not None
-        and head_revision.down_revision == REGISTRATION_RECOVERY_REVISION
+        patient_search_revision is not None
+        and patient_search_revision.down_revision == REGISTRATION_RECOVERY_REVISION
     )
+    head_revision = scripts.get_revision(HEAD_REVISION)
+    assert head_revision is not None and head_revision.down_revision == PATIENT_SEARCH_REVISION
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (
         "provider_trust_permission_grant",
