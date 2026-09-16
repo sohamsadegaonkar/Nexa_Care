@@ -9,6 +9,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from app.core.redis import get_async_redis_client
+from app.security.clinical_access_policy import (
+    CLINICAL_ACCESS_POLICY_VERSION,
+    SIGNED_CONSENT_V3_PROTOCOL_VERSION,
+    ClinicalAccessPolicyError,
+    operation_for_record_category,
+    operations_for_signed_v3,
+)
 from app.security.document_processing_policy import (
     DOCUMENT_PROCESSING_GRANT_TYPE,
     DOCUMENT_PROCESSING_PURPOSE,
@@ -16,10 +23,16 @@ from app.security.document_processing_policy import (
     DocumentProcessingOperation,
     operations_for_grant,
 )
+from app.services.clinical_access_session import (
+    ClinicalAccessSessionError,
+    build_from_signed_v3_approval,
+    hash_provider_session_binding,
+)
 
 
 CAPABILITY_PREFIX = "consent_access:capability:"
 CLAIM_PREFIX = "consent_access:claim:"
+CLINICAL_ACCESS_SESSION_GRANT_TYPE = "clinical_access_session"
 
 
 _CLAIM_ONCE_LUA = """
@@ -52,6 +65,9 @@ class ApprovedAccessCapability:
     expires_at: str
     grant_type: str = "clinical"
     allowed_operations: tuple[str, ...] = ()
+    clinical_session_id: str | None = None
+    provider_session_binding_hash: str | None = None
+    clinical_access_policy_version: str | None = None
 
 
 def token_hash(token: str) -> str:
@@ -87,10 +103,31 @@ def _scope_allows(scope: str, requested_category: str) -> bool:
     return scope == "clinical" and requested_category in clinical_reads
 
 
+def _binding_hash_matches(stored_hash: str | None, provider_session_binding: str | None) -> bool:
+    if not isinstance(stored_hash, str) or len(stored_hash) != 64:
+        return False
+    if not isinstance(provider_session_binding, str) or not provider_session_binding.strip():
+        return False
+    try:
+        candidate = hash_provider_session_binding(provider_session_binding)
+    except ClinicalAccessSessionError:
+        return False
+    return secrets.compare_digest(stored_hash, candidate)
+
+
 async def issue_from_approved_request(
-    *, request_data: dict
+    *,
+    request_data: dict,
+    provider_session_binding: str | None = None,
 ) -> tuple[str, ApprovedAccessCapability]:
-    """Atomically claim an approved request exactly once."""
+    """Atomically claim an approved request exactly once.
+
+    Canonical Signed Consent V3 routine grants are upgraded into a bounded
+    read-only clinical access session.  The session is bound to the exact
+    authenticated provider session through a one-way derived binding hash.
+    Legacy routine grants retain their compatibility shape until separately
+    retired; document-processing grants remain a distinct operation vocabulary.
+    """
     now = datetime.now(timezone.utc)
     expires_at = datetime.fromisoformat(str(request_data["access_expires_at"]))
     if expires_at.tzinfo is None:
@@ -105,6 +142,25 @@ async def issue_from_approved_request(
     purpose = str(request_data["purpose"])
     allowed_operations = operations_for_grant(purpose, scope)
     grant_type = DOCUMENT_PROCESSING_GRANT_TYPE if allowed_operations else "clinical"
+    clinical_session_id: str | None = None
+    provider_session_binding_hash: str | None = None
+    clinical_access_policy_version: str | None = None
+
+    if (
+        grant_type == "clinical"
+        and request_data.get("protocol_version") == SIGNED_CONSENT_V3_PROTOCOL_VERSION
+    ):
+        session = build_from_signed_v3_approval(
+            request_data=request_data,
+            provider_session_binding=provider_session_binding or "",
+            now=now,
+        )
+        grant_type = CLINICAL_ACCESS_SESSION_GRANT_TYPE
+        allowed_operations = session.allowed_operations
+        clinical_session_id = session.session_id
+        provider_session_binding_hash = session.provider_session_binding_hash
+        clinical_access_policy_version = session.policy_version
+
     payload = {
         "request_id": str(request_data["request_id"]),
         "provider_id": str(request_data["provider_id"]),
@@ -112,11 +168,20 @@ async def issue_from_approved_request(
         "patient_id": str(request_data["patient_id"]),
         "purpose": purpose,
         "scope": scope,
+        "protocol_version": request_data.get("protocol_version"),
         "grant_type": grant_type,
         "allowed_operations": list(allowed_operations),
         "issued_at": now.isoformat(),
         "expires_at": expires_at.isoformat(),
     }
+    if grant_type == CLINICAL_ACCESS_SESSION_GRANT_TYPE:
+        payload.update(
+            {
+                "clinical_session_id": clinical_session_id,
+                "provider_session_binding_hash": provider_session_binding_hash,
+                "clinical_access_policy_version": clinical_access_policy_version,
+            }
+        )
 
     try:
         redis = get_async_redis_client()
@@ -152,7 +217,10 @@ async def issue_from_approved_request(
         issued_at=payload["issued_at"],
         expires_at=payload["expires_at"],
         grant_type=grant_type,
-        allowed_operations=allowed_operations,
+        allowed_operations=tuple(allowed_operations),
+        clinical_session_id=clinical_session_id,
+        provider_session_binding_hash=provider_session_binding_hash,
+        clinical_access_policy_version=clinical_access_policy_version,
     )
 
 
@@ -298,6 +366,38 @@ async def _load_live_capability(
         )
     ):
         return None
+
+    grant_type = str(payload.get("grant_type", "clinical"))
+    allowed_operations = tuple(
+        str(operation)
+        for operation in payload.get("allowed_operations", [])
+        if isinstance(operation, str)
+    )
+    clinical_session_id = payload.get("clinical_session_id")
+    provider_session_binding_hash = payload.get("provider_session_binding_hash")
+    policy_version = payload.get("clinical_access_policy_version")
+
+    if grant_type == CLINICAL_ACCESS_SESSION_GRANT_TYPE:
+        if (
+            request_data.get("protocol_version") != SIGNED_CONSENT_V3_PROTOCOL_VERSION
+            or payload.get("protocol_version") != SIGNED_CONSENT_V3_PROTOCOL_VERSION
+            or not isinstance(clinical_session_id, str)
+            or not clinical_session_id
+            or not isinstance(provider_session_binding_hash, str)
+            or len(provider_session_binding_hash) != 64
+            or policy_version != CLINICAL_ACCESS_POLICY_VERSION
+        ):
+            return None
+        try:
+            expected_operations = operations_for_signed_v3(
+                purpose=str(payload["purpose"]),
+                scope=str(payload["scope"]),
+            )
+        except (ClinicalAccessPolicyError, KeyError):
+            return None
+        if allowed_operations != expected_operations:
+            return None
+
     return ApprovedAccessCapability(
         patient_id=patient_id,
         clinician_id=provider_id,
@@ -309,11 +409,18 @@ async def _load_live_capability(
         reason_code=None,
         issued_at=str(payload["issued_at"]),
         expires_at=expires_at.isoformat(),
-        grant_type=str(payload.get("grant_type", "clinical")),
-        allowed_operations=tuple(
-            str(operation)
-            for operation in payload.get("allowed_operations", [])
-            if isinstance(operation, str)
+        grant_type=grant_type,
+        allowed_operations=allowed_operations,
+        clinical_session_id=(
+            str(clinical_session_id) if isinstance(clinical_session_id, str) else None
+        ),
+        provider_session_binding_hash=(
+            str(provider_session_binding_hash)
+            if isinstance(provider_session_binding_hash, str)
+            else None
+        ),
+        clinical_access_policy_version=(
+            str(policy_version) if isinstance(policy_version, str) else None
         ),
     )
 
@@ -325,6 +432,7 @@ async def validate(
     provider_id: str,
     hospital_id: str,
     requested_category: str,
+    provider_session_binding: str | None = None,
 ) -> ApprovedAccessCapability | None:
     """Validate a routine clinical category without accepting pipeline grants."""
     capability = await _load_live_capability(
@@ -333,7 +441,23 @@ async def validate(
         provider_id=provider_id,
         hospital_id=hospital_id,
     )
-    if capability is None or capability.grant_type != "clinical":
+    if capability is None:
+        return None
+
+    if capability.grant_type == CLINICAL_ACCESS_SESSION_GRANT_TYPE:
+        if not _binding_hash_matches(
+            capability.provider_session_binding_hash, provider_session_binding
+        ):
+            return None
+        try:
+            required_operation = operation_for_record_category(requested_category)
+        except ClinicalAccessPolicyError:
+            return None
+        if required_operation.value not in capability.allowed_operations:
+            return None
+        return capability
+
+    if capability.grant_type != "clinical":
         return None
     if not _scope_allows(capability.scope[0], requested_category):
         return None
