@@ -1,6 +1,6 @@
 # Slice 10B — Bounded Clinical Access Session
 
-Status: **OPEN — BACKEND SECURITY FOUNDATION STARTED**
+Status: **IN PROGRESS — 10B.3 DURABLE READ AUTHORITY IMPLEMENTED; EXACT-HEAD QUALIFICATION RESTARTED**
 
 Authoritative baseline before this slice started:
 `f68bad3d157e7dcdf7716a9bf0b74fc0b7991f25` on `main`.
@@ -176,6 +176,44 @@ Backend release gates must include:
 Frontend work is not the first step.  Any later UI integration must preserve the
 bounded session in memory/approved state and must not place bearer authority or
 patient identifiers in URLs.
+
+## Current 10B.3 implementation checkpoint — 2026-09-16
+
+The durable read-authority increment now has these repository invariants:
+
+- the current single repository migration head is
+  `20260916_clinical_access_sessions`;
+- canonical Signed Consent V3 routine `clinical` / `full` claims still map only
+  to `READ_CLINICAL_HISTORY`;
+- a successful routine V3 claim stages the hashed `ConsentGrantLog` and the
+  bounded `ClinicalAccessSession` row in the same PostgreSQL transaction;
+- the durable session stores only token/session-binding digests, never the raw
+  bearer or raw provider-session binding;
+- routine read validation requires the Redis capability, exact live provider
+  session binding, matching active durable session, and matching unrevoked,
+  unexpired durable consent grant to agree;
+- revoking the durable grant therefore denies subsequent access even if stale
+  Redis/session material remains, preserving fail-closed authority during the
+  remaining lifecycle-metadata reconciliation work;
+- document-processing authority remains a separate grant type and does not
+  acquire the routine clinical-session contract;
+- no `CREATE_ENCOUNTER`, `WRITE_*`, or `ORDER_INVESTIGATION` authority is
+  enabled by this checkpoint.
+
+Backend CI run #654 on parent head
+`be5a08c0fdb60b2aa511a5e634d526f79f0eb1d5` proved Partition B green but exposed
+only two qualification-contract mismatches: the security non-regression current
+migration-head marker and the historical Slice-4 private qualification database
+head.  Commit `17a6058ce106bd61c530d0d2e2ef4d3dd34c7b30` updates exactly those stale
+markers to `20260916_clinical_access_sessions`.  That maintenance commit was
+created through a SHA-pinned one-shot branch which deleted itself after the
+fast-forward; it is not itself claimed as qualified because workflow-token
+pushes do not provide the ordinary exact-head push qualification signal.
+
+The next direct `main` head created by this checkpoint must therefore pass the
+full backend A/B/C zero-skip gates and the applicable frontend/deployment checks
+before 10B.3 can be called qualified.  Qualification evidence from an older SHA
+must not be reused.
 
 ## Out of scope for the opening increment
 
