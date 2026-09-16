@@ -1,5 +1,6 @@
-import { Stack } from 'expo-router'
+import { Stack, useRouter } from 'expo-router'
 import { useTheme } from '@my/ui'
+import { Pressable, Text } from 'react-native'
 
 export const unstable_settings = {
   initialRouteName: 'access-history',
@@ -7,6 +8,7 @@ export const unstable_settings = {
 
 export default function PatientLayout() {
   const theme = useTheme()
+  const router = useRouter()
   return (
     <Stack
       screenOptions={{
@@ -45,7 +47,21 @@ export default function PatientLayout() {
       />
       <Stack.Screen
         name="access-history"
-        options={{ headerTitle: 'Access History' }}
+        options={{
+          headerTitle: 'Access History',
+          headerRight: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Open phone discoverability settings"
+              onPress={() => router.push('/patient/discoverability')}
+              hitSlop={12}
+            >
+              <Text style={{ color: theme.nexaAccent.val, fontWeight: '600' }}>
+                Privacy
+              </Text>
+            </Pressable>
+          ),
+        }}
       />
       <Stack.Screen
         name="timeline"
