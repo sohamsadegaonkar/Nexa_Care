@@ -3,53 +3,52 @@
 ## NEXT AGENT — START HERE
 
 - **Current branch:** `slice-11a-patient-external-record-import`
-- **Current HEAD before this documentation commit:** `aa218f24930140c0fc34a6b719403178e95ac0eb`
+- **Current HEAD at start of current logical commit:** `c7bc7998f9a288b8f9cdf9a438653f1da13b6f0b` (the commit containing this file must be resolved from the branch ref after write; a commit cannot embed its own future SHA).
 - **Base main SHA:** `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
-- **Current implementation phase:** Step 1 audit complete enough to lock the first architecture boundary; runtime implementation has not started.
-- **Last completed step:** Audited patient-self authentication, provider pipeline authority, encrypted document storage, extraction job/candidate persistence, typed records/timeline, client API wrapper, and the asynchronous delegated-trust recheck; opened draft PR #47.
-- **Exact next step:** Implement the smallest patient-owned import boundary without faking provider/hospital authority. First prove whether a patient-import authority strategy can be introduced in non-protected pipeline code and persistence while preserving the provider path unchanged; if that requires protected Slice 10B files, mark that subcomponent BLOCKED and continue UI/API contract work that does not depend on it.
-- **Blockers:** The existing asynchronous pipeline is provider-delegation-bound: it rechecks delegated provider trust and extraction candidates require `tenant_id` plus `authorization_provider_id`. A patient must not be represented as a fake provider or hospital. This is an architectural constraint, not yet a total workstream blocker.
-- **Exact tests to run next:** focused new patient-import authority tests; existing patient auth tests; document pipeline/provider regression tests; extraction evidence/candidate binding tests. No test is marked PASS until actually executed.
-- **Files that must not currently be touched:** `app/services/clinical_access_session.py`, `app/security/clinical_access_policy.py`, `app/services/approved_access_capability.py`, `app/api/v2/consent_v3_routes.py`, `app/core/consent_gate.py`, `app/models/clinical_access_session.py`, clinical-access-session migrations/tests, and migration-head governance files unless an unavoidable dependency is proven.
+- **Current implementation phase:** patient-owned import persistence contract; API/service extraction path is next.
+- **Last completed step:** designed patient-owned import/job evidence tables, linear migration, ORM registration, and authority/provenance contract tests without provider/hospital/consent fields.
+- **Exact next step:** implement patient-self source storage/upload service and `/api/v2/patient/me/external-records` API using server-derived patient identity, then run focused tests and existing provider document regressions.
+- **Blockers:** no repository/concurrency blocker. Existing provider async extraction remains provider-delegation-bound and must not be reused by faking provider/hospital authority; patient extraction orchestration needs its own authority-safe service using shared storage/extractor/evidence primitives.
+- **Exact tests to run next:** `tests/test_patient_external_record_import_contract.py`, existing patient-auth/self-route tests, migration governance/head tests, then focused provider-pipeline regressions after shared storage changes.
+- **Files that must not currently be touched:** `app/services/clinical_access_session.py`, `app/security/clinical_access_policy.py`, `app/services/approved_access_capability.py`, `app/api/v2/consent_v3_routes.py`, `app/core/consent_gate.py`, `app/models/clinical_access_session.py`, clinical-access-session qualification tests, and Slice 10B policy/session files unless an unavoidable dependency is proven.
 
 ## Current Scope
 
-Authenticated patient self-import of previous/out-of-network medical records from onboarding and Records, including safe upload, processing/review states, patient correction, provenance-aware finalization, typed record/timeline integration, retained source access where policy allows, privacy/audit/lifecycle behavior, and qualification.
+Authenticated patient self-import of previous/out-of-network medical records from onboarding and Records: category selection, secure source retention, extraction, patient-safe review/correction, provenance-aware finalization into existing typed records, timeline integration, source access where policy allows, retries, audit/privacy/lifecycle behavior, and qualification.
 
 ## Explicit Non-Scope
 
-- Redesigning or broadening `ClinicalAccessSession`.
-- Reinterpreting provider treatment consent.
-- Making patient import grant provider authority.
-- Treating a patient as a synthetic provider or hospital/tenant to satisfy provider-only schema.
-- Replacing the safe extraction/evidence pipeline with `upload → LLM/OCR → JSON → canonical record`.
-- Enabling AI/OCR auto-commit.
+- Redesigning/broadening `ClinicalAccessSession` or provider treatment consent.
+- Making a patient import grant provider authority.
+- Treating a patient as a synthetic provider, hospital, or clinical tenant.
+- Replacing evidence-based processing with direct OCR/LLM-to-record writes.
+- Enabling extraction auto-commit.
+- Creating a generic JSON clinical-record blob when typed record models exist.
 - Redesigning global erasure architecture.
-- Creating a competing Alembic head.
+- Creating a sibling/competing Alembic head.
 
 ## Repository Baseline
 
 - **origin/main SHA at branch creation:** `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
 - **Branch:** `slice-11a-patient-external-record-import`
-- **Execution mode:** authenticated GitHub connector; no repository checkout is mounted in the sandbox.
-- **Remote branches at branch creation:** only `main`.
-- **Open PRs at branch creation:** none.
-- **Current visible branches at latest overlap check:** `main` and this workstream branch only.
+- **Execution mode:** authenticated GitHub connector; no local repository checkout is mounted.
+- **Branches at creation:** only `main`.
+- **Open PRs at creation:** none.
 - **Draft PR:** #47, `feat(patient): integrate external medical record import workflow`.
 - **Migration head at baseline:** `20260916_clinical_access_sessions`.
-- **Latest overlap check:** `main` remains at the branch base SHA; no new concurrent remote work is visible.
+- **Pre-migration concurrency recheck:** main still `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`; only `main` plus this branch exist; the only open PR is #47. Therefore the patient-import migration is linear from `20260916_clinical_access_sessions` and does not create a sibling head.
 
 ## Product Contract
 
 ### New patient / onboarding
 
-Create account → required onboarding → **Add previous medical records** → choose category → camera/photo/PDF where supported → upload → secure processing → patient-friendly review → correct/confirm → retain original source → provenance-aware save → categorized record → longitudinal timeline → continue onboarding or **Skip for now**.
+Create account → required onboarding → **Add previous medical records** → category → camera/photo/PDF where supported → upload → secure processing → patient-friendly review → correct/confirm → retain original source → provenance-aware save → categorized record → timeline → continue onboarding or **Skip for now**.
 
 ### Existing patient
 
-Home / Records → **Add external record** → category → source upload → processing → review → save → categorized record → timeline.
+Home / Records → **Add external record** → category → upload → processing → review → save → categorized record → timeline.
 
-Initial patient-facing categories:
+Patient-facing categories:
 
 - Prescription
 - Lab report
@@ -57,100 +56,84 @@ Initial patient-facing categories:
 - Discharge summary
 - Other medical record
 
-No internal terms such as `SOURCE_ONLY`, `QUARANTINE`, workflow IDs, adjudication candidates, or extraction-provider jobs may appear in patient UI.
+Never expose internal terms such as `SOURCE_ONLY`, `QUARANTINE`, workflow IDs, adjudication candidates, or extraction-provider jobs.
 
 ## Security Invariants
 
-1. Patient ownership comes from strict server-side patient JWT/session authority; a client-supplied patient UUID is never authorization.
-2. Patient self-import authority is distinct from treatment consent, provider capability, provider clinical session, clinician verification, and AI confidence.
-3. Patient import cannot create provider access or alter treatment consent.
-4. Provider consent/capability tokens cannot be reused as patient-upload authority.
-5. Do not satisfy provider-only bindings by inventing a provider identity or hospital tenant for the patient.
-6. Source documents remain encrypted and patient-bound using existing storage primitives.
-7. Extraction evidence/candidates remain encrypted/provenance-aware; OCR/AI output never silently becomes canonical clinical truth.
-8. `AUTO_COMMIT_ENABLED = False` and `AUTO_COMMIT_APPROVED = False` remain unchanged absent separate governance authorization.
-9. Patient-edited values remain external-document + patient-reviewed provenance, not clinician-created or clinician-verified.
-10. No document bytes, extracted PII, raw object keys, or sensitive identifiers in logs, URLs, analytics, or patient UI.
-11. Security-sensitive transitions remain auditable with fail-closed behavior consistent with existing governance.
-12. Duplicate upload/finalization is idempotent or safely rejected.
-13. Merge/erasure/delete behavior must use existing canonical lifecycle hooks.
+1. Patient ownership is derived from `get_current_patient` / `get_current_patient_session`; client patient IDs are never authority.
+2. Patient self-import is distinct from treatment consent, provider capability/session, clinician verification, and AI confidence.
+3. Patient import cannot create provider access or mutate treatment consent.
+4. Provider tokens/capabilities cannot authorize patient self-import.
+5. Do not invent provider/hospital/tenant bindings for patient imports.
+6. Source documents remain encrypted and patient-bound.
+7. Extracted/reviewed medical values are encrypted at rest and retain source/evidence provenance.
+8. OCR/AI output cannot silently become authoritative clinical truth; auto-commit remains disabled.
+9. Patient corrections remain explicitly patient-reviewed external-document provenance.
+10. No document bytes, extracted PII, object-storage keys, or sensitive identifiers in logs/URLs/analytics/patient UI.
+11. Security-sensitive writes preserve fail-closed audit behavior.
+12. Duplicate/replay upload/finalization is idempotent or safely rejected.
+13. Merge/erasure/delete behavior must reuse canonical lifecycle hooks.
 14. Existing provider document processing must not regress.
 
 ## Existing Components Reused
 
 | Component | Classification | Evidence / decision |
 |---|---|---|
-| Strict patient-self authentication | **EXISTS** | `app/core/dependencies.py` exposes `AuthenticatedPatient`, `AuthenticatedPatientSession`, `get_current_patient`, and `get_current_patient_session`. JWT claims are resolved through live server-side session authority and DB identity state. |
-| Patient-self API namespace | **EXISTS** | `app/api/v2/patient_self_routes.py` uses `/api/v2/patient/me`, strict patient JWT/session dependencies, and explicitly rejects body/path/query patient-ID overrides. |
-| Patient-authenticated external-document upload API | **MISSING** | No audited patient-owned upload route exists. Current pipeline upload accepts form `patient_id` and uses clinical consent/capability authority. |
-| Provider-authorized document upload | **WRONG_FLOW** for patient self-import; **EXISTS** for provider path | `app/api/v2/pipeline_routes.py` is the mature provider/clinical document path and must remain intact. |
-| Legacy unbound upload | **CORRECTLY RETIRED** | `app/api/v2/document_routes.py` returns 410 and directs callers to the patient-bound staged pipeline. Do not revive it. |
-| Encrypted source document storage | **EXISTS** | `app/services/document_storage.py` provides local AES-GCM and S3 client-side AES-GCM + KMS storage, patient/tenant binding, authenticated retrieval, digest, and delete. |
-| Document metadata/job persistence | **PARTIAL** | `DocumentStorage` and `ExtractionJob` already hold patient, source, type, digest/status/timestamps. They are reusable, but current authorization fields are provider-oriented. |
-| Extraction orchestration | **WRONG_FLOW** for patient self-import; **EXISTS** for provider path | `app/services/pipeline_orchestrator.py` rechecks delegated provider trust during async processing. Patient self-import needs a distinct authority strategy; bypassing the recheck is not acceptable. |
-| Encrypted extraction candidates | **PARTIAL** | `ExtractionCandidateRecord` encrypts raw/source text and preserves evidence, but schema requires non-null `tenant_id` and `authorization_provider_id` and its FK/index semantics are provider authorization-bound. |
-| Field-level evidence / source traceability | **EXISTS** | Pipeline imports evidence integrity and source relationship primitives and candidates retain `evidence_id`, source document, page/bbox, confidence, provider/version and reason codes. |
-| AI auto-commit safety | **EXISTS** | Pipeline response contract reports `auto_commit_enabled: false` and clinician adjudication required; retired direct extraction paths prevent unbound direct writes. |
-| Human adjudication/review | **WRONG_FLOW** for patient UX; **EXISTS** internally | Current review/adjudication vocabulary and APIs are steward/provider/engineering oriented. Patient UI requires a safe adapter, not raw candidate lanes. |
-| Typed clinical record models | **EXISTS/PARTIAL** | `patient_record_routes.py` uses typed `Medication`, `LabResult`, `DocumentReference`, `TimelineEvent`, etc. Existing append models retain `source_document_id`, source/confidence/risk metadata. Imaging/discharge mapping still needs exact audit before finalization. |
-| Timeline persistence | **EXISTS** | `TimelineEvent` is part of the typed record layer and existing clinical writes stage audit + record/timeline atomically. Patient-import provenance wording still needs integration. |
-| Fail-closed audit/outbox patterns | **EXISTS** | Patient record routes stage audit intent in the same clinical transaction and roll back on audit durability failure. Reuse this pattern. |
-| Erasure signal handling | **EXISTS/PARTIAL** | Patient-self routes already map erased-patient and erasure-registry failures; pipeline also imports/checks erasure registry. Full imported-record lifecycle qualification remains pending. |
-| Client API abstraction | **EXISTS** | `nexa-client/packages/app/utils/apiClient.ts` already centralizes pipeline calls; no ad-hoc fetch/axios should be added. Existing upload method is consent-token/provider-flow oriented and cannot be reused unchanged. |
-| Patient onboarding/import UI | **MISSING/PARTIAL** | Patient onboarding status exists server-side; no audited patient-facing external-record import flow has been found. |
-| Patient Records/timeline self-view | **PARTIAL** | Backend has patient self-view record support, but external-import category/review/source UX is not implemented. |
-| Malware scanning | **NOT VERIFIED / DO NOT CLAIM** | No audited evidence yet of a malware scanner. Do not fabricate this control. |
-
-## Audit Questions A–Q
-
-- **A. Patient-authenticated upload API?** No safe self-import upload API found: **MISSING**.
-- **B. Existing upload requires provider/consent authority?** Yes. It is clinical-capability/consent bound: **WRONG_FLOW** for patient self-import.
-- **C. Safe patient-self import authority path?** Strict patient auth exists, but no document-import adapter yet: **PARTIAL**.
-- **D. Does upload directly create authoritative truth?** The mature pipeline stages extraction/review; direct unbound extraction has been retired. Auto-commit remains disabled.
-- **E. Source encrypted?** Yes, existing storage is authenticated encryption and patient-bound.
-- **F. Extraction candidates encrypted?** Yes for candidate raw/source text.
-- **G. AUTO_COMMIT disabled?** Yes in audited pipeline contract; do not change.
-- **H. Human-review boundary?** Exists, but current adjudication flow is clinician/steward oriented, not patient UX.
-- **I. Typed models for categories?** Medication/lab/document/timeline primitives exist; exact imaging/discharge category commit mapping remains to be finalized.
-- **J. Timeline persistence supports source references?** Typed record layer and source-document IDs exist; imported provenance presentation remains to implement.
-- **K. Existing frontend workflow?** Current pipeline client/API is clinical/provider oriented; patient import UX is missing.
-- **L. After upload?** Existing flow creates an extraction job and queues asynchronous extraction.
-- **M. Extraction failure?** Job model carries `error_code`, retryability, attempt count; quarantine/retry services exist. Patient-friendly mapping remains to implement.
-- **N. Ambiguous/low confidence?** Existing evidence/candidate routing uses safe lanes/reason codes and does not auto-commit; patient UI must translate this into review language.
-- **O. Can patient view source after processing?** Existing adjudication has source-read primitives; no audited patient-safe source route exists yet.
-- **P. Duplicate/idempotency controls?** Existing document schema has patient/tenant/content-hash uniqueness and jobs have request IDs; patient-self semantics require focused tests.
-- **Q. PII/log/URL leakage?** Safe logging/error patterns exist in audited components, but patient-import-specific static/adversarial tests are still required.
+| Strict patient-self authentication | **EXISTS** | `app/core/dependencies.py`: live Redis + PostgreSQL patient/session/identity authority. |
+| Patient-self API namespace | **EXISTS** | `app/api/v2/patient_self_routes.py` under `/api/v2/patient/me`, no patient-ID override. |
+| Patient-authenticated external upload | **MISSING** | To implement next. |
+| Provider document upload | **WRONG_FLOW** for self-import / **EXISTS** for provider | Consent/capability + hospital/provider bound. Preserve unchanged. |
+| Legacy unbound upload | **CORRECTLY RETIRED** | Returns 410; do not revive. |
+| Encrypted source storage | **EXISTS/PARTIAL** | Strong AES-GCM/KMS storage exists, but current storage namespace requires tenant string; add truthful patient-self namespace instead of fake hospital. |
+| Patient import persistence | **IMPLEMENTING** | New patient-owned import/candidate tables contain no provider/hospital/consent authority. |
+| Existing extraction jobs/candidates | **WRONG_FLOW** for patient | Provider-delegated trust and non-null provider/hospital candidate bindings. |
+| Extraction adapters | **EXISTS** | `app/ai/extractor.py` has validated configured adapters and attempt provenance. |
+| Field evidence/source traceability | **EXISTS** | Existing evidence/routing/source primitives can be reused where authority-neutral. |
+| AI auto-commit safety | **EXISTS** | Existing provider pipeline requires adjudication; do not weaken. |
+| Human adjudication/review | **WRONG_FLOW** for patient UX | Internal provider/steward semantics need patient-facing adapter. |
+| Typed clinical records | **EXISTS/PARTIAL** | Medication/Lab/etc. and `source_document_id` exist; imaging/discharge final mapping still needs exact design. |
+| Timeline | **EXISTS** | Existing timeline model/write patterns available. |
+| Audit/outbox | **EXISTS** | Existing clinical writes fail closed if durable audit cannot be staged. |
+| Erasure/merge lifecycle | **EXISTS/PARTIAL** | Canonical patient erasure/session checks exist; new rows need integration/qualification. |
+| API client abstraction | **EXISTS** | `nexa-client` centralizes API calls; existing pipeline method is provider-flow specific. |
+| Patient import UI | **MISSING/PARTIAL** | To implement after backend contract. |
+| Malware scanning | **NOT VERIFIED** | Do not claim scanner exists. |
 
 ## Architecture Decisions
 
-### 1. Patient authority lives under the strict patient-self boundary
+### 1. Patient authority remains patient authority
 
-- **Decision:** New patient-import endpoints must derive ownership from `get_current_patient` / `get_current_patient_session` and must not accept a patient UUID as authority.
-- **Reason:** This is the repository's canonical self-service trust model.
-- **Rejected:** Provider consent token, ClinicalAccessSession, client-supplied patient UUID.
-- **Affected files:** Prefer a new patient-import route/service plus registration in existing non-protected router wiring.
-- **Security consequence:** Prevents cross-patient selection and provider-authority creation.
+- **Decision:** new self-import endpoints derive patient ownership exclusively from strict patient auth.
+- **Reason:** self-import is a patient ownership action, not a provider treatment session.
+- **Rejected:** client patient UUID, provider consent token, ClinicalAccessSession.
+- **Security consequence:** prevents cross-patient selection and accidental provider authority.
 
-### 2. Do not fake provider/hospital bindings
+### 2. Patient imports use distinct persistence from provider-delegated candidates
 
-- **Decision:** A patient import will not populate `authorization_provider_id` or hospital tenant with synthetic values merely to satisfy the provider pipeline.
-- **Reason:** Those fields are used in delegated-trust rechecks, candidate FKs, indexes, and provenance. Synthetic values would misstate authority.
-- **Rejected:** `provider_id = patient_id`, fake hospital UUID, bypassing delegated-trust checks.
-- **Affected files:** Likely pipeline authority abstraction and/or persistence contract; exact design still being proven.
-- **Security consequence:** Preserves the distinction between self-import provenance and provider clinical authority.
+- **Decision:** add `patient_external_record_imports` and `patient_external_record_candidates` bound directly to patient + retained source.
+- **Reason:** existing extraction candidate graph requires provider/hospital delegated authority and would misstate provenance for self-import.
+- **Rejected:** fake provider, fake hospital, nullable weakening of provider candidate semantics.
+- **Affected files:** `app/models/patient_external_record_import.py`, model registry, linear migration.
+- **Security consequence:** provider pipeline authorization semantics remain intact while patient imports have truthful ownership.
 
-### 3. Reuse encrypted storage and extraction/evidence primitives, not provider authorization semantics
+### 3. No generic clinical JSON store
 
-- **Decision:** Reuse `document_storage`, extractor adapters, evidence encryption/integrity, routing, source relationships, audit/outbox and typed record/timeline primitives where they can be invoked under patient authority without weakening checks.
-- **Reason:** These are mature safety controls.
-- **Rejected:** New unencrypted storage, direct OCR-to-record writes, raw engine output in UI.
-- **Security consequence:** Retains source confidentiality and human-review provenance.
+- **Decision:** import rows store workflow/provenance metadata and encrypted candidate evidence only. Completed imports must reference an existing typed record and a timeline event.
+- **Reason:** canonical clinical facts belong in typed record models.
+- **Rejected:** arbitrary final JSON medical-record blob.
+- **Security consequence:** avoids a second ungoverned clinical truth store.
 
-### 4. No speculative migration
+### 4. Patient corrections require explicit provenance
 
-- **Decision:** No migration is created until the authority strategy proves whether the existing provider-bound candidate schema can safely support a distinct patient authority. If schema change is necessary, it must be linear from `20260916_clinical_access_sessions` after a fresh concurrency check.
-- **Reason:** Avoid multiple heads and semantic hacks.
-- **Security consequence:** Prevents accidental provider-binding corruption.
+- **Decision:** a `CORRECTED` candidate requires `patient_reviewed`, encrypted reviewed value, and review timestamp.
+- **Reason:** edited extraction cannot be relabeled as clinician verification.
+- **Security consequence:** correction origin remains auditable and truthful.
+
+### 5. Migration is linear from the current single head
+
+- **Decision:** `20260916_patient_external_record_import` revises `20260916_clinical_access_sessions` after a fresh branch/PR/main check.
+- **Reason:** patient-specific authority cannot safely fit provider-bound candidate schema without semantic weakening.
+- **Security consequence:** no sibling migration head.
 
 ## Work Log
 
@@ -159,86 +142,100 @@ No internal terms such as `SOURCE_ONLY`, `QUARANTINE`, workflow IDs, adjudicatio
 - **Timestamp:** 2026-09-16
 - **Starting SHA:** `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
 - **Ending SHA:** `aa218f24930140c0fc34a6b719403178e95ac0eb`
-- **Files changed:** `docs/governance/PATIENT_EXTERNAL_RECORD_IMPORT_HANDOFF.md`
-- **Behavior:** Created isolated branch and mandatory handoff.
-- **Security impact:** Process isolation only.
-- **Tests:** None; documentation step.
-- **Concurrent overlap:** None visible; protected Slice 10B is already on main.
-- **Next:** Audit architecture.
+- **Files changed:** handoff only.
+- **Behavior:** created isolated branch and living handoff.
+- **Security impact:** process isolation only.
+- **Tests:** none; documentation step.
+- **Concurrent overlap:** none visible.
+- **Next:** architecture audit.
 
 ### Entry 2 — Architecture/security audit and draft PR
 
 - **Timestamp:** 2026-09-16
 - **Starting SHA:** `aa218f24930140c0fc34a6b719403178e95ac0eb`
-- **Ending SHA:** this documentation commit; resolve exact SHA after write.
-- **Files changed:** `docs/governance/PATIENT_EXTERNAL_RECORD_IMPORT_HANDOFF.md`
-- **Behavior:** No runtime change. Classified patient auth, pipeline authority, storage, candidates, typed records/timeline and client boundary; opened draft PR #47.
-- **Security impact:** Identified and prohibited the unsafe shortcut of representing a patient as a provider/hospital to reuse delegated provider processing.
-- **Tests run:** None; audit-only step.
-- **Results:** Audit evidence recorded above.
-- **Known failures/blockers:** Existing async extraction path is provider-delegation-bound; patient authority strategy is not yet implemented.
-- **Concurrent overlap:** Latest remote branch check shows only main + this branch; main remains at base SHA.
-- **Next:** Prove/implement a distinct patient-import authority strategy without protected Slice 10B changes.
+- **Ending SHA:** `c7bc7998f9a288b8f9cdf9a438653f1da13b6f0b`
+- **Files changed:** handoff only.
+- **Behavior:** classified patient auth, provider pipeline, encrypted storage, candidate graph, typed records/timeline and client boundary; opened draft PR #47.
+- **Security impact:** explicitly prohibited fake provider/hospital reuse of delegated processing.
+- **Tests:** none; audit-only.
+- **Known issue:** provider orchestrator is delegated-authority-bound.
+- **Concurrent overlap:** main unchanged; no external branch/PR.
+- **Next:** patient-owned domain contract.
+
+### Entry 3 — Patient-owned persistence contract
+
+- **Timestamp:** 2026-09-16
+- **Starting SHA:** `c7bc7998f9a288b8f9cdf9a438653f1da13b6f0b`
+- **Ending SHA:** resolve branch HEAD after this atomic commit.
+- **Files changed:** `app/models/patient_external_record_import.py`; `app/models/__init__.py`; `alembic/versions/20260916_patient_external_record_import.py`; `tests/test_patient_external_record_import_contract.py`; this handoff.
+- **Behavior:** adds patient-owned import orchestration/evidence schema with required categories/states, encrypted candidate fields, patient-correction provenance constraints, completion references, and patient-self duplicate source hash protection.
+- **Security impact:** no provider/hospital/consent authority can be stored in the new import/candidate tables; completion requires typed record + timeline references; patient correction provenance is constrained.
+- **Tests run:** NOT RUN in this execution environment before commit; contract tests are added and CI/workflow evidence must be checked against the resulting exact SHA.
+- **Results:** code review/static contract prepared; no PASS claimed.
+- **Known failures:** none observed yet; runtime/migration tests pending.
+- **Concurrent overlap check:** main unchanged at original base; only this branch exists besides main; only PR #47 open immediately before migration creation.
+- **Next action:** run/check exact-head tests; implement patient-self encrypted source storage/upload API if migration/model checks are green.
 
 ## Test / Qualification Matrix
 
 | Area | State | Notes |
 |---|---|---|
-| Unit | NOT RUN | Runtime implementation not started. |
-| Backend API | NOT RUN | Patient import routes not implemented. |
-| Existing patient auth regression | NOT RUN | Required after first backend delta. |
-| Existing provider document pipeline regression | NOT RUN | Mandatory after shared pipeline changes. |
-| Extraction evidence/candidate security | NOT RUN | Mandatory if authority/persistence changes. |
-| PostgreSQL | NOT RUN | Required for any persistence/schema work. |
-| Redis | NOT RUN | Patient session authority uses Redis; applicable. |
-| Privacy/security | NOT RUN | Add authority, logging, provenance, replay tests. |
+| Patient import model contract | NOT RUN | Test file added in Entry 3. |
+| Unit | NOT RUN | Await exact-head workflow/local runner. |
+| Backend API | NOT RUN | Patient upload API not implemented yet. |
+| Patient auth regression | NOT RUN | Required after API delta. |
+| Provider document regression | NOT RUN | Mandatory after shared storage changes. |
+| Migration single-head/governance | NOT RUN | New linear migration added; must execute. |
+| PostgreSQL | NOT RUN | Must exercise migration + constraints. |
+| Redis | NOT RUN | Required for real patient-session API tests. |
+| Privacy/security | NOT RUN | Add authority/log/provenance/replay coverage. |
 | Mobile tests | NOT RUN | UI not implemented. |
 | Web tests | NOT RUN | UI not implemented. |
 | Next production build | NOT RUN | UI not implemented. |
 | Android compile | NOT RUN | UI not implemented. |
 | iOS compile | NOT RUN | UI not implemented. |
-| E2E | NOT RUN | End-to-end path not implemented. |
-| Vercel | NOT RUN | Apply if Vercel-deployed code changes. |
+| E2E | NOT RUN | End-to-end path incomplete. |
+| Vercel | NOT RUN | Required if Vercel-deployed frontend changes. |
 
 ## Open Risks / Blockers
 
-1. **Provider-bound async extraction contract:** `pipeline_orchestrator.py` rechecks delegated clinical trust; extraction candidate schema requires provider/hospital bindings. Patient self-import needs a truthful distinct authority strategy.
-2. **Migration risk:** If authority-neutral candidate persistence requires schema change, create it only after a fresh main/PR/branch/migration-head check and linearly from the current single head.
-3. **Category commit mapping:** Medication/lab are clear typed targets; imaging and discharge need exact existing-model mapping before implementation.
-4. **Source viewing:** Existing source-read functionality is adjudication-oriented; patient-safe source retrieval must derive patient ownership and hide storage refs.
-5. **Malware/content scanning:** Not verified; must be documented as absent if the repository has no real scanner.
+1. Existing provider async extraction remains delegated provider/hospital trust-bound. Patient orchestration must invoke shared extraction/evidence primitives under patient authority without bypassing provider checks.
+2. Patient-self document storage needs a non-hospital encrypted namespace; existing storage method requires tenant ID. Do not pass a synthetic hospital UUID/string.
+3. Imaging/discharge final typed-record mapping remains to be selected from current canonical models.
+4. Patient-safe original-source retrieval is not implemented yet.
+5. Malware/content scanner is not verified; document absence rather than fabricating a control.
+6. New migration must be executed against PostgreSQL and single-head governance before being considered qualified.
 
 ## Merge / Rebase Safety Notes
 
-- Original base: `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`.
-- Draft PR #47 makes overlap visible.
-- Recheck main/branches/open PRs before each major implementation phase and before any migration.
-- Do not modify protected Slice 10B files casually.
-- Do not resolve future conflicts with blind ours/theirs selection.
-- Final qualification must be tied to the final exact head SHA.
+- Original base `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`.
+- Draft PR #47 exposes overlap.
+- Recheck branches/PRs/main before every major phase and before any further migration changes.
+- Do not touch protected Slice 10B files casually.
+- Rebase only at safe integration point; resolve conflicts semantically, never blind ours/theirs.
+- Final qualification must correspond to final exact head SHA.
 
 ## Final Completion Checklist
 
-- [ ] Patient can enter import from onboarding.
-- [ ] Patient can enter import from Records.
-- [ ] Five required categories available.
+- [ ] Patient can enter import from onboarding and Records.
+- [ ] Five required patient-facing categories exist.
 - [ ] Onboarding has Skip for now and upload is optional.
-- [ ] Patient-owned upload derives identity server-side.
-- [ ] MIME/extension/size/empty/corrupt/duplicate/storage/extraction failure handling qualified.
-- [ ] Source remains encrypted and safely retrievable.
-- [ ] Existing safe extraction/evidence primitives reused under truthful patient authority.
+- [ ] Patient ownership is server-derived; no client patient UUID authority.
+- [ ] Upload validates type/signature/size/empty/corrupt cases and is idempotent.
+- [ ] Source is encrypted in a truthful patient-self namespace.
+- [ ] Existing extraction/evidence primitives are reused without provider-authority fabrication.
 - [ ] AI/OCR cannot auto-commit clinical truth.
-- [ ] Patient-friendly structured review/correction implemented.
-- [ ] Patient edits retain external-document + patient-review provenance.
-- [ ] Typed record integration implemented for supported categories.
-- [ ] Timeline integration retains provenance.
-- [ ] Safe source-view route implemented where policy permits.
-- [ ] Retry/recovery/resume behavior implemented.
-- [ ] No provider authority or treatment-consent mutation occurs.
-- [ ] Provider document pipeline regressions pass.
+- [ ] Patient-friendly structured review/correction exists.
+- [ ] Corrections retain patient-review provenance.
+- [ ] Supported results persist into existing typed record models.
+- [ ] Timeline entry retains external-import provenance.
+- [ ] Original source can be viewed safely where policy permits.
+- [ ] Retry/recovery/resume paths exist.
+- [ ] Patient import never creates provider authority or changes treatment consent.
+- [ ] Provider document-processing regressions pass.
 - [ ] Authority/privacy/provenance/adversarial tests pass.
 - [ ] Merge/erasure/delete lifecycle qualified.
-- [ ] Exactly one Alembic head if migration introduced.
+- [ ] Exactly one Alembic head and migration tests pass.
 - [ ] Frontend/mobile/build/native/E2E gates green where applicable.
 - [ ] Exact final SHA recorded.
-- [ ] Draft PR #47 updated and ready for review only after all required qualification.
+- [ ] Draft PR #47 updated and ready for review only after qualification.
