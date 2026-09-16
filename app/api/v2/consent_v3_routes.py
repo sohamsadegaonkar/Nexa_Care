@@ -40,12 +40,18 @@ from app.security.audit_context import AuditDomain, bind_trusted_audit_hospital,
 from app.security.document_processing_policy import DOCUMENT_PROCESSING_PURPOSE, DOCUMENT_PROCESSING_SCOPE
 from app.security.provider_capabilities import ClinicalCapability
 from app.services.approved_access_capability import (
+    CLINICAL_ACCESS_SESSION_GRANT_TYPE,
     ApprovedAccessClaimInProgress,
     ApprovedAccessStoreUnavailable,
     invalidate_request,
     issue_from_approved_request,
 )
 from app.services.clinical_access_session import ClinicalAccessSessionError
+from app.services.clinical_access_session_store import (
+    ClinicalAccessSessionStoreError,
+    revoke_by_request,
+    stage_session,
+)
 from app.services.consent_v3_authority import (
     ConsentV3AuthorityUnavailable,
     ConsentV3ProviderIneligible,
@@ -753,6 +759,7 @@ async def claim_consent_v3_access(
         raise HTTPException(status_code=403, detail={"error_code": "CONSENT_APPROVING_KEY_NO_LONGER_ACTIVE"})
 
     grant_row = None
+    durable_session_staged = False
     try:
         token, capability = await issue_from_approved_request(
             request_data=data,
@@ -776,6 +783,42 @@ async def claim_consent_v3_access(
         for prior in prior_rows:
             prior.revoked_at = now
             prior.revoked_reason = "capability_rotated"
+
+        if capability.grant_type == CLINICAL_ACCESS_SESSION_GRANT_TYPE:
+            if (
+                capability.clinical_session_id is None
+                or capability.provider_session_binding_hash is None
+                or capability.clinical_access_policy_version is None
+                or capability.allowed_operations != ("READ_CLINICAL_HISTORY",)
+                or len(capability.scope) != 1
+            ):
+                raise ClinicalAccessSessionStoreError(
+                    "CLINICAL_ACCESS_SESSION_METADATA_INVALID"
+                )
+            issued_at = datetime.fromisoformat(
+                capability.issued_at.replace("Z", "+00:00")
+            )
+            capability_expires_at = datetime.fromisoformat(
+                capability.expires_at.replace("Z", "+00:00")
+            )
+            await stage_session(
+                db,
+                session_id=capability.clinical_session_id,
+                patient_id=capability.patient_id,
+                provider_id=provider.actor_uid,
+                hospital_id=str(provider.hospital_id),
+                consent_request_id=request_id,
+                token_hash=_token_hash(token),
+                purpose=capability.purpose,
+                scope=capability.scope[0],
+                allowed_operations=capability.allowed_operations,
+                provider_session_binding_hash=capability.provider_session_binding_hash,
+                policy_version=capability.clinical_access_policy_version,
+                issued_at=issued_at,
+                expires_at=capability_expires_at,
+            )
+            durable_session_staged = True
+
         grant_row = ConsentGrantLog(
             token_hash=_token_hash(token),
             patient_id=capability.patient_id,
@@ -814,23 +857,46 @@ async def claim_consent_v3_access(
                 "allowed_operations": list(capability.allowed_operations),
             },
         )
+    except ClinicalAccessSessionStoreError as exc:
+        await db.rollback()
+        try:
+            await invalidate_request(request_id)
+        except ApprovedAccessStoreUnavailable:
+            pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CLINICAL_ACCESS_SESSION_UNAVAILABLE"},
+        ) from exc
     except ClinicalAccessSessionError as exc:
+        await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error_code": exc.code},
         ) from exc
     except ApprovedAccessClaimInProgress as exc:
+        await db.rollback()
         raise HTTPException(status_code=409, detail={"error_code": "CONSENT_ACCESS_CLAIM_IN_PROGRESS"}) from exc
     except ApprovedAccessStoreUnavailable as exc:
+        await db.rollback()
         raise HTTPException(status_code=503, detail={"error_code": "CONSENT_ACCESS_STORE_UNAVAILABLE"}) from exc
     except Exception:
         try:
             await invalidate_request(request_id)
         finally:
-            if grant_row is not None:
-                grant_row.revoked_at = datetime.now(timezone.utc)
-                grant_row.revoked_reason = "claim_finalization_failed"
+            await db.rollback()
+            if grant_row is not None or durable_session_staged:
+                cleanup_now = datetime.now(timezone.utc)
                 try:
+                    if grant_row is not None:
+                        grant_row.revoked_at = cleanup_now
+                        grant_row.revoked_reason = "claim_finalization_failed"
+                    if durable_session_staged:
+                        await revoke_by_request(
+                            db,
+                            consent_request_id=request_id,
+                            reason="CLAIM_FINALIZATION_FAILED",
+                            revoked_at=cleanup_now,
+                        )
                     await db.commit()
                 except Exception:
                     await db.rollback()
