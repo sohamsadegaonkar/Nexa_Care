@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -65,7 +65,7 @@ def client(provider: ProviderContext):
         app.dependency_overrides.clear()
 
 
-def _common_success(patient):
+def _common_success():
     handle = DiscoveryHandle("opaque-discovery-handle", datetime.now(timezone.utc))
     return (
         patch(
@@ -97,7 +97,7 @@ def test_phone_discovery_requires_recent_mfa_and_returns_only_opaque_handle(
 ) -> None:
     patient = SimpleNamespace(patient_uuid=uuid4())
     redis_patch, budget_patch, audit_patch, issue_patch, activate_patch, handle = (
-        _common_success(patient)
+        _common_success()
     )
     with (
         redis_patch,
@@ -128,15 +128,14 @@ def test_phone_discovery_requires_recent_mfa_and_returns_only_opaque_handle(
     assert PHONE not in response.text
     assert str(patient.patient_uuid) not in response.text
     budget.assert_awaited_once_with(
-        MagicMock.ANY if False else budget.await_args.args[0],
+        ANY,
         provider_id=provider.actor_uid,
         hospital_id=str(provider.hospital_id),
         identifier_type="PHONE",
     )
     mfa.assert_awaited_once()
-    resolve.assert_awaited_once_with(
-        app.dependency_overrides[get_db_session](), phone=PHONE
-    ) if False else None
+    resolve.assert_awaited_once()
+    assert resolve.await_args.kwargs["phone"] == PHONE
 
 
 def test_qr_is_only_transport_for_public_id_and_never_discloses_patient(
@@ -144,7 +143,7 @@ def test_qr_is_only_transport_for_public_id_and_never_discloses_patient(
 ) -> None:
     patient = SimpleNamespace(patient_uuid=uuid4())
     redis_patch, budget_patch, audit_patch, issue_patch, activate_patch, handle = (
-        _common_success(patient)
+        _common_success()
     )
     with (
         redis_patch,
