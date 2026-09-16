@@ -711,27 +711,27 @@ async def get_my_records_by_category(
         lab_rows = res.scalars().all()
         if cursor_dt and cursor_id:
             lab_rows = [
-                l for l in lab_rows
-                if (l.recorded_at < cursor_dt or (l.recorded_at == cursor_dt and str(l.id) < cursor_id))
+                lab_item for lab_item in lab_rows
+                if (lab_item.recorded_at < cursor_dt or (lab_item.recorded_at == cursor_dt and str(lab_item.id) < cursor_id))
             ]
         page = lab_rows[:bounded_limit]
         if len(lab_rows) > bounded_limit and page:
             next_cursor = _encode_keyset_cursor(page[-1].recorded_at, page[-1].id)
-        for l in page:
+        for lab_item in page:
             records.append({
-                "record_id": str(l.id),
+                "record_id": str(lab_item.id),
                 "category": "labs",
-                "test_name": l.test_name,
-                "value": l.value,
-                "unit": l.unit,
-                "reference_range": l.reference_range,
-                "is_abnormal": l.is_abnormal,
-                "recorded_at": l.recorded_at.isoformat() if l.recorded_at else None,
-                "source": l.source,
-                "risk_level": l.risk_level,
-                "confidence": l.confidence,
-                "source_document_id": str(l.source_document_id) if l.source_document_id else None,
-                "has_source_document": l.source_document_id is not None,
+                "test_name": lab_item.test_name,
+                "value": lab_item.value,
+                "unit": lab_item.unit,
+                "reference_range": lab_item.reference_range,
+                "is_abnormal": lab_item.is_abnormal,
+                "recorded_at": lab_item.recorded_at.isoformat() if lab_item.recorded_at else None,
+                "source": lab_item.source,
+                "risk_level": lab_item.risk_level,
+                "confidence": lab_item.confidence,
+                "source_document_id": str(lab_item.source_document_id) if lab_item.source_document_id else None,
+                "has_source_document": lab_item.source_document_id is not None,
             })
 
     elif cat_norm == "documents":

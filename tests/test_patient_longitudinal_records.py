@@ -23,8 +23,7 @@ from app.api.v2.patient_record_routes import (
 from app.core.database import get_db_session
 from app.core.dependencies import get_scoped_session
 from app.main import app
-from app.models.patient_records import Allergy, DocumentReference, LabResult, Medication, Vitals
-from app.models.pipeline import DocumentStorage
+from app.models.patient_records import DocumentReference, Medication, Vitals
 
 
 # ---------------------------------------------------------------------------
