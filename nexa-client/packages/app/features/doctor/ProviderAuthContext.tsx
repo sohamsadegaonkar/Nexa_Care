@@ -49,7 +49,7 @@ export interface PatientDiscoverySelection {
   discoveryHandle: string
   expiresAt: string
   displayIdentifier: string
-  source: 'public_id' | 'nfc'
+  source: 'public_id' | 'nfc' | 'phone' | 'qr'
 }
 export type ProviderAuthStatus = 'hydrating' | 'unauthenticated' | 'mfa_required' | 'authenticated'
 export type LoginResult = { type: 'authenticated' } | { type: 'mfa_required' }
