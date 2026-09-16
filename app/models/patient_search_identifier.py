@@ -1,7 +1,7 @@
 """Durable privacy-preserving patient-search identifier authority.
 
-The table intentionally stores only keyed exact-match fingerprints.  Raw or
-normalized PII is never persisted here.  A search identifier is not patient
+The table intentionally stores only keyed exact-match fingerprints. Raw or
+normalized PII is never persisted here. A search identifier is not patient
 authentication, consent, or clinical-access authority.
 """
 
@@ -10,7 +10,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, Integer, String, func, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,7 +30,7 @@ class PatientSearchIdentifier(Base):
     """One lifecycle-versioned exact-match identifier bound to a patient.
 
     ``value_hmac`` is a domain-separated HMAC produced by server code with a
-    dedicated discovery-index key.  The normalized identifier value must never
+    dedicated discovery-index key. The normalized identifier value must never
     be stored in this table, logs, audit metadata, URLs, or Redis keys.
     """
 
@@ -43,7 +52,8 @@ class PatientSearchIdentifier(Base):
             "(revoked_at IS NULL AND revocation_reason IS NULL) OR "
             "(revoked_at IS NOT NULL AND revocation_reason IN "
             "('SUPERSEDED','IDENTITY_REVOKED','IDENTITY_REBOUND','PATIENT_ERASED',"
-            "'AUTHORITY_CONFLICT','SOURCE_REVERIFICATION_FAILED','ADMINISTRATIVE'))",
+            "'AUTHORITY_CONFLICT','SOURCE_REVERIFICATION_FAILED','PATIENT_OPT_OUT',"
+            "'ADMINISTRATIVE'))",
             name="ck_patient_search_identifier_lifecycle",
         ),
         Index(
