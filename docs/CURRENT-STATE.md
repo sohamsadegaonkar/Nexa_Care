@@ -1,8 +1,8 @@
 # Nexa Care — Current Engineering State
 
-**Last reconciled:** 2026-09-11  
-**Reconciliation base:** `54351f9a55ba94665420961cfe766bdcc84a5398`  
-**Purpose:** repository-attested current state. Historical alpha and earlier Slice-7/8 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
+**Last reconciled:** 2026-09-16  
+**Reconciliation basis:** Slice 10A PR #46 release candidate; exact qualified SHA is recorded in the PR rather than embedded here.  
+**Purpose:** repository-attested current state. Historical alpha and earlier Slice-7/8/9 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
 
 ## 1. Current authority boundaries
 
@@ -15,11 +15,13 @@ account authentication
 != patient session authority
 != patient device authority
 != registration-recovery reviewer authority
+!= patient discovery identifier match
+!= patient discovery capability
 != patient consent
 != record-access capability
 ```
 
-Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, and registration-recovery review cannot independently mint patient session, device, or consent authority.
+Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, registration-recovery review cannot independently mint patient session/device/consent authority, and an identifier match never grants patient authentication, consent, or clinical access.
 
 ## 2. Provider trust and external registry boundary
 
@@ -44,7 +46,7 @@ The internal registry boundary is ready, but official live HPR/HFR transport is 
 
 `docs/governance/ABDM_HPR_HFR_MACHINE_CONTRACT_GATE.json` therefore records `BLOCKED_EXTERNAL_CONTRACT` and `external_adapter_enabled=false`. Published ABDM FHIR interoperability material is not reinterpreted as the HPR/HFR registry transport contract. No HPR/HFR endpoint, token exchange, retry policy, or response mapping is inferred from unofficial or historical material.
 
-## 3. Patient sessions, devices, recovery, and consent
+## 3. Patient sessions, devices, recovery, consent, and discovery
 
 The Slice 6 software authority work through Slice 6H is merged and internally qualified.
 
@@ -62,11 +64,38 @@ Current consent signing uses explicit protocol `nexa-consent-v3`; newly created 
 
 ### Slice 9A — registration recovery manual review
 
-The patient registration-account recovery path now has a durable manual-review continuation for account graphs that automatic recovery intentionally refuses. Fresh patient OTP proof can open an opaque review case only after server-side graph classification. Review authority is independently derived from a live provider session, recent MFA, a current ACTIVE affiliation, and the server-owned `registration_recovery_reviewer` role.
+The registration-recovery manual-review backend and UI are merged. Fresh patient OTP proof can open an opaque review case only after server-side graph classification. Review authority is independently derived from a live provider session, recent MFA, a current ACTIVE affiliation, and the server-owned `registration_recovery_reviewer` role.
 
 Reviewer claim and terminal resolution are versioned and session-bound. Terminal resolution revalidates the registration graph under the same PostgreSQL advisory-lock domain used by automatic recovery and rejects graph-fingerprint drift. The repair vocabulary remains closed to the already-bounded automatic repair kinds; erasure, revocation, ambiguity and security concerns cannot be silently resurrected. Audit-outbox insertion and any terminal mutation share the database transaction. Reviewer routes never issue patient access sessions, device authority, or consent authority; after a safe repair the patient returns through the normal patient-facing recovery path.
 
 Patient status polling exposes only the opaque case reference, public status, terminal flag, next action and timestamps. Provider subject, graph fingerprint, reviewer identity/session binding and internal authority metadata remain server-side.
+
+The remaining frontend `baseUrl` migration is explicitly deferred in `docs/governance/TYPESCRIPT_UPGRADE_DEBT.md` and is not a Slice-9 blocker.
+
+### Slice 10A — secure patient discovery V2
+
+Slice 10A implementation is **RELEASE-CANDIDATE COMPLETE / EXACT-HEAD QUALIFICATION REQUIRED** on PR #46. Merge remains prohibited until the same frozen head passes every required backend, frontend and deployment gate.
+
+Provider-facing discovery in the candidate supports exactly four bounded transports:
+
+- exact opaque `NEXA_PUBLIC_ID`;
+- exact patient-opted-in `PHONE`;
+- strict versioned `QR_PUBLIC_ID` carrying only the opaque Nexa public ID; and
+- existing NFC card resolution.
+
+Every provider-facing mode requires the server-owned `PATIENT_DISCOVER` clinical capability and converges on the same short-lived, provider/hospital/session-bound, audit-gated, single-use opaque discovery handle. No successful discovery response returns patient UUID, phone, public-ID echo, profile/demographic data, redirect details, clinical data, candidate lists, or result counts.
+
+PHONE is off by default for the patient. Enabling it requires a live patient session plus a fresh Supabase SMS OTP whose authoritative returned subject exactly matches the current patient identity. The durable `patient_search_identifiers` authority stores only versioned, domain-separated keyed HMAC fingerprints plus patient/auth-identity provenance and lifecycle state; it stores no raw or normalized phone. Its dedicated HMAC keyring supports controlled version rotation and fails closed if active rows cannot be covered by configured key material.
+
+A verified phone may not silently move between patient identities. Collision or ambiguity quarantines/revokes implicated search authority instead of selecting a winner. Merge/deletion/erasure/revocation/rebind boundaries revoke or deny stale search authority. Patient opt-out revokes only phone discoverability and does not disable phone login.
+
+PHONE lookup additionally requires the exact live provider session binding and recent provider MFA. It has stricter provider/hospital/type rate budgets plus aggregate cross-type throttling; rate-limit keys contain no searched identifier. Absent, opted-out, stale, or otherwise nonmatching phone authority is exposed only as generic `DISCOVERY_NO_MATCH`, while integrity ambiguity fails closed as unavailable.
+
+`QR_PUBLIC_ID` accepts only `nexa://patient-discovery/v1/NC-...` and is merely a transport for the opaque public ID. Raw UUIDs, access/consent tokens, device credentials, arbitrary URLs and sensitive profile payloads are rejected.
+
+Name-only search, prefix/fuzzy search, ranked candidate lists, broad directory search, MRN and generic external-ID discovery remain prohibited in Slice 10A.
+
+The patient frontend exposes Phone Discoverability as a visible privacy control on web and native clients; the provider client exposes only qualified discovery modes. Discovery capabilities remain memory-only and do not travel in URLs or durable client storage.
 
 ## 4. Native mobile key custody
 
@@ -82,9 +111,11 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 ## 5. Persistence and migrations
 
-The current single Alembic head is:
+The current single Alembic head on the Slice-10A release candidate is:
 
-`20260910_registration_recovery_review`
+`20260914_patient_search_identifiers`
+
+It descends linearly from `20260910_registration_recovery_review`. The migration creates no plaintext search columns and performs no unsafe backfill from unauthoritative PII sources.
 
 Pilot/staging/production startup must not silently migrate, stamp, or downgrade the database.
 
@@ -168,7 +199,7 @@ Therefore live rollback/runtime qualification remains **BLOCKED BY PILOT AWS/TAR
 
 ## 11. Backend closure state
 
-The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** adds the repository-defined registration-recovery manual-review lifecycle needed before UI integration. Its implementation is exact-head CI-gated; repository qualification does not claim a live deployment or remove any external Slice-8/6I blocker.
+The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is implementation-complete on its release candidate but remains unmerged until exact-head qualification proves every repository and deployment gate.
 
 Current matrix:
 
@@ -181,7 +212,8 @@ Current matrix:
 | 8E | operational audit gate MERGED / INTERNALLY QUALIFIED | authorized DB wiring missing; retention approvals PENDING |
 | 8F | rollback/monitoring gate MERGED / INTERNALLY QUALIFIED | seven pilot inputs missing; live runtime drill NOT_RUN |
 | 8G | registry boundary ready / contract gate enforced | official HPR/HFR machine contract + sandbox missing |
-| 9A | registration-recovery review IMPLEMENTED / exact-head CI-gated | live deployment not claimed; UI integration follows repository merge |
+| 9A | backend + UI MERGED / QUALIFIED | live deployment not claimed |
+| 10A | implementation complete on PR #46 / exact-head release gate pending | merge and post-merge `main` verification pending |
 
 The remaining live backend gates still require real prerequisites that repository code cannot manufacture:
 
@@ -195,6 +227,14 @@ Slice 6I supported-handset execution remains a separate physical-platform gate o
 
 ## 12. Next safe action
 
-Slice 9A is now repository-defined. Its merge gate is fully green exact-head Backend and Frontend CI. After that gate is satisfied and the reviewed head is merged, the next internally executable product step is UI integration against the stable registration-recovery and review contracts.
+Freeze one final Slice-10A PR head and require, on that exact SHA:
 
-The live/external blockers above remain unchanged. Moving to UI must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS.
+- Backend CI Partitions A/B/C all green with each partition's zero-skip assertion green;
+- full Frontend CI green, including frontend tests, Next production build, workspace build, Android generation/compile and iOS generation/CocoaPods/compile;
+- exact-head Vercel deployment green.
+
+Only then may PR #46 be marked ready and merged using exact-head protection. After merge, verify the new `main` SHA and its repository/deployment checks before calling Slice 10A closed.
+
+Name-only, fuzzy/prefix, candidate-list, broad-directory, MRN and generic external-ID search remain prohibited after Slice 10A. The next roadmap slice after secure discovery closure is the bounded clinical treatment/access-session model.
+
+The live/external blockers above remain unchanged and must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS.

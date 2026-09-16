@@ -33,6 +33,12 @@ const navigation = [
     matches: (path: string) => path === '/patient/timeline',
   },
   {
+    label: 'Phone Discoverability',
+    path: '/patient/discoverability',
+    icon: ShieldCheck,
+    matches: (path: string) => path === '/patient/discoverability',
+  },
+  {
     label: 'My Profile',
     path: '/patient/profile',
     icon: User,

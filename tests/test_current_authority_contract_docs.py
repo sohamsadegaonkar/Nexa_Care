@@ -65,7 +65,7 @@ def test_pilot_operations_migration_head_matches_runtime_migration_tool() -> Non
     assert match is not None
     expected_head = match.group(1)
 
-    assert expected_head == "20260910_registration_recovery_review"
+    assert expected_head == "20260914_patient_search_identifiers"
     assert f"`{expected_head}`" in runbook
     assert f"`{expected_head}`" in _read("docs/API-CONTRACTS.md")
     assert "`20260906_verification_scheduler`" not in runbook
@@ -113,8 +113,14 @@ def test_current_state_preserves_live_external_and_manual_boundaries() -> None:
     assert "live rollback/runtime qualification remains **BLOCKED" in current
 
     assert "Slice 9A" in current
-    assert "registration-recovery review IMPLEMENTED / exact-head CI-gated" in current
-    assert "20260910_registration_recovery_review" in current
+    assert "backend + UI MERGED / QUALIFIED" in current
+    assert "Slice 10A" in current
+    assert "RELEASE-CANDIDATE COMPLETE / EXACT-HEAD QUALIFICATION REQUIRED" in current
+    assert "20260914_patient_search_identifiers" in current
+    assert "patient-opted-in `PHONE`" in current
+    assert "Name-only search" in current
+    assert "remain prohibited" in current
+    assert "implementation complete on PR #46 / exact-head release gate pending" in current
     assert "no repository-defined Slice 9" not in current
 
 

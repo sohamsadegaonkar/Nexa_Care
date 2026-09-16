@@ -15,30 +15,77 @@ import {
   XStack,
   YStack,
 } from '@my/ui'
-import { Search, RadioReceiver, ShieldCheck, ArrowRight } from '@tamagui/lucide-icons'
+import {
+  ArrowRight,
+  Phone,
+  QrCode,
+  RadioReceiver,
+  Search,
+  ShieldCheck,
+} from '@tamagui/lucide-icons'
 import { useCallback, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { discoverPatientExact, type DiscoveryIdentifierType } from '../../services/patientDiscovery'
 import { resolveNfcCard } from '../../services/nfcResolve'
-import { ApiError, NexaApiClient } from '../../utils/apiClient'
-import { useProviderAuth } from './ProviderAuthContext'
+import { ApiError } from '../../utils/apiClient'
+import { useProviderAuth, type PatientDiscoverySelection } from './ProviderAuthContext'
 
-type SearchMode = 'manual' | 'nfc'
+type SearchMode = 'public_id' | 'phone' | 'qr' | 'nfc'
+
+function initialMode(value: string | null): SearchMode {
+  return value === 'nfc' || value === 'phone' || value === 'qr' ? value : 'public_id'
+}
+
+function identifierType(mode: Exclude<SearchMode, 'nfc'>): DiscoveryIdentifierType {
+  if (mode === 'phone') return 'PHONE'
+  if (mode === 'qr') return 'QR_PUBLIC_ID'
+  return 'NEXA_PUBLIC_ID'
+}
+
+function safeDisplay(mode: SearchMode, input: string): Pick<PatientDiscoverySelection, 'displayIdentifier' | 'source'> {
+  if (mode === 'phone') return { displayIdentifier: 'Verified phone match', source: 'phone' }
+  if (mode === 'qr') return { displayIdentifier: 'Nexa QR code', source: 'qr' }
+  if (mode === 'nfc') return { displayIdentifier: 'NFC card', source: 'nfc' }
+  return { displayIdentifier: input.toUpperCase(), source: 'public_id' }
+}
+
+function discoveryError(error: unknown): string {
+  if (!(error instanceof ApiError)) {
+    return 'Patient could not be identified with this method. Verify the input and try again.'
+  }
+  if (error.code === 'DISCOVERY_RECENT_MFA_REQUIRED') {
+    return 'Recent multi-factor verification is required for phone discovery. Sign in again with MFA and retry.'
+  }
+  if (error.code === 'DISCOVERY_RATE_LIMITED') {
+    return 'Too many discovery attempts. Wait before trying again.'
+  }
+  if (error.status >= 500) {
+    return 'Patient discovery is temporarily unavailable. Please try again later.'
+  }
+  // Deliberately collapse no-match, opted-out, malformed and other ordinary
+  // lookup failures. The client must not become an account-enumeration oracle.
+  return 'Patient could not be identified with this method. Verify the input and try again.'
+}
 
 /**
  * Stores only an opaque discovery capability in provider memory.
- * Never leaks patient identifiers or capabilities into URLs.
+ * Patient search values and capabilities never enter URLs or durable storage.
  */
 export function PatientSearchScreen() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const [mode, setMode] = useState<SearchMode>(
-    searchParams.get('mode') === 'nfc' ? 'nfc' : 'manual'
-  )
+  const [mode, setMode] = useState<SearchMode>(initialMode(searchParams.get('mode')))
   const [value, setValue] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const { isAuthenticated, session, setDiscoverySelection } = useProviderAuth()
   const documentUploadIntent = searchParams.get('intent') === 'document_upload'
+
+  const selectMode = useCallback((next: SearchMode) => {
+    setMode(next)
+    setValue('')
+    setError(null)
+  }, [])
 
   const resolve = useCallback(async () => {
     const input = value.trim()
@@ -51,23 +98,22 @@ export function PatientSearchScreen() {
       const result =
         mode === 'nfc'
           ? await resolveNfcCard(input)
-          : await NexaApiClient.discoverPatient(
-              { identifier_type: 'NEXA_PUBLIC_ID', value: input },
+          : await discoverPatientExact(
+              { identifier_type: identifierType(mode), value: input },
               hospitalId
             )
+      const display = safeDisplay(mode, input)
+      // Clear the searched value before navigation. Only the opaque capability
+      // and a non-sensitive display label remain in provider memory.
+      setValue('')
       setDiscoverySelection({
         discoveryHandle: result.discovery_handle,
         expiresAt: result.expires_at,
-        displayIdentifier: mode === 'manual' ? input.toUpperCase() : 'NFC card',
-        source: mode === 'manual' ? 'public_id' : 'nfc',
+        ...display,
       })
       router.push(`/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`)
     } catch (caught) {
-      setError(
-        caught instanceof ApiError
-          ? caught.message || 'Patient could not be identified. Please verify the ID and try again.'
-          : 'Patient could not be identified. Please verify the ID and try again.'
-      )
+      setError(discoveryError(caught))
     } finally {
       setLoading(false)
     }
@@ -101,23 +147,16 @@ export function PatientSearchScreen() {
         }
       />
 
-      {/* Mode Selection Tabs */}
       <XStack gap="$3" flexWrap="wrap">
         <ActionButton
           flex={1}
-          minWidth={200}
-          intent={mode === 'manual' ? 'primary' : undefined}
-          onPress={() => {
-            setMode('manual')
-            setError(null)
-          }}
+          minWidth={180}
+          intent={mode === 'public_id' ? 'primary' : undefined}
+          onPress={() => selectMode('public_id')}
         >
           <XStack alignItems="center" gap="$2">
-            <Search size={18} color={mode === 'manual' ? '$nexaOnAccent' : '$nexaSecondary'} />
-            <Text
-              color={mode === 'manual' ? '$nexaOnAccent' : '$nexaText'}
-              fontWeight="700"
-            >
+            <Search size={18} color={mode === 'public_id' ? '$nexaOnAccent' : '$nexaSecondary'} />
+            <Text color={mode === 'public_id' ? '$nexaOnAccent' : '$nexaText'} fontWeight="700">
               Nexa Patient ID
             </Text>
           </XStack>
@@ -125,41 +164,62 @@ export function PatientSearchScreen() {
 
         <ActionButton
           flex={1}
-          minWidth={200}
+          minWidth={180}
+          intent={mode === 'phone' ? 'primary' : undefined}
+          onPress={() => selectMode('phone')}
+        >
+          <XStack alignItems="center" gap="$2">
+            <Phone size={18} color={mode === 'phone' ? '$nexaOnAccent' : '$nexaSecondary'} />
+            <Text color={mode === 'phone' ? '$nexaOnAccent' : '$nexaText'} fontWeight="700">
+              Verified Phone
+            </Text>
+          </XStack>
+        </ActionButton>
+
+        <ActionButton
+          flex={1}
+          minWidth={180}
+          intent={mode === 'qr' ? 'primary' : undefined}
+          onPress={() => selectMode('qr')}
+        >
+          <XStack alignItems="center" gap="$2">
+            <QrCode size={18} color={mode === 'qr' ? '$nexaOnAccent' : '$nexaSecondary'} />
+            <Text color={mode === 'qr' ? '$nexaOnAccent' : '$nexaText'} fontWeight="700">
+              Nexa QR
+            </Text>
+          </XStack>
+        </ActionButton>
+
+        <ActionButton
+          flex={1}
+          minWidth={180}
           intent={mode === 'nfc' ? 'primary' : undefined}
-          onPress={() => {
-            setMode('nfc')
-            setError(null)
-          }}
+          onPress={() => selectMode('nfc')}
         >
           <XStack alignItems="center" gap="$2">
             <RadioReceiver size={18} color={mode === 'nfc' ? '$nexaOnAccent' : '$nexaSecondary'} />
-            <Text
-              color={mode === 'nfc' ? '$nexaOnAccent' : '$nexaText'}
-              fontWeight="700"
-            >
+            <Text color={mode === 'nfc' ? '$nexaOnAccent' : '$nexaText'} fontWeight="700">
               NFC Scan
             </Text>
           </XStack>
         </ActionButton>
       </XStack>
 
-      {/* Main Search Surface */}
       <Surface padding="$5" gap="$4">
-        {mode === 'manual' ? (
+        {mode === 'public_id' && (
           <YStack gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
               <SectionHeading>Enter Nexa Patient Identifier</SectionHeading>
               <StatusBadge tone="info">Opaque Resolution</StatusBadge>
             </XStack>
             <Paragraph color="$nexaSecondary" fontSize={14}>
-              Enter the patient's public identifier shown on their Nexa Care app or printed health card.
+              Enter the public identifier shown on the patient's Nexa Care app or printed health card.
             </Paragraph>
             <SearchInputField
               id="patient-search-id"
               label="Patient Public ID"
               placeholder="NC-..."
-              hint="Format: NC- followed by 24 hexadecimal characters (e.g. from card or app)."
+              hint="Format: NC- followed by 24 hexadecimal characters."
               value={value}
               onChangeText={(text) => {
                 setValue(text.toUpperCase())
@@ -171,7 +231,61 @@ export function PatientSearchScreen() {
               onSubmitEditing={resolve}
             />
           </YStack>
-        ) : (
+        )}
+
+        {mode === 'phone' && (
+          <YStack gap="$3">
+            <XStack justifyContent="space-between" alignItems="center">
+              <SectionHeading>Exact Verified Phone Lookup</SectionHeading>
+              <StatusBadge tone="warning">Recent MFA Required</StatusBadge>
+            </XStack>
+            <Paragraph color="$nexaSecondary" fontSize={14}>
+              Available only when the patient has explicitly enabled phone discoverability. No candidate list or profile data is returned.
+            </Paragraph>
+            <SearchInputField
+              id="patient-search-phone"
+              label="Patient Phone Number"
+              placeholder="+91..."
+              value={value}
+              onChangeText={(text) => {
+                setValue(text)
+                if (error) setError(null)
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              disabled={loading}
+              onSubmitEditing={resolve}
+            />
+          </YStack>
+        )}
+
+        {mode === 'qr' && (
+          <YStack gap="$3">
+            <XStack justifyContent="space-between" alignItems="center">
+              <SectionHeading>Scan Nexa Discovery QR</SectionHeading>
+              <StatusBadge tone="info">Public-ID Only</StatusBadge>
+            </XStack>
+            <Paragraph color="$nexaSecondary" fontSize={14}>
+              Nexa QR codes contain only a versioned opaque public discovery identifier. Access tokens, patient UUIDs and consent authority are rejected.
+            </Paragraph>
+            <SearchInputField
+              id="patient-search-qr"
+              label="Nexa QR Payload"
+              placeholder="nexa://patient-discovery/v1/NC-..."
+              value={value}
+              onChangeText={(text) => {
+                setValue(text)
+                if (error) setError(null)
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              disabled={loading}
+              onSubmitEditing={resolve}
+            />
+          </YStack>
+        )}
+
+        {mode === 'nfc' && (
           <YStack gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
               <SectionHeading>Tap NFC Health Card</SectionHeading>
@@ -191,7 +305,7 @@ export function PatientSearchScreen() {
                 Hold patient card to the NFC reader
               </Text>
               <Paragraph color="$nexaSecondary" fontSize={13} textAlign="center">
-                Or manually enter the hardware UID from the card below:
+                Or manually enter the hardware UID from the card below.
               </Paragraph>
             </YStack>
             <SearchInputField
@@ -211,9 +325,7 @@ export function PatientSearchScreen() {
           </YStack>
         )}
 
-        {error && (
-          <InlineNotice title={error} tone="danger" />
-        )}
+        {error && <InlineNotice title={error} tone="danger" />}
 
         <XStack justifyContent="flex-end" gap="$3">
           <ActionButton
@@ -236,16 +348,15 @@ export function PatientSearchScreen() {
         </XStack>
       </Surface>
 
-      {/* Security Assurance Notice */}
       <Surface backgroundColor="$nexaMuted" borderColor="$nexaBorder" padding="$4">
         <XStack gap="$3" alignItems="center">
           <ShieldCheck size={24} color="$nexaAccent" />
           <YStack gap="$1" flex={1}>
             <Text color="$nexaText" fontWeight="700" fontSize={14}>
-              Privacy & Zero-Knowledge Resolution
+              Minimum-Disclosure Resolution
             </Text>
             <Paragraph color="$nexaSecondary" fontSize={13} lineHeight={20}>
-              Patient resolution returns an encrypted, single-use discovery handle. No clinical data or medical history is fetched or exposed until the patient grants explicit permission on their trusted device.
+              Successful resolution returns only an opaque, short-lived, single-use discovery handle. It is not patient authentication, consent or clinical-access authority; clinical data remains unavailable until the patient grants explicit permission.
             </Paragraph>
           </YStack>
         </XStack>

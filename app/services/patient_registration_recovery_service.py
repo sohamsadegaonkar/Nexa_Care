@@ -34,6 +34,9 @@ from app.services.audit_outbox import enqueue_audit_event
 from app.services.patient_registration_recovery_authority import (
     RegistrationRecoveryCapability,
 )
+from app.services.patient_search_identifier_service import (
+    revoke_active_identifiers_for_identity,
+)
 
 
 SUPABASE_PROVIDER = "supabase"
@@ -409,6 +412,15 @@ async def repair_patient_registration_account(
             REPAIR_REBIND_MERGED_IDENTITY,
             REPAIR_REBIND_AND_RESTORE_RECORD,
         }:
+            # Search identifiers are patient-bound authority. They cannot remain
+            # active against the pre-merge patient once the authentication
+            # identity moves to its canonical patient. A later fresh verified
+            # phone event may establish a new canonical search binding.
+            await revoke_active_identifiers_for_identity(
+                db,
+                identity_id=identity.identity_id,
+                reason="IDENTITY_REBOUND",
+            )
             identity.patient_id = target_patient_id
             if capability.repair_kind == REPAIR_REBIND_AND_RESTORE_RECORD:
                 db.add(PatientRecord(patient_id=target_patient_id))

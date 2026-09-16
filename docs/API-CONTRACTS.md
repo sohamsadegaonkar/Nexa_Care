@@ -1,7 +1,7 @@
 # Nexa Care — Canonical Authority-Critical API Contracts
 
-**Reconciled:** 2026-09-09  
-**Source baseline:** `aa091e14cf38124ca81e32438b49bdad4d79be8b`
+**Reconciled:** 2026-09-16  
+**Source:** Slice 10A release-candidate contract; the exact qualified release SHA is recorded in PR #46 rather than embedded here.
 
 ## Scope
 
@@ -21,14 +21,130 @@ account authentication
 != provider clinical eligibility
 != patient session authority
 != patient device authority
+!= patient discovery identifier match
+!= patient discovery capability
 != patient consent
 != approved record-access capability
 ```
 
-## 1. NFC discovery
+## 1. Patient discovery — Slice 10A
+
+### 1.1 Provider-facing exact discovery
+
+**Endpoint:** `POST /api/v2/patient-discovery`  
+**Authentication:** provider with current server-owned `PATIENT_DISCOVER`
+clinical capability.
+
+The request vocabulary is closed to the qualified Slice 10A modes:
+
+```text
+NEXA_PUBLIC_ID
+PHONE
+QR_PUBLIC_ID
+```
+
+Example request:
+
+```json
+{
+  "identifier_type": "NEXA_PUBLIC_ID",
+  "value": "NC-..."
+}
+```
+
+Success is deliberately minimum-disclosure for every mode:
+
+```json
+{ "discovery_handle": "...", "expires_at": "..." }
+```
+
+The response contains no patient UUID, phone, public identifier, name,
+demographic summary, redirect chain, clinical data, candidate list, or result
+count. A successful identifier match is still only identification; it is not
+patient authentication, consent, or record-access authority.
+
+Every supported mode resolves to one active canonical, unerased patient and
+then converges on the same provider/hospital/session-bound short-lived Redis
+discovery handle. The handle is staged as `PENDING_AUDIT`, mandatory success
+audit must complete, activation is atomic and does not extend TTL, and
+consumption is atomic and single-use.
+
+Name-only, prefix, fuzzy, ranked-candidate, broad-directory, MRN, generic
+external-ID and caller-selected patient-UUID discovery remain prohibited.
+
+### 1.2 Exact Nexa public ID and QR transport
+
+`NEXA_PUBLIC_ID` accepts only the opaque `NC-...` public identifier under the
+server parser and canonical merge/deletion/erasure checks.
+
+`QR_PUBLIC_ID` is only a transport wrapper for that same opaque public ID. Its
+payload must match the versioned form:
+
+```text
+nexa://patient-discovery/v1/NC-...
+```
+
+QR never carries a raw patient UUID, access token, consent token, clinical
+capability, device credential, or profile payload. Malformed public-ID/QR input
+is exposed only as the generic discovery no-match contract, not parser detail.
+
+### 1.3 Exact phone discovery
+
+`PHONE` is a deliberately higher-assurance, lower-rate discovery mode. It is
+available only when the patient has explicitly opted in to phone discoverability
+and the current indexed authority is still valid.
+
+Before a PHONE lookup is permitted, the server requires all ordinary discovery
+authority plus:
+
+- the exact live provider session to match the server-resolved session binding;
+- a current provider identity matching that live session;
+- recent provider MFA evidence within the qualified freshness window;
+- the patient-side phone search binding to have been created from a fresh
+  upstream-verified phone event tied to the patient's exact Supabase subject.
+
+PHONE uses exact server normalization only. Absent, opted-out, revoked, stale,
+or otherwise nonmatching phone authority is exposed as the same generic
+`DISCOVERY_NO_MATCH` result. Integrity ambiguity fails closed as unavailable;
+the service never chooses a patient by ranking or first-match behavior.
+
+Low-entropy discovery is throttled with server-owned provider/hospital/type
+budgets plus an aggregate cross-type budget. Rate-limit keys never contain the
+searched phone/public ID/QR value.
+
+### 1.4 Patient-controlled phone discoverability
+
+Authenticated patient-self controls are:
+
+- `GET /api/v2/patient/me/discoverability/phone`
+- `POST /api/v2/patient/me/discoverability/phone/enable`
+- `DELETE /api/v2/patient/me/discoverability/phone`
+
+GET returns only `{ "enabled": true|false }` and never returns the phone.
+
+Enable requires the current patient session plus a fresh SMS OTP verification.
+The authoritative Supabase response must return the same normalized phone and
+the same external subject as the current patient session. The client cannot
+submit a patient UUID or choose the patient binding.
+
+The searchable authority stores no raw or normalized phone. It stores only
+patient/auth-identity provenance, normalization/key versions, a dedicated
+domain-separated HMAC-SHA256 exact-match fingerprint, verification timestamp,
+and lifecycle state. Discovery-index HMAC keys are independent of OTP, provider
+registration, contact assurance, and other application secrets. Multiple key
+versions support controlled rotation while active rows on retired versions fail
+closed until reverified/reindexed.
+
+A verified phone collision across patient identities never silently reassigns
+search authority. Implicated active bindings are quarantined/revoked and the
+patient receives a generic conflict. Disabling discoverability revokes the
+search binding without changing the patient's ability to sign in by phone.
+
+### 1.5 NFC discovery
 
 **Endpoint:** `POST /api/v2/nfc/resolve`  
-**Authentication:** authenticated provider under current provider/session policy.
+**Authentication:** authenticated provider under current provider/session and
+clinical-capability policy.
 
 Request:
 
@@ -43,9 +159,9 @@ Response:
 ```
 
 The response contains no patient UUID, public identifier, redirect chain, or
-clinical data. The discovery handle is opaque, provider/hospital/session-bound,
-short-lived, single-use, and audit-gated before disclosure authority becomes
-active.
+clinical data. The NFC path converges on the same opaque,
+provider/hospital/session-bound, short-lived, single-use, audit-gated discovery
+capability boundary.
 
 ## 2. Signed Consent V3 request
 
@@ -125,7 +241,7 @@ and sign the request, including:
 ```
 
 The patient ID in this authenticated patient-facing challenge is not a provider
-discovery result and must not be exposed by the NFC resolve endpoint.
+discovery result and must not be exposed by provider discovery endpoints.
 
 ## 4. Signed patient decision
 
@@ -370,10 +486,10 @@ canonical:
 - Device/recovery/rotation one-time authority is not resurrected after a later
   PostgreSQL failure; retry requires a fresh authority according to the
   qualified operation ordering.
-- Arbitrary UUID, bearer token, legacy role, consent alone, or stale device key
-  possession does not independently authorize clinical access.
+- Arbitrary UUID, bearer token, legacy role, consent alone, stale device key, or
+  search-index match does not independently authorize clinical access.
 - The current single database migration head is
-  `20260910_registration_recovery_review`.
+  `20260914_patient_search_identifiers`.
 
 ### Registration recovery manual review (Slice 9A)
 
@@ -399,6 +515,10 @@ trusted-device, provider-access or consent authority.
 
 This contract does not claim:
 
+- name-only, fuzzy/prefix, ranked-candidate, broad-directory, MRN or generic
+  external-ID patient discovery;
+- that phone discoverability is enabled for a patient who has not explicitly
+  opted in or whose current binding cannot be revalidated;
 - completion of Slice 6I physical handset qualification;
 - physical StrongBox/Secure Enclave/native NFC execution;
 - external FHIR certification;

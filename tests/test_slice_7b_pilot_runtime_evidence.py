@@ -5,6 +5,9 @@ from copy import deepcopy
 from scripts.validate_pilot_runtime_evidence import REQUIRED_CHECKS, validate_manifest
 
 
+CURRENT_HEAD = "20260914_patient_search_identifiers"
+
+
 def _valid_manifest() -> dict:
     return {
         "schema": "nexa-slice-7b-pilot-runtime-evidence-v1",
@@ -12,7 +15,7 @@ def _valid_manifest() -> dict:
         "repository_commit": "0" * 40,
         "backend_image_digest": "sha256:" + "a" * 64,
         "frontend_deployment_identity": "vercel:pilot-deployment-20260909",
-        "migration_head": "20260910_registration_recovery_review",
+        "migration_head": CURRENT_HEAD,
         "aws_region": "ap-south-1",
         "data_classification": "synthetic-only",
         "aws_identity": {
@@ -34,7 +37,7 @@ def _valid_manifest() -> dict:
         "database": {
             "engine": "postgresql",
             "dedicated": True,
-            "migration_head": "20260910_registration_recovery_review",
+            "migration_head": CURRENT_HEAD,
         },
         "redis": {"tls": True, "dedicated": True},
         "checks": {name: "PASS" for name in REQUIRED_CHECKS},
@@ -97,7 +100,7 @@ def test_wrong_migration_head_is_rejected() -> None:
 
     errors = validate_manifest(manifest)
 
-    assert any("20260910_registration_recovery_review" in error for error in errors)
+    assert any(CURRENT_HEAD in error for error in errors)
 
 
 def test_non_tls_redis_is_rejected() -> None:

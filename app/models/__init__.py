@@ -28,6 +28,7 @@ from app.models.patient_records import (
     TimelineEvent,
     Vitals,
 )
+from app.models.patient_search_identifier import PatientSearchIdentifier
 from app.models.patient_tombstone import PatientTombstone
 from app.models.pipeline import (
     AdjudicationCaseRecord,
@@ -88,6 +89,7 @@ __all__ = [
     "PatientDeviceKey",
     "PatientPolicy",
     "PatientRecord",
+    "PatientSearchIdentifier",
     "Vitals",
     "Medication",
     "LabResult",
