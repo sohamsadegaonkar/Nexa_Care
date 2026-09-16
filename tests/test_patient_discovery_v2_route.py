@@ -132,6 +132,7 @@ def test_phone_discovery_requires_recent_mfa_and_returns_only_opaque_handle(
         provider_id=provider.actor_uid,
         hospital_id=str(provider.hospital_id),
         identifier_type="PHONE",
+        limiter=ANY,
     )
     mfa.assert_awaited_once()
     resolve.assert_awaited_once()
