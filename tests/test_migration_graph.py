@@ -9,7 +9,8 @@ CLEANUP_REVISION = "20260704_drop_raw_pii_from_vault"
 CORE_REVISION = "20260705_nexa_v1"
 DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
 REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
-EXPECTED_HEAD = "20260914_patient_search_identifiers"
+PATIENT_SEARCH_REVISION = "20260914_patient_search_identifiers"
+EXPECTED_HEAD = "20260916_clinical_access_sessions"
 
 
 def _scripts() -> ScriptDirectory:
@@ -105,9 +106,15 @@ def test_registration_recovery_review_descends_from_device_trust() -> None:
 
 
 def test_patient_search_identifiers_descend_from_registration_recovery() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision(PATIENT_SEARCH_REVISION)
     assert revision is not None
     assert revision.down_revision == REGISTRATION_RECOVERY_REVISION
+
+
+def test_clinical_access_sessions_descend_from_patient_search() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == PATIENT_SEARCH_REVISION
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:
