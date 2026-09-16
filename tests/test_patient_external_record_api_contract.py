@@ -30,6 +30,7 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
         ("POST", "/api/v2/patient/me/external-records"),
         ("GET", "/api/v2/patient/me/external-records"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
+        ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}/source"),
     }
     actual = {
@@ -41,10 +42,9 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
     assert expected <= actual
 
 
-def test_upload_authority_is_dependency_derived_not_patient_input() -> None:
-    route = _route("/api/v2/patient/me/external-records", "POST")
+def _client_parameter_names(route) -> set[str]:
     dependant = route.dependant
-    client_names = {
+    return {
         item.name
         for collection in (
             dependant.path_params,
@@ -54,10 +54,34 @@ def test_upload_authority_is_dependency_derived_not_patient_input() -> None:
         )
         for item in collection
     }
-    dependency_calls = {dependency.call for dependency in dependant.dependencies}
 
-    assert "patient_id" not in client_names
+
+def test_upload_authority_is_dependency_derived_not_patient_input() -> None:
+    route = _route("/api/v2/patient/me/external-records", "POST")
+    dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+
+    assert "patient_id" not in _client_parameter_names(route)
     assert get_current_patient in dependency_calls
+
+
+def test_process_authority_is_dependency_derived_and_has_no_provider_inputs() -> None:
+    route = _route(
+        "/api/v2/patient/me/external-records/{import_id}/process",
+        "POST",
+    )
+    dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+    client_names = _client_parameter_names(route)
+
+    assert get_current_patient in dependency_calls
+    assert "patient_id" not in client_names
+    assert {
+        "provider_id",
+        "hospital_id",
+        "tenant_id",
+        "consent_token",
+        "consent_request_id",
+        "clinical_access_session_id",
+    }.isdisjoint(client_names)
 
 
 def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None:
