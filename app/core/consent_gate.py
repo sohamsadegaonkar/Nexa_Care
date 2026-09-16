@@ -6,7 +6,7 @@ Defines three distinct access gates:
 3. require_role(role): For data operators/admins reviewing AI ingestion jobs.
 
 ALPHA: validate_consent_for_patient() is the server-side patient_id consent
-path.  Pipeline routes that reference existing entities (ExtractionJob,
+path. Pipeline routes that reference existing entities (ExtractionJob,
 ExtractedFieldRecord) MUST use it instead of require_consent() so that the
 patient_id is derived from the DB row, never from a client-supplied value.
 This eliminates the patient_id spoofing vector described in threat-model.md T-06.
@@ -14,15 +14,15 @@ This eliminates the patient_id spoofing vector described in threat-model.md T-06
 
 from __future__ import annotations
 
-from app.security.audit_context import AuditDomain, current_audit_context
-
 import logging
 from collections.abc import Callable
 from time import perf_counter
 from typing import Any
 
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db_session
 from app.core.dependencies import (
     get_current_provider,
     get_scoped_session,
@@ -30,15 +30,19 @@ from app.core.dependencies import (
 )
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
+from app.security.audit_context import AuditDomain, current_audit_context
+from app.services.approved_access_capability import (
+    CLINICAL_ACCESS_SESSION_GRANT_TYPE,
+    ApprovedAccessCapability,
+    ApprovedAccessStoreUnavailable,
+    token_hash,
+    validate as validate_approved_access,
+)
+from app.services.clinical_access_session_store import validate_active_session
 from app.services.consent_engine import (
     ConsentCapability,
     ConsentEngineUnavailable,
     validate as validate_consent_capability,
-)
-from app.services.approved_access_capability import (
-    ApprovedAccessCapability,
-    ApprovedAccessStoreUnavailable,
-    validate as validate_approved_access,
 )
 
 logger = logging.getLogger("nexa_logger")
@@ -46,27 +50,19 @@ logger = logging.getLogger("nexa_logger")
 require_role = deps_require_role
 
 
-# ── Core validation (shared by require_consent and direct callers) ─────────
-
-
 async def validate_consent_for_patient(
     patient_id: str | None,
     purpose: str,
     provider: ProviderContext,
     x_consent_token: str | None,
+    db: AsyncSession | None = None,
 ) -> ConsentCapability | ApprovedAccessCapability:
     """Validate consent for an explicitly provided patient_id.
 
-    ALPHA: Use this when patient_id is derived server-side from a DB entity
-    (ExtractionJob, ExtractedFieldRecord) to eliminate the patient_id
-    spoofing vector.  Unlike require_consent(), this function does NOT
-    discover patient_id from the request — it must be provided by the
-    caller.
-
-    Raises:
-        HTTPException 403: Missing consent token or patient_id, or
-            invalid/expired consent.
-        HTTPException 503: Consent engine (Redis) unavailable.
+    Canonical Signed Consent V3 routine access must validate in both Redis and
+    PostgreSQL. A missing durable database session therefore fails closed for
+    ``clinical_access_session`` grants. Legacy consent-engine capabilities keep
+    their existing compatibility path until separately retired.
     """
     actor_uid = provider.actor_uid if provider else "UNKNOWN"
     target_id = str(patient_id) if patient_id else "UNKNOWN"
@@ -104,6 +100,31 @@ async def validate_consent_for_patient(
                 requested_category=purpose,
                 provider_session_binding=provider.session_binding,
             )
+            if (
+                capability is not None
+                and capability.grant_type == CLINICAL_ACCESS_SESSION_GRANT_TYPE
+            ):
+                if (
+                    db is None
+                    or capability.clinical_session_id is None
+                    or capability.provider_session_binding_hash is None
+                    or capability.clinical_access_policy_version is None
+                    or not await validate_active_session(
+                        db,
+                        session_id=capability.clinical_session_id,
+                        token_hash=token_hash(x_consent_token),
+                        patient_id=str(patient_id),
+                        provider_id=actor_uid,
+                        hospital_id=hospital_id,
+                        consent_request_id=capability.request_id,
+                        provider_session_binding_hash=(
+                            capability.provider_session_binding_hash
+                        ),
+                        allowed_operations=capability.allowed_operations,
+                        policy_version=capability.clinical_access_policy_version,
+                    )
+                ):
+                    capability = None
     except (ConsentEngineUnavailable, ApprovedAccessStoreUnavailable) as exc:
         await append_audit_log_or_503(
             audit_context=current_audit_context(AuditDomain.CONSENT),
@@ -133,10 +154,6 @@ async def validate_consent_for_patient(
         )
 
     if getattr(capability, "is_break_glass", False):
-        # Break-glass capabilities are scoped to whole clinical categories
-        # with their own audit/filtering contract and may only be used
-        # against the dedicated emergency-summary endpoint -- never any
-        # routine require_consent()-gated view (summary, timeline, record).
         await append_audit_log_or_503(
             audit_context=current_audit_context(AuditDomain.CONSENT),
             actor_uid=actor_uid,
@@ -190,26 +207,17 @@ async def validate_consent_for_patient(
     return capability
 
 
-# ── FastAPI dependency factories ────────────────────────────────────────────
-
-
 def require_consent(
     purpose: str,
-) -> Callable[[Request, ProviderContext, str | None], Any]:
-    """FastAPI dependency factory enforcing live consent for provider access to patient data.
-
-    Discovers patient_id from the request (path params, query params, headers,
-    or request body).  For pipeline endpoints that reference existing entities
-    (jobs, fields), prefer loading the entity first and calling
-    validate_consent_for_patient() directly — this eliminates the spoofing
-    vector where a client provides a patient_id that doesn't match the entity.
-    """
+) -> Callable[[Request, ProviderContext, str | None, AsyncSession], Any]:
+    """FastAPI dependency factory enforcing live consent for provider access."""
 
     async def _consent_gate(
         request: Request,
         provider: ProviderContext = Depends(get_current_provider),
         x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
-    ) -> ConsentCapability:
+        db: AsyncSession = Depends(get_db_session),
+    ) -> ConsentCapability | ApprovedAccessCapability:
         patient_id = request.path_params.get("patient_id") or request.path_params.get(
             "id"
         )
@@ -233,6 +241,7 @@ def require_consent(
             purpose=purpose,
             provider=provider,
             x_consent_token=x_consent_token,
+            db=db,
         )
 
     return _consent_gate
