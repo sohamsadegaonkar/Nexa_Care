@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db_session
 from app.core.dependencies import require_clinical_capability
+from app.core.rate_limiter import atomic_fixed_window
 from app.core.redis import get_async_redis_client
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
@@ -117,6 +118,7 @@ async def discover_patient(
             provider_id=provider.actor_uid,
             hospital_id=str(provider.hospital_id),
             identifier_type=identifier_type,
+            limiter=atomic_fixed_window,
         )
     except DiscoveryRateLimited as exc:
         try:
@@ -171,11 +173,7 @@ async def discover_patient(
                 raise HTTPException(
                     status_code=503, detail={"error_code": "DISCOVERY_UNAVAILABLE"}
                 ) from audit_exc
-            status_code = (
-                403
-                if exc.code == "DISCOVERY_RECENT_MFA_REQUIRED"
-                else 401
-            )
+            status_code = 403 if exc.code == "DISCOVERY_RECENT_MFA_REQUIRED" else 401
             raise HTTPException(
                 status_code=status_code,
                 detail={"error_code": exc.code},
