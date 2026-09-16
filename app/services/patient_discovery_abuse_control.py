@@ -1,9 +1,9 @@
 """Server-owned abuse controls for patient discovery.
 
 Low-entropy discovery modes must not become efficient account-enumeration
-oracles.  These budgets are intentionally independent of the searched value:
+oracles. These budgets are intentionally independent of the searched value:
 Redis keys contain only server-resolved provider/hospital context, the closed
-identifier type, and the window.  Raw or normalized patient identifiers never
+identifier type, and the window. Raw or normalized patient identifiers never
 enter rate-limit keys.
 """
 
@@ -37,10 +37,15 @@ class DiscoveryBudget:
     limit: int
 
 
-# Public IDs are opaque and substantially higher entropy than phone numbers.
-# Phone therefore receives a deliberately smaller provider/hospital budget.
+# Public IDs and QR-wrapped public IDs are opaque high-entropy values. Phone is
+# lower entropy and therefore receives a deliberately smaller provider/hospital
+# budget in addition to the recent-MFA gate enforced by the route.
 _TYPE_BUDGETS: Final[dict[str, tuple[DiscoveryBudget, ...]]] = {
     "NEXA_PUBLIC_ID": (
+        DiscoveryBudget(window_seconds=60, limit=12),
+        DiscoveryBudget(window_seconds=3600, limit=120),
+    ),
+    "QR_PUBLIC_ID": (
         DiscoveryBudget(window_seconds=60, limit=12),
         DiscoveryBudget(window_seconds=3600, limit=120),
     ),
@@ -51,7 +56,7 @@ _TYPE_BUDGETS: Final[dict[str, tuple[DiscoveryBudget, ...]]] = {
 }
 
 # Prevent identifier-type hopping from multiplying the provider/hospital search
-# budget.  These are evaluated in addition to the per-type limits.
+# budget. These are evaluated in addition to the per-type limits.
 _GLOBAL_BUDGETS: Final[tuple[DiscoveryBudget, ...]] = (
     DiscoveryBudget(window_seconds=60, limit=20),
     DiscoveryBudget(window_seconds=3600, limit=180),
@@ -81,7 +86,7 @@ async def enforce_patient_discovery_budget(
     """Atomically enforce closed per-type and aggregate discovery budgets.
 
     The searched identifier is intentionally not accepted by this function, so
-    future callers cannot accidentally place phone/public-ID material into a
+    future callers cannot accidentally place phone/public-ID/QR material into a
     Redis key or rate-limit diagnostic.
     """
 
@@ -92,9 +97,9 @@ async def enforce_patient_discovery_budget(
         raise ValueError("Provider and hospital context are required")
 
     exceeded_ttls: list[int] = []
-    checks = [
-        (identifier_type, budget) for budget in type_budgets
-    ] + [("ALL", budget) for budget in _GLOBAL_BUDGETS]
+    checks = [(identifier_type, budget) for budget in type_budgets] + [
+        ("ALL", budget) for budget in _GLOBAL_BUDGETS
+    ]
 
     try:
         for budget_type, budget in checks:
