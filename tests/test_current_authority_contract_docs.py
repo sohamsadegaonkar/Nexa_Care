@@ -115,9 +115,12 @@ def test_current_state_preserves_live_external_and_manual_boundaries() -> None:
     assert "Slice 9A" in current
     assert "backend + UI MERGED / QUALIFIED" in current
     assert "Slice 10A" in current
-    assert "secure discovery V2 IN PROGRESS" in current
+    assert "RELEASE-CANDIDATE COMPLETE / EXACT-HEAD QUALIFICATION REQUIRED" in current
     assert "20260914_patient_search_identifiers" in current
-    assert "phone discovery is not publicly enabled yet" in current
+    assert "patient-opted-in `PHONE`" in current
+    assert "Name-only search" in current
+    assert "remain prohibited" in current
+    assert "implementation complete on PR #46 / exact-head release gate pending" in current
     assert "no repository-defined Slice 9" not in current
 
 
