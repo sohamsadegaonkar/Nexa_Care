@@ -98,7 +98,7 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260916_clinical_access_sessions"
+HEAD = "20260916_patient_external_record_import"
 _USER_AGENT = "Nexa-Slice4-Qual-Agent/1.0"
 _CLIENT_IP = "127.0.0.1"
 _DB_NAME = "nexa_qual_slice4_e2e"
