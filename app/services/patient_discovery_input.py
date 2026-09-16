@@ -7,7 +7,7 @@ import re
 from app.services.patient_discovery_service import normalize_public_patient_id
 
 _QR_PUBLIC_ID_RE = re.compile(
-    r"^nexa://patient-discovery/v1/(NC-[A-Fa-f0-9]{24})$"
+    r"^nexa://patient-discovery/v1/([Nn][Cc]-[A-Fa-f0-9]{24})$"
 )
 
 
