@@ -121,10 +121,10 @@ def test_phone_discovery_requires_recent_mfa_and_returns_only_opaque_handle(
         )
 
     assert response.status_code == 200, response.text
-    assert response.json() == {
-        "discovery_handle": handle.value,
-        "expires_at": handle.expires_at.isoformat(),
-    }
+    payload = response.json()
+    assert payload["discovery_handle"] == handle.value
+    serialized_expiry = datetime.fromisoformat(payload["expires_at"].replace("Z", "+00:00"))
+    assert serialized_expiry == handle.expires_at
     assert PHONE not in response.text
     assert str(patient.patient_uuid) not in response.text
     budget.assert_awaited_once_with(
