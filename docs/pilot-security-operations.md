@@ -16,6 +16,7 @@ extraction is active.
 | --- | --- | --- |
 | Consent, replay nonce, capability claim | Security-critical | Fail closed with `503` |
 | Provider login/MFA, patient OTP, break-glass and generic route throttles | Security-critical | Fail closed with `503` |
+| Patient discovery throttles and opaque-handle state | Security-critical | Fail closed with `503` |
 | Push concurrency/rate limiting | Security-critical | Fail closed with `503` |
 | Push notification delivery | Availability-sensitive | Record delivery failure; approval remains pending |
 | Audit ledger/outbox | Security-critical | Protected operation/qualification fails closed |
@@ -48,15 +49,18 @@ prohibited. Set `TRUSTED_HOSTS` to explicit deployed API hosts and
 - independent Supabase, handshake, MFA, PII, patient JWT, OTP HMAC, provider
   registration HMAC, provider contact-assurance HMAC, document-storage, and
   `OPERATIONS_AUTH_TOKEN` secrets supplied through managed secret references
+- an independently generated `PATIENT_DISCOVERY_INDEX_HMAC_KEYS_JSON` keyring
+  and `PATIENT_DISCOVERY_INDEX_ACTIVE_KEY_VERSION` for Slice 10A phone
+  discoverability; discovery-index keys must not reuse any secret above
 - `DATABASE_ECHO_SQL=false` and `AUTO_COMMIT=false`
 
-Slice 10A's private searchable-identifier schema does not itself enable provider
-phone discovery. Before any low-entropy provider-facing discovery mode is
-activated, production wiring must additionally supply an independently generated
-`PATIENT_DISCOVERY_INDEX_HMAC_KEYS_JSON` keyring and
-`PATIENT_DISCOVERY_INDEX_ACTIVE_KEY_VERSION`, add them to production preflight
-and deployment secret-reference contracts, and qualify rotation/reindexing and
-anti-enumeration behavior. They must not reuse any secret listed above.
+Slice 10A phone discovery is fail-closed when the dedicated discovery-index
+keyring is absent or invalid: no unkeyed/plaintext fallback exists. Before a
+pilot environment accepts phone-discovery traffic, operators must provision the
+keyring through managed secret references and qualify controlled key rotation /
+reindexing. Retired key material must remain available while any active index
+row still depends on that version; otherwise lookup intentionally becomes
+unavailable rather than risking duplicate/collision blindness.
 
 Static `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `AWS_SESSION_TOKEN`
 environment variables are prohibited. Runtime AWS access comes only from the ECS
@@ -93,6 +97,10 @@ production-like runtime, API startup then independently refuses to start unless:
 5. both configured KMS keys are enabled for encrypt/decrypt;
 6. the S3 bucket is reachable, uses default SSE-KMS, has all four public-access
    block controls enabled, and has versioning enabled.
+
+Discovery-index keyring validation additionally occurs at the security-sensitive
+phone binding/lookup boundary and fails closed with an unavailable result when
+key authority cannot be established.
 
 The checks occur before background workers start, so a stale schema or unusable
 security dependency cannot produce a partially alive task.
