@@ -97,7 +97,9 @@ def test_search_identifier_schema_contains_no_raw_pii_column() -> None:
     assert "value_hmac" in columns
 
 
-def test_low_entropy_phone_mode_is_not_publicly_enabled_yet() -> None:
+def test_low_entropy_phone_mode_is_public_only_with_explicit_hardening() -> None:
     source = (ROOT / "app/api/v2/patient_discovery_routes.py").read_text()
-    assert 'Literal["NEXA_PUBLIC_ID"]' in source
-    assert 'Literal["NEXA_PUBLIC_ID", "PHONE"]' not in source
+    assert 'Literal["NEXA_PUBLIC_ID", "PHONE", "QR_PUBLIC_ID"]' in source
+    assert "require_recent_mfa_for_phone_discovery" in source
+    assert "enforce_patient_discovery_budget" in source
+    assert "resolve_verified_phone_patient" in source
