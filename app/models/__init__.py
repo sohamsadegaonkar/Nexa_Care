@@ -3,6 +3,7 @@
 # --- 1. ALL IMPORTS MUST GO HERE AT THE VERY TOP ---
 from app.models.ai_models import ExtractedMedicalDocument
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.clinical_access_session import ClinicalAccessSessionRecord
 from app.models.consent_grant import ConsentGrantLog
 from app.models.consent_ledger import ConsentLedger
 from app.models.consent_sessions import ConsentSession
@@ -69,6 +70,7 @@ from app.models.shards import NexaClinical, NexaEmergencySnapshot, NexaVault
 # --- 2. EXECUTABLE CODE/VARIABLES GO DOWN HERE AT THE BOTTOM ---
 __all__ = [
     "ExtractedMedicalDocument",
+    "ClinicalAccessSessionRecord",
     "ConsentGrantLog",
     "ConsentLedger",
     "ConsentSession",
