@@ -65,7 +65,8 @@ def upgrade() -> None:
             "(revoked_at IS NULL AND revocation_reason IS NULL) OR "
             "(revoked_at IS NOT NULL AND revocation_reason IN "
             "('SUPERSEDED','IDENTITY_REVOKED','IDENTITY_REBOUND','PATIENT_ERASED',"
-            "'AUTHORITY_CONFLICT','SOURCE_REVERIFICATION_FAILED','ADMINISTRATIVE'))",
+            "'AUTHORITY_CONFLICT','SOURCE_REVERIFICATION_FAILED','PATIENT_OPT_OUT',"
+            "'ADMINISTRATIVE'))",
             name="ck_patient_search_identifier_lifecycle",
         ),
     )
