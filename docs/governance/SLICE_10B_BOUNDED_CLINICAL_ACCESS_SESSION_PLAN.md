@@ -1,6 +1,6 @@
 # Slice 10B — Bounded Clinical Access Session
 
-Status: **10B.3 IMPLEMENTED — FINAL EXACT-HEAD QUALIFICATION IN PROGRESS**
+Status: **10B.3 QUALIFIED — 10B.4 SIGNED PROTOCOL IMPLEMENTED / AUTHORITY MINT NOT STARTED**
 
 Authoritative baseline before this slice started:
 `f68bad3d157e7dcdf7716a9bf0b74fc0b7991f25` on `main`.
@@ -44,7 +44,7 @@ rather than bypass:
 ## Security correction introduced by this slice
 
 The product model requires a first-class bounded clinical session with an
-explicit, closed operation vocabulary.  The server-owned vocabulary is:
+explicit, closed operation vocabulary. The server-owned vocabulary is:
 
 ```text
 READ_CLINICAL_HISTORY
@@ -62,10 +62,14 @@ set**. Therefore Slice 10B must not silently reinterpret an existing V3
 `clinical`/`full` approval as permission to write clinical data.
 
 The current implementation consequently maps routine V3 approvals to
-`READ_CLINICAL_HISTORY` only. Write operations are vocabulary only until a
-patient-signed context explicitly binds them. The separate
+`READ_CLINICAL_HISTORY` only. The separate
 `document_processing`/`documents` grant remains outside the treatment-session
 contract.
+
+Slice 10B.4 now has a separate `nexa-treatment-session-v1` signature protocol
+that cryptographically binds an exact operation set. That protocol is not yet a
+clinical-session minting mechanism, and its existence alone does not authorize
+any clinical write.
 
 ## Provider-session binding
 
@@ -127,7 +131,7 @@ Implemented:
 
 ### 10B.3 — durable session lifecycle
 
-Implemented for the current read-only authority:
+Implemented and qualified for the current read-only authority:
 
 - linear Alembic migration `20260916_clinical_access_sessions`;
 - durable session row stores token/session-binding hashes only;
@@ -150,18 +154,63 @@ the current validation gate.
 
 ### 10B.4 — signed write-authority protocol
 
-**NOT STARTED / NO WRITE AUTHORITY ENABLED.**
+**SIGNED PROTOCOL IMPLEMENTED; AUTHORITY MINT / WRITE ENABLEMENT NOT STARTED.**
 
-Do not add writes to existing Signed Consent V3 bytes in place.
+The repository now has a separate versioned protocol:
 
-Before `CREATE_ENCOUNTER` or any `WRITE_*` operation can be issued, the patient
-must sign a versioned context that explicitly includes the exact operation set
-(or an equivalently precise server-owned treatment-session policy digest). The
-protocol must prevent operation widening after signature.
+```text
+nexa-treatment-session-v1
+```
+
+It does not modify Signed Consent V3 bytes in place. The V1 treatment signature
+binds the canonical patient, provider, hospital, provider-session-binding hash,
+challenge nonce, purpose, exact normalized operation set, bounded access
+duration, issue/expiry timestamps, policy version, treatment-context digest,
+and exact active patient device-key identity.
+
+Implemented protocol/lifecycle properties include:
+
+- treatment-session request consumes the opaque provider/hospital/session-bound
+  discovery handle;
+- server captures current clinical initiation assurance before request issue;
+- patient challenge is available only to the authenticated matching patient;
+- the context hash fails closed on operation/context substitution;
+- signature verification uses the exact active enrolled P-256 patient device
+  key, including key id/version/fingerprint;
+- provider professional/facility/affiliation/capability trust is re-evaluated
+  again when the signed decision is accepted;
+- nonce/request resolution is replay-protected and same-response idempotency is
+  fingerprint-bound;
+- approved and denied decisions are audit-recorded;
+- provider-session binding is retained only as a one-way hash.
+
+The currently registered V1 routes are:
+
+```text
+POST /api/v2/treatment-session/v1/request
+GET  /api/v2/treatment-session/v1/challenge/{request_id}
+POST /api/v2/treatment-session/v1/approve-signed
+```
+
+There is deliberately **no treatment-session claim/mint route yet**. A signed
+approval remains signed evidence/context only; it does not create a durable or
+live write-capable ClinicalAccessSession and cannot authorize a write endpoint.
+
+Before `CREATE_ENCOUNTER` or any `WRITE_*` operation can become executable, the
+next increment must design and qualify a one-time provider claim/mint that:
+
+- revalidates exact provider/hospital/session binding and live provider trust;
+- consumes only the patient-signed exact operation set without widening it;
+- persists only bearer hashes, never raw bearer authority;
+- atomically coordinates replay protection and durable/live session state;
+- extends the durable allowed-operation database policy from the current
+  read-only constraint through an explicit linear migration;
+- remains incapable of authorizing an encounter/write until the central
+  operation gate is present.
 
 ### 10B.5 — clinical gates and encounter binding
 
-Future work after a signed write-authority protocol exists:
+Future work after treatment-session claim/mint exists:
 
 - central `require_clinical_session(operation)` gate;
 - no client-selected patient UUID as an independent authority source;
@@ -189,7 +238,7 @@ patient identifiers in URLs.
 
 ## 10B.3 qualification checkpoints — 2026-09-16
 
-The current single repository migration head is
+The current qualified 10B.3 migration head is
 `20260916_clinical_access_sessions`.
 
 Backend CI run #654 on parent head
@@ -201,32 +250,65 @@ historical Slice-4 disposable database target. Commit
 The next direct checkpoint, `0e32854a43cd6e2d675a8047b406f874fd4ede2f`,
 then passed Backend CI #656 across Partition A, PostgreSQL Partition B, and
 PostgreSQL + Redis Partition C, including all three zero-skip assertions. Its
-frontend test/Next/workspace job also passed and exact-head Vercel deployment
-succeeded. Those results are intermediate evidence only because the subsequent
-patient-revocation lifecycle hardening changed code.
+frontend test/Next/workspace job also passed. Those results were intermediate
+evidence only because subsequent patient-revocation lifecycle hardening changed
+code.
 
-Commit `55bb0a25ecd71b70d5212052cfde184d018ad50c` adds explicit durable-session
-revocation to the patient consent-revocation transaction and adds focused
-idempotency/call-contract regression assertions. It was applied from an exact
-SHA-pinned one-shot maintenance branch that deleted itself after the
-fast-forward. Because workflow-token pushes do not provide the ordinary push CI
-signal, this documentation commit deliberately creates a new direct `main`
-head. **Only the exact SHA produced by this documentation update may be used as
-the final 10B.3 qualification target.** Older CI must not be reused as final
-proof.
+Commit `55bb0a25ecd71b70d5212052cfde184d018ad50c` added explicit durable-session
+revocation to the patient consent-revocation transaction and focused
+idempotency/call-contract regression assertions.
+
+The final 10B.3 qualification target is
+`238c59b7fe94cc04213063f55750f3d727a062c7`.
+
+On that exact SHA:
+
+- Backend CI #657 completed successfully across Partition A, PostgreSQL
+  Partition B, and PostgreSQL + Redis Partition C, including all zero-skip
+  assertions;
+- Frontend CI #606 completed successfully;
+- the frontend test job, Next production build, and workspace builds completed
+  successfully;
+- Android native generation and native-source compilation completed
+  successfully;
+- iOS native generation, CocoaPods installation, and native-source compilation
+  completed successfully.
+
+This freezes 10B.3 as the qualified read-only durable-session checkpoint.
+Subsequent 10B.4 commits require their own exact-head qualification and must not
+reuse 10B.3 evidence.
+
+## 10B.4 qualification state — 2026-09-17
+
+The signed treatment-session V1 implementation reached
+`ddef230b60493a20aec5a71e05b35f0ecb772a21`. Backend CI #666 showed:
+
+- lint: success;
+- PostgreSQL Partition B: success + zero skips;
+- PostgreSQL + Redis Partition C: success + zero skips;
+- Partition A: one failure only, because the three intentional V1 routes had
+  not yet been added to the explicit route-governance allowlist.
+
+Commit `e5c3acff2c575f87604b1913c5df1bd25e2148c0` reconciles that exact route
+contract. This documentation commit is the next direct exact-head qualification
+target. No 10B.4 qualification claim is valid until its own A/B/C and zero-skip
+results are green.
 
 ## Nonclaims
 
-The current 10B.3 checkpoint does **not**:
+The current Slice 10B state does **not**:
 
-- mint any clinical write operation;
+- mint a write-capable treatment ClinicalAccessSession from V1 approval;
+- expose a V1 claim/mint endpoint;
+- authorize `CREATE_ENCOUNTER` or any `WRITE_*` operation;
 - create encounters;
-- change prescription/diagnosis/vitals/note persistence;
+- change prescription/diagnosis/vitals/note persistence authority;
 - broaden Signed Consent V3;
 - weaken document-processing consent;
 - modify physical-device assurance claims;
 - claim production deployment or that Nexa Care is fully secure.
 
-If the final exact-head gates are green, the next engineering phase is 10B.4:
-a separately versioned patient-signed write-authority protocol design. Existing
-V3 read approval must remain incapable of silently authorizing writes.
+The next engineering increment is the separately qualified, one-time
+provider claim/mint boundary for approved `nexa-treatment-session-v1` evidence.
+That increment must not enable write endpoints until the durable operation-set
+policy and central clinical-session operation gate are also in place.
