@@ -22,7 +22,7 @@ from tests.helpers.qualification_infra import (  # noqa: E402
 )
 
 SHARED_DB_NAME = "nexa_qual_ci_shared"
-HEAD = "20260914_patient_search_identifiers"
+HEAD = "20260916_clinical_access_sessions"
 
 
 def main() -> int:
