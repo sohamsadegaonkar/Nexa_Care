@@ -51,6 +51,10 @@ export default function PatientLayout() {
         name="timeline"
         options={{ headerTitle: 'Health Timeline' }}
       />
+      <Stack.Screen
+        name="discoverability"
+        options={{ headerTitle: 'Phone Discoverability' }}
+      />
     </Stack>
   )
 }
