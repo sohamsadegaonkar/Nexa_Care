@@ -1,7 +1,7 @@
 # Nexa Care — Current Engineering State
 
-**Last reconciled:** 2026-09-14  
-**Reconciliation base:** `d138a37956bc7bebca8833ba2cf1fad64cb67593` on `main`  
+**Last reconciled:** 2026-09-16  
+**Reconciliation basis:** Slice 10A PR #46 release candidate; exact qualified SHA is recorded in the PR rather than embedded here.  
 **Purpose:** repository-attested current state. Historical alpha and earlier Slice-7/8/9 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
 
 ## 1. Current authority boundaries
@@ -74,13 +74,28 @@ The remaining frontend `baseUrl` migration is explicitly deferred in `docs/gover
 
 ### Slice 10A — secure patient discovery V2
 
-Slice 10A is **IN PROGRESS** on `slice-10a-secure-patient-discovery` from main baseline `d138a37956bc7bebca8833ba2cf1fad64cb67593`.
+Slice 10A implementation is **RELEASE-CANDIDATE COMPLETE / EXACT-HEAD QUALIFICATION REQUIRED** on PR #46. Merge remains prohibited until the same frozen head passes every required backend, frontend and deployment gate.
 
-The existing exact Nexa public-ID and NFC discovery paths remain the only provider-facing discovery modes. They require the server-owned `PATIENT_DISCOVER` capability and return only a short-lived, provider/hospital/session-bound, single-use opaque discovery handle after mandatory success audit. They do not return patient UUIDs or clinical data before consent.
+Provider-facing discovery in the candidate supports exactly four bounded transports:
 
-The new Slice-10A private foundation adds a durable `patient_search_identifiers` authority for future low-entropy exact-match identifiers. It stores **only** versioned, domain-separated HMAC fingerprints plus patient/auth-identity provenance and lifecycle state; no raw or normalized phone is persisted. Its HMAC keyring is dedicated to discovery indexing and supports controlled key-version rotation. Verified-phone synchronization requires a live Supabase patient identity bound to one active canonical, unerased patient and refuses silent cross-patient phone reassignment.
+- exact opaque `NEXA_PUBLIC_ID`;
+- exact patient-opted-in `PHONE`;
+- strict versioned `QR_PUBLIC_ID` carrying only the opaque Nexa public ID; and
+- existing NFC card resolution.
 
-Important activation boundary: **phone discovery is not publicly enabled yet**. `POST /api/v2/patient-discovery` still accepts only `NEXA_PUBLIC_ID`; name-only, fuzzy, broad-directory, QR/MRN/external-ID and phone discovery remain prohibited until their authority, abuse controls, audit/error policy and lifecycle are explicitly qualified. The private index foundation is not itself patient authentication, a discovery capability, consent, or clinical access.
+Every provider-facing mode requires the server-owned `PATIENT_DISCOVER` clinical capability and converges on the same short-lived, provider/hospital/session-bound, audit-gated, single-use opaque discovery handle. No successful discovery response returns patient UUID, phone, public-ID echo, profile/demographic data, redirect details, clinical data, candidate lists, or result counts.
+
+PHONE is off by default for the patient. Enabling it requires a live patient session plus a fresh Supabase SMS OTP whose authoritative returned subject exactly matches the current patient identity. The durable `patient_search_identifiers` authority stores only versioned, domain-separated keyed HMAC fingerprints plus patient/auth-identity provenance and lifecycle state; it stores no raw or normalized phone. Its dedicated HMAC keyring supports controlled version rotation and fails closed if active rows cannot be covered by configured key material.
+
+A verified phone may not silently move between patient identities. Collision or ambiguity quarantines/revokes implicated search authority instead of selecting a winner. Merge/deletion/erasure/revocation/rebind boundaries revoke or deny stale search authority. Patient opt-out revokes only phone discoverability and does not disable phone login.
+
+PHONE lookup additionally requires the exact live provider session binding and recent provider MFA. It has stricter provider/hospital/type rate budgets plus aggregate cross-type throttling; rate-limit keys contain no searched identifier. Absent, opted-out, stale, or otherwise nonmatching phone authority is exposed only as generic `DISCOVERY_NO_MATCH`, while integrity ambiguity fails closed as unavailable.
+
+`QR_PUBLIC_ID` accepts only `nexa://patient-discovery/v1/NC-...` and is merely a transport for the opaque public ID. Raw UUIDs, access/consent tokens, device credentials, arbitrary URLs and sensitive profile payloads are rejected.
+
+Name-only search, prefix/fuzzy search, ranked candidate lists, broad directory search, MRN and generic external-ID discovery remain prohibited in Slice 10A.
+
+The patient frontend exposes Phone Discoverability as a visible privacy control on web and native clients; the provider client exposes only qualified discovery modes. Discovery capabilities remain memory-only and do not travel in URLs or durable client storage.
 
 ## 4. Native mobile key custody
 
@@ -96,7 +111,7 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 ## 5. Persistence and migrations
 
-The current single Alembic head on the Slice-10A branch is:
+The current single Alembic head on the Slice-10A release candidate is:
 
 `20260914_patient_search_identifiers`
 
@@ -184,7 +199,7 @@ Therefore live rollback/runtime qualification remains **BLOCKED BY PILOT AWS/TAR
 
 ## 11. Backend closure state
 
-The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is the active product/backend slice and is intentionally keeping low-entropy discovery private until the searchable-identifier authority and route-level privacy controls are qualified.
+The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is implementation-complete on its release candidate but remains unmerged until exact-head qualification proves every repository and deployment gate.
 
 Current matrix:
 
@@ -198,7 +213,7 @@ Current matrix:
 | 8F | rollback/monitoring gate MERGED / INTERNALLY QUALIFIED | seven pilot inputs missing; live runtime drill NOT_RUN |
 | 8G | registry boundary ready / contract gate enforced | official HPR/HFR machine contract + sandbox missing |
 | 9A | backend + UI MERGED / QUALIFIED | live deployment not claimed |
-| 10A | secure discovery V2 IN PROGRESS; private keyed-index foundation implemented | low-entropy provider-facing discovery remains disabled pending lifecycle + anti-enumeration qualification |
+| 10A | implementation complete on PR #46 / exact-head release gate pending | merge and post-merge `main` verification pending |
 
 The remaining live backend gates still require real prerequisites that repository code cannot manufacture:
 
@@ -212,8 +227,14 @@ Slice 6I supported-handset execution remains a separate physical-platform gate o
 
 ## 12. Next safe action
 
-Qualify the Slice-10A private searchable-identifier foundation on exact-head Backend CI, including PostgreSQL uniqueness/lifecycle/key-rotation tests. Then wire synchronization only from already-authoritative patient OTP verification events and add revocation/erasure lifecycle hooks before considering any provider-facing phone mode.
+Freeze one final Slice-10A PR head and require, on that exact SHA:
 
-A phone route must not be enabled until response equivalence, throttling, auditing, abuse controls, reassignment behavior, keyring production wiring and adversarial enumeration tests are all green. Name-only, fuzzy and broad-directory search remain prohibited. After secure discovery V2 is closed, the next roadmap slice is the bounded clinical treatment/access-session model.
+- Backend CI Partitions A/B/C all green with each partition's zero-skip assertion green;
+- full Frontend CI green, including frontend tests, Next production build, workspace build, Android generation/compile and iOS generation/CocoaPods/compile;
+- exact-head Vercel deployment green.
+
+Only then may PR #46 be marked ready and merged using exact-head protection. After merge, verify the new `main` SHA and its repository/deployment checks before calling Slice 10A closed.
+
+Name-only, fuzzy/prefix, candidate-list, broad-directory, MRN and generic external-ID search remain prohibited after Slice 10A. The next roadmap slice after secure discovery closure is the bounded clinical treatment/access-session model.
 
 The live/external blockers above remain unchanged and must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS.
