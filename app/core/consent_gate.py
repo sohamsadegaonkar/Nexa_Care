@@ -102,6 +102,7 @@ async def validate_consent_for_patient(
                 provider_id=actor_uid,
                 hospital_id=hospital_id,
                 requested_category=purpose,
+                provider_session_binding=provider.session_binding,
             )
     except (ConsentEngineUnavailable, ApprovedAccessStoreUnavailable) as exc:
         await append_audit_log_or_503(
@@ -161,6 +162,13 @@ async def validate_consent_for_patient(
         "consent_request_id": approved_request_id,
         "is_break_glass": capability.is_break_glass,
     }
+    clinical_session_id = getattr(capability, "clinical_session_id", None)
+    if clinical_session_id:
+        audit_metadata["clinical_session_id"] = clinical_session_id
+        audit_metadata["clinical_access_policy_version"] = getattr(
+            capability, "clinical_access_policy_version", None
+        )
+
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.CONSENT),
         actor_uid=actor_uid,
