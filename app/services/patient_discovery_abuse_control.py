@@ -82,12 +82,14 @@ async def enforce_patient_discovery_budget(
     provider_id: str,
     hospital_id: str,
     identifier_type: str,
+    limiter=None,
 ) -> None:
     """Atomically enforce closed per-type and aggregate discovery budgets.
 
     The searched identifier is intentionally not accepted by this function, so
     future callers cannot accidentally place phone/public-ID/QR material into a
-    Redis key or rate-limit diagnostic.
+    Redis key or rate-limit diagnostic. ``limiter`` is an internal test seam;
+    production callers leave it unset and use the canonical atomic limiter.
     """
 
     type_budgets = _TYPE_BUDGETS.get(identifier_type)
@@ -100,10 +102,11 @@ async def enforce_patient_discovery_budget(
     checks = [(identifier_type, budget) for budget in type_budgets] + [
         ("ALL", budget) for budget in _GLOBAL_BUDGETS
     ]
+    rate_limiter = limiter or atomic_fixed_window
 
     try:
         for budget_type, budget in checks:
-            count, ttl = await atomic_fixed_window(
+            count, ttl = await rate_limiter(
                 redis,
                 _budget_key(
                     provider_id=provider_id,
