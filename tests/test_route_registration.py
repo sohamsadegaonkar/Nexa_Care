@@ -51,6 +51,9 @@ from app.main import app
 #   5. Slice 9A adds one patient-safe opaque-case status endpoint plus five
 #      reviewer endpoints protected by the independent registration-recovery
 #      reviewer authority gate.
+#   6. Slice 10A adds three authenticated patient-self phone-discoverability
+#      controls; they manage exact-search authority and never replace login,
+#      device, consent, or provider record-access authority.
 #
 # If this file goes red again, confirm the owning route was intentionally
 # added or removed before updating this set.
@@ -163,6 +166,9 @@ EXPECTED_ROUTES = {
     ("GET", "/api/v2/patient/me/legal-requirements"),
     ("POST", "/api/v2/patient/me/legal-acceptances"),
     ("GET", "/api/v2/patient/me/onboarding-status"),
+    ("GET", "/api/v2/patient/me/discoverability/phone"),
+    ("POST", "/api/v2/patient/me/discoverability/phone/enable"),
+    ("DELETE", "/api/v2/patient/me/discoverability/phone"),
     ("GET", "/api/v2/patient/{id}/audit-trail"),
     ("GET", "/api/v2/patient/{id}/records"),
     ("GET", "/api/v2/patient/{id}/structured-record"),
