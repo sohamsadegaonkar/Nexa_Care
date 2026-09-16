@@ -3,7 +3,7 @@
 ## NEXT AGENT — START HERE
 
 - **Current branch:** `slice-11b-patient-longitudinal-records-ux`
-- **Current HEAD:** `3fc0530` (commit for frontend UX to follow)
+- **Current HEAD:** `a2c7da2`
 - **Base main SHA:** `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
 - **Current phase:** Phase 4 — Final Qualification & Release Ready
 - **Last completed step:** Full frontend & backend longitudinal patient UX completed and verified:
@@ -241,7 +241,7 @@ Clinical Safety Rules:
 - **Timestamp:** 2026-09-17T00:50:00+05:30
 - **Step:** Frontend longitudinal records UX, cross-platform routes, Next.js production build, and Vitest suite.
 - **Starting SHA:** `3fc0530`
-- **Ending SHA:** Pending commit for frontend UX
+- **Ending SHA:** `894cc34`
 - **Files changed:**
   - `nexa-client/packages/app/utils/apiClient.ts`
   - `nexa-client/packages/app/features/patient/PatientRecordDetailModal.tsx`
