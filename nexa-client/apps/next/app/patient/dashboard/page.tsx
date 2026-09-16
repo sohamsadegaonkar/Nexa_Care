@@ -18,8 +18,10 @@ import {
   ArrowRight,
   Clock,
   FileText,
+  FlaskConical,
   Heart,
   Lock,
+  Pill,
   QrCode,
   Shield,
   ShieldAlert,
@@ -28,7 +30,11 @@ import {
   UserCheck,
 } from '@tamagui/lucide-icons'
 import { getCurrentPatientId, usePatientAuthSession } from 'app/services/patientAuthSession'
-import { apiClient } from 'app/utils/apiClient'
+import {
+  apiClient,
+  NexaApiClient,
+  type PatientHealthSummaryResponse,
+} from 'app/utils/apiClient'
 
 interface AccessLogItem {
   audit_id: string
@@ -47,18 +53,25 @@ export default function PatientDashboardPage() {
   const [loading, setLoading] = useState(false)
   const [timelineCount, setTimelineCount] = useState(0)
   const [publicPatientId, setPublicPatientId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (session.hydrated && session.status === 'unauthenticated') {
-      // Allow viewing or redirect if needed
-    }
-  }, [session])
+  const [healthSummary, setHealthSummary] = useState<PatientHealthSummaryResponse | null>(null)
 
   useEffect(() => {
     let mounted = true
     async function loadData() {
       if (session.status !== 'authenticated') return
       setLoading(true)
+
+      // Fetch health summary
+      try {
+        const summaryData = await NexaApiClient.getMyHealthSummary()
+        if (mounted) {
+          setHealthSummary(summaryData)
+        }
+      } catch {
+        // fallback gracefully
+      }
+
+      // Fetch access history
       try {
         const historyRes = await apiClient.get<any>('/api/v2/patient/me/access-history?limit=3')
         const raw = (historyRes as any)?.data?.access_history || (historyRes as any)?.access_history || []
@@ -68,6 +81,8 @@ export default function PatientDashboardPage() {
       } catch {
         // graceful fallback
       }
+
+      // Fetch timeline count
       try {
         const timelineRes = await apiClient.get<any>('/api/v2/patient/me/timeline?limit=10')
         const rawEvents = (timelineRes as any)?.data?.events || (timelineRes as any)?.events || []
@@ -77,6 +92,8 @@ export default function PatientDashboardPage() {
       } catch {
         // graceful fallback
       }
+
+      // Fetch profile
       try {
         const profRes = await apiClient.get<any>('/api/v2/patient/me/profile')
         const profData = (profRes as any)?.data || profRes
@@ -89,6 +106,7 @@ export default function PatientDashboardPage() {
         if (mounted) setLoading(false)
       }
     }
+
     loadData()
     return () => {
       mounted = false
@@ -97,7 +115,7 @@ export default function PatientDashboardPage() {
 
   return (
     <YStack gap="$6" maxWidth={1180} width="100%" marginHorizontal="auto">
-      {/* Welcome & Security Banner */}
+      {/* Welcome & Patient Identity Banner */}
       <Surface padding="$5" borderRadius={16} elevation="$1">
         <XStack
           flexWrap="wrap"
@@ -110,10 +128,10 @@ export default function PatientDashboardPage() {
               <StatusBadge tone="success">Patient Session Active</StatusBadge>
             </XStack>
             <Text fontSize={26} fontWeight="900" color="$nexaText">
-              Welcome to Your Health Portal
+              My Health Home
             </Text>
             <Paragraph color="$nexaSecondary" fontSize={14}>
-              Review your clinical events, access history, and profile settings. Every access requires your verified consent or emergency audit justification.
+              Your longitudinal health record, active prescriptions, clinical observations, and verifiable access logs.
             </Paragraph>
           </YStack>
 
@@ -146,46 +164,265 @@ export default function PatientDashboardPage() {
         </XStack>
       </Surface>
 
+      {/* Quick Longitudinal Hub Action Tiles */}
+      <XStack flexWrap="wrap" gap="$3">
+        <Surface
+          flex={1}
+          minWidth={180}
+          padding="$4"
+          borderRadius={14}
+          elevation="$1"
+          pressStyle={{ opacity: 0.85 }}
+          onPress={() => router.push('/patient/timeline')}
+        >
+          <XStack justifyContent="space-between" alignItems="center">
+            <YStack gap="$1">
+              <Text fontSize={24}>📅</Text>
+              <Text fontSize={16} fontWeight="800" color="$nexaText">
+                Timeline
+              </Text>
+              <Paragraph fontSize={12} color="$nexaSecondary">
+                {timelineCount} clinical events
+              </Paragraph>
+            </YStack>
+            <ArrowRight size={18} color="$nexaSecondary" />
+          </XStack>
+        </Surface>
+
+        <Surface
+          flex={1}
+          minWidth={180}
+          padding="$4"
+          borderRadius={14}
+          elevation="$1"
+          pressStyle={{ opacity: 0.85 }}
+          onPress={() => router.push('/patient/records')}
+        >
+          <XStack justifyContent="space-between" alignItems="center">
+            <YStack gap="$1">
+              <Text fontSize={24}>📁</Text>
+              <Text fontSize={16} fontWeight="800" color="$nexaText">
+                Records
+              </Text>
+              <Paragraph fontSize={12} color="$nexaSecondary">
+                Categorized observations
+              </Paragraph>
+            </YStack>
+            <ArrowRight size={18} color="$nexaSecondary" />
+          </XStack>
+        </Surface>
+
+        <Surface
+          flex={1}
+          minWidth={180}
+          padding="$4"
+          borderRadius={14}
+          elevation="$1"
+          pressStyle={{ opacity: 0.85 }}
+          onPress={() => router.push('/patient/prescriptions')}
+        >
+          <XStack justifyContent="space-between" alignItems="center">
+            <YStack gap="$1">
+              <Text fontSize={24}>💊</Text>
+              <Text fontSize={16} fontWeight="800" color="$nexaText">
+                Prescriptions
+              </Text>
+              <Paragraph fontSize={12} color="$nexaSecondary">
+                {healthSummary?.counts?.medications ?? 0} medications on file
+              </Paragraph>
+            </YStack>
+            <ArrowRight size={18} color="$nexaSecondary" />
+          </XStack>
+        </Surface>
+
+        <Surface
+          flex={1}
+          minWidth={180}
+          padding="$4"
+          borderRadius={14}
+          elevation="$1"
+          pressStyle={{ opacity: 0.85 }}
+          onPress={() => router.push('/patient/reports')}
+        >
+          <XStack justifyContent="space-between" alignItems="center">
+            <YStack gap="$1">
+              <Text fontSize={24}>📄</Text>
+              <Text fontSize={16} fontWeight="800" color="$nexaText">
+                Reports
+              </Text>
+              <Paragraph fontSize={12} color="$nexaSecondary">
+                {healthSummary?.counts?.reports ?? 0} diagnostic files
+              </Paragraph>
+            </YStack>
+            <ArrowRight size={18} color="$nexaSecondary" />
+          </XStack>
+        </Surface>
+      </XStack>
+
       {/* Metrics Row */}
       <XStack flexWrap="wrap" gap="$4">
         <StatCard
-          label="Access History Events"
-          value={accessLogs.length > 0 ? `${accessLogs.length} Logged` : '0 Recorded'}
+          label="Active Medications"
+          value={
+            healthSummary?.active_medications?.length
+              ? `${healthSummary.active_medications.length} Prescribed`
+              : '0 Active'
+          }
           tone="neutral"
-          icon={<Clock size={20} />}
-          description="Doctor accesses recorded in audit log"
+          icon={<Pill size={20} />}
+          description="Clinician-directed treatments"
         />
         <StatCard
-          label="Emergency Accesses"
-          value={accessLogs.filter((l) => l.is_break_glass).length > 0 ? `${accessLogs.filter((l) => l.is_break_glass).length} Active` : '0 Active'}
-          tone="success"
-          icon={<ShieldAlert size={20} />}
-          description="Emergency access requires audit review"
+          label="Allergies on File"
+          value={
+            healthSummary?.allergy_highlights?.length
+              ? `${healthSummary.allergy_highlights.length} Recorded`
+              : '0 Recorded'
+          }
+          tone={healthSummary?.allergy_highlights?.length ? 'warning' : 'success'}
+          icon={<AlertTriangle size={20} />}
+          description="Clinical allergy alerts"
         />
         <StatCard
-          label="Health Timeline"
-          value={`${timelineCount} Records`}
+          label="Recent Labs"
+          value={
+            healthSummary?.recent_labs?.length
+              ? `${healthSummary.recent_labs.length} Evaluated`
+              : '0 Evaluated'
+          }
           tone="accent"
-          icon={<Activity size={20} />}
-          description="Vitals, lab reports, and clinical encounters"
+          icon={<FlaskConical size={20} />}
+          description="Blood, pathology, and diagnostic tests"
         />
         <StatCard
           label="Consent Gate"
           value="Enforced"
           tone="success"
           icon={<ShieldCheck size={20} />}
-          description="Time-bounded purpose scoping active"
+          description="Doctor access requires verified consent"
         />
       </XStack>
 
-      {/* Main Grid: Recent Accesses + Sovereign Rights */}
+      {/* Main Grid: Clinical Highlights + Transparency */}
       <XStack
         flexWrap="wrap"
         gap="$5"
         flexDirection="column"
         $lg={{ flexDirection: 'row' }}
       >
-        {/* Left Column: Recent Access Transparency */}
+        {/* Left Column: Personal Health Highlights */}
+        <Surface
+          flex={1}
+          minWidth={320}
+          padding="$5"
+          borderRadius={16}
+          elevation="$1"
+        >
+          <YStack gap="$4">
+            <XStack justifyContent="space-between" alignItems="center">
+              <YStack gap="$1">
+                <Text fontSize={18} fontWeight="800" color="$nexaText">
+                  Personal Clinical Highlights
+                </Text>
+                <Paragraph color="$nexaSecondary" fontSize={13}>
+                  Active medications, recorded allergies, and recent vital readings
+                </Paragraph>
+              </YStack>
+              <ActionButton
+                onPress={() => router.push('/patient/records')}
+              >
+                <XStack alignItems="center" gap="$1.5">
+                  <Text color="$nexaText" fontSize={13} fontWeight="600">All Records</Text>
+                  <ArrowRight size={14} color="$nexaText" />
+                </XStack>
+              </ActionButton>
+            </XStack>
+
+            {/* Active Medications Preview */}
+            <YStack gap="$2.5">
+              <Text fontSize={14} fontWeight="700" color="$nexaText">
+                💊 Active Medications
+              </Text>
+              {healthSummary?.active_medications && healthSummary.active_medications.length > 0 ? (
+                healthSummary.active_medications.slice(0, 3).map((m, idx) => (
+                  <Surface
+                    key={idx}
+                    padding="$3"
+                    borderRadius={10}
+                    borderWidth={1}
+                    borderColor="$nexaBorder"
+                    backgroundColor="$nexaSurface"
+                  >
+                    <XStack justifyContent="space-between" alignItems="center">
+                      <YStack gap="$0.5">
+                        <Text fontSize={14} fontWeight="700" color="$nexaText">
+                          {m.medication_name}
+                        </Text>
+                        <Paragraph fontSize={12} color="$nexaSecondary">
+                          {m.dosage} • {m.frequency}
+                        </Paragraph>
+                      </YStack>
+                      <StatusBadge tone="neutral">{m.source === 'manual' ? 'Prescribed' : 'Extracted'}</StatusBadge>
+                    </XStack>
+                  </Surface>
+                ))
+              ) : (
+                <Paragraph fontSize={13} color="$nexaSecondary">
+                  No active medications recorded on file.
+                </Paragraph>
+              )}
+            </YStack>
+
+            {/* Allergies Highlight */}
+            <YStack gap="$2.5">
+              <Text fontSize={14} fontWeight="700" color="$nexaText">
+                ⚠️ Allergies & Sensitivities
+              </Text>
+              {healthSummary?.allergy_highlights && healthSummary.allergy_highlights.length > 0 ? (
+                healthSummary.allergy_highlights.slice(0, 3).map((a, idx) => (
+                  <Surface
+                    key={idx}
+                    padding="$3"
+                    borderRadius={10}
+                    borderWidth={1}
+                    borderColor="$nexaBorder"
+                    backgroundColor="$nexaSurface"
+                  >
+                    <XStack justifyContent="space-between" alignItems="center">
+                      <YStack gap="$0.5">
+                        <Text fontSize={14} fontWeight="700" color="$nexaText">
+                          {a.allergen}
+                        </Text>
+                        <Paragraph fontSize={12} color="$nexaSecondary">
+                          Severity: {a.severity}
+                        </Paragraph>
+                      </YStack>
+                      <StatusBadge tone="danger">{a.risk_level}</StatusBadge>
+                    </XStack>
+                  </Surface>
+                ))
+              ) : (
+                <Paragraph fontSize={13} color="$nexaSecondary">
+                  No recorded allergies on file.
+                </Paragraph>
+              )}
+            </YStack>
+
+            <ActionButton
+              intent="primary"
+              onPress={() => router.push('/patient/timeline')}
+            >
+              <XStack alignItems="center" justifyContent="center" gap="$2">
+                <Activity size={16} color="white" />
+                <Text color="white" fontWeight="700" fontSize={14}>
+                  Open Full Health Timeline
+                </Text>
+              </XStack>
+            </ActionButton>
+          </YStack>
+        </Surface>
+
+        {/* Right Column: Recent Access Ledger & Transparency */}
         <Surface
           flex={1}
           minWidth={320}
@@ -263,110 +500,25 @@ export default function PatientDashboardPage() {
               </Surface>
             )}
 
-            <ActionButton
-              intent="primary"
-              onPress={() => router.push('/patient/timeline')}
+            <Surface
+              padding="$3.5"
+              borderRadius={10}
+              backgroundColor="$nexaSurface"
+              borderWidth={1}
+              borderColor="$nexaBorder"
             >
-              <XStack alignItems="center" justifyContent="center" gap="$2">
-                <Activity size={16} color="white" />
-                <Text color="white" fontWeight="700" fontSize={14}>
-                  Open Complete Health Timeline
-                </Text>
+              <XStack gap="$3" alignItems="flex-start">
+                <Lock size={20} color="$nexaAccent" />
+                <YStack gap="$1" flex={1}>
+                  <Text fontSize={14} fontWeight="700" color="$nexaText">
+                    Zero-Trust Access Model
+                  </Text>
+                  <Paragraph color="$nexaSecondary" fontSize={12}>
+                    Healthcare providers cannot browse your records without active consent tokens or verified break-glass justification.
+                  </Paragraph>
+                </YStack>
               </XStack>
-            </ActionButton>
-          </YStack>
-        </Surface>
-
-        {/* Right Column: Privacy & Access Controls */}
-        <Surface
-          flex={1}
-          minWidth={320}
-          padding="$5"
-          borderRadius={16}
-          elevation="$1"
-        >
-          <YStack gap="$4">
-            <YStack gap="$1">
-              <Text fontSize={18} fontWeight="800" color="$nexaText">
-                Privacy & Access Controls
-              </Text>
-              <Paragraph color="$nexaSecondary" fontSize={13}>
-                Core security and privacy protections enforced by Nexa Care
-              </Paragraph>
-            </YStack>
-
-            <YStack gap="$3">
-              <Surface
-                padding="$3"
-                borderRadius={10}
-                backgroundColor="$nexaSurface"
-                borderWidth={1}
-                borderColor="$nexaBorder"
-              >
-                <XStack gap="$3" alignItems="flex-start">
-                  <Shield size={20} color="$nexaAccent" />
-                  <YStack gap="$1" flex={1}>
-                    <Text fontSize={14} fontWeight="700" color="$nexaText">
-                      Access History Transparency
-                    </Text>
-                    <Paragraph color="$nexaSecondary" fontSize={12}>
-                      View audit entries for any healthcare provider who requested or accessed your health record.
-                    </Paragraph>
-                  </YStack>
-                </XStack>
-              </Surface>
-
-              <Surface
-                padding="$3"
-                borderRadius={10}
-                backgroundColor="$nexaSurface"
-                borderWidth={1}
-                borderColor="$nexaBorder"
-              >
-                <XStack gap="$3" alignItems="flex-start">
-                  <Lock size={20} color="$nexaAccent" />
-                  <YStack gap="$1" flex={1}>
-                    <Text fontSize={14} fontWeight="700" color="$nexaText">
-                      Memory-Only Capabilities
-                    </Text>
-                    <Paragraph color="$nexaSecondary" fontSize={12}>
-                      Doctor access tokens are time-bounded, held only in ephemeral memory, and never persist to long-term storage or URLs.
-                    </Paragraph>
-                  </YStack>
-                </XStack>
-              </Surface>
-
-              <Surface
-                padding="$3"
-                borderRadius={10}
-                backgroundColor="$nexaSurface"
-                borderWidth={1}
-                borderColor="$nexaBorder"
-              >
-                <XStack gap="$3" alignItems="flex-start">
-                  <User size={20} color="$nexaAccent" />
-                  <YStack gap="$1" flex={1}>
-                    <Text fontSize={14} fontWeight="700" color="$nexaText">
-                      Consent Revocation & Review
-                    </Text>
-                    <Paragraph color="$nexaSecondary" fontSize={12}>
-                      Every routine access requires your active approval. You can review all past and active permissions from your access history.
-                    </Paragraph>
-                  </YStack>
-                </XStack>
-              </Surface>
-            </YStack>
-
-            <ActionButton
-              onPress={() => router.push('/patient/profile')}
-            >
-              <XStack alignItems="center" justifyContent="center" gap="$2">
-                <User size={16} color="$nexaText" />
-                <Text color="$nexaText" fontWeight="700" fontSize={14}>
-                  Manage Profile
-                </Text>
-              </XStack>
-            </ActionButton>
+            </Surface>
           </YStack>
         </Surface>
       </XStack>

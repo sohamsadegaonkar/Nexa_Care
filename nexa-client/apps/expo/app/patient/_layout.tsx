@@ -68,6 +68,18 @@ export default function PatientLayout() {
         options={{ headerTitle: 'Health Timeline' }}
       />
       <Stack.Screen
+        name="records"
+        options={{ headerTitle: 'Medical Records' }}
+      />
+      <Stack.Screen
+        name="prescriptions"
+        options={{ headerTitle: 'Prescriptions' }}
+      />
+      <Stack.Screen
+        name="reports"
+        options={{ headerTitle: 'Diagnostic Reports' }}
+      />
+      <Stack.Screen
         name="discoverability"
         options={{ headerTitle: 'Phone Discoverability' }}
       />
