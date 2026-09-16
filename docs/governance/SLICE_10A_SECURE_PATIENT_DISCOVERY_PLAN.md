@@ -1,81 +1,20 @@
 # Slice 10A — Secure Patient Discovery V2
 
-Status: **OPEN — BASELINE / SECURITY CONTRACT RECONCILIATION**
+Status: **IMPLEMENTATION COMPLETE — EXACT-HEAD RELEASE QUALIFICATION REQUIRED**
 
-Baseline `main`: `d138a37956bc7bebca8833ba2cf1fad64cb67593`
-
+PR: `#46`  
 Branch: `slice-10a-secure-patient-discovery`
 
-## 1. Why this is the next slice
+The exact release SHA and CI/deployment evidence are recorded in PR #46 after the
+head is frozen. This document deliberately does not embed a moving branch SHA,
+so recording qualification evidence cannot itself create a new unqualified
+head.
 
-The repository product order in `docs/context/NEXA_CARE_CODEX_CONTEXT.md` places **real secure patient discovery/search** immediately after registration and before the bounded clinical treatment/access-session work.
+## 1. Slice objective
 
-Slice 9A backend and UI are closed. The remaining TypeScript `baseUrl` migration is separately recorded in `docs/governance/TYPESCRIPT_UPGRADE_DEBT.md` and is intentionally not part of this slice.
-
-This slice therefore moves product/backend work forward rather than continuing registration-recovery polish.
-
-## 2. Current repository baseline
-
-Patient discovery is **PARTIAL, not missing**.
-
-Already implemented and preserved:
-
-- `POST /api/v2/patient-discovery` for exact `NEXA_PUBLIC_ID` resolution;
-- NFC resolution through the same opaque discovery-capability boundary;
-- provider authorization through server-owned `ClinicalCapability.PATIENT_DISCOVER`;
-- provider/hospital/session-bound Redis discovery handles;
-- `PENDING_AUDIT -> ACTIVE` activation only after mandatory success audit;
-- short-lived, single-use atomic handle consumption;
-- canonical patient resolution through redirect/tombstone handling;
-- erasure and deleted-patient fail-closed behavior;
-- bounded provider/hospital/type rate limiting;
-- no patient UUID or clinical data returned before consent;
-- doctor UI support for Nexa public ID and NFC.
-
-Current discovery response remains intentionally minimal:
-
-```text
-discovery_handle
-expires_at
-```
-
-A discovery handle is not consent, clinical access, patient authentication, device authority, or a patient identifier for display.
-
-## 3. Product target
-
-The repository product context targets secure discovery using appropriate identifiers such as:
-
-- Nexa public patient ID;
-- phone number;
-- name plus another approved identifier;
-- NFC;
-- QR;
-- later, hospital MRN / institution-scoped identifiers.
-
-This target does **not** authorize a broad patient directory, fuzzy patient finder, ranked candidates, or client-selected patient UUIDs.
-
-## 4. Existing security contract that must be deliberately evolved
-
-`docs/governance/SECURITY_NON_REGRESSION.md` currently records the Phase 1B.2 invariant that phone, name, QR, MRN, external-identifier, fuzzy, and broad-directory discovery are not authorized.
-
-That prohibition remains authoritative until this slice explicitly replaces it with a reviewed, narrower V2 contract and tests.
-
-Therefore this slice MUST NOT simply add new values to `identifier_type` and query the database.
-
-Before enabling any new identifier mode, implementation must define and qualify:
-
-1. the authoritative source of that identifier;
-2. normalization rules;
-3. lookup/index privacy properties;
-4. collision and ambiguity behavior;
-5. enumeration resistance and rate limits;
-6. canonical merge/redirect behavior;
-7. erasure/deletion behavior;
-8. minimum pre-consent disclosure;
-9. audit vocabulary;
-10. exact client behavior.
-
-## 5. Non-negotiable authority boundaries
+Slice 10A replaces the earlier public-ID/NFC-only discovery boundary with a
+narrow, security-qualified exact-discovery model while preserving the core
+trust separation:
 
 ```text
 identifier match
@@ -94,269 +33,254 @@ provider login
 != provider clinical eligibility
 != PATIENT_DISCOVER capability
 != patient consent
-!= clinical access session
+!= record-access authority
 ```
 
-Discovery remains a provider-initiated, pre-consent identification step only.
+## 2. Qualified discovery transports
 
-The backend remains authoritative for provider identity, hospital, session binding, clinical capability, canonical patient resolution, and the patient bound into the discovery handle.
+The release candidate supports only:
 
-The client must never submit or select a patient UUID for routine discovery.
+- `NEXA_PUBLIC_ID` — exact opaque Nexa public ID;
+- `PHONE` — exact patient-opted-in verified phone;
+- `QR_PUBLIC_ID` — strict versioned QR transport containing only the opaque
+  Nexa public ID; and
+- NFC card resolution through the existing NFC endpoint.
 
-## 6. Privacy and enumeration requirements
+The following remain prohibited:
 
-The V2 discovery surface must preserve these rules:
+- name-only search;
+- prefix or fuzzy search;
+- ranked candidates or result lists;
+- broad patient-directory search;
+- caller-selected patient UUIDs;
+- MRN search;
+- generic external-ID search.
 
-- no broad patient-directory endpoint;
-- no prefix search;
-- no fuzzy name matching;
-- no ranked candidate list;
-- no search suggestions derived from patient data;
-- no result counts that disclose directory size;
-- no clinical history or document metadata before consent;
-- no internal UUID in a success response;
-- no use of patient/source-document evidence to search for another patient;
-- no client-side canonicalization of merged identities.
+No qualified mode returns patient UUID, phone, public-ID echo, demographic
+summary, clinical data, redirect chain, candidate count or candidate list before
+consent.
 
-Name-based discovery, if introduced, must require another approved identifier and use a conjunctive server-side match. Name alone is not sufficient.
+## 3. Common capability boundary
 
-Low-entropy identifiers such as phone numbers require explicit anti-enumeration analysis even for authenticated providers. Existing rate limiting and audit are necessary but must not be assumed sufficient without adversarial qualification.
-
-## 7. Searchable-PII data boundary
-
-Current core `Patient` records contain an opaque `public_patient_id` but no patient name or phone field.
-
-The legacy `nexa_vault` shard contains encrypted `patient_name`, `phone`, and `aadhaar_abha_id` ciphertext. Plaintext PII is prohibited there, and the current schema does not provide a patient search blind index.
-
-Current first-time registration intentionally creates only the account graph required for phone-OTP authentication and does not persist a searchable patient profile.
-
-Consequently, phone/name discovery cannot be implemented safely by:
-
-- decrypting and scanning the entire vault;
-- storing plaintext search columns;
-- indexing raw phone/name values;
-- querying Supabase or another identity provider as an implicit patient directory;
-- reusing an unrelated HMAC secret;
-- treating the external authentication subject as a phone number without an explicit contract.
-
-## 8. Required searchable-identifier design
-
-If Slice 10A enables phone or other PII-based exact lookup, introduce an explicit server-owned searchable-identifier model or equivalent service boundary.
-
-At minimum it must provide:
-
-- closed identifier-type vocabulary;
-- canonical normalized value produced only by server code;
-- a keyed one-way exact-match index using an independent, domain-separated secret;
-- versioned index/key metadata to permit controlled rotation;
-- patient binding through durable relational authority;
-- unique/ambiguity rules appropriate to each identifier type;
-- no raw normalized PII in logs, audit metadata, URLs, Redis keys, or generic observability;
-- migration/backfill only from an authoritative source whose provenance is known;
-- fail-closed behavior when index authority or required secret is unavailable.
-
-Do not use an unkeyed hash for low-entropy identifiers such as phone numbers.
-
-A keyed exact-match index is not by itself permission to expose whether arbitrary people have Nexa accounts. Route-level authorization, throttling, auditing and response design still apply.
-
-## 9. Identifier-mode requirements
-
-### 9.1 Nexa public patient ID
-
-Keep the existing opaque `NC-...` exact-match path as the baseline implementation.
-
-Preserve:
-
-- strict normalization/format validation;
-- canonical redirect resolution;
-- erasure/deletion checks;
-- opaque handle response only.
-
-### 9.2 NFC
-
-Keep the existing NFC resolution boundary and reuse the same discovery-handle semantics.
-
-NFC resolution must not expose patient UUID or clinical data.
-
-### 9.3 Phone
-
-Phone discovery is not enabled merely because patient login uses phone OTP.
-
-Before enablement, define:
-
-- authoritative verified phone source;
-- E.164/server normalization;
-- searchable-index creation/update lifecycle;
-- duplicate/merged-account semantics;
-- change/reassignment handling;
-- enumeration controls.
-
-Do not bind a patient by a client-supplied phone-to-UUID mapping.
-
-### 9.4 Name + another approved identifier
-
-Name-only search remains prohibited.
-
-Any supported combination must:
-
-- be conjunctive;
-- use exact or deliberately bounded normalization;
-- never return a candidate list;
-- fail closed on ambiguity;
-- reveal no extra pre-consent demographics beyond an explicitly approved minimum-disclosure contract.
-
-### 9.5 QR
-
-A QR flow should carry an opaque server-issued discovery input or public discovery identifier. It must not encode a raw patient UUID, clinical capability, consent token, access token, device credential, or sensitive profile payload.
-
-### 9.6 Hospital MRN
-
-MRN/institution-scoped discovery is deferred until a hospital-scoped identifier authority and lifecycle are explicitly modeled. Any future MRN lookup must be scoped to the current authorized organization/hospital.
-
-## 10. Discovery handle contract
-
-The current handle model is retained unless qualification demonstrates a reason to change it:
+Every successful provider-facing mode converges on the existing discovery
+capability:
 
 - cryptographically random raw handle;
-- only a SHA-256-derived Redis key is used for lookup;
+- Redis lookup by derived handle key, not patient identifier;
 - short TTL;
-- staged `PENDING_AUDIT` state;
-- activation only after success audit;
+- `PENDING_AUDIT` before success audit;
+- activation only after mandatory success audit;
+- activation never extends TTL;
 - provider-bound;
 - hospital-bound;
-- provider-session-bound;
+- exact provider-session-bound;
 - canonical-patient-bound;
-- single-use atomic consume;
-- no TTL extension during activation;
-- invalid/expired/replayed/binding-mismatched handles fail closed.
+- atomic single-use consume;
+- invalid, expired, replayed or binding-mismatched handles fail closed.
 
-New identifier modes must converge on this same capability boundary rather than creating parallel consent shortcuts.
+A discovery handle is not consent or clinical access. Routine consent consumes
+the handle and applies its own authority checks.
 
-## 11. Audit and rate limiting
+## 4. Exact public ID and QR
 
-Every supported discovery mode must retain stable, non-PII audit evidence for at least:
+Public IDs remain high-entropy opaque identifiers generated by Nexa and resolved
+through canonical merge, deletion and erasure checks.
 
-- attempted;
-- succeeded;
-- no match / safely equivalent disposition;
-- rate limited;
-- unavailable;
-- ambiguous/integrity blocked if that state is distinguishable by server policy.
+QR is only a transport for that public ID. Accepted format is:
 
-Audit metadata must contain safe type/policy identifiers, not raw phone, name, QR content, MRN, public ID, or patient UUID unless an existing audit policy explicitly authorizes a durable opaque target.
+```text
+nexa://patient-discovery/v1/NC-<opaque-id>
+```
 
-Rate limits must remain keyed by server-resolved provider/hospital context and identifier type. Low-entropy modes may require stricter budgets or additional abuse controls than public-ID/NFC resolution.
+Raw UUIDs, consent/access tokens, device credentials, arbitrary URLs, query
+strings/fragments and profile payloads are rejected. Malformed QR/public-ID input
+is surfaced as generic discovery no-match rather than parser detail.
 
-## 12. Error/response design
+## 5. Patient-controlled phone discoverability
 
-The route must use stable error codes and must not return internal database state.
+Phone discovery is **off by default**.
 
-The implementation must explicitly review whether new low-entropy identifier modes can safely distinguish `NO_MATCH` from other outcomes to the provider client. A broader identifier mode must not accidentally become an efficient account-enumeration oracle.
+Patient controls:
 
-Success continues to return only the opaque discovery handle and expiry unless a separately reviewed minimum-necessary pre-consent identity summary is introduced. Such a summary is not authorized by this plan by default.
+- `GET /api/v2/patient/me/discoverability/phone`
+- `POST /api/v2/patient/me/discoverability/phone/enable`
+- `DELETE /api/v2/patient/me/discoverability/phone`
 
-## 13. Tests required before merge
+Enable requires:
 
-### Pure/unit
+1. a live authoritative patient session;
+2. a fresh SMS OTP verified by Supabase;
+3. the authoritative returned phone to normalize exactly to the submitted
+   phone; and
+4. the authoritative returned Supabase subject to equal the current patient
+   session subject.
 
-- normalization for every enabled identifier type;
-- malformed/oversized input rejection;
-- closed enum enforcement;
-- no raw PII in audit metadata/logging;
-- deterministic keyed-index behavior without revealing raw value;
-- key-domain separation and missing-secret fail closed;
-- QR payload/parser boundary if QR is included.
+The client cannot submit or select a patient UUID for the binding.
 
-### PostgreSQL
+Disable revokes only phone-search authority. It does not disable patient login.
 
-- exact searchable-identifier uniqueness/ambiguity behavior;
-- canonical merged patient resolution;
-- deleted patient denial;
-- erased patient denial;
-- stale/reassigned identifier lifecycle;
-- migration forward path and single Alembic head if schema changes;
-- no plaintext PII persisted in search index.
+## 6. Privacy-preserving phone index
 
-### Redis / concurrency
+`patient_search_identifiers` stores no raw or normalized phone. It stores only:
 
-- staged handle cannot be consumed before audit activation;
-- activation does not extend TTL;
-- handle is one-use under concurrency;
-- wrong provider/hospital/session cannot consume it;
-- expired/revoked handle fails closed;
-- discovery success-audit failure cannot leak a usable handle;
-- rate limit is atomic.
+- patient/auth-identity relational provenance;
+- closed identifier type;
+- normalization version;
+- dedicated HMAC key version;
+- domain-separated HMAC-SHA256 exact-match fingerprint;
+- verification timestamp;
+- lifecycle revocation state/reason.
 
-### Adversarial privacy
+The discovery-index keyring is independent from OTP, provider registration,
+contact assurance and other application secrets. New writes use the configured
+active key version. Active rows on unconfigured/retired key versions cause
+lookup/synchronization to fail closed until they are authoritatively
+reverified/reindexed.
 
-- broad/fuzzy/name-only lookup rejected;
-- candidate enumeration/listing unavailable;
-- public ID/phone probes cannot leak internal UUIDs;
-- client-supplied patient UUID ignored/rejected;
-- ambiguity does not choose a patient arbitrarily;
-- cross-hospital scoped identifier cannot resolve outside its authority;
-- logs/errors contain no raw search PII;
-- discovery cannot mint consent/access authority.
+An unkeyed hash is never sufficient for low-entropy phone identifiers.
+
+## 7. Collision, merge, erasure and lifecycle behavior
+
+A verified phone never silently moves between patients. Cross-patient collision
+or ambiguity causes implicated active search bindings to be quarantined/revoked;
+no winner is selected.
+
+Search authority is invalidated when its source identity is revoked or rebound,
+when merge reconciliation moves authority, or when erasure/lifecycle state makes
+continued discovery unsafe. A matched phone still passes canonical patient,
+deletion and erasure checks before a discovery handle can be staged.
+
+## 8. High-risk provider gate for PHONE
+
+`PHONE` requires all ordinary `PATIENT_DISCOVER` provider trust plus:
+
+- exact live provider session binding;
+- live provider session re-resolution;
+- provider identity equality with the current server context; and
+- recent provider MFA within the qualified freshness window.
+
+A missing/stale MFA assertion cannot be repaired by client role strings,
+patient consent, or possession of an old provider session.
+
+## 9. Anti-enumeration controls
+
+Rate limiting is server-owned and identifier-independent. Redis keys contain
+only provider, hospital, closed identifier type and window; searched values are
+never included.
+
+Qualified budgets:
+
+| Mode | Per minute | Per hour |
+| --- | ---: | ---: |
+| `NEXA_PUBLIC_ID` | 12 | 120 |
+| `QR_PUBLIC_ID` | 12 | 120 |
+| `PHONE` | 4 | 30 |
+| aggregate all modes | 20 | 180 |
+
+Identifier-type hopping therefore cannot multiply the total provider/hospital
+budget without limit.
+
+For PHONE, absent, opted-out, stale and ordinary no-match states all expose the
+same `DISCOVERY_NO_MATCH` response. Integrity ambiguity becomes generic
+unavailable rather than a candidate list or conflict detail.
+
+## 10. Audit vocabulary
+
+Slice 10A adds/uses value-free audit events including:
+
+- `PATIENT_DISCOVERY_ATTEMPTED`
+- `PATIENT_DISCOVERY_SUCCEEDED`
+- `PATIENT_DISCOVERY_NO_MATCH`
+- `PATIENT_DISCOVERY_RATE_LIMITED`
+- `PATIENT_DISCOVERY_UNAVAILABLE`
+- `PATIENT_DISCOVERY_AUTHORITY_REJECTED`
+- `PATIENT_SEARCH_IDENTIFIER_BOUND`
+- `PATIENT_SEARCH_IDENTIFIER_SUPERSEDED`
+- `PATIENT_SEARCH_IDENTIFIER_REVOKED`
+- `PATIENT_PHONE_DISCOVERABILITY_DISABLED`
+
+Discovery audit metadata may identify the closed mode and server-resolved
+provider/hospital context but must not contain searched phone/public-ID/QR
+content.
+
+## 11. Frontend contract
+
+Provider clients expose only qualified discovery modes. The resulting discovery
+handle remains memory-only and must not enter URLs, navigation query strings,
+local/session storage or analytics.
+
+Patient web and native clients expose Phone Discoverability as a visible privacy
+control. Phone and OTP values remain transient form state and are cleared after
+submission/cancellation; discoverability status returns only a boolean.
+
+## 12. Security-contract precedence
+
+The earlier Phase 1B.2 statement in `SECURITY_NON_REGRESSION.md` that phone and
+QR discovery were not authorized described the pre-Slice-10A implementation.
+For discovery scope only, this Slice 10A contract and
+`SLICE_10A_DISCOVERY_SECURITY_NON_REGRESSION.md` supersede that historical
+Phase 1B.2 mode list once PR #46 is merged.
+
+They do **not** relax the original protections against raw patient UUIDs,
+broad/fuzzy directories, pre-consent disclosure, unaudited handles or
+client-derived patient authority.
+
+## 13. Release gates
+
+The PR head is frozen only after implementation and documentation are complete.
+The exact same SHA must then pass all of the following before the PR may leave
+draft state or merge:
+
+### Backend
+
+- Backend CI Partition A green;
+- Backend CI Partition A zero-skip assertion green;
+- Backend CI Partition B PostgreSQL qualification green;
+- Backend CI Partition B zero-skip assertion green;
+- Backend CI Partition C PostgreSQL + Redis qualification green;
+- Backend CI Partition C zero-skip assertion green;
+- migration graph has one head: `20260914_patient_search_identifiers`.
 
 ### Frontend
 
-- only enabled identifier modes render;
-- discovery handle remains memory-only;
-- capability never enters URL/navigation query/local storage/logs;
-- no patient clinical data rendered pre-consent;
-- expired discovery selection forces fresh discovery;
-- stable errors do not expose backend internals.
+- immutable dependency install;
+- complete frontend test suite;
+- Next production build;
+- workspace build;
+- Android native generation and compile;
+- iOS native generation, CocoaPods and compile.
 
-## 14. Implementation sequence
+### Deployment
 
-1. **10A.1 — baseline/security reconciliation**
-   - inventory current discovery, NFC, consent-consumption and frontend flows;
-   - update security contract deliberately before broadening identifier modes;
-   - decide which V2 identifier modes are in scope for this slice.
+- Vercel deployment for the exact frozen head green.
 
-2. **10A.2 — identifier authority / searchable-index primitive**
-   - only if a new PII-based identifier is approved;
-   - add migration/model/service/config with independent secret and rotation/version semantics;
-   - define authoritative profile/update source.
+No check may be waived, disabled or interpreted from an older SHA.
 
-3. **10A.3 — resolver expansion**
-   - add exact server normalization and resolver(s);
-   - retain canonical/erasure/tombstone checks;
-   - converge on existing discovery handle issuance.
+## 14. Merge and closure rule
 
-4. **10A.4 — API + audit + abuse controls**
-   - closed request vocabulary;
-   - stable errors;
-   - per-type throttling;
-   - non-sensitive audit.
+When and only when every exact-head gate above is green:
 
-5. **10A.5 — frontend integration**
-   - expose only qualified modes;
-   - preserve memory-only discovery capability and consent handoff.
+1. update PR #46 with the frozen SHA and evidence;
+2. mark PR #46 ready;
+3. merge with exact-head protection;
+4. resolve the new `main` SHA;
+5. verify post-merge `main` CI/deployment status; and
+6. only then record Slice 10A as closed.
 
-6. **10A.6 — qualification**
-   - focused pure/PostgreSQL/Redis/adversarial tests;
-   - full Backend CI Partitions A/B/C;
-   - full Frontend CI including Next, workspace, Android and iOS;
-   - Vercel exact-head deployment if frontend changes.
+If any gate fails, PR #46 remains draft, the failure is fixed on the branch, a
+new head is frozen, and the complete exact-head gate is repeated.
 
-## 15. Definition of done
+## 15. Explicit nonclaims
 
-Slice 10A is complete only when:
+Slice 10A does not claim:
 
-- enabled identifier modes have explicit authoritative data sources;
-- no broad/fuzzy patient directory exists;
-- no plaintext searchable PII is introduced;
-- canonical merge/erasure/deletion semantics remain fail closed;
-- discovery success returns an opaque single-use bound handle, not patient authority;
-- enumeration/privacy risks are explicitly tested;
-- security non-regression documentation matches implementation;
-- exact-head Backend and Frontend CI are green;
-- any migration has one valid Alembic head;
-- PR is merged and post-merge `main` is verified.
+- broad patient search or identity ranking;
+- MRN/external-directory authority;
+- production deployment certification;
+- physical handset StrongBox/Secure Enclave qualification;
+- external HPR/HFR machine-contract qualification;
+- partner FHIR certification; or
+- that Nexa Care is "fully secure".
 
-## 16. Explicitly out of scope
-
-This slice does not implement the next bounded clinical access-session model. Existing consent flows may consume discovery handles as they do today, but Slice 10A does not broaden access authority.
-
-After secure discovery V2 is closed, the next roadmap step is the bounded clinical treatment/access-session slice.
+After Slice 10A closes, the next roadmap step is the bounded clinical
+treatment/access-session slice.
