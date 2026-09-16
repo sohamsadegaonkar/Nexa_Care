@@ -1,6 +1,6 @@
 """Durable lifecycle record for bounded provider clinical-access sessions.
 
-The raw bearer capability is never persisted.  PostgreSQL stores only its
+The raw bearer capability is never persisted. PostgreSQL stores only its
 SHA-256 digest together with the server-owned authority bindings required to
 explain, revoke, and qualify a clinical access session.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Index, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,25 +52,34 @@ class ClinicalAccessSessionRecord(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revocation_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default="now()"
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
         CheckConstraint(
-            "char_length(token_hash) = 64",
-            name="ck_clinical_access_session_token_hash_length",
+            "token_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_clinical_access_session_token_hash",
         ),
         CheckConstraint(
-            "char_length(provider_session_binding_hash) = 64",
-            name="ck_clinical_access_session_binding_hash_length",
+            "provider_session_binding_hash ~ '^[0-9a-f]{64}$'",
+            name="ck_clinical_access_session_binding_hash",
         ),
         CheckConstraint(
             "expires_at > issued_at",
             name="ck_clinical_access_session_positive_lifetime",
         ),
         CheckConstraint(
-            "jsonb_typeof(allowed_operations) = 'array' AND jsonb_array_length(allowed_operations) > 0",
-            name="ck_clinical_access_session_operations_array",
+            "scope IN ('clinical','full')",
+            name="ck_clinical_access_session_scope",
+        ),
+        CheckConstraint(
+            "policy_version = 'clinical-access-v1'",
+            name="ck_clinical_access_session_policy_v1",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(allowed_operations) = 'array' "
+            "AND allowed_operations = '[\"READ_CLINICAL_HISTORY\"]'::jsonb",
+            name="ck_clinical_access_session_ops_v1",
         ),
         CheckConstraint(
             "status IN ('ACTIVE','REVOKED')",
