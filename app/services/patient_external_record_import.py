@@ -288,10 +288,11 @@ async def stage_patient_external_record(
             audit_context=current_audit_context(AuditDomain.PIPELINE),
             idempotency_key=f"patient-external-record-upload:{patient_id}:{request_id}",
             actor_id=f"patient:{patient_id}",
-            event_type="PATIENT_EXTERNAL_RECORD_UPLOAD_ACCEPTED",
+            event_type="DOCUMENT_UPLOADED",
             target_id=str(import_id),
             patient_id=patient_id,
             metadata={
+                "authority": "patient_self",
                 "category": category,
                 "mime_type": mime_type,
                 "size": stored.size,
@@ -440,10 +441,13 @@ async def read_patient_external_record_source(
             audit_context=current_audit_context(AuditDomain.PIPELINE),
             idempotency_key=f"patient-external-record-source-view:{import_id}:{uuid.uuid4()}",
             actor_id=f"patient:{patient_id}",
-            event_type="PATIENT_EXTERNAL_RECORD_SOURCE_VIEWED",
+            event_type="DOCUMENT_SOURCE_VIEWED",
             target_id=str(import_id),
             patient_id=patient_id,
-            metadata={"mime_type": document.content_type},
+            metadata={
+                "authority": "patient_self",
+                "mime_type": document.content_type,
+            },
         )
         await db.commit()
     except SQLAlchemyError as exc:

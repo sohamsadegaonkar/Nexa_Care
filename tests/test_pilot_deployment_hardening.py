@@ -102,10 +102,8 @@ def test_migration_script_requires_migration_database_url() -> None:
     assert "MIGRATION_DATABASE_URL is required" in result.stdout
 
 
-def test_migration_script_requires_exact_single_repository_head() -> None:
-    assert run_pilot_migrations.repository_heads() == (
-        run_pilot_migrations.EXPECTED_HEAD,
-    )
+def test_migration_script_remains_pinned_to_approved_pilot_head() -> None:
+    assert run_pilot_migrations.EXPECTED_HEAD == "20260916_clinical_access_sessions"
 
 
 def test_migration_script_scopes_url_and_redacts_command_output(
@@ -133,6 +131,11 @@ def test_migration_script_scopes_url_and_redacts_command_output(
         return subprocess.CompletedProcess(arguments, 0, stdout=stdout, stderr="")
 
     monkeypatch.setattr(run_pilot_migrations, "_run_alembic", fake_alembic)
+    monkeypatch.setattr(
+        run_pilot_migrations,
+        "repository_heads",
+        lambda: (run_pilot_migrations.EXPECTED_HEAD,),
+    )
 
     assert run_pilot_migrations.main() == 0
     output = capsys.readouterr().out

@@ -50,20 +50,26 @@ class DocumentStorage(ABC):
         self, storage_ref: str, *, tenant_id: str, patient_id: str
     ) -> None: ...
 
-    @abstractmethod
     async def put_patient_document(
         self, data: bytes, *, patient_id: str, mime_type: str
-    ) -> StoredDocument: ...
+    ) -> StoredDocument:
+        raise DocumentStorageError(
+            "Patient-self document storage is unsupported by this adapter"
+        )
 
-    @abstractmethod
     async def get_patient_document_bytes(
         self, storage_ref: str, *, patient_id: str
-    ) -> bytes: ...
+    ) -> bytes:
+        raise DocumentStorageError(
+            "Patient-self document storage is unsupported by this adapter"
+        )
 
-    @abstractmethod
     async def delete_patient_document(
         self, storage_ref: str, *, patient_id: str
-    ) -> None: ...
+    ) -> None:
+        raise DocumentStorageError(
+            "Patient-self document storage is unsupported by this adapter"
+        )
 
 
 def _key_bytes(value: str) -> bytes:

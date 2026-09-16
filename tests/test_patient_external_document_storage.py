@@ -6,6 +6,7 @@ import pytest
 
 from app.core.config import DocumentStorageConfig
 from app.services.document_storage import (
+    DocumentStorage,
     DocumentStorageError,
     LocalEncryptedDocumentStorage,
 )
@@ -99,4 +100,39 @@ async def test_provider_and_patient_namespaces_are_not_interchangeable(tmp_path)
     with pytest.raises(DocumentStorageError, match="ownership mismatch"):
         await storage.get_patient_document_bytes(
             provider_source.storage_ref, patient_id=patient_id
+        )
+
+
+class _ProviderOnlyStorage(DocumentStorage):
+    async def put_document(
+        self, data: bytes, *, tenant_id: str, patient_id: str, mime_type: str
+    ):
+        raise AssertionError("provider write path is not exercised")
+
+    async def get_document_bytes(
+        self, storage_ref: str, *, tenant_id: str, patient_id: str
+    ) -> bytes:
+        raise AssertionError("provider read path is not exercised")
+
+    async def delete_document(
+        self, storage_ref: str, *, tenant_id: str, patient_id: str
+    ) -> None:
+        raise AssertionError("provider delete path is not exercised")
+
+
+@pytest.mark.asyncio
+async def test_provider_only_storage_remains_instantiable_and_patient_calls_fail_closed() -> None:
+    storage = _ProviderOnlyStorage()
+
+    with pytest.raises(DocumentStorageError, match="Patient-self document storage is unsupported"):
+        await storage.put_patient_document(
+            b"source", patient_id="patient-1", mime_type="application/pdf"
+        )
+    with pytest.raises(DocumentStorageError, match="Patient-self document storage is unsupported"):
+        await storage.get_patient_document_bytes(
+            "provider://source", patient_id="patient-1"
+        )
+    with pytest.raises(DocumentStorageError, match="Patient-self document storage is unsupported"):
+        await storage.delete_patient_document(
+            "provider://source", patient_id="patient-1"
         )
