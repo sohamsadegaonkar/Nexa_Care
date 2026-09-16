@@ -2,19 +2,14 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `slice-11b-patient-longitudinal-records-ux`
-- **Current HEAD:** `a2c7da2`
-- **Base main SHA:** `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
-- **Current phase:** Phase 4 — Final Qualification & Release Ready
-- **Last completed step:** Full frontend & backend longitudinal patient UX completed and verified:
-  - Health Home summary (active medications, honest allergy disclaimer, vitals, labs)
-  - Interactive Timeline with keyset cursor pagination, category filters, and detail modal
-  - Categorized Records (Allergies, Medications, Vitals, Labs, Documents) with drilldown and pagination
-  - Prescriptions hub with treatment details and honest provenance
-  - Reports hub with safe diagnostic documents (no storage key exposure)
-  - Full cross-platform Expo + Next.js routes
-  - 194 Python tests passed; 276 App vitest passed; 6 Next vitest passed; Next production build passed (29/29 routes).
-- **Exact next task:** Code review, PR creation, and merge into main.
+- **Current branch:** `integration/slice-11b-on-10b4`
+- **Source Slice 11B head:** `dd4aba0`
+- **Integration base:** `342d25cb960a3c81539502e6d3eacde4e7121aee`
+- **Current Alembic head:** `20260917_treatment_session_operations`
+- **New Slice 11B migrations:** NONE
+- **Current phase:** Integration on Treatment Session V1 Main & PR Qualification
+- **Last completed step:** Reconciled Slice 11B onto Treatment Session V1 main with all 4 treatment-session routes and 7 patient-self endpoints preserved.
+- **Exact next task:** Full regression suite run, branch push, and PR creation.
 - **Current blockers:** None
 - **Tests to run next:** Full CI verification suite
 - **Protected files not to touch:**
@@ -24,15 +19,16 @@
   - `app/services/approved_access_capability.py`
   - `app/core/consent_gate.py`
   - `app/api/v2/consent_v3_routes.py`
-  - `alembic/versions/20260916_clinical_access_sessions.py` (and any new competing migrations)
+  - `app/api/v2/treatment_session_v1_routes.py`
+  - `alembic/versions/20260917_treatment_session_operations.py` (and any new competing migrations)
   - Patient external import workstream files (`slice-11a-patient-external-record-import`)
-- **Concurrent branches to re-check:** `origin/slice-11a-patient-external-record-import` (remote commit `aa218f2`)
+- **Concurrent branches to re-check:** `origin/slice-11a-patient-external-record-import`
 
 ---
 
 ## Scope
 
-This branch (`slice-11b-patient-longitudinal-records-ux`) exclusively owns:
+This branch (`integration/slice-11b-on-10b4`) integrates:
 1. **Patient Home:** Personal health summary with trustworthy highlights (active medications, allergies, recent vitals, recent labs/reports, quick access navigation).
 2. **Timeline:** Chronological healthcare history from all valid sources, bounded keyset pagination (`limit`, `cursor`, `next_cursor`), safe user-facing event titles/summaries, and deep link/navigation to underlying record details.
 3. **Categorized Records:** Structured record browsing by category (Allergies, Medications, Vitals, Laboratory, Reports / Documents) with counts, recent previews, list view, and record detail view.
@@ -47,22 +43,25 @@ This branch (`slice-11b-patient-longitudinal-records-ux`) exclusively owns:
 
 1. Doctor treatment workspace, clinical access session backend (`ClinicalAccessSession`), and provider consent gate redesign.
 2. Patient external record upload/OCR processing pipeline (owned by parallel workstream `slice-11a-patient-external-record-import`).
-3. Sibling/competing Alembic migrations: No database migrations will be introduced in this branch unless strictly necessary and after linear verification from head `20260916_clinical_access_sessions`.
+3. Sibling/competing Alembic migrations: No database migrations will be introduced in this branch. Current head `20260917_treatment_session_operations` remains unchanged.
 4. Fabricating missing clinical models: Missing models (e.g. separate Prescription order table, Encounter table, Diagnosis table) must NOT be faked with JSON blobs or synthetic mock data.
 
 ---
 
 ## Repository Baseline
 
-- **Origin/Main SHA:** `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
-- **Branch:** `slice-11b-patient-longitudinal-records-ux`
-- **Alembic Current Single Head:** `20260916_clinical_access_sessions`
+- **Integration Base SHA:** `342d25cb960a3c81539502e6d3eacde4e7121aee`
+- **Source Slice 11B Head:** `dd4aba0`
+- **Branch:** `integration/slice-11b-on-10b4`
+- **Alembic Current Single Head:** `20260917_treatment_session_operations`
+- **New Slice 11B Migrations:** NONE
 - **Active Remote Branches:**
-  - `origin/main` (`2a10384`)
-  - `origin/slice-11a-patient-external-record-import` (`aa218f2` - touched only `docs/governance/PATIENT_EXTERNAL_RECORD_IMPORT_HANDOFF.md`)
+  - `origin/main` (`342d25c`)
+  - `origin/slice-11b-patient-longitudinal-records-ux` (`dd4aba0` - frozen Task 2 artifact)
+  - `origin/slice-11a-patient-external-record-import`
 - **Open PRs:** None
 - **Concurrent Workstreams:**
-  - Workstream A: Bounded `ClinicalAccessSession` / treatment-access backend (merged to main at `fd34956` / `2a10384`).
+  - Workstream A: Treatment Session Operations (merged to main at `342d25c`).
   - Workstream B: Patient External-Record Import + Medical-History Onboarding (`slice-11a-patient-external-record-import`).
 
 ---
@@ -300,10 +299,10 @@ Clinical Safety Rules:
 | Dashboard tests | PASS | Personal health summary integrated with honest allergy messaging |
 | Next production build | PASS | Verified with `verify:next-build`: 29/29 routes prerendered/compiled |
 | Workspaces build | PASS | Verified with `yarn build` (@my/config, @my/ui) |
-| Android compile | PASS | Expo routes declared and registered in `_layout.tsx` |
-| iOS compile | PASS | Expo routes declared and registered in `_layout.tsx` |
-| Vercel exact head | PASS | Next production build succeeds cleanly |
-| Accessibility checks | PASS | Tamagui accessible controls, high contrast labels, semantic roles |
+| Android native compile | NOT QUALIFIED BY SLICE 11B LOCAL RUN | Expo routes declared and registered in `_layout.tsx`; native compilation to be validated by CI |
+| iOS native compile | NOT QUALIFIED BY SLICE 11B LOCAL RUN | Expo routes declared and registered in `_layout.tsx`; native compilation to be validated by CI |
+| Vercel exact-head deployment | NOT RUN | Local Next production build verified; cloud deployment to be validated by CI |
+| Accessibility checks | STATIC REVIEW | Tamagui accessible controls, high contrast labels, semantic roles verified via static code review |
 | Pagination checks | PASS | Keyset cursor pagination unit tested frontend & backend |
 | Empty/loading/error states | PASS | Verified across Home, Timeline, Records, Prescriptions, Reports |
 
@@ -318,7 +317,8 @@ Clinical Safety Rules:
 
 ## Merge / Rebase Safety
 
-- Base SHA: `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`
+- Integration Base SHA: `342d25cb960a3c81539502e6d3eacde4e7121aee`
+- Source Slice 11B Head: `dd4aba0`
 - Never rebase blindly with ours/theirs.
 - Regularly fetch origin and check diff against main and parallel branches.
 
