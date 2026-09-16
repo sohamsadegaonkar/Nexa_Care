@@ -17,7 +17,8 @@ SCHEDULER_REVISION = "20260906_verification_scheduler"
 DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
 REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
 PATIENT_SEARCH_REVISION = "20260914_patient_search_identifiers"
-HEAD_REVISION = "20260916_clinical_access_sessions"
+CLINICAL_ACCESS_REVISION = "20260916_clinical_access_sessions"
+HEAD_REVISION = "20260917_treatment_session_operations"
 
 
 def _source() -> str:
@@ -67,7 +68,8 @@ def test_provider_trust_migration_is_current_single_head() -> None:
         scripts.get_revision(PATIENT_SEARCH_REVISION).down_revision
         == REGISTRATION_RECOVERY_REVISION
     )
-    assert scripts.get_revision(HEAD_REVISION).down_revision == PATIENT_SEARCH_REVISION
+    assert scripts.get_revision(CLINICAL_ACCESS_REVISION).down_revision == PATIENT_SEARCH_REVISION
+    assert scripts.get_revision(HEAD_REVISION).down_revision == CLINICAL_ACCESS_REVISION
 
 
 def test_lifecycle_version_migration_is_documented_backfilled_and_forward_only() -> (

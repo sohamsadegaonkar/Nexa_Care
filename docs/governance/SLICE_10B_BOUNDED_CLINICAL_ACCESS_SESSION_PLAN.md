@@ -1,6 +1,6 @@
 # Slice 10B — Bounded Clinical Access Session
 
-Status: **10B.3 QUALIFIED — 10B.4 SIGNED PROTOCOL IMPLEMENTED / AUTHORITY MINT NOT STARTED**
+Status: **10B.3 QUALIFIED — 10B.4 SIGNED PROTOCOL QUALIFIED / CLAIM-MINT IMPLEMENTED, QUALIFICATION PENDING**
 
 Authoritative baseline before this slice started:
 `f68bad3d157e7dcdf7716a9bf0b74fc0b7991f25` on `main`.
@@ -192,9 +192,10 @@ GET  /api/v2/treatment-session/v1/challenge/{request_id}
 POST /api/v2/treatment-session/v1/approve-signed
 ```
 
-There is deliberately **no treatment-session claim/mint route yet**. A signed
-approval remains signed evidence/context only; it does not create a durable or
-live write-capable ClinicalAccessSession and cannot authorize a write endpoint.
+The one-time provider claim/mint boundary is now implemented at
+`POST /api/v2/treatment-session/v1/{request_id}/claim`. It creates matching live
+Redis and durable PostgreSQL authority from the exact signed operation set, but
+no clinical write endpoint consumes that authority yet.
 
 Before `CREATE_ENCOUNTER` or any `WRITE_*` operation can become executable, the
 next increment must design and qualify a one-time provider claim/mint that:
@@ -308,7 +309,6 @@ The current Slice 10B state does **not**:
 - modify physical-device assurance claims;
 - claim production deployment or that Nexa Care is fully secure.
 
-The next engineering increment is the separately qualified, one-time
-provider claim/mint boundary for approved `nexa-treatment-session-v1` evidence.
-That increment must not enable write endpoints until the durable operation-set
-policy and central clinical-session operation gate are also in place.
+The next engineering increment after claim/mint qualification is the central
+`require_clinical_session(operation)` gate and encounter binding. No write endpoint
+may consume treatment authority before that gate is separately qualified.

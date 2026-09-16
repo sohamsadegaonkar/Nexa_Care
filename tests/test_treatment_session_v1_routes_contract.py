@@ -55,12 +55,12 @@ def _patient_session(patient_id: str):
     return SimpleNamespace(patient_id=patient_id)
 
 
-def test_router_exposes_request_challenge_and_signed_decision_but_no_claim():
+def test_signed_lifecycle_router_does_not_duplicate_claim_router():
     paths = {route.path for route in routes.router.routes}
     assert "/api/v2/treatment-session/v1/request" in paths
     assert "/api/v2/treatment-session/v1/challenge/{request_id}" in paths
     assert "/api/v2/treatment-session/v1/approve-signed" in paths
-    assert not any("claim" in path for path in paths)
+    assert "/api/v2/treatment-session/v1/{request_id}/claim" not in paths
 
 
 def test_provider_session_binding_is_one_way_and_stable():

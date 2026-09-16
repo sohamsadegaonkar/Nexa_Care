@@ -150,12 +150,12 @@ EXPECTED_ROUTES = {
     ("GET", "/api/v2/consent/v3/challenge/{request_id}"),
     ("POST", "/api/v2/consent/v3/approve-signed"),
     ("POST", "/api/v2/consent/v3/{request_id}/claim-access"),
-    # Slice 10B.4: operation-bound patient-signed treatment-session protocol.
-    # These routes create/resolve signed authority context only; they do not
-    # mint a clinical session or authorize writes by themselves.
+    # Slice 10B.4: patient-signed treatment context plus one-time mint.
+    # The claim creates bounded authority but no write route consumes it yet.
     ("POST", "/api/v2/treatment-session/v1/request"),
     ("GET", "/api/v2/treatment-session/v1/challenge/{request_id}"),
     ("POST", "/api/v2/treatment-session/v1/approve-signed"),
+    ("POST", "/api/v2/treatment-session/v1/{request_id}/claim"),
     ("GET", "/api/v2/consent/status/{request_id}"),
     (
         "POST",
