@@ -80,8 +80,10 @@ def upgrade() -> None:
             name="ck_patient_external_record_import_completion_refs",
         ),
         sa.ForeignKeyConstraint(
-            ["patient_id"], ["patients.patient_uuid"],
-            name="fk_patient_external_record_import_patient", ondelete="RESTRICT"
+            ["patient_id"],
+            ["patients.patient_uuid"],
+            name="fk_patient_external_record_import_patient",
+            ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
             ["source_document_id", "patient_id"],
@@ -90,13 +92,20 @@ def upgrade() -> None:
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("request_id"),
         sa.UniqueConstraint(
-            "source_document_id", "patient_id",
+            "patient_id",
+            "request_id",
+            name="uq_patient_external_record_import_request",
+        ),
+        sa.UniqueConstraint(
+            "source_document_id",
+            "patient_id",
             name="uq_patient_external_record_import_source_owner",
         ),
         sa.UniqueConstraint(
-            "id", "patient_id", "source_document_id",
+            "id",
+            "patient_id",
+            "source_document_id",
             name="uq_patient_external_record_import_graph",
         ),
     )
@@ -137,7 +146,10 @@ def upgrade() -> None:
             server_default="NEEDS_REVIEW",
         ),
         sa.Column(
-            "patient_reviewed", sa.Boolean(), nullable=False, server_default=sa.false()
+            "patient_reviewed",
+            sa.Boolean(),
+            nullable=False,
+            server_default=sa.false(),
         ),
         sa.Column("extracted_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),

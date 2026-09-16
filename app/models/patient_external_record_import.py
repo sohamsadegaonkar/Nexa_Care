@@ -1,7 +1,7 @@
 """Patient-owned external medical record import persistence.
 
 This domain is deliberately separate from provider delegated document-processing
-authority.  Rows are owned directly by the authenticated patient identity and
+authority. Rows are owned directly by the authenticated patient identity and
 must never be interpreted as clinician-created or clinician-verified records.
 """
 
@@ -27,7 +27,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
 
-
 PATIENT_EXTERNAL_RECORD_CATEGORIES = (
     "PRESCRIPTION",
     "LAB_REPORT",
@@ -35,7 +34,6 @@ PATIENT_EXTERNAL_RECORD_CATEGORIES = (
     "DISCHARGE_SUMMARY",
     "OTHER_MEDICAL_RECORD",
 )
-
 PATIENT_EXTERNAL_RECORD_IMPORT_STATUSES = (
     "UPLOADED",
     "PROCESSING",
@@ -46,7 +44,6 @@ PATIENT_EXTERNAL_RECORD_IMPORT_STATUSES = (
     "FAILED_TERMINAL",
     "CANCELLED",
 )
-
 PATIENT_EXTERNAL_RECORD_REVIEW_STATUSES = (
     "NEEDS_REVIEW",
     "ACCEPTED",
@@ -56,12 +53,7 @@ PATIENT_EXTERNAL_RECORD_REVIEW_STATUSES = (
 
 
 class PatientExternalRecordImport(Base, UUIDPrimaryKeyMixin):
-    """Patient-owned orchestration state for one retained external source.
-
-    The row contains workflow metadata and references only.  Extracted medical
-    values live in encrypted evidence rows and accepted facts are ultimately
-    written to the existing typed record models.
-    """
+    """Patient-owned workflow metadata for one retained external source."""
 
     __tablename__ = "patient_external_record_imports"
 
@@ -71,7 +63,7 @@ class PatientExternalRecordImport(Base, UUIDPrimaryKeyMixin):
     )
     category: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="UPLOADED")
-    request_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    request_id: Mapped[str] = mapped_column(String(64), nullable=False)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     extractor_provider: Mapped[str | None] = mapped_column(String(32), nullable=True)
     extractor_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -113,6 +105,11 @@ class PatientExternalRecordImport(Base, UUIDPrimaryKeyMixin):
             ["document_storage.id", "document_storage.patient_id"],
             name="fk_patient_external_record_import_source_owner",
             ondelete="RESTRICT",
+        ),
+        UniqueConstraint(
+            "patient_id",
+            "request_id",
+            name="uq_patient_external_record_import_request",
         ),
         UniqueConstraint(
             "source_document_id",
