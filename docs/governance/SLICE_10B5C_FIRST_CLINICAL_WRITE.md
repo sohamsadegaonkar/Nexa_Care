@@ -1,6 +1,6 @@
 # Slice 10B.5c — First Bounded Treatment Session V1 Clinical Write
 
-Status: **ISOLATED HTTP ROUTE CORE IMPLEMENTED — DIAGNOSTIC / NOT APP-MOUNTED / NOT FINAL**
+Status: **POST-#53 ROUTE INTEGRATED — DIAGNOSTIC / WAITING ON TASK-2 RELEASE RECONCILIATION / NOT FINAL**
 
 ## Repository checkpoint
 
@@ -8,13 +8,11 @@ Status: **ISOLATED HTTP ROUTE CORE IMPLEMENTED — DIAGNOSTIC / NOT APP-MOUNTED 
 - Branch: `task0/10b5c-first-clinical-write`
 - Starting Alembic head: `20260918_canonical_encounter`
 - Task 0 10B.5b canonical Encounter: **MERGED**
-- Task 1 PR #53: frozen at `f775e1d56745ff6d108737b5980b12869482da97`, zero-behind, open/draft/unmerged, blocked on Vercel quota
-- Task 2 PR #55: open and must reconcile current main before merge
+- Task 1 PR #53: **MERGED** as main commit `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f`
+- Task 0 post-#53 reconciliation merge: `26aab84b2f062649e8cd59c1a552952dd74f0dd7`
+- Task 2 PR #55: open; final exact-head release qualification remains deferred until its integration state is resolved
 
-Task 0 must not edit these integration-controlled files while PR #53 reconciles:
-
-- `tests/test_route_registration.py`
-- `tests/test_audit_event_coverage.py`
+The post-#53 integration gate is open. Task 0 may now mount the bounded vitals router and update the shared route catalog. `PATIENT_RECORD_APPEND_SUCCESS` is already present in `tests/test_audit_event_coverage.py`, so no new audit vocabulary or redundant audit-catalog edit is required.
 
 ## Objective
 
@@ -474,22 +472,25 @@ same transaction.
 
 No parallel or shortcut trust model is permitted.
 
-### Current Task-1 integration gate
+### Post-Task-1 integration gate
 
-PR #53 is frozen at
-`f775e1d56745ff6d108737b5980b12869482da97`, zero-behind current main,
-green on backend/frontend/native CI, and still open/draft/unmerged because its
-exact-head Vercel deployment is quota-blocked.
+PR #53 merged at `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f`.
+Task 0 then reconciled current main into this branch at
+`26aab84b2f062649e8cd59c1a552952dd74f0dd7` before touching shared
+integration files.
 
-Task 0 may implement the bounded WRITE_VITALS router in isolated Task-0 files,
-but it must remain **unmounted from `app.main`** until the shared route catalog
-can be updated after #53 merges. Task 0 still does not modify:
+The WRITE_VITALS router is now mounted in `app.main`, and the shared route
+registration catalog contains exactly one
+`POST /api/v2/treatment-session/v1/vitals` entry while preserving the
+Task-1 external-record retry/cancel entries.
 
-- `tests/test_route_registration.py`;
-- `tests/test_audit_event_coverage.py`.
+The success audit continues to reuse the existing
+`PATIENT_RECORD_APPEND_SUCCESS` event. That event was already present in the
+shared audit catalog, so 10B.5c does not create or add a new audit event type.
 
-No final release qualification or merge claim is permitted while #53 is
-unmerged.
+Final release qualification and merge remain deferred while Task 2 PR #55 is
+still open and until the then-current exact head completes the required
+backend/frontend/native/Vercel evidence.
 
 ## Isolated HTTP runtime checkpoint
 
@@ -505,10 +506,7 @@ The isolated Task-0 router implements exactly one new surface:
 POST /api/v2/treatment-session/v1/vitals
 ```
 
-The router is intentionally **not mounted in `app.main` yet**. This preserves
-the release-integration boundary while PR #53 is unmerged and keeps the shared
-route/audit catalogs untouched. Dedicated Task-0 route tests exercise the
-isolated APIRouter directly.
+At this historical checkpoint the router was intentionally not mounted. That gate is now superseded by the post-Task-1 integration section above: the router is mounted in `app.main`, the shared route catalog is updated, and the existing audit vocabulary is reused.
 
 ### Request contract
 
@@ -581,8 +579,7 @@ are not returned.
 
 The Task-0-specific route test file covers:
 
-- exact isolated router path/method and deliberate non-registration in
-  `app.main`;
+- exact router path/method and post-Task-1 registration in `app.main`;
 - all four typed observations and UTC time normalization;
 - caller authority/provenance injection denial;
 - naive timestamp denial;
@@ -623,3 +620,15 @@ The final exact head must prove, at minimum:
 Then run exact-head Ruff, focused tests, migration graph, PostgreSQL qualification,
 Partitions A/B/C with zero skips, frontend/web/Next/workspace, Android, iOS, and
 Vercel as required by repository CI.
+
+## Post-#53 integration checkpoint
+
+- Reconciled authoritative main `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f` into the Task-0 branch through integration PR #58.
+- Reconciliation commit: `26aab84b2f062649e8cd59c1a552952dd74f0dd7`.
+- The reconciliation had no overlapping changed files between Task 1 and the Task-0 feature delta.
+- `app.main` now mounts `treatment_session_v1_vitals_router`.
+- `tests/test_route_registration.py` now records `POST /api/v2/treatment-session/v1/vitals` while preserving Task-1 external-record routes.
+- `tests/test_audit_event_coverage.py` remains intentionally unchanged because `PATIENT_RECORD_APPEND_SUCCESS` is already an approved catalog event.
+- The dedicated vitals route contract now asserts the route is mounted.
+- No second Treatment Session clinical write family is activated.
+- PR #55 remains open; therefore this checkpoint is not a final exact-head release qualification and PR #56 remains draft / do not merge.
