@@ -417,6 +417,7 @@ async def claim_treatment_session_v1(
         expires_at=capability.expires_at,
     )
 
+
 @router.post(
     "/encounter",
     status_code=status.HTTP_200_OK,
