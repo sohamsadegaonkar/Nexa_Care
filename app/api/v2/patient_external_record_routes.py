@@ -42,6 +42,7 @@ PatientCategory = Literal[
 PatientVisibleStatus = Literal[
     "processing",
     "needs_review",
+    "ready_to_save",
     "imported",
     "retry_available",
     "could_not_process",

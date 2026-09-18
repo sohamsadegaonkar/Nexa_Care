@@ -36,7 +36,7 @@ PATIENT_STATUS_MAP = {
     "UPLOADED": "processing",
     "PROCESSING": "processing",
     "REVIEW_REQUIRED": "needs_review",
-    "READY_TO_SAVE": "needs_review",
+    "READY_TO_SAVE": "ready_to_save",
     "COMPLETED": "imported",
     "FAILED_RETRYABLE": "retry_available",
     "FAILED_TERMINAL": "could_not_process",

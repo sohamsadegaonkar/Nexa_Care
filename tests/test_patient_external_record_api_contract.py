@@ -89,6 +89,7 @@ def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None
     assert visible == {
         "processing",
         "needs_review",
+        "ready_to_save",
         "imported",
         "retry_available",
         "could_not_process",
