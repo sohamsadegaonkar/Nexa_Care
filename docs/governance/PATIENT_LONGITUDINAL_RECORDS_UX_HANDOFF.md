@@ -3,8 +3,10 @@
 ## NEXT AGENT — START HERE
 
 - **Current branch:** `task2/patient-records-ux-next`
-- **Starting Main Baseline:** `337c8229de2267aaa1a07410833a57eaf040411c`
+- **Reconciled Main Baseline:** `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f`
 - **Consolidated Merged PRs:**
+  - PR #53: Patient External-Record D3 Retry/Cancel Lifecycle (Task 1 merged, `0afc5d2`)
+  - PR #54: Canonical Treatment Session Encounter Boundary (Task 0 merged, `a9b2210`)
   - PR #52: Checkpoint freeze (`337c822`)
   - PR #50: Treatment Session V1 Operation Gate (Task 0 merged, `a92033c`)
   - PR #47: Patient External-Record Import Lifecycle (Task 1 merged Phase D2, `48ea8fe`)
@@ -12,11 +14,11 @@
   - PR #48: Slice 11B Longitudinal Records UX (Task 2 merged, `34510ec`)
   - PR #49: Qualification Fixture Repair (merged, `20c75f9`)
 - **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
-- **Current Alembic head:** `20260916_patient_external_record_import` (singular)
-- **New Migrations:** NONE
-- **Current phase:** Slice 11D — Patient Records Discovery & UX Reliability
-- **Last completed step:** Completed comprehensive Product UX Audit (Phase A) across Health Home, Timeline, Records, Prescriptions, Reports, and Record Detail Modal.
-- **Exact next task:** Implement loading/error/empty state hardening, pagination usability, category search/filtering, race condition protection, and accessibility enhancements.
+- **Current Alembic head:** `20260918_canonical_encounter` (singular, inherited unchanged from main)
+- **New Migrations:** NONE (Zero Task-2 migrations)
+- **Current phase:** Slice 11D — Patient Records Discovery & UX Reliability (Reconciled)
+- **Last completed step:** Successfully reconciled post-D3 main (0afc5d2), verified zero conflicts and inherited canonical Encounter + D3 retry/cancel routes.
+- **Exact next task:** Run exact-head qualification matrix and merge PR #55 to release Task 0 for PR #56 consolidation.
 - **Current blockers:** None
 - **Tests to run next:** `yarn --cwd nexa-client test:app`, `yarn --cwd nexa-client test:next`, `yarn verify:next-build`, `pytest tests/test_patient_screens.py`
 - **Protected files not to touch:**
@@ -64,18 +66,19 @@ This branch (`task2/patient-records-ux-next`) implements **Slice 11D — Patient
 
 ## Repository Baseline
 
-- **Starting Main SHA:** `337c8229de2267aaa1a07410833a57eaf040411c`
+- **Authoritative Main Baseline SHA:** `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f` (Post Task 1 PR #53)
 - **Current Branch:** `task2/patient-records-ux-next`
-- **Alembic Head:** `20260916_patient_external_record_import`
-- **New Migrations:** NONE
+- **Alembic Head:** `20260918_canonical_encounter` (singular, inherited unchanged from main)
+- **New Migrations:** NONE (Zero Task-2 migrations)
 - **Active Remote Branches:**
-  - `origin/main` (`6a4f21f`)
+  - `origin/main` (`0afc5d2`)
   - `origin/slice-11b-patient-longitudinal-records-ux` (`dd4aba0` - frozen Task 2 artifact)
-  - `origin/slice-11a-patient-external-record-import` (PR #47 in DRAFT)
-  - `origin/slice-10b5-clinical-session-gate` (PR #50)
-- **Concurrent Workstreams:**
-  - Workstream A: Treatment Session Operations & Clinical Session Gate (PR #50).
-  - Workstream B: Patient External-Record Import + Medical-History Onboarding (`slice-11a-patient-external-record-import`).
+  - `origin/task0/10b5c-first-clinical-write` (PR #56 awaiting consolidation)
+- **Consolidation Sequence:**
+  - Step 1: Task 0 PR #54 merged to main (`a9b2210`).
+  - Step 2: Task 1 PR #53 reconciled, qualified, and merged to main (`0afc5d2`).
+  - Step 3: Task 2 PR #55 reconciled onto `0afc5d2`, qualified, and merged.
+  - Step 4: Task 0 PR #56 unblocked for final clinical write consolidation.
 
 ---
 
@@ -383,9 +386,9 @@ Clinical Safety Rules:
 ## Slice 11D — Patient Records Discovery & UX Reliability Qualification
 
 - **Branch:** `task2/patient-records-ux-next`
-- **Base Baseline:** `origin/main` @ `337c8229de2267aaa1a07410833a57eaf040411c`
-- **Alembic Head:** `20260916_patient_external_record_import` (singular, zero migrations introduced)
-- **Backend Changes:** ZERO backend files modified. Zero schema changes.
+- **Reconciled Main Baseline:** `origin/main` @ `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f` (Post-PR #53)
+- **Alembic Head:** `20260918_canonical_encounter` (singular, zero migrations introduced)
+- **Backend Changes:** Reconciled Task 0 canonical Encounter and Task 1 D3 retry/cancel routes cleanly. Zero conflicts.
 - **Commit History:**
   1. `4dfe1d8` `docs(task2): start Slice 11D patient UX audit and handoff`
   2. `9176a68` `feat(task2): harden longitudinal loading, error recovery, and empty states`
@@ -393,8 +396,9 @@ Clinical Safety Rules:
   4. `4e89f24` `feat(task2): improve prescriptions and reports discovery, filtering, and provenance clarity`
   5. `518626b` `test(task2): add patient records UX reliability coverage`
   6. `680ae8b` `fix(task2): type-safe button text styling in prescriptions screen`
-  7. `fix(task2): eliminate duplicate prescription search and reset category pagination state`
-  8. `test(task2): add deterministic request-id race and pagination reset tests`
+  7. `cbffacb` `fix(task2): eliminate duplicate prescription search and reset category pagination state`
+  8. `122c2fd` `test(task2): add deterministic request-id race and pagination reset tests`
+  9. `merge(reconcile): merge post-D3 main 0afc5d2 into task2/patient-records-ux-next`
 
 ### Verification Evidence
 | Test Target | Scope | Result | Execution Detail |
@@ -402,8 +406,9 @@ Clinical Safety Rules:
 | Frontend Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 44 test files, 290 tests passed (including 19 longitudinal records UX tests and 12 timeline tests) |
 | Frontend Vitest Next Suite | `yarn --cwd nexa-client test:next` | PASS | 2 test files, 6 tests passed |
 | Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 164 passed, AST invariant constraints verified |
+| Route Registration Tests | `pytest tests/test_route_registration.py` | PASS | 16/16 route invariants passed (Task 0 Encounter + Task 1 D3 retry/cancel + Task 2 patient routes) |
 | Workspace Build | `yarn --cwd nexa-client build` | PASS | `@my/config` and `@my/ui` built cleanly |
-| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 29 routes prerendered/compiled in 43.0s |
+| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 29 routes prerendered/compiled cleanly |
 
 ### Core Improvements Delivered
 1. **Error Recovery with Explicit Retry:**
