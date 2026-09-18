@@ -433,6 +433,46 @@ async def test_idempotent_replay_keeps_http_200_logical_result(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_invalid_typed_payload_is_value_free_and_rolls_back(monkeypatch):
+    db = _DB()
+    authority = _authority()
+    provider = _provider(authority)
+
+    async def should_not_stage(**_kwargs):
+        raise AssertionError("staging must not run")
+
+    monkeypatch.setattr(
+        routes,
+        "stage_treatment_vital_write",
+        should_not_stage,
+    )
+
+    with pytest.raises(HTTPException) as caught:
+        await routes.write_treatment_vital(
+            request=_request(
+                {
+                    "kind": "heart_rate",
+                    "beats_per_minute": "seventy-two",
+                    "recorded_at": "2026-09-18T12:30:00+05:30",
+                }
+            ),
+            response=Response(),
+            idempotency_key="vitals-route-invalid-payload",
+            provider=provider,
+            authority=authority,
+            db=db,
+        )
+
+    assert caught.value.status_code == 422
+    assert caught.value.detail == {
+        "error_code": "TREATMENT_VITAL_REQUEST_INVALID"
+    }
+    assert "seventy-two" not in str(caught.value.detail)
+    assert db.commits == 0
+    assert db.rollbacks == 1
+
+
+@pytest.mark.asyncio
 async def test_invalid_idempotency_key_is_value_free_and_rolls_back(monkeypatch):
     db = _DB()
     authority = _authority()
