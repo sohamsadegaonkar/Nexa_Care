@@ -2,6 +2,16 @@
 
 ## NEXT AGENT — START HERE
 
+- **Current Task-1 branch:** `task1/external-record-d3`.
+- **D3 starting main SHA:** `337c8229de2267aaa1a07410833a57eaf040411c`.
+- **Repository state at D3 start:** only `main` and this fresh Task-1 branch exist remotely; no open PRs were present.
+- **Historical Task-1 branch:** `slice-11a-patient-external-record-import` is consolidation history only and must not be reused.
+- **D3 scope:** strict `FAILED_RETRYABLE` retry, safe pre-completion cancellation, value-free cancellation audit, retired/merged-patient denial through the shared lifecycle gate, patient-self retry/cancel routes, adversarial qualification.
+- **D3 migration posture:** zero migration expected; existing `FAILED_RETRYABLE` and `CANCELLED` states are authoritative.
+- **Parallel-work result:** no active Agent-0/Agent-2 PR or branch overlaps D3 at this checkpoint. Shared files still require current-main recheck immediately before editing.
+- **Merge boundary:** canonical `PatientMergeService` soft-deletes the old patient and creates a tombstone; it does not reassign Task-1 rows. D3 must deny the retired identity and must not migrate ownership.
+- **Merge authorization:** D3 may open/update its PR but must STOP before merge into `main`.
+
 - **Consolidation state:** Task-1 Phase D2 is **MERGED INTO MAIN** via PR #47.
 - **Merged checkpoint:** `48ea8fe3994757a30c746ad539f3913131916559` on `main`.
 - **Former work branch:** `slice-11a-patient-external-record-import` is historical and must not be reused after consolidation.
@@ -384,3 +394,38 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
 - [x] Consolidate the qualified Phase-D2 checkpoint into main via PR #47; defer remaining phases to fresh follow-up branches.
+
+
+## Phase D3 — Retry / Cancel / Retired-Merged Patient Lifecycle
+
+### D3 product/security contract
+
+1. Retry is patient-self only and accepted only from canonical internal state `FAILED_RETRYABLE`.
+2. Retry never creates provider, hospital, tenant, consent, treatment-session, or ClinicalAccessSession authority.
+3. Cancellation is not erasure; cancellation retains the source unless canonical erasure later deletes it.
+4. Cancellation is allowed only through an explicit server-controlled pre-completion transition set derived from repository semantics.
+5. `COMPLETED` and `FAILED_TERMINAL` cannot be rewritten by cancellation. Repeated `CANCELLED` may be idempotent only if the implementation preserves the same terminal state without side effects.
+6. The shared Task-1 lifecycle gate must fail closed for erased, missing, retired/soft-deleted, and merged-old patient identities.
+7. D3 never rewrites `PatientExternalRecordImport.patient_id`, `DocumentStorage.patient_id`, `DocumentReference.patient_id`, or `TimelineEvent.patient_id` during patient merge handling.
+8. Cancellation audit uses `PATIENT_EXTERNAL_RECORD_CANCELLED` with structural/value-free metadata only.
+9. D2 erasure/source-deletion semantics remain unchanged.
+10. No migration is introduced.
+
+### D3 work log
+
+- Starting main: `337c8229de2267aaa1a07410833a57eaf040411c`.
+- Fresh branch: `task1/external-record-d3`.
+- Initial remote inventory: no open PRs; no active parallel branch overlap.
+- Landed merge audit: `PatientMergeService` creates a tombstone and sets the old patient `is_deleted = True`; it does not migrate Task-1 ownership.
+- Landed lifecycle audit: `assert_patient_external_record_access_active(...)` currently enforces erasure state but does not yet reject retired/soft-deleted patient identity.
+- Landed extraction audit: `process_patient_external_record(...)` already accepts `FAILED_RETRYABLE` internally and increments attempts under ownership/row-lock checks; D3 will publish a retry-only entrypoint without widening that qualified authority surface.
+
+### D3 qualification state
+
+- Focused tests: NOT RUN.
+- Ruff: NOT RUN.
+- Partition A/B/C: NOT RUN.
+- Frontend/native: NOT RUN; no frontend files are in the D3 backend slice.
+- Vercel: NOT RUN.
+- Exact qualified D3 SHA: NONE YET.
+
