@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-import uuid
 
+import pytest
 from fastapi import HTTPException
 from fastapi.responses import Response
-import pytest
 
 from app.api.v2 import patient_external_record_routes as route_module
 from app.api.v2.patient_external_record_routes import (
