@@ -34,6 +34,7 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
     expected = {
         ("POST", "/api/v2/patient/me/external-records"),
         ("GET", "/api/v2/patient/me/external-records"),
+        ("GET", "/api/v2/patient/me/external-records/upload-policy"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/retry"),
