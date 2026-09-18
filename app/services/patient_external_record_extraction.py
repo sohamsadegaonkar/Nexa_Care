@@ -554,6 +554,7 @@ async def retry_patient_external_record(
             import_id=import_id,
         )
         if row is None:
+            await db.rollback()
             raise HTTPException(
                 status_code=404,
                 detail={"error_code": "EXTERNAL_RECORD_NOT_FOUND"},
