@@ -210,6 +210,52 @@ def spo2_observation(
     )
 
 
+def _validate_normalized_observation(
+    observation: TreatmentVitalObservation,
+) -> None:
+    if not isinstance(observation.vital_type, TreatmentVitalType):
+        raise TreatmentVitalValidationError("TREATMENT_VITAL_OBSERVATION_INVALID")
+    _aware_recorded_at(observation.recorded_at)
+
+    expected_units = {
+        TreatmentVitalType.BLOOD_PRESSURE: "mmHg",
+        TreatmentVitalType.HEART_RATE: "bpm",
+        TreatmentVitalType.TEMPERATURE: "C",
+        TreatmentVitalType.SPO2: "%",
+    }
+    if observation.unit != expected_units[observation.vital_type]:
+        raise TreatmentVitalValidationError("TREATMENT_VITAL_UNIT_INVALID")
+
+    if observation.vital_type is TreatmentVitalType.BLOOD_PRESSURE:
+        match = re.fullmatch(r"(\d{1,3})/(\d{1,3})", observation.value)
+        if match is None:
+            raise TreatmentVitalValidationError("TREATMENT_VITAL_BP_INVALID")
+        _bounded_positive_int(int(match.group(1)), field="SYSTOLIC_BP")
+        _bounded_positive_int(int(match.group(2)), field="DIASTOLIC_BP")
+        return
+
+    if observation.vital_type is TreatmentVitalType.HEART_RATE:
+        if re.fullmatch(r"\d{1,3}", observation.value) is None:
+            raise TreatmentVitalValidationError("TREATMENT_VITAL_HEART_RATE_INVALID")
+        _bounded_positive_int(int(observation.value), field="HEART_RATE")
+        return
+
+    parsed = _finite_decimal(
+        observation.value,
+        field=(
+            "TEMPERATURE"
+            if observation.vital_type is TreatmentVitalType.TEMPERATURE
+            else "SPO2"
+        ),
+    )
+    if observation.value != _decimal_text(parsed):
+        raise TreatmentVitalValidationError("TREATMENT_VITAL_VALUE_NOT_CANONICAL")
+    if observation.vital_type is TreatmentVitalType.SPO2 and (
+        parsed < 0 or parsed > 100
+    ):
+        raise TreatmentVitalValidationError("TREATMENT_VITAL_SPO2_INVALID")
+
+
 def validate_treatment_vitals_idempotency_key(value: str) -> str:
     if not isinstance(value, str) or not _IDEMPOTENCY_KEY_RE.fullmatch(value):
         raise TreatmentVitalValidationError("TREATMENT_VITAL_IDEMPOTENCY_KEY_INVALID")
@@ -301,6 +347,7 @@ async def stage_treatment_vital_write(
     validate_treatment_vitals_idempotency_key(idempotency_key)
     if not isinstance(observation, TreatmentVitalObservation):
         raise TreatmentVitalValidationError("TREATMENT_VITAL_OBSERVATION_INVALID")
+    _validate_normalized_observation(observation)
     if authority.required_operation is not ClinicalAccessOperation.WRITE_VITALS:
         raise TreatmentSessionV1GateDenied("TREATMENT_OPERATION_NOT_AUTHORIZED")
     _validate_audit_context(audit_context=audit_context, authority=authority)
