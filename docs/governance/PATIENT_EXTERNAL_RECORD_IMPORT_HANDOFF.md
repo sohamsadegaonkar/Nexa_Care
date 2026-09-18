@@ -225,13 +225,13 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 | Vercel exact-head deployment | PASS | SUCCESS for `24b46e917...`. |
 | Malware scanning | NOT VERIFIED / NOT IMPLEMENTED | No claim otherwise. |
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
-| Phase-C1 review service tests | WRITTEN / NOT RUN | Isolated service/test increment prepared after exact-tip Phase-B qualification. |
+| Phase-C1 review service tests | FIRST RUN: REVIEW TESTS PASS; GLOBAL AUDIT CATALOG FAIL | CI `35353011569` reached 3959 passed / 1 failed in Partition A; the only failure is the new value-free review event missing from `EXPECTED_EVENTS`. |
 | Phase-C1 review API routes | BLOCKED ON ACTIVE OVERLAP | New routes would require `tests/test_route_registration.py`, currently modified by PR #48. |
 
 ## Open Risks / Blockers
 
 1. Phase B itself has no open qualification blocker; both code SHA and documentation-only branch-tip rerun are green.
-2. Phase C1 review/correction service foundation is implemented in this logical increment but is not yet qualified at a committed SHA.
+2. Phase C1 review/correction service foundation is committed at `5660d94ce33e0dfd53891a6de245c649c78cf669`. Its first Partition-A run passed the new review tests and failed only the global audit-event catalog check because `PATIENT_EXTERNAL_RECORD_CANDIDATE_REVIEWED` was not yet listed in `EXPECTED_EVENTS`.
 3. Review/correction route publication is blocked by active same-file overlap: PR #48 modifies `tests/test_route_registration.py`, which Task-1 must also update for any new route.
 4. Candidates remain non-canonical; `READY_TO_SAVE` will mean review complete, not clinical persistence.
 5. Typed finalization and timeline publication remain later phases. Prescription/Imaging/Discharge semantics must be audited before mapping; do not relabel Medication as Prescription.
@@ -277,7 +277,7 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 - [x] Preserve extracted ciphertext separately from patient corrections.
 - [x] Add patient-visible `ready_to_save` workflow status.
 - [ ] Publish patient review/correction API routes after PR #48 route-registry overlap resolves.
-- [ ] Qualify the Phase-C1 service increment on an exact committed SHA.
+- [ ] Qualify the Phase-C1 service increment on an exact committed SHA after the audit-catalog repair.
 - [ ] Implement safe typed finalization where repository semantics support it.
 - [ ] Publish provenance-aware timeline entries.
 - [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
