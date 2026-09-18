@@ -4,8 +4,8 @@
 
 - **Current branch:** `slice-11a-patient-external-record-import`.
 - **PR:** #47, `feat(patient): integrate external medical record import workflow` — **OPEN / DRAFT / UNMERGED**.
-- **Latest observed main:** `20c75f969657c4e9ea28cd80998724a958a88e03`.
-- **Semantic current-main reconciliation SHA:** `5b9d8a7b444f56aba4fb4ca98fca8af82133e37e`.
+- **Latest observed main:** `34510ec1e308762cf2836c70de7e1cc8a828b39d`.
+- **Latest semantic current-main reconciliation SHA:** `10c7fac1efd88c5a4e31b2cb7eb1cbd5e7a7bf41`.
 - **Phase-B implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
 - **Phase-B final code/qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
 - **Phase-B backend CI:** run `35350346488` — **PASS**.
@@ -25,7 +25,7 @@
 - **Linear migration chain:** `20260914_patient_search_identifiers → 20260916_clinical_access_sessions → 20260917_treatment_session_operations → 20260916_patient_external_record_import`.
 - **Approved production/pilot migration head remains:** `20260917_treatment_session_operations`. Task-1 qualification does not silently mark the patient-import migration pilot-approved.
 - **Migration contention:** RESOLVED after Slice-10B4 landed. No Alembic merge revision was created; Task-1 was linearized as the child of `20260917_treatment_session_operations`.
-- **Route-governance overlap:** RESOLVED semantically. Both treatment-session V1 routes and all five patient external-record routes are preserved.
+- **Route-governance overlap:** RESOLVED semantically after PR #48 merged. Slice 11B longitudinal routes and all existing Task-1 external-record routes are preserved on `10c7fac1...`.
 - **Phase B target:** COMPLETE / QUALIFIED.
 - **Exact branch-tip rerun:** backend CI `35351247909`, frontend CI `35351247888`, and Vercel on `b0177393...` are all PASS/SUCCESS.
 - **Phase C1 target:** COMPLETE / QUALIFIED — patient review/correction service foundation over encrypted `PatientExternalRecordCandidate` values, preserving extracted evidence and patient correction provenance. No typed clinical finalization or timeline write.
@@ -33,9 +33,9 @@
 - **Phase C1 backend CI:** run `35353447620` — Ruff PASS; A **3961 passed / 430 deselected / 0 skipped**, B **300 / 4091 / 0**, C **130 / 4261 / 0**; zero failures.
 - **Phase C1 frontend CI:** run `35353447680` — web tests, Next production build, workspace packages, Android native compile, and iOS native compile all PASS.
 - **Phase C1 Vercel:** SUCCESS on `1f53e830...`.
-- **Current concurrency:** PR #48 still owns `tests/test_route_registration.py` plus patient longitudinal frontend/routes; PR #50 owns the treatment-session operation gate. PR #49 has landed into main and is already reconciled in Task-1 ancestry.
-- **Current route blocker:** publishing new review/correction endpoints requires updating `tests/test_route_registration.py`, which is actively modified by PR #48. Do not edit that shared registry until PR #48 lands or the overlap otherwise resolves.
-- **Exact next step after PR #48 resolves:** reconcile its landed route registry semantically, then publish patient-self review GET + candidate-decision mutation routes, add authority/route tests, and re-run exact-head qualification.
+- **Current concurrency:** PR #48 is MERGED and reconciled. PR #50 remains open on the protected treatment-session operation gate and does not overlap the review-route files.
+- **Phase C2 target:** patient-self review route publication — GET review snapshot + POST per-item accept/correct/reject, strict patient authority, opaque review-item IDs, no internal candidate field names or provider/tenant/consent/session inputs.
+- **Phase C2 qualification state:** IMPLEMENTED / NOT YET QUALIFIED at the handoff update point. Exact next step is commit the route slice, run exact-head backend/frontend/native/Vercel qualification, then freeze the result.
 - **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
 - **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
@@ -70,7 +70,7 @@ The completed Phase-B coding target is intentionally narrower: extract a patient
 
 ### Current main / concurrency
 
-Latest observed main: `20c75f969657c4e9ea28cd80998724a958a88e03`. The only change since the prior Task-1 baseline was the pilot evidence fixture already present byte-for-byte on this branch; `1f53e830...` carries that main ancestry.
+Latest observed main: `34510ec1e308762cf2836c70de7e1cc8a828b39d`. Slice 11B longitudinal patient-record routes/UI from PR #48 are fully landed and semantically reconciled into Task-1 at `10c7fac1...`.
 
 Reconciliation facts:
 
@@ -80,9 +80,10 @@ Reconciliation facts:
 4. Current-main pilot deployment governance remains authoritative for the approved pilot head (`20260917_treatment_session_operations`); Task-1 CI independently qualifies the later feature head.
 5. No protected Slice-10B authority implementation was rewritten to make Task-1 pass.
 6. Phase-B exact-tip rerun on `b0177393...` is fully green: backend `35351247909`, frontend `35351247888`, Vercel SUCCESS.
-7. Current open PR inventory at the Phase-C1 freeze: #47 (Task-1), #48 (Slice 11B longitudinal records UX), #50 (10B.5 clinical-session gate). PR #49 has landed.
-8. PR #48 actively modifies `tests/test_route_registration.py`; Phase C1 does not touch that file.
+7. PR #48 (Slice 11B longitudinal records UX) is merged into main and reconciled into Task-1.
+8. `tests/test_route_registration.py` now contains both Slice 11B longitudinal routes and Task-1 external-record routes; the prior same-file blocker is closed.
 9. Phase-C1 exact-head qualification on `1f53e830...` is green across backend, web, Android, iOS, and Vercel.
+10. Current open PR inventory before Phase C2 qualification: #47 (Task-1) and #50 (10B.5 clinical-session gate).
 
 ## Product Contract
 
@@ -171,9 +172,9 @@ After `20260917_treatment_session_operations` landed on main and no competing mi
 
 Phase C1 uses a dedicated patient review service. Extracted value/source ciphertext stays immutable. A patient correction is stored only in `encrypted_reviewed_value` under a distinct patient-bound encryption context, with `patient_reviewed`, `review_status`, and `reviewed_at` recording the explicit decision. When no candidate remains `NEEDS_REVIEW`, the import advances to `READY_TO_SAVE`; no typed record or timeline row is created.
 
-### 8. Review routes wait for the active route-registry owner
+### 8. Review routes publish only after shared route ownership clears
 
-PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-1 review routes would require the same registry file, so Phase C1 intentionally stops at the service boundary until that overlap resolves. This is a concurrency guard, not a product-architecture dependency.
+Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests/test_route_registration.py`. After PR #48 merged, Task-1 reconciled its landed longitudinal routes first, then Phase C2 adds only two patient-self review routes. This preserves concurrent work rather than overwriting the shared route registry.
 
 ## Work Log
 
@@ -210,8 +211,19 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 - **Behavior:** owned import/candidate graph → patient lifecycle/erasure gate → decrypt extracted evidence → explicit accept/correct/reject → correction re-encryption under distinct context → value-free audit event → `READY_TO_SAVE` only when all candidate decisions are resolved.
 - **Provenance:** extracted ciphertext is never overwritten by a correction; accept/reject clears stale correction ciphertext instead of copying plaintext.
 - **Focused tests:** patient-only authority surface, lock binding, correction validation, separated encryption contexts, extracted/corrected review projection, READY_TO_SAVE transition, and accept-without-plaintext-copy.
-- **No schema change. No route-registry change. No typed record or timeline write.**
-- **Concurrency blocker for route publication:** PR #48 currently owns `tests/test_route_registration.py`; do not add the review endpoints until that shared-file overlap resolves.
+- **No schema change. No typed record or timeline write.**
+- **Former route blocker:** RESOLVED after PR #48 merged and was reconciled at `10c7fac1...`.
+
+### Phase C2 — patient review API publication
+
+- **Starting reconciliation SHA:** `10c7fac1efd88c5a4e31b2cb7eb1cbd5e7a7bf41`.
+- **Routes:** `GET /api/v2/patient/me/external-records/{import_id}/review` and `POST /api/v2/patient/me/external-records/{import_id}/review/{review_item_id}`.
+- **Authority:** both routes derive patient identity only from `get_current_patient`; caller-supplied patient/provider/hospital/tenant/consent/session authority is not accepted.
+- **Request hardening:** review mutation payload is `extra="forbid"`, so authority-shaped or unknown fields are rejected rather than ignored.
+- **Patient projection:** review response exposes opaque `review_item_id`, patient-friendly label, extracted/corrected values, decision, source context, and confirmation requirement. Internal candidate field names, clinical fact keys, extractor provider/version, storage refs, and internal lanes are not exposed.
+- **Persistence boundary:** mutations call the already-qualified Phase-C1 service and stop at `READY_TO_SAVE`; no typed clinical commit or timeline write is introduced.
+- **Shared route registry:** Slice 11B routes remain; Task-1 registry expands from five to seven external-record routes.
+- **Qualification:** PENDING for the exact Phase-C2 commit.
 
 ## Test / Qualification Matrix
 
@@ -232,13 +244,13 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 | Malware scanning | NOT VERIFIED / NOT IMPLEMENTED | No claim otherwise. |
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
 | Phase-C1 review service tests | PASS | Exact SHA `1f53e830...`; backend CI `35353447620`: A 3961 / B 300 / C 130, zero skips/failures; audit catalog repaired. |
-| Phase-C1 review API routes | BLOCKED ON ACTIVE OVERLAP | New routes would require `tests/test_route_registration.py`, currently modified by PR #48. |
+| Phase-C2 review API routes | WRITTEN / NOT RUN | PR #48 is merged; two strict patient-self routes plus authority/unknown-field/internal-projection contracts are staged for exact-head qualification. |
 
 ## Open Risks / Blockers
 
 1. Phase B itself has no open qualification blocker; both code SHA and documentation-only branch-tip rerun are green.
 2. Phase C1 review/correction service foundation is qualified at `1f53e830f00290539e5f39ed49ccfcc58f848707`; the initial audit-catalog-only failure was repaired and the exact repaired SHA is green.
-3. Review/correction route publication is blocked by active same-file overlap: PR #48 modifies `tests/test_route_registration.py`, which Task-1 must also update for any new route.
+3. The prior route-registry blocker is resolved; Phase C2 route publication still needs exact-head qualification before it can be frozen green.
 4. Candidates remain non-canonical; `READY_TO_SAVE` means review complete, not clinical persistence.
 5. Typed finalization and timeline publication remain later phases. Prescription/Imaging/Discharge semantics must be audited before mapping; do not relabel Medication as Prescription.
 6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
@@ -250,13 +262,13 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 ## Merge / Rebase Safety
 
 - Keep PR #47 draft and unmerged; Phase-B success does not complete the overall Task-1 workstream.
-- The current reconciliation already includes main `20c75f96...`; do not rebase again merely because history is non-linear.
+- The current reconciliation includes main `34510ec1...` at `10c7fac1...`; do not rebase again merely because history is non-linear.
 - Preserve the single Alembic chain ending in `20260916_patient_external_record_import`.
 - Preserve main's approved pilot head separation unless Task-1 migration receives explicit pilot approval.
 - Preserve both treatment-session and patient external-record route registrations.
 - Re-check main/open PR overlap before every major Task-1 increment and before final merge qualification.
-- While PR #48 remains active, do not modify `tests/test_route_registration.py` or longitudinal patient-record frontend/routes. Finish/qualify only the isolated review service.
-- Do not modify protected Slice-10B authority semantics to implement patient review/correction or finalization.
+- Preserve the merged Slice 11B longitudinal patient-record routes/frontend byte-for-byte unless a later Task-1 UI integration explicitly requires a semantic change.
+- PR #50 remains active; do not modify protected Slice-10B treatment-session gate semantics to implement patient review/correction or finalization.
 
 ## Final Completion Checklist
 
@@ -282,8 +294,9 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 - [x] Implement isolated patient review/correction service foundation.
 - [x] Preserve extracted ciphertext separately from patient corrections.
 - [x] Add patient-visible `ready_to_save` workflow status.
-- [ ] Publish patient review/correction API routes after PR #48 route-registry overlap resolves.
+- [x] Publish patient review/correction API routes after PR #48 route-registry overlap resolved.
 - [x] Qualify the Phase-C1 service increment on exact SHA `1f53e830...` after the audit-catalog repair.
+- [ ] Qualify the Phase-C2 review-route increment on its exact committed SHA.
 - [ ] Implement safe typed finalization where repository semantics support it.
 - [ ] Publish provenance-aware timeline entries.
 - [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.

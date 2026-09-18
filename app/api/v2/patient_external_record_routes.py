@@ -13,7 +13,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.extractor import TEXTRACT_MAX_SYNC_BYTES
@@ -28,6 +28,11 @@ from app.services.patient_external_record_import import (
     patient_status,
     read_patient_external_record_source,
     stage_patient_external_record,
+)
+from app.services.patient_external_record_review import (
+    PatientExternalRecordReviewSnapshot,
+    get_patient_external_record_review,
+    review_patient_external_record_candidate,
 )
 
 router = APIRouter(prefix="/me/external-records", tags=["patient-external-records"])
@@ -61,6 +66,41 @@ class PatientExternalRecordResponse(BaseModel):
     created_at: str
 
 
+PatientReviewDecision = Literal["accept", "correct", "reject"]
+PatientReviewItemDecision = Literal["pending", "accepted", "corrected", "rejected"]
+PatientReviewWorkflowStatus = Literal["needs_review", "ready_to_save"]
+
+
+class PatientExternalRecordReviewDecisionRequest(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    decision: PatientReviewDecision
+    corrected_value: str | None = Field(default=None, max_length=4096)
+
+
+class PatientExternalRecordReviewItemResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    review_item_id: uuid.UUID
+    label: str
+    extracted_value: str
+    corrected_value: str | None = None
+    decision: PatientReviewItemDecision
+    source_page: int | None = None
+    source_text: str | None = None
+    source_available: bool
+    confirmation_required: bool
+
+
+class PatientExternalRecordReviewResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    import_id: uuid.UUID
+    category: PatientCategory
+    status: PatientReviewWorkflowStatus
+    items: list[PatientExternalRecordReviewItemResponse]
+
+
 _INTERNAL_TO_PUBLIC_CATEGORY: dict[str, PatientCategory] = {
     "PRESCRIPTION": "prescription",
     "LAB_REPORT": "lab_report",
@@ -85,6 +125,30 @@ def _response(
         duplicate=duplicate,
         source_available=True,
         created_at=row.created_at.isoformat(),
+    )
+
+
+def _review_response(
+    snapshot: PatientExternalRecordReviewSnapshot,
+) -> PatientExternalRecordReviewResponse:
+    return PatientExternalRecordReviewResponse(
+        import_id=snapshot.import_id,
+        category=_INTERNAL_TO_PUBLIC_CATEGORY[snapshot.category],
+        status=snapshot.status,  # type: ignore[arg-type]
+        items=[
+            PatientExternalRecordReviewItemResponse(
+                review_item_id=item.candidate_id,
+                label=item.display_label,
+                extracted_value=item.extracted_value,
+                corrected_value=item.corrected_value,
+                decision=item.decision,  # type: ignore[arg-type]
+                source_page=item.source_page,
+                source_text=item.source_text,
+                source_available=item.evidence_complete,
+                confirmation_required=item.confirmation_required,
+            )
+            for item in snapshot.items
+        ],
     )
 
 
@@ -192,6 +256,51 @@ async def process_external_record(
         db,
         patient_id=auth.patient_id,
         import_id=import_id,
+    )
+    return _response(row)
+
+
+@router.get(
+    "/{import_id}/review",
+    response_model=PatientExternalRecordReviewResponse,
+)
+async def read_external_record_review(
+    import_id: uuid.UUID,
+    response: Response,
+    auth: AuthenticatedPatient = Depends(get_current_patient),
+    db: AsyncSession = Depends(get_db_session),
+) -> PatientExternalRecordReviewResponse:
+    """Return only the authenticated patient's extracted review evidence."""
+    _set_no_store(response)
+    snapshot = await get_patient_external_record_review(
+        db,
+        patient_id=auth.patient_id,
+        import_id=import_id,
+    )
+    return _review_response(snapshot)
+
+
+@router.post(
+    "/{import_id}/review/{review_item_id}",
+    response_model=PatientExternalRecordResponse,
+)
+async def review_external_record_item(
+    import_id: uuid.UUID,
+    review_item_id: uuid.UUID,
+    payload: PatientExternalRecordReviewDecisionRequest,
+    response: Response,
+    auth: AuthenticatedPatient = Depends(get_current_patient),
+    db: AsyncSession = Depends(get_db_session),
+) -> PatientExternalRecordResponse:
+    """Persist an explicit patient decision without canonical clinical commit."""
+    _set_no_store(response)
+    row = await review_patient_external_record_candidate(
+        db,
+        patient_id=auth.patient_id,
+        import_id=import_id,
+        candidate_id=review_item_id,
+        decision=payload.decision,
+        corrected_value=payload.corrected_value,
     )
     return _response(row)
 

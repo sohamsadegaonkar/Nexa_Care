@@ -4,9 +4,14 @@ from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.responses import Response
+from pydantic import ValidationError
 import pytest
 
-from app.api.v2.patient_external_record_routes import _set_no_store
+from app.api.v2.patient_external_record_routes import (
+    PatientExternalRecordReviewDecisionRequest,
+    PatientExternalRecordReviewItemResponse,
+    _set_no_store,
+)
 from app.api.v2.patient_routes import router
 from app.core.dependencies import get_current_patient
 from app.models.patient_external_record_import import PatientExternalRecordImport
@@ -32,6 +37,11 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}/source"),
+        ("GET", "/api/v2/patient/me/external-records/{import_id}/review"),
+        (
+            "POST",
+            "/api/v2/patient/me/external-records/{import_id}/review/{review_item_id}",
+        ),
     }
     actual = {
         (method, candidate.path)
@@ -82,6 +92,49 @@ def test_process_authority_is_dependency_derived_and_has_no_provider_inputs() ->
         "consent_request_id",
         "clinical_access_session_id",
     }.isdisjoint(client_names)
+
+
+def test_review_routes_are_patient_dependency_derived_without_provider_authority() -> None:
+    forbidden = {
+        "patient_id",
+        "provider_id",
+        "hospital_id",
+        "tenant_id",
+        "consent_token",
+        "consent_request_id",
+        "clinical_access_session_id",
+    }
+    for method, path in [
+        ("GET", "/api/v2/patient/me/external-records/{import_id}/review"),
+        (
+            "POST",
+            "/api/v2/patient/me/external-records/{import_id}/review/{review_item_id}",
+        ),
+    ]:
+        route = _route(path, method)
+        dependency_calls = {
+            dependency.call for dependency in route.dependant.dependencies
+        }
+        assert get_current_patient in dependency_calls
+        assert forbidden.isdisjoint(_client_parameter_names(route))
+
+
+def test_review_decision_payload_rejects_authority_injection() -> None:
+    assert PatientExternalRecordReviewDecisionRequest.model_config["extra"] == "forbid"
+    with pytest.raises(ValidationError):
+        PatientExternalRecordReviewDecisionRequest(
+            decision="accept",
+            patient_id="00000000-0000-0000-0000-000000000000",
+        )
+
+
+def test_review_item_response_hides_internal_candidate_fields() -> None:
+    fields = set(PatientExternalRecordReviewItemResponse.model_fields)
+    assert "review_item_id" in fields
+    assert "field_name" not in fields
+    assert "clinical_fact_key" not in fields
+    assert "extractor_provider" not in fields
+    assert "extractor_version" not in fields
 
 
 def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None:
