@@ -2,26 +2,34 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `slice-11a-patient-external-record-import`
+- **Current branch:** `slice-11a-patient-external-record-import`.
 - **PR:** #47, `feat(patient): integrate external medical record import workflow` — **OPEN / DRAFT / UNMERGED**.
-- **Phase-B code commit:** `392ba90670cb2518ba216d123cc108071473942f`.
-- **Phase-B code target:** patient-authority extraction service + process route + focused security/authority tests.
-- **Frozen Phase-A qualification SHA:** `72ea0eb9082e64fc9bae07981af06ba34ad40a2e`.
-- **Phase-A backend CI:** run `35137558974` — PASS.
+- **Latest observed main:** `342d25cb960a3c81539502e6d3eacde4e7121aee`.
+- **Semantic current-main reconciliation SHA:** `5b9d8a7b444f56aba4fb4ca98fca8af82133e37e`.
+- **Phase-B implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
+- **Phase-B final code/qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
+- **Phase-B backend CI:** run `35350346488` — **PASS**.
   - Ruff/lint: PASS.
-  - Partition A: 3923 passed / 429 deselected / 0 failed / 0 skipped.
-  - Partition B: 299 passed / 4053 deselected / 0 failed / 0 skipped.
-  - Partition C: 130 passed / 4222 deselected / 0 failed / 0 skipped.
+  - Partition A: **3952 passed / 430 deselected / 0 failed / 0 skipped**.
+  - Partition B: **300 passed / 4082 deselected / 0 failed / 0 skipped**.
+  - Partition C: **130 passed / 4252 deselected / 0 failed / 0 skipped**.
   - All A/B/C zero-skip qualification assertions: PASS.
-- **Task-1 feature migration head:** `20260916_patient_external_record_import`.
-- **Task-1 migration chain:** `20260914_patient_search_identifiers → 20260916_clinical_access_sessions → 20260916_patient_external_record_import`.
-- **Latest observed `main`:** `860e261b86a399d98497291133e7544be7b78b5a`.
-- **Current-main migration contention:** `main` now contains `20260917_treatment_session_operations` with `down_revision = 20260916_clinical_access_sessions`. It is therefore a sibling of Task-1's `20260916_patient_external_record_import` if the branches are naively combined.
-- **Integration rule:** do **not** create a merge migration, retarget either migration, change Slice-10B migration ownership, or force-rebase this branch until the migration owner chooses the linear integration order.
-- **PR merge state after Phase B push:** GitHub reports PR #47 `mergeable=false`; no exact-head Actions run was created for `392ba906...` at the latest check. Treat Phase-B qualification as **NOT RUN / BLOCKED**, not failed and not green.
-- **Exact next step once migration ownership is resolved:** semantically reconcile current `main`, preserving both workstreams' route-governance changes, then run focused Phase-B tests followed by exact-head A/B/C + zero-skip qualification.
-- **Protected Slice-10B behavior:** do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session operation claims, provider treatment-consent authority, or provider delegated-trust semantics to make patient import work.
-- **Unexpected leftover refs:** prior tooling already left `tmp-inspect-fe57-patient-import` and `ops/task1-exact-head-qualification-2`; this continuation also accidentally created `_phaseb-object-check`, pointing only to the pre-Phase-B Task-1 head. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
+- **Phase-B frontend CI:** run `35350346502` — **PASS**.
+  - Web tests: PASS.
+  - Next production build: PASS.
+  - Workspace package build: PASS.
+  - Android native project generation + native compile: PASS.
+  - iOS native project generation + CocoaPods + native compile: PASS.
+- **Vercel exact-head status for `24b46e917...`:** SUCCESS.
+- **Task-1 repository/CI migration head:** `20260916_patient_external_record_import`.
+- **Linear migration chain:** `20260914_patient_search_identifiers → 20260916_clinical_access_sessions → 20260917_treatment_session_operations → 20260916_patient_external_record_import`.
+- **Approved production/pilot migration head remains:** `20260917_treatment_session_operations`. Task-1 qualification does not silently mark the patient-import migration pilot-approved.
+- **Migration contention:** RESOLVED after Slice-10B4 landed. No Alembic merge revision was created; Task-1 was linearized as the child of `20260917_treatment_session_operations`.
+- **Route-governance overlap:** RESOLVED semantically. Both treatment-session V1 routes and all five patient external-record routes are preserved.
+- **Phase B target:** COMPLETE / QUALIFIED.
+- **Exact next Task-1 increment:** patient review/correction over encrypted `PatientExternalRecordCandidate` values, preserving evidence and patient correction provenance. Do not combine review with typed clinical finalization.
+- **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
+- **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
 ## Current Scope
 
@@ -46,21 +54,24 @@ The completed Phase-B coding target is intentionally narrower: extract a patient
 ### Task-1 lineage
 
 - Original Task-1 base: `2a103847e6c89efbf6a5c6b5e4e231e6c0a19eac`.
-- Qualified Phase-A SHA: `72ea0eb9082e64fc9bae07981af06ba34ad40a2e`.
+- Frozen Phase-A qualification SHA: `72ea0eb9082e64fc9bae07981af06ba34ad40a2e`.
 - Phase-A handoff documentation commit: `3a0d203636ac3358e8f551ac23b26d291864ac50`.
 - Phase-B extraction implementation commit: `392ba90670cb2518ba216d123cc108071473942f`.
+- Semantic current-main reconciliation commit: `5b9d8a7b444f56aba4fb4ca98fca8af82133e37e`.
+- Phase-B hardening / exact qualification SHA: `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
 
 ### Current main / concurrency
 
-Latest observed main: `860e261b86a399d98497291133e7544be7b78b5a` (`docs(security): freeze 10B4 claim-mint qualification target`).
+Latest observed main: `342d25cb960a3c81539502e6d3eacde4e7121aee` (`test(ci): advance Slice 4 qualification head`).
 
-Current main has materially advanced Slice 10B4. Relevant overlap/integration facts:
+Reconciliation facts:
 
-1. `tests/test_route_registration.py` is now changed by both Task-1 and Slice 10B4. Task-1 adds patient external-record routes; Slice 10B4 adds treatment-session routes. This must be semantically merged, never resolved with blanket ours/theirs.
-2. Current main introduced `alembic/versions/20260917_treatment_session_operations.py` as a direct child of `20260916_clinical_access_sessions`.
-3. Task-1 already has `20260916_patient_external_record_import` as a direct child of the same revision.
-4. Therefore a naive branch merge creates two Alembic heads. This is a hard integration blocker under Task-1 migration governance.
-5. Slice-10B protected authority files were not modified by the Phase-B Task-1 commit.
+1. Slice-10B4's `20260917_treatment_session_operations` migration is fully landed on main.
+2. Task-1's external-record migration now has `down_revision = "20260917_treatment_session_operations"`; the combined repository has one linear Alembic head.
+3. `tests/test_route_registration.py` was resolved semantically from current main: all treatment-session V1 routes remain, and Task-1's five patient external-record routes are added.
+4. Current-main pilot deployment governance remains authoritative for the approved pilot head (`20260917_treatment_session_operations`); Task-1 CI independently qualifies the later feature head.
+5. No protected Slice-10B authority implementation was rewritten to make Task-1 pass.
+6. Open PR inventory at the final Phase-B checkpoint: only PR #47.
 
 ## Product Contract
 
@@ -138,9 +149,9 @@ Provider candidate tables and provider delegated authorization graph are not use
 
 The existing Task-1 model already contains the required encrypted candidate/evidence/review fields. No new migration is created.
 
-### 6. Current-main migration contention is not solved inside Task-1
+### 6. Landed migration was reconciled linearly
 
-Current main's `20260917_treatment_session_operations` and Task-1's `20260916_patient_external_record_import` are sibling revisions. The safe integration order must be chosen by the migration owner before final reconciliation; Task-1 will not fabricate a merge migration.
+After `20260917_treatment_session_operations` landed on main and no competing migration PR remained, Task-1 followed the repository rule to reconcile after landing. The patient-import revision now descends directly from the landed treatment-session revision. No Alembic merge revision was created, and approved pilot deployment remains independently pinned to the treatment-session revision.
 
 ## Work Log
 
@@ -156,57 +167,89 @@ Current main's `20260917_treatment_session_operations` and Task-1's `20260916_pa
 
 ### Phase B — patient-authority extraction target
 
-- **Starting SHA:** `3a0d203636ac3358e8f551ac23b26d291864ac50`.
+- **Starting Phase-B SHA:** `3a0d203636ac3358e8f551ac23b26d291864ac50`.
 - **Implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
-- **Files changed:**
-  - `app/services/patient_external_record_extraction.py` — new.
-  - `app/api/v2/patient_external_record_routes.py` — adds process route.
-  - `tests/test_patient_external_record_extraction.py` — new focused security/authority tests.
-  - `tests/test_patient_external_record_api_contract.py` — process-route authority contract.
-  - `tests/test_route_registration.py` — intentional fifth Task-1 patient route.
-- **Behavior:** owned source → lifecycle/ownership/integrity checks → configured extractor → provider-authentic non-identity evidence → patient KMS encryption → patient candidate rows → `REVIEW_REQUIRED`.
-- **Not added:** provider authority, treatment consent, clinical session, typed clinical commit, timeline write, auto-commit, or schema changes.
-- **Static diff check:** exactly five paths; no protected Slice-10B file and no migration file changed.
-- **Qualification:** focused tests were written but not executed. No new Actions run was created for `392ba906...` after current-main migration/merge contention made PR #47 non-mergeable.
+- **Semantic main reconciliation SHA:** `5b9d8a7b444f56aba4fb4ca98fca8af82133e37e`.
+- **Final hardening / qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
+- **Runtime files:** patient-specific extraction service plus patient-self process route only.
+- **Focused security coverage:** configured-provider provenance, identity-field exclusion, evidence-only candidate creation, deterministic value-free evidence IDs, SHA-256 source integrity, patient/import row-lock binding, retired-patient denial, stable failure mapping, and explicit rollback/value-free response on unexpected runtime failures.
+- **Migration reconciliation:** Task-1 migration was moved behind the fully landed `20260917_treatment_session_operations`; no merge revision was introduced.
+- **Pilot-governance separation:** production/pilot migration tooling remains pinned to the approved treatment-session head. Feature-branch tests mock that repository-head precondition only where necessary to isolate runner behavior.
+- **Exact backend qualification:** CI run `35350346488` — Ruff PASS; A 3952, B 300, C 130; zero skips/failures.
+- **Exact frontend/native qualification:** Frontend CI run `35350346502` — web tests/build/workspace PASS; Android PASS; iOS PASS.
+- **Exact deployment status:** Vercel SUCCESS on `24b46e917...`.
+- **Not added:** provider authority, treatment consent, ClinicalAccessSession authority, provider delegated extraction, typed clinical commit, timeline write, auto-commit, or a new extraction migration.
 
 ## Test / Qualification Matrix
 
 | Area | State | Evidence |
 |---|---|---|
-| Phase-A Ruff/lint | PASS | CI run `35137558974` on `72ea0eb9...`. |
-| Phase-A Partition A | PASS | 3923 passed / 0 skipped. |
-| Phase-A Partition B | PASS | 299 passed / 0 skipped. |
-| Phase-A Partition C | PASS | 130 passed / 0 skipped. |
-| Phase-B focused extraction tests | WRITTEN / NOT RUN | `tests/test_patient_external_record_extraction.py`; Actions run not created for `392ba906...`. |
-| Phase-B API authority tests | WRITTEN / NOT RUN | process route requires strict patient dependency and exposes no provider/tenant/consent inputs. |
-| Phase-B route registration | WRITTEN / NOT RUN | Branch allowlist includes process route; current-main allowlist has independent Slice-10B4 changes requiring semantic reconciliation. |
-| Phase-B full A/B/C | NOT RUN / BLOCKED | PR #47 currently non-mergeable due current-main divergence including sibling migration heads. |
-| Alembic single-head after combining latest main | BLOCKED | Two direct children of `20260916_clinical_access_sessions`; do not claim a single combined head. |
+| Phase-A backend qualification | PASS | Frozen SHA `72ea0eb9...`; A 3923 / B 299 / C 130; zero skips. |
+| Phase-B focused extraction/security tests | PASS | Included in Partition A on exact SHA `24b46e917...`. |
+| Phase-B API authority/route contracts | PASS | Included in Partition A; process route derives patient authority and exposes no provider/tenant/consent inputs. |
+| Alembic single-head / migration ancestry | PASS | Task-1 head descends from landed treatment-session head; CI shared DB migrated successfully. |
+| Phase-B Ruff/lint | PASS | Backend CI run `35350346488`. |
+| Phase-B Partition A | PASS | 3952 passed / 430 deselected / 0 failed / 0 skipped. |
+| Phase-B Partition B | PASS | 300 passed / 4082 deselected / 0 failed / 0 skipped. |
+| Phase-B Partition C | PASS | 130 passed / 4252 deselected / 0 failed / 0 skipped. |
+| Web tests / Next build / workspace build | PASS | Frontend CI run `35350346502`. |
+| Android native compile | PASS | Frontend CI run `35350346502`. |
+| iOS native compile | PASS | Frontend CI run `35350346502`. |
+| Vercel exact-head deployment | PASS | SUCCESS for `24b46e917...`. |
 | Malware scanning | NOT VERIFIED / NOT IMPLEMENTED | No claim otherwise. |
-| Decoder-level document validation | NOT VERIFIED | Existing upload checks remain envelope/signature/truncation level. |
-| Frontend/mobile/native/E2E | NOT QUALIFIED | Later Task-1 phase. |
+| Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
 
 ## Open Risks / Blockers
 
-1. **Hard integration blocker — migration contention:** current main owns `20260917_treatment_session_operations`, a sibling of Task-1's external-record migration. Migration owner must choose the linear order before reconciliation.
-2. **Shared route-governance overlap:** `tests/test_route_registration.py` has legitimate changes in both workstreams. Resolve semantically after migration order is established.
-3. **Phase-B tests not executed:** PR conflict prevented a new exact-head PR Actions run at the latest check. Do not call Phase B green.
-4. Temporary refs remain because connector does not expose ref deletion; do not use them.
-5. Review/correction, typed finalization, timeline, retry/cancel UX, lifecycle retention/erasure qualification, and frontend are still incomplete.
-6. Prescription/Imaging/Discharge typed semantics must still be audited before finalization; do not relabel Medication as Prescription.
-7. Malware scanning and full decoder validity remain unresolved security/product gaps.
+1. Phase B itself has no open qualification blocker; its exact code SHA is green.
+2. Patient review/correction is not implemented yet; candidates are intentionally non-canonical and remain at `REVIEW_REQUIRED`.
+3. Typed finalization and timeline publication remain later phases. Prescription/Imaging/Discharge semantics must be audited before mapping; do not relabel Medication as Prescription.
+4. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
+5. Onboarding + Records patient frontend flow remains incomplete.
+6. Malware scanning is not verified/implemented.
+7. Full decoder-level corruption validation remains unverified beyond the existing structural checks.
+8. Temporary refs remain because the connector does not expose ref deletion; do not use them.
 
 ## Merge / Rebase Safety
 
-- Keep PR #47 draft and unmerged.
-- Do not force-rebase merely because main moved.
-- Do not merge the two migration heads or create an Alembic merge revision inside Task-1 without migration-owner agreement.
-- When the migration order is resolved, reconcile current main semantically. Preserve both Task-1 patient routes and Slice-10B4 treatment-session routes in `tests/test_route_registration.py`.
-- Re-run focused Phase-B tests after reconciliation, then full Ruff + backend A/B/C + zero-skip assertions on the exact new SHA.
-- Re-check current main/open PRs immediately before that qualification because Slice 10B is actively moving.
-- Do not modify protected Slice-10B authority semantics to make tests pass.
+- Keep PR #47 draft and unmerged; Phase-B success does not complete the overall Task-1 workstream.
+- The current reconciliation already includes main `342d25cb...`; do not rebase again merely because history is non-linear.
+- Preserve the single Alembic chain ending in `20260916_patient_external_record_import`.
+- Preserve main's approved pilot head separation unless Task-1 migration receives explicit pilot approval.
+- Preserve both treatment-session and patient external-record route registrations.
+- Re-check main/open PR overlap before the next major Task-1 increment and before final merge qualification.
+- Do not modify protected Slice-10B authority semantics to implement patient review/correction or finalization.
 
 ## Final Completion Checklist
+
+- [x] Patient-owned import persistence exists.
+- [x] Patient-self encrypted source storage exists.
+- [x] Strict patient upload/list/detail/source API exists.
+- [x] Phase A exact backend qualification is green.
+- [x] Patient-authority extraction service is implemented.
+- [x] Patient process route is implemented.
+- [x] Focused extraction authority/security tests execute successfully.
+- [x] Extraction excludes provider/hospital/tenant/consent/session authority.
+- [x] Extraction uses provider-authentic field evidence only.
+- [x] Identity fields are excluded from Phase-B clinical review candidates.
+- [x] Candidate sensitive values are encrypted before persistence.
+- [x] Unexpected extraction failures explicitly roll back and return stable value-free errors.
+- [x] Phase B stops at `REVIEW_REQUIRED`; no typed record/timeline write occurs.
+- [x] Current main is semantically reconciled.
+- [x] Combined migration graph is single-head and linear.
+- [x] Shared route governance preserves both workstreams.
+- [x] Exact-head Ruff + A/B/C + zero skips are green at `24b46e917...`.
+- [x] Web tests / Next build / workspace packages / Android / iOS are green at `24b46e917...`.
+- [x] Vercel exact-head status is green.
+- [ ] Implement patient review/correction.
+- [ ] Implement safe typed finalization where repository semantics support it.
+- [ ] Publish provenance-aware timeline entries.
+- [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
+- [ ] Implement onboarding + Records patient frontend flow.
+- [ ] Complete final end-to-end Task-1 qualification.
+- [ ] Keep PR draft until all required Task-1 phases are complete.
+
+
 
 - [x] Patient-owned import persistence exists.
 - [x] Patient-self encrypted source storage exists.
