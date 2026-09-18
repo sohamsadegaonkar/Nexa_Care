@@ -26,6 +26,7 @@ from app.services.patient_external_record_extraction import (
     _source_digest,
     _validated_provider_result,
     process_patient_external_record,
+    retry_patient_external_record,
 )
 
 
@@ -235,3 +236,236 @@ async def test_unexpected_runtime_failure_rolls_back_with_value_free_error(
     }
     assert "synthetic-sensitive-clinical-value" not in str(exc_info.value.detail)
     db.rollback.assert_awaited_once()
+
+
+
+def test_retry_service_accepts_only_patient_import_authority() -> None:
+    parameter_names = set(inspect.signature(retry_patient_external_record).parameters)
+    assert parameter_names == {"db", "patient_id", "import_id"}
+    assert {
+        "provider_id",
+        "hospital_id",
+        "tenant_id",
+        "consent_token",
+        "consent_request_id",
+        "clinical_access_session_id",
+        "treatment_token",
+    }.isdisjoint(parameter_names)
+
+
+@pytest.mark.asyncio
+async def test_retry_accepts_only_failed_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    patient_id = str(uuid.uuid4())
+    import_id = uuid.uuid4()
+    row = SimpleNamespace(status="FAILED_RETRYABLE", retryable=True)
+    processed = SimpleNamespace(status="REVIEW_REQUIRED", retryable=False)
+    db = AsyncMock()
+
+    gate = AsyncMock(return_value=None)
+    lookup = AsyncMock(return_value=row)
+    process = AsyncMock(return_value=processed)
+    monkeypatch.setattr(
+        extraction_module, "assert_patient_external_record_access_active", gate
+    )
+    monkeypatch.setattr(extraction_module, "_load_owned_import_for_update", lookup)
+    monkeypatch.setattr(extraction_module, "process_patient_external_record", process)
+
+    result = await retry_patient_external_record(
+        db,
+        patient_id=patient_id,
+        import_id=import_id,
+    )
+
+    assert result is processed
+    gate.assert_awaited_once_with(db, patient_id=patient_id)
+    lookup.assert_awaited_once_with(
+        db,
+        patient_id=uuid.UUID(patient_id),
+        import_id=import_id,
+    )
+    process.assert_awaited_once_with(
+        db,
+        patient_id=patient_id,
+        import_id=import_id,
+    )
+    db.rollback.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "state",
+    [
+        "UPLOADED",
+        "PROCESSING",
+        "REVIEW_REQUIRED",
+        "READY_TO_SAVE",
+        "COMPLETED",
+        "FAILED_TERMINAL",
+        "CANCELLED",
+    ],
+)
+async def test_retry_rejects_every_non_retryable_state(
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    db = AsyncMock()
+    row = SimpleNamespace(status=state, retryable=False)
+    process = AsyncMock()
+    monkeypatch.setattr(
+        extraction_module,
+        "assert_patient_external_record_access_active",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        extraction_module,
+        "_load_owned_import_for_update",
+        AsyncMock(return_value=row),
+    )
+    monkeypatch.setattr(extraction_module, "process_patient_external_record", process)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await retry_patient_external_record(
+            db,
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail == {
+        "error_code": "EXTERNAL_RECORD_RETRY_NOT_AVAILABLE",
+        "retryable": False,
+    }
+    process.assert_not_awaited()
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_requires_retryable_flag_even_in_failed_retryable_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = AsyncMock()
+    monkeypatch.setattr(
+        extraction_module,
+        "assert_patient_external_record_access_active",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        extraction_module,
+        "_load_owned_import_for_update",
+        AsyncMock(return_value=SimpleNamespace(status="FAILED_RETRYABLE", retryable=False)),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await retry_patient_external_record(
+            db,
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 409
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_retry_wrong_patient_or_guessed_import_is_not_found_and_unlocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = AsyncMock()
+    monkeypatch.setattr(
+        extraction_module,
+        "assert_patient_external_record_access_active",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        extraction_module,
+        "_load_owned_import_for_update",
+        AsyncMock(return_value=None),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await retry_patient_external_record(
+            db,
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == {"error_code": "EXTERNAL_RECORD_NOT_FOUND"}
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {"error_code": "PATIENT_DATA_ERASED"},
+        {"error_code": "PATIENT_RECORD_RETIRED"},
+    ],
+)
+async def test_retry_fails_before_lookup_for_inactive_patient_lifecycle(
+    monkeypatch: pytest.MonkeyPatch,
+    detail: dict[str, str],
+) -> None:
+    lookup = AsyncMock()
+    monkeypatch.setattr(
+        extraction_module,
+        "assert_patient_external_record_access_active",
+        AsyncMock(side_effect=HTTPException(status_code=410, detail=detail)),
+    )
+    monkeypatch.setattr(extraction_module, "_load_owned_import_for_update", lookup)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await retry_patient_external_record(
+            AsyncMock(),
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail == detail
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "detail",
+    [
+        {"error_code": "SOURCE_DOCUMENT_UNAVAILABLE", "retryable": True},
+        {"error_code": "IMPORT_PERSISTENCE_UNAVAILABLE", "retryable": True},
+        {"error_code": "AUDIT_UNAVAILABLE", "retryable": True},
+    ],
+)
+async def test_retry_propagates_fail_closed_process_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    detail: dict[str, object],
+) -> None:
+    db = AsyncMock()
+    monkeypatch.setattr(
+        extraction_module,
+        "assert_patient_external_record_access_active",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        extraction_module,
+        "_load_owned_import_for_update",
+        AsyncMock(
+            return_value=SimpleNamespace(status="FAILED_RETRYABLE", retryable=True)
+        ),
+    )
+    monkeypatch.setattr(
+        extraction_module,
+        "process_patient_external_record",
+        AsyncMock(side_effect=HTTPException(status_code=503, detail=detail)),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await retry_patient_external_record(
+            db,
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == detail
