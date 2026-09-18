@@ -470,7 +470,7 @@ async def test_encounter_binding_is_server_generated_and_idempotent(monkeypatch)
         now=data.now,
     )
 
-    first_db = _DB(data.session)
+    first_db = _DB(data.session, data.grant)
     first = await gate.stage_server_encounter_binding(
         db=first_db,
         authority=authority,
@@ -479,10 +479,30 @@ async def test_encounter_binding_is_server_generated_and_idempotent(monkeypatch)
     assert data.session.encounter_id == str(first)
 
     second = await gate.stage_server_encounter_binding(
-        db=_DB(data.session),
+        db=_DB(data.session, data.grant),
         authority=authority,
     )
     assert second == first
+
+
+@pytest.mark.asyncio
+async def test_encounter_binding_rechecks_and_locks_durable_grant(monkeypatch):
+    data = _fixture()
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+    authority = await gate.validate_treatment_session_v1(
+        db=_DB(data.session, data.grant),
+        token=data.token,
+        provider=data.provider,
+        required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+        now=data.now,
+    )
+    data.grant.revoked_at = data.now
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.stage_server_encounter_binding(
+            db=_DB(data.session, data.grant),
+            authority=authority,
+        )
 
 
 @pytest.mark.asyncio
@@ -499,7 +519,7 @@ async def test_encounter_binding_requires_create_encounter_operation(monkeypatch
 
     with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
         await gate.stage_server_encounter_binding(
-            db=_DB(data.session),
+            db=_DB(data.session, data.grant),
             authority=authority,
         )
     assert caught.value.code == "TREATMENT_ENCOUNTER_OPERATION_REQUIRED"
