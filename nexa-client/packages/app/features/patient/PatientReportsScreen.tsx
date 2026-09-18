@@ -30,9 +30,11 @@ export default function PatientReportsScreen() {
   const [selectedReport, setSelectedReport] = useState<PatientReportItem | null>(null)
 
   const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all')
+  const reportRequestIdRef = React.useRef(0)
 
   const loadReports = useCallback(
     async (cursor?: string | null, append = false, typeFilter?: string) => {
+      const currentReqId = ++reportRequestIdRef.current
       if (append) setLoadingOlder(true)
       else if (!cursor) setLoading(true)
       setError(null)
@@ -45,6 +47,7 @@ export default function PatientReportsScreen() {
           limit: 20,
           documentType: activeFilter !== 'all' ? activeFilter : null,
         })
+        if (currentReqId !== reportRequestIdRef.current) return
         if (append) {
           setReports((prev) => [...prev, ...res.reports])
         } else {
@@ -52,15 +55,18 @@ export default function PatientReportsScreen() {
         }
         setNextCursor(res.next_cursor)
       } catch (err) {
+        if (currentReqId !== reportRequestIdRef.current) return
         setError(
           err instanceof Error
             ? err.message
             : 'Failed to load medical reports'
         )
       } finally {
-        setLoading(false)
-        setRefreshing(false)
-        setLoadingOlder(false)
+        if (currentReqId === reportRequestIdRef.current) {
+          setLoading(false)
+          setRefreshing(false)
+          setLoadingOlder(false)
+        }
       }
     },
     [selectedTypeFilter]
@@ -72,6 +78,7 @@ export default function PatientReportsScreen() {
 
   const handleSelectFilter = (filterKey: string) => {
     setSelectedTypeFilter(filterKey)
+    setNextCursor(null)
     void loadReports(null, false, filterKey)
   }
 
@@ -127,6 +134,7 @@ export default function PatientReportsScreen() {
                   onPress={() => handleSelectFilter(tab.key)}
                   accessibilityRole="button"
                   accessibilityLabel={`Filter by ${tab.label}`}
+                  accessibilityState={{ selected: active }}
                 >
                   <Text color={active ? 'white' : '$color'} fontSize="$2" fontWeight={active ? '700' : '500'}>
                     {tab.label}
@@ -162,14 +170,30 @@ export default function PatientReportsScreen() {
             backgroundColor="$red4"
             padding="$3"
             borderRadius="$3"
-            gap="$1"
+            gap="$2"
           >
-            <Text color="$red11" fontSize="$3" fontWeight="600">
-              ⚠️ Notice
-            </Text>
-            <Paragraph color="$red11" size="$2">
-              {error}
-            </Paragraph>
+            <XStack justifyContent="space-between" alignItems="center">
+              <YStack gap="$1" flex={1}>
+                <Text color="$red11" fontSize="$3" fontWeight="600">
+                  ⚠️ Notice
+                </Text>
+                <Paragraph color="$red11" size="$2">
+                  {error}
+                </Paragraph>
+              </YStack>
+              <Button
+                size="$2.5"
+                backgroundColor="$red6"
+                pressStyle={{ backgroundColor: '$red7' }}
+                onPress={() => void loadReports(null, false)}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading reports"
+              >
+                <Text color="$red11" fontSize="$2" fontWeight="700">
+                  Retry
+                </Text>
+              </Button>
+            </XStack>
           </YStack>
         ) : null}
 
@@ -191,12 +215,31 @@ export default function PatientReportsScreen() {
             gap="$2"
           >
             <Text fontSize={48}>📄</Text>
-            <Paragraph color="$color10" size="$4">
-              No diagnostic reports or documents on file.
+            <Paragraph color="$color" size="$4" fontWeight="600">
+              {selectedTypeFilter !== 'all'
+                ? `No ${
+                    REPORT_FILTER_TABS.find((t) => t.key === selectedTypeFilter)?.label ||
+                    'matching'
+                  } reports on file.`
+                : 'No diagnostic reports or documents on file.'}
             </Paragraph>
-            <Paragraph color="$color10" size="$3" opacity={0.6} textAlign="center">
-              Reports from hospitals, lab evaluations, and clinical documents will be cataloged here.
+            <Paragraph color="$color10" size="$3" opacity={0.7} textAlign="center">
+              {selectedTypeFilter !== 'all'
+                ? 'There are no documents matching this filter in your health record.'
+                : 'Reports from hospitals, lab evaluations, and clinical documents will be cataloged here.'}
             </Paragraph>
+            {selectedTypeFilter !== 'all' ? (
+              <Button
+                size="$2.5"
+                theme="blue"
+                marginTop="$2"
+                onPress={() => handleSelectFilter('all')}
+                accessibilityRole="button"
+                accessibilityLabel="Show all reports"
+              >
+                Show All Reports
+              </Button>
+            ) : null}
           </YStack>
         ) : (
           reports.map((item) => (
@@ -262,6 +305,14 @@ export default function PatientReportsScreen() {
                 'Load older reports'
               )}
             </Button>
+          </YStack>
+        ) : null}
+
+        {!nextCursor && reports.length > 0 ? (
+          <YStack alignItems="center" paddingVertical="$4">
+            <Paragraph color="$color10" size="$2" opacity={0.6}>
+              ✓ All diagnostic reports loaded
+            </Paragraph>
           </YStack>
         ) : null}
       </ScrollView>

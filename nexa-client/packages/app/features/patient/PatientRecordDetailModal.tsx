@@ -92,6 +92,21 @@ export default function PatientRecordDetailModal({
     }
   }, [open, category, recordId])
 
+  useEffect(() => {
+    if (!open) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onOpenChange(false)
+      }
+    }
+    if (typeof window !== 'undefined' && window.addEventListener) {
+      window.addEventListener('keydown', handleKeyDown)
+      return () => {
+        window.removeEventListener('keydown', handleKeyDown)
+      }
+    }
+  }, [open, onOpenChange])
+
   const title = detail?.title || initialTitle || 'Record Details'
   const fields = detail?.fields || initialFields || {}
   const provenance = detail?.provenance || initialProvenance || {
