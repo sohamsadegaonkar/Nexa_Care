@@ -758,3 +758,55 @@ all exact-head frontend/native/Next qualification is green, the consolidated
 Task-2 frontend already had valid qualification, and the quota-only cause is
 recorded truthfully. Production/release qualification remains deferred under
 that exception.
+
+
+### Final release-candidate evidence and Vercel exception
+
+The post-Task-2 code candidate `32018f1cb2f6be29b5d9692b657d279e9b934ee2`
+completed the full repository qualification matrix before this documentation-only
+record was added:
+
+- Ruff: PASS.
+- Partition A: 4144 passed / 436 deselected / 0 failed / 0 errors / 0 skipped.
+- Partition B: 306 passed / 4274 deselected / 0 failed / 0 errors / 0 skipped.
+- Partition C: 130 passed / 4450 deselected / 0 failed / 0 errors / 0 skipped.
+- frontend/Next tests: 2 files / 6 tests PASS.
+- app/web tests after same-SHA rerun of one transient unrelated recovery-screen
+  test failure: 44 files / 290 tests PASS.
+- Next production build: PASS.
+- workspace package build: PASS.
+- Android native compile: PASS.
+- iOS native compile: PASS.
+
+The transient first-attempt frontend failure was in
+`PatientRegistrationRecoveryScreen.test.tsx`, outside both the Task-0 delta and
+the Task-2 changed-file set. No product code was changed; rerunning that failed
+job on the same SHA passed all 290 app tests and all build checks.
+
+Exact commit status for that candidate reports Vercel failure only at the
+documented free-tier deployment-rate limit URL
+(`upgradeToPro=build-rate-limit`). There is no Task-0 `nexa-client/**` feature
+delta versus consolidated main.
+
+The backend-only Vercel quota exception prerequisites are independently
+established:
+
+- Task-2 commit `122c2fd2a91cd0523ee171a78fe223a85260cde4`
+  has exact GitHub Vercel status SUCCESS.
+- From that commit to final Task-2 head
+  `99562a1a5558ebef0f80746b3f14dfcc206c9a9b`, the changed-file set contains
+  no `nexa-client/**` file, so the qualified frontend tree was not changed by
+  the final Task-2 main reconciliation/governance commits.
+- consolidated Task-2 frontend/native GitHub CI is green.
+- Task 0 adds no frontend feature file.
+- the current Vercel failure cause is quota-only, not an application build
+  failure.
+
+Therefore the documented backend-only Vercel infrastructure exception may be
+used for this merge candidate. Production/release qualification remains
+deferred until Vercel can provide normal deployment evidence again.
+
+This evidence does not waive exact-head qualification for the documentation-only
+final candidate. The final branch head created by this governance update must
+still complete the same GitHub Actions matrix successfully before PR #56 may be
+marked ready and merged.
