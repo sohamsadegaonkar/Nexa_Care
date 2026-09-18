@@ -1,5 +1,5 @@
 import React from 'react'
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import { apiClient } from '../../utils/apiClient'
@@ -190,5 +190,66 @@ describe('PatientTimelineScreen', () => {
     fireEvent.click(screen.getByText('← Access History'))
     expect(push).toHaveBeenCalledWith('/patient/access-history')
     expect(screen.getByTestId('section-list')).toBeTruthy()
+  })
+
+  it('discards stale response when user switches filters concurrently (newest-request-wins)', async () => {
+    function createDeferred<T>() {
+      let resolve!: (val: T) => void
+      let reject!: (err: any) => void
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res
+        reject = rej
+      })
+      return { promise, resolve, reject }
+    }
+
+    const deferredLabs = createDeferred<any>()
+    const deferredVitals = createDeferred<any>()
+
+    vi.mocked(apiClient.get)
+      .mockResolvedValueOnce({
+        events: [event],
+        next_cursor: null,
+      } as never)
+      .mockImplementationOnce(() => deferredLabs.promise)
+      .mockImplementationOnce(() => deferredVitals.promise)
+
+    renderWithTamagui(<PatientTimelineScreen />)
+
+    expect(await screen.findByText('HbA1c result')).toBeTruthy()
+
+    fireEvent.click(screen.getByText('Labs'))
+    fireEvent.click(screen.getByText('Vitals'))
+
+    const vitalsEvent = {
+      event_id: 'event-vitals-1',
+      event_type: 'VITALS',
+      title: 'Blood Pressure Check',
+      summary: '120/80 mmHg recorded',
+      occurred_at: '2026-07-28T10:00:00Z',
+      source: 'manual',
+      source_display: 'Clinician reviewed',
+    }
+
+    const labsEvent = {
+      event_id: 'event-labs-2',
+      event_type: 'LAB_RESULT',
+      title: 'Stale Lipid Panel',
+      summary: 'Cholesterol panel',
+      occurred_at: '2026-07-28T11:00:00Z',
+      source: 'ai_extracted',
+      source_display: 'Clinician reviewed',
+    }
+
+    deferredVitals.resolve({ events: [vitalsEvent], next_cursor: null })
+
+    expect(await screen.findByText('Blood Pressure Check')).toBeTruthy()
+
+    deferredLabs.resolve({ events: [labsEvent], next_cursor: null })
+
+    await waitFor(() => {
+      expect(screen.queryByText('Stale Lipid Panel')).toBeNull()
+      expect(screen.getByText('Blood Pressure Check')).toBeTruthy()
+    })
   })
 })

@@ -13,7 +13,8 @@ PATIENT_SEARCH_REVISION = "20260914_patient_search_identifiers"
 CLINICAL_ACCESS_REVISION = "20260916_clinical_access_sessions"
 TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 PATIENT_EXTERNAL_RECORD_REVISION = "20260916_patient_external_record_import"
-EXPECTED_HEAD = "20260918_canonical_encounter"
+CANONICAL_ENCOUNTER_REVISION = "20260918_canonical_encounter"
+EXPECTED_HEAD = "20260918_treatment_vitals_encounter"
 
 
 def _scripts() -> ScriptDirectory:
@@ -133,9 +134,15 @@ def test_patient_external_record_import_descends_from_treatment_session_operatio
 
 
 def test_canonical_encounter_descends_from_patient_external_record_import() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision(CANONICAL_ENCOUNTER_REVISION)
     assert revision is not None
     assert revision.down_revision == PATIENT_EXTERNAL_RECORD_REVISION
+
+
+def test_treatment_vitals_descends_from_canonical_encounter() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == CANONICAL_ENCOUNTER_REVISION
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:

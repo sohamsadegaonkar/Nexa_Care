@@ -2,19 +2,25 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `main`
-- **Merged Main Baseline:** `6a4f21fb6b32624edf521d2fb00c4d9294098777`
-- **PR #51 Merge Commit:** `6a4f21fb6b32624edf521d2fb00c4d9294098777` (closed & merged)
-- **PR #48 Merge Commit:** `34510ec1e308762cf2836c70de7e1cc8a828b39d` (closed & merged)
-- **PR #49 Merge Commit:** `20c75f969657c4e9ea28cd80998724a958a88e03` (closed & merged)
+- **Current branch:** `task2/patient-records-ux-next`
+- **Reconciled Main Baseline:** `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f`
+- **Consolidated Merged PRs:**
+  - PR #53: Patient External-Record D3 Retry/Cancel Lifecycle (Task 1 merged, `0afc5d2`)
+  - PR #54: Canonical Treatment Session Encounter Boundary (Task 0 merged, `a9b2210`)
+  - PR #52: Checkpoint freeze (`337c822`)
+  - PR #50: Treatment Session V1 Operation Gate (Task 0 merged, `a92033c`)
+  - PR #47: Patient External-Record Import Lifecycle (Task 1 merged Phase D2, `48ea8fe`)
+  - PR #51: Slice 11C External-Record Longitudinal Integration (Task 2 merged, `6a4f21f`)
+  - PR #48: Slice 11B Longitudinal Records UX (Task 2 merged, `34510ec`)
+  - PR #49: Qualification Fixture Repair (merged, `20c75f9`)
 - **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
-- **Current Alembic head:** `20260917_treatment_session_operations` (singular)
-- **New Migrations:** NONE
-- **Current phase:** Patient Longitudinal Health Record & External Record Integration Complete
-- **Last completed step:** Merged PR #51 (Slice 11C external record longitudinal projection & UX) onto main with 100% green CI across all partitions.
-- **Exact next task:** Maintain operational stability; support parallel Slice 11A import review if requested.
+- **Current Alembic head:** `20260918_canonical_encounter` (singular, inherited unchanged from main)
+- **New Migrations:** NONE (Zero Task-2 migrations)
+- **Current phase:** Slice 11D — Patient Records Discovery & UX Reliability (Reconciled)
+- **Last completed step:** Successfully reconciled post-D3 main (0afc5d2), verified zero conflicts and inherited canonical Encounter + D3 retry/cancel routes.
+- **Exact next task:** Run exact-head qualification matrix and merge PR #55 to release Task 0 for PR #56 consolidation.
 - **Current blockers:** None
-- **Tests to run next:** Full CI verification suite
+- **Tests to run next:** `yarn --cwd nexa-client test:app`, `yarn --cwd nexa-client test:next`, `yarn verify:next-build`, `pytest tests/test_patient_screens.py`
 - **Protected files not to touch:**
   - `app/services/clinical_access_session.py`
   - `app/models/clinical_access_session.py`
@@ -24,48 +30,55 @@
   - `app/api/v2/consent_v3_routes.py`
   - `app/api/v2/treatment_session_v1_routes.py`
   - `app/api/v2/treatment_session_v1_claim_routes.py`
-  - `alembic/versions/20260917_treatment_session_operations.py` (and any new competing migrations)
-  - Raw import pipeline internals in `slice-11a-patient-external-record-import`
-- **Concurrent branches to re-check:** `origin/slice-11a-patient-external-record-import` (PR #47 in DRAFT)
+  - Raw import pipeline internals in `app/services/patient_external_record_import.py`
+  - Any Alembic migrations
 
 ---
 
 ## Scope
 
-This branch (`slice-11c-external-record-longitudinal-integration`) bridges:
-1. **Longitudinal Record Projection of External Records:** Projecting authentic patient-imported and external clinical records into the unified timeline and categorized records with faithful provenance tracking, honest trust badges, and document deep-links.
-2. **Patient Records External Import Entry Points:** Exposing patient-friendly "Add Medical Record" / "Upload Document" entry points from Patient Records (`/patient/records`) and Reports (`/patient/reports`) adhering to strict patient-self authorization.
-3. **External Record Provenance & Document Inspection:** Surfacing external document metadata (type, uploaded date, extraction status, processing stage) without leaking internal storage keys (`s3://...`), presigned URLs, or raw pipeline execution IDs.
-4. **Non-destructive Coexistence:** Maintaining full compatibility with parallel Slice 11A import services (`PatientExternalRecordImport`) while projecting standard `DocumentReference` and `TimelineEvent` records on main.
+This branch (`task2/patient-records-ux-next`) implements **Slice 11D — Patient Records Discovery & UX Reliability**:
+1. **Loading, Error Recovery, and Empty States:**
+   - Add explicit, accessible "Retry" actions in error states across all patient screens.
+   - Prevent false empty states when errors occur in category drilldowns or report tabs.
+   - Differentiate global empty datasets from filter-empty results (e.g. "No events found for this filter" with a "Clear filter" CTA).
+2. **Pagination & Cursor Usability:**
+   - Immediately reset cursors upon filter change to avoid stale pagination requests.
+   - Surface accessible "All records loaded" / "End of timeline" indicators upon pagination exhaustion.
+3. **Filter Navigation & Stale Response Race Protection:**
+   - Guard against network race conditions when user rapidly toggles filter pills or category tabs using request sequence tracking.
+   - Add in-category search and filtering within loaded category records.
+4. **Accessibility (a11y) & Usability:**
+   - Add `accessibilityState={{ selected: isActive }}` and descriptive labels to filter pills and tabs.
+   - Add keyboard Escape dismiss and improved focus handling in `PatientRecordDetailModal`.
+   - Maintain 100% compliance with existing Tamagui and React Testing Library invariants.
 
 ---
 
 ## Explicit Non-Scope
 
-1. Doctor treatment workspace, clinical access session backend (`ClinicalAccessSession`), and provider consent gate redesign.
-2. Auto-committing unverified OCR/Textract output as authoritative clinical truth.
-3. Introducing sibling/competing Alembic migrations: No database migrations will be introduced in this branch. Current head `20260917_treatment_session_operations` remains unchanged.
-4. Fabricating missing clinical models: Missing models (e.g. separate Prescription order table, Encounter table, Diagnosis table) must NOT be faked with synthetic mock data.
+1. Modifying Task 0 clinical access session, treatment authority, or consent policies.
+2. Modifying Task 1 external-record lifecycle mutations (retry, cancel, onboarding actions).
+3. Introducing database migrations.
+4. Fabricating missing clinical models or inventing interpretations (no fake normal ranges or doctor verification badges).
 
 ---
 
 ## Repository Baseline
 
-- **Merged Main SHA:** `6a4f21fb6b32624edf521d2fb00c4d9294098777`
-- **PR #51 (Slice 11C):** MERGED at `6a4f21f` (head `b8f9c86`)
-- **PR #48 (Slice 11B):** MERGED at `34510ec` (reconciled head `7c725a5`)
-- **PR #49 (Fixture Repair):** MERGED at `20c75f9` (head `f30a9b4`)
-- **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
-- **Alembic Current Single Head:** `20260917_treatment_session_operations`
-- **New Migrations:** NONE
+- **Authoritative Main Baseline SHA:** `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f` (Post Task 1 PR #53)
+- **Current Branch:** `task2/patient-records-ux-next`
+- **Alembic Head:** `20260918_canonical_encounter` (singular, inherited unchanged from main)
+- **New Migrations:** NONE (Zero Task-2 migrations)
 - **Active Remote Branches:**
-  - `origin/main` (`6a4f21f`)
+  - `origin/main` (`0afc5d2`)
   - `origin/slice-11b-patient-longitudinal-records-ux` (`dd4aba0` - frozen Task 2 artifact)
-  - `origin/slice-11a-patient-external-record-import` (PR #47 in DRAFT)
-  - `origin/slice-10b5-clinical-session-gate` (PR #50)
-- **Concurrent Workstreams:**
-  - Workstream A: Treatment Session Operations & Clinical Session Gate (PR #50).
-  - Workstream B: Patient External-Record Import + Medical-History Onboarding (`slice-11a-patient-external-record-import`).
+  - `origin/task0/10b5c-first-clinical-write` (PR #56 awaiting consolidation)
+- **Consolidation Sequence:**
+  - Step 1: Task 0 PR #54 merged to main (`a9b2210`).
+  - Step 2: Task 1 PR #53 reconciled, qualified, and merged to main (`0afc5d2`).
+  - Step 3: Task 2 PR #55 reconciled onto `0afc5d2`, qualified, and merged.
+  - Step 4: Task 0 PR #56 unblocked for final clinical write consolidation.
 
 ---
 
@@ -96,6 +109,33 @@ Classification: `EXISTS`, `PARTIAL`, `WRONG_FLOW`, `MISSING`.
 | **S. Response Caching** | EXISTS | `Cache-Control: no-store, no-cache, must-revalidate, private` on all patient self endpoints. |
 | **T. Timeline Data Safety** | EXISTS | Safe clinical language displayed; extraction summaries formatted cleanly. |
 | **U. User-Facing Event Copy** | EXISTS | All event types and summaries mapped to human-friendly healthcare labels. |
+
+---
+
+## Slice 11D Product UX Audit Matrix
+
+| Area | Existing behavior | Gap | Severity | Status | Proposed Bounded Fix |
+|---|---|---|---|---|---|
+| **Health Home: Error Recovery** | Error banner appears without retry CTA. | User on web cannot recover from transient network errors without full page reload. | Medium | DEFECT | Add accessible "Retry" CTA in error banner calling `loadSummary(false)`. |
+| **Health Home: Stale Data Guard** | Async `loadSummary` does not track cancellation. | Potential unmounted state update or stale race. | Low | PARTIAL | Add `isMounted` guard ref in `loadSummary`. |
+| **Health Home: Accessibility** | Action buttons lack full descriptive labels. | Screen reader says "View All →" without context. | Medium | PARTIAL | Add `accessibilityLabel="View all active medications"`, etc. |
+| **Timeline: Filter Empty State** | Filtered empty shows global empty text. | Misleading: patient assumes whole record is empty. | High | DEFECT | Differentiate: if `activeFilter !== 'ALL'`, show *"No {category} events found"* + *"Clear filter"* CTA. |
+| **Timeline: Filter Change Pagination** | Cursor retained on filter change. | User clicking "Load older" can send old cursor to new category filter. | Medium | DEFECT | Immediately reset `setNextCursor(null)` on filter switch. |
+| **Timeline: Filter Race Condition** | Boolean flag drops fast sequential filter clicks. | Quick filter taps get dropped or stale filter loads. | High | DEFECT | Implement incrementing `requestIdRef` so newest filter always wins. |
+| **Timeline: End-of-Records Status** | List ends abruptly when `nextCursor === null`. | User unclear if more events exist. | Low | MISSING | Add accessible *"End of timeline records"* indicator. |
+| **Timeline: a11y Filter Pills** | Filter buttons lack selected state attribute. | Screen reader cannot tell which filter is active. | Medium | PARTIAL | Add `accessibilityRole="button"`, `accessibilityLabel`, and `accessibilityState={{ selected: isActive }}`. |
+| **Records: Drilldown Search** | Flat list without in-category search. | Hard to find specific item in large category. | Medium | MISSING | Add client-side in-category search filter across loaded records. |
+| **Records: Drilldown Error State** | Category fetch error shows false empty state. | Error banner in header while list says "No records on file". | High | DEFECT | Show explicit in-drilldown error card with Retry button instead of false empty state. |
+| **Records: Drilldown End-of-Records** | List ends abruptly. | Unclear pagination status. | Low | MISSING | Add *"End of {category} records"* indicator. |
+| **Records: a11y List Items** | Record items lack explicit button role. | Screen readers don't announce items as interactive. | Medium | PARTIAL | Add `accessibilityRole="button"` and descriptive `accessibilityLabel`. |
+| **Prescriptions: Search / Filter** | No search or source filter. | Cannot quickly search medications or isolate external uploads. | Medium | PARTIAL | Add client-side search query input and source filter tabs. |
+| **Prescriptions: Filter Empty State** | Generic empty state only. | User unclear if search returned 0 items vs account has 0 items. | Medium | PARTIAL | Distinguish search/filter empty vs global empty with clear reset CTA. |
+| **Prescriptions: End-of-Records** | List ends abruptly. | Unclear pagination status. | Low | MISSING | Add *"All prescriptions loaded"* notice. |
+| **Reports: Stale Filter Race** | Asynchronous tab switch has no sequence guard. | Slow earlier tab response can overwrite faster current tab. | High | DEFECT | Implement active request sequence tracking. |
+| **Reports: Tab Empty State** | Tab empty shows global empty text. | Misleads patient if other document categories exist. | High | DEFECT | Show *"No {tab label} reports on file"* + *"Show All Reports"* CTA. |
+| **Reports: End-of-Records** | List ends abruptly. | Unclear pagination status. | Low | MISSING | Add *"All reports loaded"* notice. |
+| **Reports: a11y Filter Tabs** | Tabs lack `accessibilityState`. | Screen reader cannot tell which tab is active. | Medium | PARTIAL | Add `accessibilityState={{ selected: active }}`. |
+| **Detail Modal: Web Escape Key** | Bottom sheet lacks keyboard Escape listener. | Keyboard users on web cannot dismiss sheet with Escape. | Medium | PARTIAL | Add Escape key handler on web environment. |
 
 ---
 
@@ -340,3 +380,55 @@ Clinical Safety Rules:
 - [x] No internal storage keys (`s3://...`), pipeline execution IDs, or PHI are leaked in URLs, client errors, or logs.
 - [x] All Main / Web / Expo navigation flows work seamlessly with proper loading, empty, and error states.
 - [x] Full backend and frontend test suites pass with zero regressions.
+
+---
+
+## Slice 11D — Patient Records Discovery & UX Reliability Qualification
+
+- **Branch:** `task2/patient-records-ux-next`
+- **Reconciled Main Baseline:** `origin/main` @ `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f` (Post-PR #53)
+- **Alembic Head:** `20260918_canonical_encounter` (singular, zero migrations introduced)
+- **Backend Changes:** Reconciled Task 0 canonical Encounter and Task 1 D3 retry/cancel routes cleanly. Zero conflicts.
+- **Commit History:**
+  1. `4dfe1d8` `docs(task2): start Slice 11D patient UX audit and handoff`
+  2. `9176a68` `feat(task2): harden longitudinal loading, error recovery, and empty states`
+  3. `b7404d8` `feat(task2): improve patient records drilldown, search, and pagination UX`
+  4. `4e89f24` `feat(task2): improve prescriptions and reports discovery, filtering, and provenance clarity`
+  5. `518626b` `test(task2): add patient records UX reliability coverage`
+  6. `680ae8b` `fix(task2): type-safe button text styling in prescriptions screen`
+  7. `cbffacb` `fix(task2): eliminate duplicate prescription search and reset category pagination state`
+  8. `122c2fd` `test(task2): add deterministic request-id race and pagination reset tests`
+  9. `merge(reconcile): merge post-D3 main 0afc5d2 into task2/patient-records-ux-next`
+
+### Verification Evidence
+| Test Target | Scope | Result | Execution Detail |
+|---|---|---|---|
+| Frontend Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 44 test files, 290 tests passed (including 19 longitudinal records UX tests and 12 timeline tests) |
+| Frontend Vitest Next Suite | `yarn --cwd nexa-client test:next` | PASS | 2 test files, 6 tests passed |
+| Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 164 passed, AST invariant constraints verified |
+| Route Registration Tests | `pytest tests/test_route_registration.py` | PASS | 16/16 route invariants passed (Task 0 Encounter + Task 1 D3 retry/cancel + Task 2 patient routes) |
+| Workspace Build | `yarn --cwd nexa-client build` | PASS | `@my/config` and `@my/ui` built cleanly |
+| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 29 routes prerendered/compiled cleanly |
+
+### Core Improvements Delivered
+1. **Error Recovery with Explicit Retry:**
+   - PatientHealthHome: Accessible retry CTA in error state with mounted state guards.
+   - PatientRecordsScreen: Dedicated in-drilldown error card with retry button (eliminating false empty states).
+   - PatientPrescriptionsScreen: Error notice with retry button.
+   - PatientReportsScreen: Error notice with retry button.
+2. **Empty State & Search Differentiation:**
+   - Differentiated global empty states ("No {category} on file") from search/filter empty states ("No records match '{query}'").
+   - Added actionable "Reset Filters" / "Clear Search" / "Show All Reports" CTAs.
+   - Consolidated single intentional search surface on `PatientPrescriptionsScreen` covering medication name, dosage/strength, and frequency/instructions.
+3. **Network Race Condition Prevention & State Invalidation:**
+   - Request sequence tracking (`requestIdRef`) across Timeline, Records, Prescriptions, and Reports screens to discard stale out-of-order responses during rapid tab or filter switching.
+   - Deterministic controlled-promise race condition tests proving newest-request-wins across Timeline, Records, and Reports screens.
+   - Synchronous pagination and record state invalidation upon category switch in `PatientRecordsScreen` preventing stale cursors from lingering across categories.
+4. **Client-Side Discovery & Filtering:**
+   - In-category search in `PatientRecordsScreen`.
+   - Prescription source filtering (`All Treatments`, `Clinic Prescriptions`, `Uploaded Prescriptions`) and medication name/frequency search.
+   - Diagnostic document category tabs with explicit type filtering.
+5. **Accessibility Enhancements:**
+   - `accessibilityState={{ selected: isActive }}` on all filter pills.
+   - Web keyboard `Escape` key dismissal for `PatientRecordDetailModal`.
+   - Descriptive accessibility labels on interactive controls.

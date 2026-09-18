@@ -42,6 +42,9 @@ class Vitals(Base, UUIDPrimaryKeyMixin):
     patient_id: Mapped[uuid.UUID] = mapped_column(
         PG_UUID(as_uuid=True), nullable=False, index=True
     )
+    encounter_id: Mapped[uuid.UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, index=True
+    )
     type: Mapped[str] = mapped_column(
         String(32), nullable=False
     )  # BP, sugar, HR, temp, SpO2
@@ -63,6 +66,12 @@ class Vitals(Base, UUIDPrimaryKeyMixin):
 
     __table_args__ = (
         Index("ix_patient_vitals_patient_recorded", "patient_id", "recorded_at"),
+        ForeignKeyConstraint(
+            ["encounter_id"],
+            ["clinical_encounters.encounter_id"],
+            name="fk_patient_vitals_encounter",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "source != 'ai_extracted' OR (confidence IS NOT NULL AND risk_level IS NOT NULL AND source_document_id IS NOT NULL)",
             name="ck_patient_vitals_provenance_complete",
