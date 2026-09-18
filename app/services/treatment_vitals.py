@@ -120,13 +120,21 @@ class TreatmentVitalUnavailable(TreatmentVitalError):
 
 
 def _aware_recorded_at(value: datetime) -> datetime:
-    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
         raise TreatmentVitalValidationError("TREATMENT_VITAL_RECORDED_AT_INVALID")
     return value
 
 
 def _bounded_positive_int(value: object, *, field: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 999:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= 999
+    ):
         raise TreatmentVitalValidationError(f"TREATMENT_VITAL_{field}_INVALID")
     return value
 
@@ -322,9 +330,14 @@ def _replay_result(
     request_hash: str,
 ) -> TreatmentVitalWriteResult:
     if getattr(row, "request_hash", None) != request_hash:
-        raise TreatmentVitalIdempotencyConflict("TREATMENT_VITAL_IDEMPOTENCY_KEY_REUSED")
+        raise TreatmentVitalIdempotencyConflict(
+            "TREATMENT_VITAL_IDEMPOTENCY_KEY_REUSED"
+        )
     payload = getattr(row, "response_payload", None)
-    if getattr(row, "response_status", None) != 200 or not isinstance(payload, dict):
+    if (
+        getattr(row, "response_status", None) != 200
+        or not isinstance(payload, dict)
+    ):
         raise TreatmentVitalUnavailable("TREATMENT_VITAL_IDEMPOTENCY_STATE_INCOMPLETE")
     try:
         return TreatmentVitalWriteResult(
