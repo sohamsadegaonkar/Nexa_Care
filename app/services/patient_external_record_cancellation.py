@@ -69,7 +69,13 @@ async def cancel_patient_external_record(
             )
 
         # Close merge/erasure races after the row lock but before mutation.
-        await assert_patient_external_record_access_active(db, patient_id=patient_id)
+        try:
+            await assert_patient_external_record_access_active(
+                db, patient_id=patient_id
+            )
+        except HTTPException:
+            await db.rollback()
+            raise
 
         previous_status = row.status
         row.status = "CANCELLED"
