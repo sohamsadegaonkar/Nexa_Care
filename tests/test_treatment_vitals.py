@@ -222,13 +222,34 @@ async def test_stage_treatment_vital_uses_only_server_authority(monkeypatch):
     kwargs = audit.await_args.kwargs
     assert kwargs["event_type"] == "PATIENT_RECORD_APPEND_SUCCESS"
     assert kwargs["patient_id"] == str(authority.patient_id)
-    assert kwargs["metadata"] == {
+    expected_metadata = {
         "clinical_session_id": str(authority.session_id),
         "encounter_id": str(authority.encounter_id),
         "operation": ClinicalAccessOperation.WRITE_VITALS.value,
         "record_type": "vitals",
     }
-    assert "72" not in repr(kwargs["metadata"])
+    assert kwargs["metadata"] == expected_metadata
+    assert set(kwargs["metadata"]) == {
+        "clinical_session_id",
+        "encounter_id",
+        "operation",
+        "record_type",
+    }
+    for forbidden_key in {
+        "value",
+        "unit",
+        "systolic_bp",
+        "diastolic_bp",
+        "heart_rate",
+        "temperature",
+        "spo2",
+        "summary",
+        "request",
+        "raw_request",
+        "payload",
+        "token",
+    }:
+        assert forbidden_key not in kwargs["metadata"]
 
 
 @pytest.mark.asyncio
