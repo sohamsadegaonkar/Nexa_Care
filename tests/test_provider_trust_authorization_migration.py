@@ -12,6 +12,7 @@ DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
 REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
 PATIENT_SEARCH_REVISION = "20260914_patient_search_identifiers"
 CLINICAL_ACCESS_REVISION = "20260916_clinical_access_sessions"
+TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 HEAD_REVISION = "20260916_patient_external_record_import"
 
 
@@ -49,8 +50,16 @@ def test_trust_authorization_migration_is_single_head_and_forward_only() -> None
         clinical_access_revision is not None
         and clinical_access_revision.down_revision == PATIENT_SEARCH_REVISION
     )
+    treatment_revision = scripts.get_revision(TREATMENT_SESSION_REVISION)
+    assert (
+        treatment_revision is not None
+        and treatment_revision.down_revision == CLINICAL_ACCESS_REVISION
+    )
     head_revision = scripts.get_revision(HEAD_REVISION)
-    assert head_revision is not None and head_revision.down_revision == CLINICAL_ACCESS_REVISION
+    assert (
+        head_revision is not None
+        and head_revision.down_revision == TREATMENT_SESSION_REVISION
+    )
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (
         "provider_trust_permission_grant",

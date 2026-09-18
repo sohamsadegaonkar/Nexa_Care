@@ -26,6 +26,10 @@ from app.api.v2.auth_routes import router as auth_v2_router
 from app.api.v2.consent_history_routes import router as consent_history_v2_router
 from app.api.v2.consent_routes import router as consent_v2_router
 from app.api.v2.consent_v3_routes import router as consent_v3_router
+from app.api.v2.treatment_session_v1_claim_routes import (
+    router as treatment_session_v1_claim_router,
+)
+from app.api.v2.treatment_session_v1_routes import router as treatment_session_v1_router
 from app.api.v2.contract_routes import router as contract_v2_router
 from app.api.v2.dashboard_routes import router as dashboard_v2_router
 from app.api.v2.device_routes import router as device_v2_router
@@ -422,6 +426,8 @@ app.include_router(registration_recovery_v2_router)
 app.include_router(registration_recovery_review_v2_router)
 app.include_router(consent_v2_router)
 app.include_router(consent_v3_router)
+app.include_router(treatment_session_v1_router)
+app.include_router(treatment_session_v1_claim_router)
 app.include_router(document_v2_router)
 app.include_router(emergency_v2_router)
 app.include_router(fhir_v2_router)

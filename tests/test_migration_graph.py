@@ -11,6 +11,7 @@ DEVICE_TRUST_REVISION = "20260909_device_trust_lifecycle"
 REGISTRATION_RECOVERY_REVISION = "20260910_registration_recovery_review"
 PATIENT_SEARCH_REVISION = "20260914_patient_search_identifiers"
 CLINICAL_ACCESS_REVISION = "20260916_clinical_access_sessions"
+TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 EXPECTED_HEAD = "20260916_patient_external_record_import"
 
 
@@ -118,10 +119,16 @@ def test_clinical_access_sessions_descend_from_patient_search() -> None:
     assert revision.down_revision == PATIENT_SEARCH_REVISION
 
 
-def test_patient_external_record_import_descends_from_clinical_access() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+def test_treatment_session_operations_descend_from_clinical_access() -> None:
+    revision = _scripts().get_revision(TREATMENT_SESSION_REVISION)
     assert revision is not None
     assert revision.down_revision == CLINICAL_ACCESS_REVISION
+
+
+def test_patient_external_record_import_descends_from_treatment_session_operations() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == TREATMENT_SESSION_REVISION
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:

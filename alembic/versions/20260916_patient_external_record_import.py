@@ -1,7 +1,7 @@
 """Add patient-owned external record import persistence.
 
 Revision ID: 20260916_patient_external_record_import
-Revises: 20260916_clinical_access_sessions
+Revises: 20260917_treatment_session_operations
 Create Date: 2026-09-16 20:20:00.000000
 """
 
@@ -12,7 +12,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "20260916_patient_external_record_import"
-down_revision: Union[str, None] = "20260916_clinical_access_sessions"
+down_revision: Union[str, None] = "20260917_treatment_session_operations"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -69,7 +69,7 @@ class ClinicalAccessSessionRecord(Base):
             name="ck_clinical_access_session_positive_lifetime",
         ),
         CheckConstraint(
-            "scope IN ('clinical','full')",
+            "scope IN ('clinical','full','treatment')",
             name="ck_clinical_access_session_scope",
         ),
         CheckConstraint(
@@ -77,8 +77,14 @@ class ClinicalAccessSessionRecord(Base):
             name="ck_clinical_access_session_policy_v1",
         ),
         CheckConstraint(
-            "jsonb_typeof(allowed_operations) = 'array' "
-            "AND allowed_operations = '[\"READ_CLINICAL_HISTORY\"]'::jsonb",
+            "(scope IN ('clinical','full') "
+            "AND allowed_operations = '[\"READ_CLINICAL_HISTORY\"]'::jsonb) "
+            "OR (scope = 'treatment' "
+            "AND jsonb_typeof(allowed_operations) = 'array' "
+            "AND jsonb_array_length(allowed_operations) BETWEEN 1 AND 8 "
+            "AND allowed_operations <@ '[\"READ_CLINICAL_HISTORY\",\"READ_DOCUMENTS\","
+            "\"CREATE_ENCOUNTER\",\"WRITE_PRESCRIPTION\",\"WRITE_DIAGNOSIS\","
+            "\"WRITE_VITALS\",\"WRITE_CLINICAL_NOTES\",\"ORDER_INVESTIGATION\"]'::jsonb)",
             name="ck_clinical_access_session_ops_v1",
         ),
         CheckConstraint(

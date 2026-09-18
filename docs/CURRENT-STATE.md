@@ -129,7 +129,7 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 The current single Alembic head on `main` is:
 
-`20260916_clinical_access_sessions`
+`20260917_treatment_session_operations`
 
 It descends linearly from `20260914_patient_search_identifiers`, which descends from `20260910_registration_recovery_review`. The Slice 10B migration adds only durable server-owned clinical-session authority; it stores bearer digests rather than raw access tokens.
 
@@ -247,7 +247,7 @@ Slice 6I supported-handset execution remains a separate physical-platform gate o
 Continue Slice 10B backend hardening without broadening write authority:
 
 1. finish patient-revocation propagation into the durable `ClinicalAccessSession` lifecycle;
-2. reconcile current migration-head/runtime evidence contracts to `20260916_clinical_access_sessions`;
+2. reconcile current migration-head/runtime evidence contracts to `20260917_treatment_session_operations`;
 3. prove Redis/PostgreSQL exact agreement, revocation, expiry, wrong-session/wrong-provider/wrong-hospital/tampered-operation denial, and post-claim failure compensation under adversarial tests;
 4. freeze one exact `main` SHA only after the implementation and current governance contracts agree; and
 5. require Backend CI Partitions A/B/C with each zero-skip assertion green before treating the durable backend increment as qualified.
