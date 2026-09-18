@@ -758,7 +758,7 @@ async def get_my_records_by_category(
                 "document_type": d.document_type,
                 "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
                 "source": "patient_uploaded",
-                "source_display": "Patient Uploaded / External Document",
+                "source_display": "Imported by you from an external report",
                 "has_source_document": True,
             })
 
@@ -915,7 +915,7 @@ async def get_my_record_detail(
             "recorded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
             "provenance": {
                 "source": "patient_uploaded",
-                "source_display": "Patient Uploaded / External Document",
+                "source_display": "Imported by you from an external report",
                 "source_document_id": str(d.id),
                 "has_source_document": True,
             },
@@ -1000,7 +1000,7 @@ async def get_my_prescriptions(
                 "frequency": "See Document",
                 "prescribed_at": doc.uploaded_at.isoformat() if getattr(doc, "uploaded_at", None) else None,
                 "source": "patient_uploaded",
-                "source_display": "Patient Uploaded Prescription",
+                "source_display": "Imported by you from an external report",
                 "risk_level": "MEDIUM_RISK",
                 "confidence": None,
                 "has_source_document": True,
@@ -1068,7 +1068,7 @@ async def get_my_reports(
             "document_type": d.document_type,
             "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
             "source": "patient_uploaded",
-            "source_display": "Patient Uploaded / External Source",
+            "source_display": "Imported by you from an external report",
             "can_view_source": True,
             "category": (
                 "medications"
@@ -1537,6 +1537,13 @@ def _enrich_timeline_provenance(
             ]
             if badge is not None
         ]
+    elif raw_source == "patient_uploaded":
+        conf_val = None
+        risk_val = str(risk_level) if risk_level else None
+        source_display = "Imported by you from an external report"
+        source_detail = "Patient-imported external medical record"
+        rev_val = "Patient reviewed"
+        badges = ["Imported by you", "External record"]
     else:
         conf_val = None
         risk_val = str(risk_level or "LOW_RISK") if risk_level else None

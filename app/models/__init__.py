@@ -19,6 +19,10 @@ from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
 from app.models.patient_device_keys import PatientDeviceKey
+from app.models.patient_external_record_import import (
+    PatientExternalRecordCandidate,
+    PatientExternalRecordImport,
+)
 from app.models.patient_policy import PatientPolicy
 from app.models.patient_records import (
     Allergy,
@@ -89,6 +93,8 @@ __all__ = [
     "Patient",
     "PatientAuthIdentity",
     "PatientDeviceKey",
+    "PatientExternalRecordImport",
+    "PatientExternalRecordCandidate",
     "PatientPolicy",
     "PatientRecord",
     "PatientSearchIdentifier",

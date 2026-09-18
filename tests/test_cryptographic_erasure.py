@@ -32,6 +32,9 @@ from app.models.provider_context import (
 from app.core.dependencies import get_db_session, get_provider_context, require_role
 from app.api.v2.patient_routes import get_kms_provider
 from app.models.provider import AffiliationType
+from app.services.patient_external_record_lifecycle import (
+    PatientExternalSourceErasureUnavailable,
+)
 
 
 class _ScalarsResult:
@@ -271,3 +274,59 @@ async def test_erasure_idempotent(client, mock_db, mock_admin, env_setup):
         assert response2.status_code == 200, response2.text
         assert response2.json()["status"] == first_status
     app.dependency_overrides.clear()
+
+
+
+@pytest.mark.asyncio
+async def test_erasure_source_cleanup_failure_requires_operator_action(
+    client, mock_db, mock_admin, env_setup
+):
+    kms = LocalEnvelopeProvider()
+    patient_id = str(uuid.uuid4())
+    await kms.generate_dek(patient_id, mock_db)
+
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    app.dependency_overrides[get_provider_context] = lambda: mock_admin
+    app.dependency_overrides[require_role("admin")] = lambda: mock_admin
+    app.dependency_overrides[get_kms_provider] = lambda: kms
+
+    try:
+        with (
+            patch(
+                "app.observability.audit_ledger.append_audit_log_or_503",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.api.v2.patient_routes.append_audit_log_or_503",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "app.api.v2.patient_routes.delete_patient_external_record_sources",
+                new_callable=AsyncMock,
+                side_effect=PatientExternalSourceErasureUnavailable(
+                    "synthetic cleanup failure"
+                ),
+            ),
+        ):
+            response = client.post(
+                f"/api/v2/patient/{patient_id}/erase",
+                json={
+                    "confirmation": f"ERASE-{patient_id}",
+                    "reason": "Patient request",
+                },
+            )
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["status"] == "operator_action_required"
+        assert body["operator_action_required"] is True
+        assert body["historical_backup_irrecoverability_proven"] is False
+
+        assert len(mock_db.tombstones) == 1
+        tombstone = mock_db.tombstones[0]
+        assert tombstone.failure_code == "patient_external_source_delete_failed"
+        assert tombstone.retry_required is True
+    finally:
+        app.dependency_overrides.clear()
