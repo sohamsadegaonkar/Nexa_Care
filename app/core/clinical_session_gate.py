@@ -250,6 +250,7 @@ def _durable_grant_matches(
     try:
         grant_expires_at = _aware(getattr(grant, "expires_at"))
         grant_issued_at = _aware(getattr(grant, "issued_at"))
+        assurance_verified_at = _aware(getattr(grant, "assurance_verified_at"))
         grant_hospital_id = _uuid(getattr(grant, "hospital_id"))
         grant_token_hash = _sha256_hex(getattr(grant, "token_hash"))
         grant_request_id = _uuid(getattr(grant, "request_id"))
@@ -258,7 +259,9 @@ def _durable_grant_matches(
 
     return (
         getattr(grant, "is_break_glass", None) is False
+        and getattr(grant, "reason_code", None) is None
         and getattr(grant, "revoked_at", None) is None
+        and getattr(grant, "revoked_reason", None) is None
         and getattr(grant, "purpose", None) == authority.purpose
         and getattr(grant, "scope", None) == [TREATMENT_SESSION_V1_SCOPE]
         and getattr(grant, "assurance_level", None) == "signed_device_treatment_v1"
@@ -268,6 +271,7 @@ def _durable_grant_matches(
         and grant_request_id == authority.request_id
         and secrets.compare_digest(grant_token_hash, authority.token_hash)
         and grant_issued_at <= now
+        and assurance_verified_at == grant_issued_at
         and grant_expires_at == authority.expires_at
         and now < grant_expires_at
     )
