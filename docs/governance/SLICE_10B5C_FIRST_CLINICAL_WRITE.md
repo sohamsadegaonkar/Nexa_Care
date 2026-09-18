@@ -312,6 +312,181 @@ semantically reconcile any shared changes.
 - autonomous interpretation;
 - Signed Consent V3 write authority.
 
+## Pre-route contract hardening checkpoint
+
+Diagnostic checkpoint head:
+
+```text
+1c672fd9e2de7d69ebdb74a33bf17d9ff701ced6
+```
+
+This checkpoint remains **diagnostic only**. It does not authorize route exposure
+or merge.
+
+Backend CI `35380405329` / run #718:
+
+- Ruff: **PASS**
+- Partition A: **4050 passed / 435 deselected / 0 skipped**
+- Partition B: **305 passed / 4180 deselected / 0 skipped**
+- Partition C: **130 passed / 4355 deselected / 0 skipped**
+- all zero-skip assertions: **PASS**
+
+Frontend/native CI `35380405536` / run #667:
+
+- frontend/web: **44 files / 277 tests PASS**
+- Next production build: **PASS**
+- workspace build: **PASS**
+- Android native compile: **PASS**
+- iOS native compile: **PASS**
+
+### Vercel diagnostic evidence
+
+PR #56 currently has two different Vercel signals:
+
+- a deployment failure caused by the free-tier deployment-rate limit
+  (`api-deployments-free-per-day`);
+- a separate PR bot event showing a Ready preview deployment.
+
+Those signals are **ambiguous for exact-head release qualification**. They are
+recorded as diagnostic context only. Final 10B.5c qualification requires one
+unambiguous successful Vercel result tied to the exact intended merge head.
+
+### Audit allow-list
+
+The Treatment Session vitals success audit must remain structural/value-free.
+
+Permitted metadata is exactly:
+
+```text
+clinical_session_id
+encounter_id
+operation
+record_type
+```
+
+Clinical values, units, BP components, heart rate, temperature, SpO2, timeline
+summary, raw request/payload, treatment token, and raw clinical idempotency
+payload are prohibited from audit metadata.
+
+The canonical idempotency request hash may cryptographically bind clinical
+semantics. The raw clinical values themselves still do not enter audit metadata.
+
+### Idempotency HTTP contract
+
+The existing repository mutation-idempotency convention persists completed
+success as HTTP status `200`. The 10B.5c route must therefore use one stable
+logical success contract:
+
+```text
+first successful WRITE_VITALS request -> HTTP 200
+same key + same canonical request     -> HTTP 200 + original logical result
+same key + changed canonical request  -> conflict / fail closed
+```
+
+The canonical request hash binds at least:
+
+- ClinicalAccessSession;
+- canonical Encounter;
+- patient;
+- provider;
+- hospital;
+- vital type;
+- canonical value;
+- server-owned unit;
+- recorded time.
+
+The route must not return a different nominal success status from the status
+stored in `mutation_idempotency`.
+
+### recorded_at semantics
+
+Repository evidence defines `patient_vitals.recorded_at` as the **timestamp of
+observation** and `TimelineEvent.occurred_at` as a historical occurrence
+timestamp. Existing manual vitals entry accepts a caller-supplied observation
+time.
+
+The canonical Encounter currently has `created_at` but no authoritative
+started-at / ended-at clinical window contract. Therefore 10B.5c must not invent
+an Encounter-time cutoff or silently reinterpret `recorded_at` as server time.
+
+For this slice:
+
+- `recorded_at` remains the clinician-supplied observation timestamp;
+- it must be timezone-aware and canonically serialized;
+- it is cryptographically bound into idempotency semantics;
+- no claim is made that it occurred after Encounter creation;
+- a stricter historical-entry/window policy is deferred until the repository has
+  an explicit clinical policy contract.
+
+### Numeric validation semantics
+
+10B.5c separates representation safety from clinical interpretation.
+
+Current bounded validation proves:
+
+- finite numeric representation;
+- canonical encoding;
+- server-owned units;
+- BP and HR positive bounded integer representation;
+- SpO2 percentage representation constrained to 0..100.
+
+The repository does not currently define authoritative manual-entry clinical
+normal/abnormal thresholds for these Treatment Session writes. 10B.5c therefore
+must not manufacture diagnostic ranges, normality labels, or treatment
+interpretation.
+
+Temperature remains finite/canonical under the current broad representation
+envelope. A stricter clinical plausibility range is explicitly deferred unless
+an authoritative repository/domain policy is added.
+
+### Provenance contract
+
+Treatment Session clinician-entered vitals remain:
+
+```text
+source = manual
+confidence = null
+source_document_id = null
+```
+
+No AI confidence, document provenance, clinician-verification score, or
+normality interpretation is fabricated.
+
+The existing `risk_level` column remains a legacy schema-compatibility field;
+10B.5c does not expose that value as a new clinical interpretation.
+
+### Final provider-trust recheck
+
+The repository-established primitive is:
+
+```text
+enforce_current_clinical_capability(...)
+```
+
+It reauthenticates the provider session and reevaluates current clinical
+eligibility. The future WRITE_VITALS route must use the repository's normal
+admission dependency and invoke this same primitive again **immediately before
+commit**.
+
+If the final recheck fails, the route must roll back the Vitals row,
+TimelineEvent, audit-outbox event, and idempotency reservation/completion in the
+same transaction.
+
+No parallel or shortcut trust model is permitted.
+
+### Current Task-1 integration gate
+
+At this checkpoint PR #53 remains open/draft/unmerged.
+
+Therefore Task 0 continues to expose **no WRITE_VITALS HTTP route** and does not
+modify:
+
+- `tests/test_route_registration.py`;
+- `tests/test_audit_event_coverage.py`.
+
+The route and shared integration assertions remain blocked until GitHub reports
+PR #53 merged.
+
 ## Qualification required before merge
 
 The final exact head must prove, at minimum:
