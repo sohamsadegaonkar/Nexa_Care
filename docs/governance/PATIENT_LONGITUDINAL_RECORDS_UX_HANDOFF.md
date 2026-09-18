@@ -2,16 +2,17 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `slice-11c-external-record-longitudinal-integration`
-- **Merged Main Baseline:** `34510ec1e308762cf2836c70de7e1cc8a828b39d`
+- **Current branch:** `main`
+- **Merged Main Baseline:** `6a4f21fb6b32624edf521d2fb00c4d9294098777`
+- **PR #51 Merge Commit:** `6a4f21fb6b32624edf521d2fb00c4d9294098777` (closed & merged)
 - **PR #48 Merge Commit:** `34510ec1e308762cf2836c70de7e1cc8a828b39d` (closed & merged)
 - **PR #49 Merge Commit:** `20c75f969657c4e9ea28cd80998724a958a88e03` (closed & merged)
 - **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
 - **Current Alembic head:** `20260917_treatment_session_operations` (singular)
 - **New Migrations:** NONE
-- **Current phase:** Slice 11C External Record Longitudinal Integration
-- **Last completed step:** Merged PR #49 qualification repair and PR #48 Slice 11B longitudinal records onto main with 100% green CI across all partitions.
-- **Exact next task:** Implement Slice 11C external record longitudinal projection & frontend integration.
+- **Current phase:** Patient Longitudinal Health Record & External Record Integration Complete
+- **Last completed step:** Merged PR #51 (Slice 11C external record longitudinal projection & UX) onto main with 100% green CI across all partitions.
+- **Exact next task:** Maintain operational stability; support parallel Slice 11A import review if requested.
 - **Current blockers:** None
 - **Tests to run next:** Full CI verification suite
 - **Protected files not to touch:**
@@ -25,7 +26,7 @@
   - `app/api/v2/treatment_session_v1_claim_routes.py`
   - `alembic/versions/20260917_treatment_session_operations.py` (and any new competing migrations)
   - Raw import pipeline internals in `slice-11a-patient-external-record-import`
-- **Concurrent branches to re-check:** `origin/slice-11a-patient-external-record-import`
+- **Concurrent branches to re-check:** `origin/slice-11a-patient-external-record-import` (PR #47 in DRAFT)
 
 ---
 
@@ -50,18 +51,20 @@ This branch (`slice-11c-external-record-longitudinal-integration`) bridges:
 
 ## Repository Baseline
 
-- **Merged Main SHA:** `34510ec1e308762cf2836c70de7e1cc8a828b39d`
+- **Merged Main SHA:** `6a4f21fb6b32624edf521d2fb00c4d9294098777`
+- **PR #51 (Slice 11C):** MERGED at `6a4f21f` (head `b8f9c86`)
 - **PR #48 (Slice 11B):** MERGED at `34510ec` (reconciled head `7c725a5`)
 - **PR #49 (Fixture Repair):** MERGED at `20c75f9` (head `f30a9b4`)
 - **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
 - **Alembic Current Single Head:** `20260917_treatment_session_operations`
 - **New Migrations:** NONE
 - **Active Remote Branches:**
-  - `origin/main` (`34510ec`)
+  - `origin/main` (`6a4f21f`)
   - `origin/slice-11b-patient-longitudinal-records-ux` (`dd4aba0` - frozen Task 2 artifact)
   - `origin/slice-11a-patient-external-record-import` (PR #47 in DRAFT)
+  - `origin/slice-10b5-clinical-session-gate` (PR #50)
 - **Concurrent Workstreams:**
-  - Workstream A: Treatment Session Operations (merged to main).
+  - Workstream A: Treatment Session Operations & Clinical Session Gate (PR #50).
   - Workstream B: Patient External-Record Import + Medical-History Onboarding (`slice-11a-patient-external-record-import`).
 
 ---
