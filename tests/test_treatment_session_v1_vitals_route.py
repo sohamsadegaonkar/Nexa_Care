@@ -141,7 +141,7 @@ def _result(
     )
 
 
-def test_isolated_router_exposes_exactly_one_bounded_write_surface():
+def test_router_exposes_exactly_one_bounded_write_surface():
     paths = {
         (tuple(sorted(route.methods or ())), route.path)
         for route in routes.router.routes
@@ -151,10 +151,10 @@ def test_isolated_router_exposes_exactly_one_bounded_write_surface():
     }
 
 
-def test_isolated_router_is_not_mounted_in_app_before_task1_merge():
+def test_router_is_mounted_in_app_after_task1_merge():
     from app.main import app
 
-    assert "/api/v2/treatment-session/v1/vitals" not in {
+    assert "/api/v2/treatment-session/v1/vitals" in {
         route.path for route in app.routes
     }
 
