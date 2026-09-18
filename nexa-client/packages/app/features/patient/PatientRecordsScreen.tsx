@@ -3,6 +3,7 @@ import {
   Button,
   H2,
   H3,
+  Input,
   Paragraph,
   Separator,
   Spinner,
@@ -10,7 +11,7 @@ import {
   XStack,
   YStack,
 } from 'tamagui'
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { RefreshControl, ScrollView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
@@ -64,6 +65,9 @@ export default function PatientRecordsScreen() {
   const [categoryLoading, setCategoryLoading] = useState(false)
   const [categoryNextCursor, setCategoryNextCursor] = useState<string | null>(null)
   const [loadingOlder, setLoadingOlder] = useState(false)
+  const [categoryError, setCategoryError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState('')
+  const categoryRequestIdRef = useRef(0)
 
   // Detail modal state
   const [selectedRecord, setSelectedRecord] = useState<Record<string, any> | null>(null)
@@ -92,14 +96,17 @@ export default function PatientRecordsScreen() {
 
   const loadCategoryRecords = useCallback(
     async (cat: string, cursor?: string | null, append = false) => {
+      const currentReqId = ++categoryRequestIdRef.current
       if (append) setLoadingOlder(true)
       else setCategoryLoading(true)
+      setCategoryError(null)
 
       try {
         const res = await NexaApiClient.getMyRecordsByCategory(cat, {
           cursor,
           limit: 20,
         })
+        if (currentReqId !== categoryRequestIdRef.current) return
         if (append) {
           setCategoryRecords((prev) => [...prev, ...res.records])
         } else {
@@ -107,14 +114,17 @@ export default function PatientRecordsScreen() {
         }
         setCategoryNextCursor(res.next_cursor)
       } catch (err) {
-        setError(
+        if (currentReqId !== categoryRequestIdRef.current) return
+        setCategoryError(
           err instanceof Error
             ? err.message
             : `Failed to load ${cat} records`
         )
       } finally {
-        setCategoryLoading(false)
-        setLoadingOlder(false)
+        if (currentReqId === categoryRequestIdRef.current) {
+          setCategoryLoading(false)
+          setLoadingOlder(false)
+        }
       }
     },
     []
@@ -122,6 +132,8 @@ export default function PatientRecordsScreen() {
 
   const handleSelectCategory = (catKey: string) => {
     setSelectedCategory(catKey)
+    setSearchQuery('')
+    setCategoryError(null)
     void loadCategoryRecords(catKey)
   }
 
@@ -129,7 +141,22 @@ export default function PatientRecordsScreen() {
     setSelectedCategory(null)
     setCategoryRecords([])
     setCategoryNextCursor(null)
+    setSearchQuery('')
+    setCategoryError(null)
   }
+
+  const filteredCategoryRecords = useMemo(() => {
+    if (!searchQuery.trim()) return categoryRecords
+    const q = searchQuery.toLowerCase().trim()
+    return categoryRecords.filter((item) => {
+      const title = String(
+        item.type || item.name || item.test_name || item.allergen || item.document_type || ''
+      ).toLowerCase()
+      const val = String(item.value || '').toLowerCase()
+      const strength = String(item.strength || '').toLowerCase()
+      return title.includes(q) || val.includes(q) || strength.includes(q)
+    })
+  }, [categoryRecords, searchQuery])
 
   return (
     <YStack flex={1} backgroundColor="$background">
@@ -149,6 +176,8 @@ export default function PatientRecordsScreen() {
               size="$2"
               chromeless
               onPress={handleBackToOverview}
+              accessibilityRole="button"
+              accessibilityLabel="Return to all record categories"
             >
               ← All Categories
             </Button>
@@ -222,6 +251,32 @@ export default function PatientRecordsScreen() {
         ) : selectedCategory ? (
           /* Category Drilldown List */
           <YStack gap="$3">
+            {/* Search Input for Category Records */}
+            {!categoryLoading && !categoryError && categoryRecords.length > 0 ? (
+              <XStack gap="$2" alignItems="center">
+                <Input
+                  flex={1}
+                  size="$3"
+                  placeholder={`Search ${CATEGORY_DEFINITIONS[selectedCategory]?.label || 'records'}…`}
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                  accessibilityLabel={`Search ${CATEGORY_DEFINITIONS[selectedCategory]?.label || 'records'}`}
+                  backgroundColor="$backgroundHover"
+                />
+                {searchQuery.length > 0 ? (
+                  <Button
+                    size="$3"
+                    chromeless
+                    onPress={() => setSearchQuery('')}
+                    accessibilityRole="button"
+                    accessibilityLabel="Clear search"
+                  >
+                    Clear
+                  </Button>
+                ) : null}
+              </XStack>
+            ) : null}
+
             {categoryLoading ? (
               <YStack
                 alignItems="center"
@@ -231,6 +286,33 @@ export default function PatientRecordsScreen() {
               >
                 <Spinner size="large" color="$blue10" />
                 <Paragraph color="$color10">Loading records…</Paragraph>
+              </YStack>
+            ) : categoryError ? (
+              <YStack
+                backgroundColor="$red4"
+                padding="$4"
+                borderRadius="$4"
+                alignItems="center"
+                gap="$2"
+                accessibilityRole="alert"
+              >
+                <Text fontSize={32}>⚠️</Text>
+                <Text color="$red11" fontSize="$4" fontWeight="700">
+                  Failed to load {CATEGORY_DEFINITIONS[selectedCategory]?.label || selectedCategory}
+                </Text>
+                <Paragraph color="$red11" size="$2" textAlign="center">
+                  {categoryError}
+                </Paragraph>
+                <Button
+                  size="$2.5"
+                  theme="red"
+                  marginTop="$1"
+                  onPress={() => void loadCategoryRecords(selectedCategory)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Retry loading ${CATEGORY_DEFINITIONS[selectedCategory]?.label || selectedCategory} records`}
+                >
+                  Retry
+                </Button>
               </YStack>
             ) : categoryRecords.length === 0 ? (
               <YStack
@@ -244,48 +326,74 @@ export default function PatientRecordsScreen() {
                   No {CATEGORY_DEFINITIONS[selectedCategory]?.label} recorded on file.
                 </Paragraph>
               </YStack>
-            ) : (
-              categoryRecords.map((item) => (
-                <YStack
-                  key={item.record_id}
-                  backgroundColor="$backgroundHover"
-                  borderRadius="$4"
-                  padding="$3.5"
-                  gap="$2"
-                  pressStyle={{ opacity: 0.85 }}
-                  onPress={() => setSelectedRecord(item)}
+            ) : filteredCategoryRecords.length === 0 ? (
+              <YStack
+                alignItems="center"
+                justifyContent="center"
+                paddingVertical="$8"
+                gap="$2"
+              >
+                <Text fontSize={32}>🔍</Text>
+                <Paragraph color="$color10" size="$4">
+                  No records match &quot;{searchQuery}&quot;
+                </Paragraph>
+                <Button
+                  size="$2.5"
+                  chromeless
+                  onPress={() => setSearchQuery('')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Clear search filter"
                 >
-                  <XStack justifyContent="space-between" alignItems="center">
-                    <Text color="$color" fontSize="$4" fontWeight="700">
-                      {item.type || item.name || item.test_name || item.allergen || item.document_type || 'Record'}
-                    </Text>
-                    {item.value ? (
-                      <Text color="$color" fontSize="$4" fontWeight="800">
-                        {item.value} {item.unit || ''}
+                  Clear Search
+                </Button>
+              </YStack>
+            ) : (
+              filteredCategoryRecords.map((item) => {
+                const title = item.type || item.name || item.test_name || item.allergen || item.document_type || 'Record'
+                return (
+                  <YStack
+                    key={item.record_id}
+                    backgroundColor="$backgroundHover"
+                    borderRadius="$4"
+                    padding="$3.5"
+                    gap="$2"
+                    pressStyle={{ opacity: 0.85 }}
+                    onPress={() => setSelectedRecord(item)}
+                    accessibilityRole="button"
+                    accessibilityLabel={`View details for ${title}`}
+                  >
+                    <XStack justifyContent="space-between" alignItems="center">
+                      <Text color="$color" fontSize="$4" fontWeight="700">
+                        {title}
                       </Text>
-                    ) : item.strength ? (
-                      <Text color="$color" fontSize="$3" fontWeight="600">
-                        {item.strength}
-                      </Text>
-                    ) : null}
-                  </XStack>
+                      {item.value ? (
+                        <Text color="$color" fontSize="$4" fontWeight="800">
+                          {item.value} {item.unit || ''}
+                        </Text>
+                      ) : item.strength ? (
+                        <Text color="$color" fontSize="$3" fontWeight="600">
+                          {item.strength}
+                        </Text>
+                      ) : null}
+                    </XStack>
 
-                  <XStack justifyContent="space-between" alignItems="center">
-                    <Text color="$color10" fontSize="$2">
-                      {item.recorded_at || item.prescribed_at || item.uploaded_at
-                        ? new Date(
-                            item.recorded_at || item.prescribed_at || item.uploaded_at
-                          ).toLocaleDateString('en-IN', {
-                            dateStyle: 'medium',
-                          })
-                        : 'Date not recorded'}
-                    </Text>
-                    <Text color="$blue10" fontSize="$2" fontWeight="600">
-                      View Details →
-                    </Text>
-                  </XStack>
-                </YStack>
-              ))
+                    <XStack justifyContent="space-between" alignItems="center">
+                      <Text color="$color10" fontSize="$2">
+                        {item.recorded_at || item.prescribed_at || item.uploaded_at
+                          ? new Date(
+                              item.recorded_at || item.prescribed_at || item.uploaded_at
+                            ).toLocaleDateString('en-IN', {
+                              dateStyle: 'medium',
+                            })
+                          : 'Date not recorded'}
+                      </Text>
+                      <Text color="$blue10" fontSize="$2" fontWeight="600">
+                        View Details →
+                      </Text>
+                    </XStack>
+                  </YStack>
+                )
+              })
             )}
 
             {categoryNextCursor ? (
@@ -297,6 +405,8 @@ export default function PatientRecordsScreen() {
                   onPress={() =>
                     void loadCategoryRecords(selectedCategory, categoryNextCursor, true)
                   }
+                  accessibilityRole="button"
+                  accessibilityLabel="Load older category records"
                 >
                   {loadingOlder ? (
                     <XStack gap="$2" alignItems="center">
@@ -307,6 +417,12 @@ export default function PatientRecordsScreen() {
                     'Load older records'
                   )}
                 </Button>
+              </YStack>
+            ) : categoryRecords.length > 0 ? (
+              <YStack alignItems="center" paddingVertical="$4">
+                <Paragraph color="$color10" size="$2" opacity={0.6}>
+                  ✓ All {CATEGORY_DEFINITIONS[selectedCategory]?.label || selectedCategory} records loaded
+                </Paragraph>
               </YStack>
             ) : null}
           </YStack>
