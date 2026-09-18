@@ -134,6 +134,8 @@ export default function PatientTimelineScreen({
   const timelineRef = useRef(initialTimeline ?? [])
   const activeRequestIdRef = useRef(0)
   const loadingOlderRef = useRef(false)
+  const activeFilterRef = useRef(activeFilter)
+  activeFilterRef.current = activeFilter
 
   const fetchTimeline = useCallback(
     async (mode: 'initial' | 'refresh' | 'append', cursor?: string | null, filterKey?: string) => {
@@ -156,7 +158,7 @@ export default function PatientTimelineScreen({
         if (cursor) {
           params.set('cursor', cursor)
         }
-        const effectiveFilter = filterKey !== undefined ? filterKey : activeFilter
+        const effectiveFilter = filterKey !== undefined ? filterKey : activeFilterRef.current
         if (effectiveFilter && effectiveFilter !== 'ALL') {
           // Map to backend category name
           let catParam = effectiveFilter.toLowerCase()
@@ -204,7 +206,7 @@ export default function PatientTimelineScreen({
         }
       }
     },
-    [activeFilter]
+    []
   )
 
   useEffect(() => {

@@ -97,8 +97,14 @@ export default function PatientRecordsScreen() {
   const loadCategoryRecords = useCallback(
     async (cat: string, cursor?: string | null, append = false) => {
       const currentReqId = ++categoryRequestIdRef.current
-      if (append) setLoadingOlder(true)
-      else setCategoryLoading(true)
+      if (append) {
+        setLoadingOlder(true)
+      } else {
+        setCategoryLoading(true)
+        setCategoryRecords([])
+        setCategoryNextCursor(null)
+        setLoadingOlder(false)
+      }
       setCategoryError(null)
 
       try {
@@ -132,6 +138,9 @@ export default function PatientRecordsScreen() {
 
   const handleSelectCategory = (catKey: string) => {
     setSelectedCategory(catKey)
+    setCategoryRecords([])
+    setCategoryNextCursor(null)
+    setLoadingOlder(false)
     setSearchQuery('')
     setCategoryError(null)
     void loadCategoryRecords(catKey)
@@ -141,6 +150,7 @@ export default function PatientRecordsScreen() {
     setSelectedCategory(null)
     setCategoryRecords([])
     setCategoryNextCursor(null)
+    setLoadingOlder(false)
     setSearchQuery('')
     setCategoryError(null)
   }

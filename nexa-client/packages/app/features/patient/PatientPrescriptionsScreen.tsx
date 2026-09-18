@@ -232,30 +232,6 @@ export default function PatientPrescriptionsScreen() {
           </YStack>
         ) : null}
 
-        {!loading && prescriptions.length > 0 ? (
-          <XStack gap="$2" alignItems="center">
-            <Input
-              flex={1}
-              size="$3"
-              placeholder="Search medication name or dosage…"
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-              accessibilityLabel="Search prescriptions by medication name or dosage"
-              backgroundColor="$backgroundHover"
-            />
-            {searchQuery.length > 0 ? (
-              <Button
-                size="$3"
-                chromeless
-                onPress={() => setSearchQuery('')}
-                accessibilityRole="button"
-                accessibilityLabel="Clear prescription search"
-              >
-                Clear
-              </Button>
-            ) : null}
-          </XStack>
-        ) : null}
 
         {loading ? (
           <YStack

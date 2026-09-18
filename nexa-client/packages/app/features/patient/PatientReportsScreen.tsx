@@ -35,8 +35,16 @@ export default function PatientReportsScreen() {
   const loadReports = useCallback(
     async (cursor?: string | null, append = false, typeFilter?: string) => {
       const currentReqId = ++reportRequestIdRef.current
-      if (append) setLoadingOlder(true)
-      else if (!cursor) setLoading(true)
+      if (append) {
+        setLoadingOlder(true)
+      } else {
+        if (!cursor) {
+          setLoading(true)
+          setReports([])
+          setNextCursor(null)
+          setLoadingOlder(false)
+        }
+      }
       setError(null)
 
       const activeFilter = typeFilter !== undefined ? typeFilter : selectedTypeFilter
@@ -78,7 +86,10 @@ export default function PatientReportsScreen() {
 
   const handleSelectFilter = (filterKey: string) => {
     setSelectedTypeFilter(filterKey)
+    setReports([])
     setNextCursor(null)
+    setLoadingOlder(false)
+    setError(null)
     void loadReports(null, false, filterKey)
   }
 
