@@ -152,7 +152,17 @@ export default function PatientRecordsScreen() {
             >
               ← All Categories
             </Button>
-          ) : null}
+          ) : (
+            <Button
+              size="$2.5"
+              theme="blue"
+              onPress={() => router.push('/patient/reports')}
+              accessibilityRole="button"
+              accessibilityLabel="Add Medical Record"
+            >
+              + Add Record
+            </Button>
+          )}
         </XStack>
         <Paragraph color="$color10" size="$3">
           {selectedCategory

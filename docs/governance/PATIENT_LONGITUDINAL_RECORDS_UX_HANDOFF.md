@@ -2,14 +2,16 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `integration/slice-11b-on-10b4`
-- **Source Slice 11B head:** `dd4aba0`
-- **Integration base:** `342d25cb960a3c81539502e6d3eacde4e7121aee`
-- **Current Alembic head:** `20260917_treatment_session_operations`
-- **New Slice 11B migrations:** NONE
-- **Current phase:** Integration on Treatment Session V1 Main & PR Qualification
-- **Last completed step:** Reconciled Slice 11B onto Treatment Session V1 main with all 4 treatment-session routes and 7 patient-self endpoints preserved.
-- **Exact next task:** Full regression suite run, branch push, and PR creation.
+- **Current branch:** `slice-11c-external-record-longitudinal-integration`
+- **Merged Main Baseline:** `34510ec1e308762cf2836c70de7e1cc8a828b39d`
+- **PR #48 Merge Commit:** `34510ec1e308762cf2836c70de7e1cc8a828b39d` (closed & merged)
+- **PR #49 Merge Commit:** `20c75f969657c4e9ea28cd80998724a958a88e03` (closed & merged)
+- **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
+- **Current Alembic head:** `20260917_treatment_session_operations` (singular)
+- **New Migrations:** NONE
+- **Current phase:** Slice 11C External Record Longitudinal Integration
+- **Last completed step:** Merged PR #49 qualification repair and PR #48 Slice 11B longitudinal records onto main with 100% green CI across all partitions.
+- **Exact next task:** Implement Slice 11C external record longitudinal projection & frontend integration.
 - **Current blockers:** None
 - **Tests to run next:** Full CI verification suite
 - **Protected files not to touch:**
@@ -20,48 +22,46 @@
   - `app/core/consent_gate.py`
   - `app/api/v2/consent_v3_routes.py`
   - `app/api/v2/treatment_session_v1_routes.py`
+  - `app/api/v2/treatment_session_v1_claim_routes.py`
   - `alembic/versions/20260917_treatment_session_operations.py` (and any new competing migrations)
-  - Patient external import workstream files (`slice-11a-patient-external-record-import`)
+  - Raw import pipeline internals in `slice-11a-patient-external-record-import`
 - **Concurrent branches to re-check:** `origin/slice-11a-patient-external-record-import`
 
 ---
 
 ## Scope
 
-This branch (`integration/slice-11b-on-10b4`) integrates:
-1. **Patient Home:** Personal health summary with trustworthy highlights (active medications, allergies, recent vitals, recent labs/reports, quick access navigation).
-2. **Timeline:** Chronological healthcare history from all valid sources, bounded keyset pagination (`limit`, `cursor`, `next_cursor`), safe user-facing event titles/summaries, and deep link/navigation to underlying record details.
-3. **Categorized Records:** Structured record browsing by category (Allergies, Medications, Vitals, Laboratory, Reports / Documents) with counts, recent previews, list view, and record detail view.
-4. **Prescriptions vs. Medications UX:** Clear distinction between medication treatments and clinician-issued prescriptions (consuming `Medication` entities with appropriate provenance without conflating them).
-5. **Reports UX:** Categorized medical reports aggregating typed lab evaluations, imaging, discharge summaries, and external source documents with provenance, facility, and authorized source-view access without leaking storage keys or internal IDs.
-6. **Record Detail & Provenance Presentation:** Readable structured clinical details, origin source, doctor/facility/date, honest trust labels (`Nexa Clinician Created`, `Patient Reported`, `Document Extracted`, `Hospital HMS Imported`).
-7. **Patient Self-View Read Backend Models:** Server-derived patient self-view endpoints on `/api/v2/patient/me/*` with strict `no-store` cache controls, bounded pagination, zero cross-patient exposure, and no provider consent requirements.
+This branch (`slice-11c-external-record-longitudinal-integration`) bridges:
+1. **Longitudinal Record Projection of External Records:** Projecting authentic patient-imported and external clinical records into the unified timeline and categorized records with faithful provenance tracking, honest trust badges, and document deep-links.
+2. **Patient Records External Import Entry Points:** Exposing patient-friendly "Add Medical Record" / "Upload Document" entry points from Patient Records (`/patient/records`) and Reports (`/patient/reports`) adhering to strict patient-self authorization.
+3. **External Record Provenance & Document Inspection:** Surfacing external document metadata (type, uploaded date, extraction status, processing stage) without leaking internal storage keys (`s3://...`), presigned URLs, or raw pipeline execution IDs.
+4. **Non-destructive Coexistence:** Maintaining full compatibility with parallel Slice 11A import services (`PatientExternalRecordImport`) while projecting standard `DocumentReference` and `TimelineEvent` records on main.
 
 ---
 
 ## Explicit Non-Scope
 
 1. Doctor treatment workspace, clinical access session backend (`ClinicalAccessSession`), and provider consent gate redesign.
-2. Patient external record upload/OCR processing pipeline (owned by parallel workstream `slice-11a-patient-external-record-import`).
-3. Sibling/competing Alembic migrations: No database migrations will be introduced in this branch. Current head `20260917_treatment_session_operations` remains unchanged.
-4. Fabricating missing clinical models: Missing models (e.g. separate Prescription order table, Encounter table, Diagnosis table) must NOT be faked with JSON blobs or synthetic mock data.
+2. Auto-committing unverified OCR/Textract output as authoritative clinical truth.
+3. Introducing sibling/competing Alembic migrations: No database migrations will be introduced in this branch. Current head `20260917_treatment_session_operations` remains unchanged.
+4. Fabricating missing clinical models: Missing models (e.g. separate Prescription order table, Encounter table, Diagnosis table) must NOT be faked with synthetic mock data.
 
 ---
 
 ## Repository Baseline
 
-- **Integration Base SHA:** `342d25cb960a3c81539502e6d3eacde4e7121aee`
-- **Source Slice 11B Head:** `dd4aba0`
-- **Branch:** `integration/slice-11b-on-10b4`
+- **Merged Main SHA:** `34510ec1e308762cf2836c70de7e1cc8a828b39d`
+- **PR #48 (Slice 11B):** MERGED at `34510ec` (reconciled head `7c725a5`)
+- **PR #49 (Fixture Repair):** MERGED at `20c75f9` (head `f30a9b4`)
+- **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
 - **Alembic Current Single Head:** `20260917_treatment_session_operations`
-- **New Slice 11B Migrations:** NONE
+- **New Migrations:** NONE
 - **Active Remote Branches:**
-  - `origin/main` (`342d25c`)
+  - `origin/main` (`34510ec`)
   - `origin/slice-11b-patient-longitudinal-records-ux` (`dd4aba0` - frozen Task 2 artifact)
-  - `origin/slice-11a-patient-external-record-import`
-- **Open PRs:** None
+  - `origin/slice-11a-patient-external-record-import` (PR #47 in DRAFT)
 - **Concurrent Workstreams:**
-  - Workstream A: Treatment Session Operations (merged to main at `342d25c`).
+  - Workstream A: Treatment Session Operations (merged to main).
   - Workstream B: Patient External-Record Import + Medical-History Onboarding (`slice-11a-patient-external-record-import`).
 
 ---

@@ -220,6 +220,30 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(await screen.findByText('Discharge Summary (Inpatient)')).toBeTruthy()
       expect(screen.getByText('Type: DISCHARGE_SUMMARY')).toBeTruthy()
       expect(screen.getByText('Patient Uploaded / External Source')).toBeTruthy()
+      expect(screen.getByText('All Reports')).toBeTruthy()
+      expect(screen.getByText('Labs')).toBeTruthy()
+      expect(screen.getByText('Imaging')).toBeTruthy()
+    })
+
+    it('filters reports when selecting filter tabs', async () => {
+      const getReportsSpy = vi.spyOn(NexaApiClient, 'getMyReports').mockResolvedValue({
+        patient_id: 'pat-1',
+        reports: [],
+        next_cursor: null,
+      })
+
+      renderWithTamagui(<PatientReportsScreen />)
+
+      const labsTab = await screen.findByText('Labs')
+      fireEvent.click(labsTab)
+
+      await waitFor(() => {
+        expect(getReportsSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            documentType: 'lab_report',
+          })
+        )
+      })
     })
   })
 

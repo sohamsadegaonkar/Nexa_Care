@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.consent_gate import require_consent, require_self_patient_access
@@ -750,11 +750,15 @@ async def get_my_records_by_category(
         if len(doc_rows) > bounded_limit and page:
             next_cursor = _encode_keyset_cursor(page[-1].uploaded_at, page[-1].id)
         for d in page:
+            doc_type_clean = (d.document_type or "Document").replace("_", " ").title()
             records.append({
                 "record_id": str(d.id),
                 "category": "documents",
+                "title": f"Document ({doc_type_clean})",
                 "document_type": d.document_type,
                 "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
+                "source": "patient_uploaded",
+                "source_display": "Patient Uploaded / External Document",
                 "has_source_document": True,
             })
 
@@ -928,6 +932,7 @@ async def get_my_prescriptions(
     response: Response,
     limit: int = 20,
     cursor: str | None = None,
+    include_external: bool = True,
     patient_id: str = Depends(require_self_patient_access()),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -972,6 +977,37 @@ async def get_my_prescriptions(
         for m in page
     ]
 
+    if include_external:
+        stmt_ext = select(DocumentReference).where(
+            DocumentReference.patient_id == pid_uuid,
+            func.lower(DocumentReference.document_type).in_(["prescription", "rx", "medication"]),
+        )
+        if cursor_dt:
+            stmt_ext = stmt_ext.where(DocumentReference.uploaded_at <= cursor_dt)
+        stmt_ext = stmt_ext.order_by(DocumentReference.uploaded_at.desc(), DocumentReference.id.desc()).limit(bounded_limit)
+        res_ext = await db.execute(stmt_ext)
+        seen_doc_ids = {str(m.source_document_id) for m in page if m.source_document_id}
+        for doc in res_ext.scalars().all():
+            if not hasattr(doc, "document_type"):
+                continue
+            if str(doc.id) in seen_doc_ids:
+                continue
+            doc_type_str = (doc.document_type or "Prescription").replace("_", " ").title()
+            prescriptions.append({
+                "prescription_id": str(doc.id),
+                "medication_name": f"External Prescription ({doc_type_str})",
+                "strength": "See Document",
+                "frequency": "See Document",
+                "prescribed_at": doc.uploaded_at.isoformat() if getattr(doc, "uploaded_at", None) else None,
+                "source": "patient_uploaded",
+                "source_display": "Patient Uploaded Prescription",
+                "risk_level": "MEDIUM_RISK",
+                "confidence": None,
+                "has_source_document": True,
+                "source_document_id": str(doc.id),
+                "is_external_document": True,
+            })
+
     return {
         "patient_id": patient_id,
         "prescriptions": prescriptions,
@@ -984,6 +1020,7 @@ async def get_my_reports(
     response: Response,
     limit: int = 20,
     cursor: str | None = None,
+    document_type: str | None = None,
     patient_id: str = Depends(require_self_patient_access()),
     db: AsyncSession = Depends(get_db_session),
 ):
@@ -994,6 +1031,19 @@ async def get_my_reports(
     cursor_dt, cursor_id = _decode_keyset_cursor(cursor)
 
     stmt = select(DocumentReference).where(DocumentReference.patient_id == pid_uuid)
+    if document_type and document_type.strip().lower() != "all":
+        dt_filter = document_type.strip().lower()
+        if dt_filter in {"lab", "labs", "lab_report"}:
+            stmt = stmt.where(func.lower(DocumentReference.document_type).in_(["lab_report", "lab", "pathology", "blood_work"]))
+        elif dt_filter in {"imaging", "radiology", "imaging_report"}:
+            stmt = stmt.where(func.lower(DocumentReference.document_type).in_(["imaging_report", "imaging", "radiology", "x-ray", "mri", "ct_scan"]))
+        elif dt_filter in {"discharge", "discharge_summary"}:
+            stmt = stmt.where(func.lower(DocumentReference.document_type).in_(["discharge_summary", "discharge"]))
+        elif dt_filter in {"prescription", "prescriptions", "rx"}:
+            stmt = stmt.where(func.lower(DocumentReference.document_type).in_(["prescription", "rx", "medication"]))
+        else:
+            stmt = stmt.where(func.lower(DocumentReference.document_type) == dt_filter)
+
     if cursor_dt:
         stmt = stmt.where(DocumentReference.uploaded_at <= cursor_dt)
     stmt = stmt.order_by(DocumentReference.uploaded_at.desc(), DocumentReference.id.desc()).limit(bounded_limit + 1)
@@ -1014,12 +1064,19 @@ async def get_my_reports(
     reports = [
         {
             "report_id": str(d.id),
-            "report_title": f"Medical Report ({d.document_type})",
+            "report_title": f"Medical Report ({d.document_type.replace('_', ' ').title()})",
             "document_type": d.document_type,
             "uploaded_at": d.uploaded_at.isoformat() if d.uploaded_at else None,
             "source": "patient_uploaded",
             "source_display": "Patient Uploaded / External Source",
             "can_view_source": True,
+            "category": (
+                "medications"
+                if (d.document_type or "").lower() in {"prescription", "rx", "medication"}
+                else "labs"
+                if (d.document_type or "").lower() in {"lab_report", "lab", "pathology", "blood_work"}
+                else "documents"
+            ),
         }
         for d in page
     ]
@@ -1776,8 +1833,8 @@ async def _fetch_patient_longitudinal_timeline(
                 )
             )
 
-    # 4. Documents
-    if include_docs:
+    # 4. Documents & External Records
+    if include_docs or include_meds or include_labs:
         stmt_d = select(DocumentReference).where(DocumentReference.patient_id == pid_uuid)
         if cursor_dt:
             stmt_d = stmt_d.where(DocumentReference.uploaded_at <= cursor_dt)
@@ -1787,18 +1844,47 @@ async def _fetch_patient_longitudinal_timeline(
             if d.uploaded_at is None:
                 continue
             dt_str = d.uploaded_at.isoformat()
+            doc_type_lower = (d.document_type or "").strip().lower()
+            is_prescription_doc = doc_type_lower in {"prescription", "medication", "rx"}
+            is_lab_doc = doc_type_lower in {"lab_report", "lab", "pathology", "blood_work", "diagnostic_lab"}
+
+            assigned_category = "documents"
+            if is_prescription_doc:
+                assigned_category = "medications"
+            elif is_lab_doc:
+                assigned_category = "labs"
+
+            if not include_all:
+                if assigned_category == "medications" and not (include_meds or include_docs):
+                    continue
+                elif assigned_category == "labs" and not (include_labs or include_docs):
+                    continue
+                elif assigned_category == "documents" and not include_docs:
+                    continue
+
             seen_entity_keys.add(f"document:{str(d.id)}")
             seen_entity_keys.add(f"document_dt:{dt_str}")
+
+            doc_type_clean = (d.document_type or "Document").replace("_", " ").title()
+            event_title = f"Document Uploaded ({doc_type_clean})"
+            event_summary = f"Uploaded clinical document: {d.document_type}"
+            if is_prescription_doc:
+                event_title = f"External Prescription ({doc_type_clean})"
+                event_summary = f"Uploaded prescription record: {d.document_type}"
+            elif is_lab_doc:
+                event_title = f"Diagnostic Lab Report ({doc_type_clean})"
+                event_summary = f"Uploaded laboratory evaluation: {d.document_type}"
+
             candidates.append(
                 _enrich_timeline_provenance(
                     str(d.id),
                     "DOCUMENT",
-                    f"Document Uploaded ({d.document_type})",
-                    f"Uploaded clinical document: {d.document_type}",
+                    event_title,
+                    event_summary,
                     dt_str,
-                    "manual",
+                    "patient_uploaded",
                     record_id=str(d.id),
-                    category="documents",
+                    category=assigned_category if (not include_docs or include_all) else "documents",
                 )
             )
 

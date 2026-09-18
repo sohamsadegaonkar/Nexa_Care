@@ -341,6 +341,7 @@ export interface PatientPrescriptionItem {
   confidence?: number | null
   has_source_document: boolean
   source_document_id?: string | null
+  is_external_document?: boolean
 }
 
 export interface PatientPrescriptionsResponse {
@@ -357,6 +358,7 @@ export interface PatientReportItem {
   source: string
   source_display: string
   can_view_source: boolean
+  category?: string
 }
 
 export interface PatientReportsResponse {
@@ -1515,10 +1517,13 @@ export const NexaApiClient = {
   getMyPrescriptions(options?: {
     cursor?: string | null
     limit?: number
+    includeExternal?: boolean
   }): Promise<PatientPrescriptionsResponse> {
     const params = new URLSearchParams()
     if (options?.limit) params.set('limit', String(options.limit))
     if (options?.cursor) params.set('cursor', options.cursor)
+    if (options?.includeExternal !== undefined)
+      params.set('include_external', String(options.includeExternal))
     const qs = params.toString()
     return request<PatientPrescriptionsResponse>(
       `/api/v2/patient/me/prescriptions${qs ? `?${qs}` : ''}`,
@@ -1529,10 +1534,12 @@ export const NexaApiClient = {
   getMyReports(options?: {
     cursor?: string | null
     limit?: number
+    documentType?: string | null
   }): Promise<PatientReportsResponse> {
     const params = new URLSearchParams()
     if (options?.limit) params.set('limit', String(options.limit))
     if (options?.cursor) params.set('cursor', options.cursor)
+    if (options?.documentType) params.set('document_type', options.documentType)
     const qs = params.toString()
     return request<PatientReportsResponse>(
       `/api/v2/patient/me/reports${qs ? `?${qs}` : ''}`,
