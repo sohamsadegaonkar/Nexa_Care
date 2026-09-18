@@ -54,7 +54,7 @@ from app.main import app
 #   6. Slice 10A adds three authenticated patient-self phone-discoverability
 #      controls; they manage exact-search authority and never replace login,
 #      device, consent, or provider record-access authority.
-#   7. Task 1 adds eight strict patient-self external-record import/review/save
+#   7. Task 1 adds ten strict patient-self external-record import/review/save
 #      routes under /api/v2/patient/me; none accepts a caller-selected patient identifier.
 #
 # If this file goes red again, confirm the owning route was intentionally
@@ -185,6 +185,8 @@ EXPECTED_ROUTES = {
     ("GET", "/api/v2/patient/me/external-records"),
     ("GET", "/api/v2/patient/me/external-records/{import_id}"),
     ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
+    ("POST", "/api/v2/patient/me/external-records/{import_id}/retry"),
+    ("POST", "/api/v2/patient/me/external-records/{import_id}/cancel"),
     ("GET", "/api/v2/patient/me/external-records/{import_id}/source"),
     ("POST", "/api/v2/patient/me/external-records/{import_id}/save"),
     ("GET", "/api/v2/patient/me/external-records/{import_id}/review"),
