@@ -35,7 +35,12 @@
 - **Phase C1 Vercel:** SUCCESS on `1f53e830...`.
 - **Current concurrency:** PR #48 is MERGED and reconciled. PR #50 remains open on the protected treatment-session operation gate and does not overlap the review-route files.
 - **Phase C2 target:** patient-self review route publication — GET review snapshot + POST per-item accept/correct/reject, strict patient authority, opaque review-item IDs, no internal candidate field names or provider/tenant/consent/session inputs.
-- **Phase C2 qualification state:** IMPLEMENTED / NOT YET QUALIFIED at the handoff update point. Exact next step is commit the route slice, run exact-head backend/frontend/native/Vercel qualification, then freeze the result.
+- **Phase C2 target:** COMPLETE / QUALIFIED.
+- **Phase C2 qualified SHA:** `5292857e3fc632668be1c6cced5bdcedf74b5846`.
+- **Phase C2 backend CI:** run `35354830638` — Ruff PASS; A **3978 passed / 430 deselected / 0 skipped**, B **300 / 4108 / 0**, C **130 / 4278 / 0**; zero failures.
+- **Phase C2 frontend CI:** run `35354830394` — web tests, Next production build, workspace packages, Android native compile, and iOS native compile all PASS.
+- **Phase C2 Vercel:** SUCCESS on `5292857e...`.
+- **Exact next Task-1 increment:** audit canonical typed persistence category-by-category against current repository models and provenance vocabulary. Implement only mappings supported by repository semantics; do not relabel `Medication` as `Prescription`, and do not publish timeline rows until typed persistence semantics are proven.
 - **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
 - **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
@@ -223,7 +228,7 @@ Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests
 - **Patient projection:** review response exposes opaque `review_item_id`, patient-friendly label, extracted/corrected values, decision, source context, and confirmation requirement. Internal candidate field names, clinical fact keys, extractor provider/version, storage refs, and internal lanes are not exposed.
 - **Persistence boundary:** mutations call the already-qualified Phase-C1 service and stop at `READY_TO_SAVE`; no typed clinical commit or timeline write is introduced.
 - **Shared route registry:** Slice 11B routes remain; Task-1 registry expands from five to seven external-record routes.
-- **Qualification:** PENDING for the exact Phase-C2 commit.
+- **Qualification:** PASS on exact SHA `5292857e...`; backend `35354830638`, frontend `35354830394`, Vercel SUCCESS.
 
 ## Test / Qualification Matrix
 
@@ -244,13 +249,13 @@ Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests
 | Malware scanning | NOT VERIFIED / NOT IMPLEMENTED | No claim otherwise. |
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
 | Phase-C1 review service tests | PASS | Exact SHA `1f53e830...`; backend CI `35353447620`: A 3961 / B 300 / C 130, zero skips/failures; audit catalog repaired. |
-| Phase-C2 review API routes | WRITTEN / NOT RUN | PR #48 is merged; two strict patient-self routes plus authority/unknown-field/internal-projection contracts are staged for exact-head qualification. |
+| Phase-C2 review API routes | PASS | Exact SHA `5292857e...`; A 3978 / B 300 / C 130 with zero skips/failures; frontend/native/Vercel green. |
 
 ## Open Risks / Blockers
 
 1. Phase B itself has no open qualification blocker; both code SHA and documentation-only branch-tip rerun are green.
 2. Phase C1 review/correction service foundation is qualified at `1f53e830f00290539e5f39ed49ccfcc58f848707`; the initial audit-catalog-only failure was repaired and the exact repaired SHA is green.
-3. The prior route-registry blocker is resolved; Phase C2 route publication still needs exact-head qualification before it can be frozen green.
+3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. Candidates remain non-canonical; `READY_TO_SAVE` means review complete, not clinical persistence.
 5. Typed finalization and timeline publication remain later phases. Prescription/Imaging/Discharge semantics must be audited before mapping; do not relabel Medication as Prescription.
 6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
@@ -296,8 +301,8 @@ Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests
 - [x] Add patient-visible `ready_to_save` workflow status.
 - [x] Publish patient review/correction API routes after PR #48 route-registry overlap resolved.
 - [x] Qualify the Phase-C1 service increment on exact SHA `1f53e830...` after the audit-catalog repair.
-- [ ] Qualify the Phase-C2 review-route increment on its exact committed SHA.
-- [ ] Implement safe typed finalization where repository semantics support it.
+- [x] Qualify the Phase-C2 review-route increment on exact SHA `5292857e...`.
+- [ ] Audit and implement safe typed finalization where repository semantics support it.
 - [ ] Publish provenance-aware timeline entries.
 - [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
 - [ ] Implement onboarding + Records patient frontend flow.
