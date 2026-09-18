@@ -631,4 +631,130 @@ Vercel as required by repository CI.
 - `tests/test_audit_event_coverage.py` remains intentionally unchanged because `PATIENT_RECORD_APPEND_SUCCESS` is already an approved catalog event.
 - The dedicated vitals route contract now asserts the route is mounted.
 - No second Treatment Session clinical write family is activated.
-- PR #55 remains open; therefore this checkpoint is not a final exact-head release qualification and PR #56 remains draft / do not merge.
+- PR #55 subsequently merged and this historical checkpoint is superseded by the final post-Task-2 consolidation section below.
+
+
+## Final post-Task-2 consolidation gate
+
+Task 2 PR #55 merged into authoritative main at:
+
+```text
+a5d16346e859a873c6736996a276d1eb579e6a63
+```
+
+with Task-2 head:
+
+```text
+99562a1a5558ebef0f80746b3f14dfcc206c9a9b
+```
+
+Task 0 reconciled that consolidated main into
+`task0/10b5c-first-clinical-write` through integration PR #60.
+
+Reconciliation commit:
+
+```text
+3a6640eee22f941c78db7d853ff5fef63559a930
+```
+
+The #55 delta is limited to the Slice 11D patient longitudinal-records UX
+handoff and patient frontend screens. It introduces no Alembic migration and
+does not modify the WRITE_VITALS backend authority/service/route files.
+
+### Final migration lineage
+
+The intended linear migration chain remains:
+
+```text
+20260918_canonical_encounter
+    ->
+20260918_treatment_vitals_encounter
+```
+
+The Task-0 migration remains the only child introduced by this slice. No
+Alembic merge revision is authorized unless actual graph evidence creates a
+second head.
+
+### Final bounded route
+
+Exactly one new Treatment Session clinical mutation surface is authorized:
+
+```text
+POST /api/v2/treatment-session/v1/vitals
+operation = WRITE_VITALS
+```
+
+Supported typed observations remain blood pressure, heart rate, temperature,
+and SpO2. No prescription, diagnosis, note, investigation, allergy, or document
+mutation is part of 10B.5c.
+
+### Final authority and trust-race contract
+
+A successful mutation requires all of:
+
+```text
+authenticated provider
++ current server-owned provider clinical eligibility
++ exact X-Treatment-Token WRITE_VITALS authority
++ current provider/hospital/provider-session binding
++ durable ClinicalAccessSession
++ durable ConsentGrant
++ same canonical Encounter
++ strict typed observation
++ durable idempotency
++ transactional structural audit
+```
+
+The route order is:
+
+```text
+entry provider trust
+-> exact Treatment Session authority
+-> stage mutation
+-> durable session/grant/Encounter locks and revalidation
+-> final enforce_current_clinical_capability(...)
+-> final provider/hospital/provider-session binding check
+-> commit exactly once
+```
+
+Failure of staging or final trust/binding rolls back Vitals, TimelineEvent,
+audit outbox state, and idempotency state in the same request transaction.
+
+The caller cannot select patient, provider, hospital, ClinicalAccessSession,
+canonical Encounter, operation, source, confidence, or document provenance.
+
+### Shared catalog reconciliation
+
+The route catalog preserves canonical Encounter, patient external-record D3
+retry/cancel, and the single WRITE_VITALS route.
+
+The audit catalog preserves:
+
+```text
+CLINICAL_ENCOUNTER_CREATED
+PATIENT_EXTERNAL_RECORD_CANCELLED
+PATIENT_RECORD_APPEND_SUCCESS
+```
+
+WRITE_VITALS continues to reuse `PATIENT_RECORD_APPEND_SUCCESS`; no redundant
+vitals audit event is introduced.
+
+### Final qualification evidence policy
+
+Final merge qualification must come from GitHub Actions and commit status tied
+to the exact intended merge head after this governance update. Required
+evidence is Ruff; focused WRITE_VITALS, Treatment Session, Encounter, migration,
+route, audit, PostgreSQL, concurrency, and rollback coverage; Partitions A/B/C
+with zero skips; frontend tests; Next production build; workspace build;
+Android; and iOS.
+
+Historical green runs remain diagnostic only and are not substituted for the
+exact final head.
+
+Vercel success on the exact head is preferred. If the only failure is the
+documented free-tier deployment-rate quota, the backend-only infrastructure
+exception may be used only when Task 0 has no `nexa-client/**` feature delta,
+all exact-head frontend/native/Next qualification is green, the consolidated
+Task-2 frontend already had valid qualification, and the quota-only cause is
+recorded truthfully. Production/release qualification remains deferred under
+that exception.
