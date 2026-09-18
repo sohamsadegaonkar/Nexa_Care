@@ -309,6 +309,163 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       })
       expect(await screen.findByText('BP')).toBeTruthy()
     })
+
+    it('resets pagination cursor and records state when switching categories, even if next category fails', async () => {
+      vi.spyOn(NexaApiClient, 'getMyRecordCategories').mockResolvedValue({
+        patient_id: 'pat-1',
+        categories: [
+          {
+            category: 'vitals',
+            label: 'Vitals',
+            icon: '❤️',
+            count: 2,
+            latest_record_date: '2026-07-17',
+            preview: 'BP: 120/80 mmHg',
+          },
+          {
+            category: 'medications',
+            label: 'Medications',
+            icon: '💊',
+            count: 1,
+            latest_record_date: '2026-07-10',
+            preview: 'Metformin 500mg',
+          },
+        ],
+      })
+
+      vi.spyOn(NexaApiClient, 'getMyRecordsByCategory')
+        .mockResolvedValueOnce({
+          patient_id: 'pat-1',
+          category: 'vitals',
+          records: [
+            {
+              record_id: 'vital-1',
+              category: 'vitals',
+              type: 'BP',
+              value: '120/80',
+              unit: 'mmHg',
+              recorded_at: '2026-07-17T10:00:00Z',
+              source: 'manual',
+            },
+          ],
+          next_cursor: 'vitals-cursor-page-2',
+        })
+        .mockRejectedValueOnce(new Error('Network failure loading medications'))
+
+      renderWithTamagui(<PatientRecordsScreen />)
+
+      // Drill down into Vitals
+      fireEvent.click(await screen.findByText('Vitals'))
+      expect(await screen.findByText('BP')).toBeTruthy()
+      expect(screen.getByText('Load older records')).toBeTruthy()
+
+      // Go back to overview
+      fireEvent.click(screen.getByText('← All Categories'))
+      expect(await screen.findByText('Medications')).toBeTruthy()
+
+      // Drill down into Medications (which fails)
+      fireEvent.click(screen.getByText('Medications'))
+
+      expect(await screen.findByText('Network failure loading medications')).toBeTruthy()
+      // Previous category records and "Load older records" button must be absent
+      expect(screen.queryByText('BP')).toBeNull()
+      expect(screen.queryByText('Load older records')).toBeNull()
+    })
+
+    it('discards stale category records response when switching categories concurrently (newest-request-wins)', async () => {
+      function createDeferred<T>() {
+        let resolve!: (val: T) => void
+        let reject!: (err: any) => void
+        const promise = new Promise<T>((res, rej) => {
+          resolve = res
+          reject = rej
+        })
+        return { promise, resolve, reject }
+      }
+
+      const deferredVitals = createDeferred<any>()
+      const deferredMeds = createDeferred<any>()
+
+      vi.spyOn(NexaApiClient, 'getMyRecordCategories').mockResolvedValue({
+        patient_id: 'pat-1',
+        categories: [
+          {
+            category: 'vitals',
+            label: 'Vitals',
+            icon: '❤️',
+            count: 1,
+            latest_record_date: '2026-07-17',
+            preview: 'BP: 120/80 mmHg',
+          },
+          {
+            category: 'medications',
+            label: 'Medications',
+            icon: '💊',
+            count: 1,
+            latest_record_date: '2026-07-10',
+            preview: 'Metformin 500mg',
+          },
+        ],
+      })
+
+      vi.spyOn(NexaApiClient, 'getMyRecordsByCategory').mockImplementation((cat: string) => {
+        if (cat === 'vitals') return deferredVitals.promise
+        if (cat === 'medications') return deferredMeds.promise
+        return Promise.resolve({ patient_id: 'pat-1', category: cat, records: [], next_cursor: null } as any)
+      })
+
+      renderWithTamagui(<PatientRecordsScreen />)
+
+      // Start Request A: click Vitals
+      fireEvent.click(await screen.findByText('Vitals'))
+      // Return to overview immediately and click Medications (Request B)
+      fireEvent.click(await screen.findByText('← All Categories'))
+      fireEvent.click(await screen.findByText('Medications'))
+
+      // Resolve Request B first
+      deferredMeds.resolve({
+        patient_id: 'pat-1',
+        category: 'medications',
+        records: [
+          {
+            record_id: 'med-1',
+            category: 'medications',
+            name: 'Metformin',
+            strength: '500mg',
+            recorded_at: '2026-07-10T10:00:00Z',
+            source: 'manual',
+          },
+        ],
+        next_cursor: 'med-page-2',
+      })
+
+      expect(await screen.findByText('Metformin')).toBeTruthy()
+      expect(screen.getByText('Load older records')).toBeTruthy()
+
+      // Resolve Request A later (stale vitals response)
+      deferredVitals.resolve({
+        patient_id: 'pat-1',
+        category: 'vitals',
+        records: [
+          {
+            record_id: 'vital-stale',
+            category: 'vitals',
+            type: 'Stale BP',
+            value: '130/85',
+            unit: 'mmHg',
+            recorded_at: '2026-07-17T10:00:00Z',
+            source: 'manual',
+          },
+        ],
+        next_cursor: 'vitals-stale-cursor',
+      })
+
+      // UI must remain showing Medications, never showing Stale BP
+      await waitFor(() => {
+        expect(screen.queryByText('Stale BP')).toBeNull()
+        expect(screen.getByText('Metformin')).toBeTruthy()
+      })
+    })
   })
 
   describe('PatientPrescriptionsScreen', () => {
@@ -418,6 +575,46 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       })
       expect(await screen.findByText('No active or historical medications on file.')).toBeTruthy()
     })
+
+    it('has exactly one search input surface supporting medication name, strength, and frequency', async () => {
+      vi.spyOn(NexaApiClient, 'getMyPrescriptions').mockResolvedValue({
+        patient_id: 'pat-1',
+        prescriptions: [
+          {
+            prescription_id: 'rx-1',
+            medication_name: 'Metformin',
+            strength: '500mg',
+            frequency: 'Twice daily',
+            prescribed_at: '2026-05-15T00:00:00Z',
+            source: 'manual',
+            source_display: 'Clinician Prescribed',
+            risk_level: 'LOW_RISK',
+            has_source_document: true,
+            is_external_document: false,
+          },
+        ],
+        next_cursor: null,
+      })
+
+      renderWithTamagui(<PatientPrescriptionsScreen />)
+
+      expect(await screen.findByText('Metformin')).toBeTruthy()
+      const searchInputs = screen.getAllByPlaceholderText(/Search prescriptions/i)
+      expect(searchInputs).toHaveLength(1)
+      expect(screen.queryByPlaceholderText('Search medication name or dosage…')).toBeNull()
+
+      // Search by frequency
+      fireEvent.change(searchInputs[0], { target: { value: 'twice daily' } })
+      expect(screen.getByText('Metformin')).toBeTruthy()
+
+      // Search by strength
+      fireEvent.change(searchInputs[0], { target: { value: '500mg' } })
+      expect(screen.getByText('Metformin')).toBeTruthy()
+
+      // Search mismatch
+      fireEvent.change(searchInputs[0], { target: { value: 'Insulin' } })
+      expect(await screen.findByText('No prescriptions match your filter.')).toBeTruthy()
+    })
   })
 
   describe('PatientReportsScreen', () => {
@@ -510,6 +707,84 @@ describe('PatientLongitudinalRecords UX Suite', () => {
         expect(reportsSpy).toHaveBeenCalledTimes(2)
       })
       expect(await screen.findByText('No diagnostic reports or documents on file.')).toBeTruthy()
+    })
+
+    it('discards stale reports response when switching filter tabs concurrently (newest-request-wins)', async () => {
+      function createDeferred<T>() {
+        let resolve!: (val: T) => void
+        let reject!: (err: any) => void
+        const promise = new Promise<T>((res, rej) => {
+          resolve = res
+          reject = rej
+        })
+        return { promise, resolve, reject }
+      }
+
+      const deferredLabs = createDeferred<any>()
+      const deferredImaging = createDeferred<any>()
+
+      vi.spyOn(NexaApiClient, 'getMyReports')
+        .mockResolvedValueOnce({
+          patient_id: 'pat-1',
+          reports: [],
+          next_cursor: null,
+        })
+        .mockImplementation((params: any) => {
+          if (params?.documentType === 'lab_report') return deferredLabs.promise
+          if (params?.documentType === 'imaging_report') return deferredImaging.promise
+          return Promise.resolve({ patient_id: 'pat-1', reports: [], next_cursor: null } as any)
+        })
+
+      renderWithTamagui(<PatientReportsScreen />)
+
+      expect(await screen.findByText('All Reports')).toBeTruthy()
+
+      // Switch to Labs (Request A)
+      fireEvent.click(screen.getByText('Labs'))
+      // Switch immediately to Imaging (Request B)
+      fireEvent.click(screen.getByText('Imaging'))
+
+      const imagingReport = {
+        report_id: 'rep-imaging-1',
+        report_title: 'Chest X-Ray PA View',
+        document_type: 'imaging_report',
+        uploaded_at: '2026-06-01T08:00:00Z',
+        source: 'manual',
+        source_display: 'Radiology Department',
+        can_view_source: false,
+      }
+
+      const labsReport = {
+        report_id: 'rep-labs-stale',
+        report_title: 'Stale Lipid Panel',
+        document_type: 'lab_report',
+        uploaded_at: '2026-06-01T08:00:00Z',
+        source: 'ai_extracted',
+        source_display: 'Pathology Lab',
+        can_view_source: false,
+      }
+
+      // Resolve Imaging first
+      deferredImaging.resolve({
+        patient_id: 'pat-1',
+        reports: [imagingReport],
+        next_cursor: null,
+      })
+
+      expect(await screen.findByText('Chest X-Ray PA View')).toBeTruthy()
+
+      // Resolve Labs later
+      deferredLabs.resolve({
+        patient_id: 'pat-1',
+        reports: [labsReport],
+        next_cursor: null,
+      })
+
+      // UI must remain showing Imaging, never showing Stale Lipid Panel
+      await waitFor(() => {
+        expect(screen.queryByText('Stale Lipid Panel')).toBeNull()
+        expect(screen.getByText('Chest X-Ray PA View')).toBeTruthy()
+      })
     })
   })
 

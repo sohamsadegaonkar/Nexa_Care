@@ -393,15 +393,17 @@ Clinical Safety Rules:
   4. `4e89f24` `feat(task2): improve prescriptions and reports discovery, filtering, and provenance clarity`
   5. `518626b` `test(task2): add patient records UX reliability coverage`
   6. `680ae8b` `fix(task2): type-safe button text styling in prescriptions screen`
+  7. `fix(task2): eliminate duplicate prescription search and reset category pagination state`
+  8. `test(task2): add deterministic request-id race and pagination reset tests`
 
 ### Verification Evidence
 | Test Target | Scope | Result | Execution Detail |
 |---|---|---|---|
-| Frontend Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 44 test files, 285 tests passed (including 15 longitudinal records UX tests) |
+| Frontend Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 44 test files, 290 tests passed (including 19 longitudinal records UX tests and 12 timeline tests) |
 | Frontend Vitest Next Suite | `yarn --cwd nexa-client test:next` | PASS | 2 test files, 6 tests passed |
 | Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 164 passed, AST invariant constraints verified |
 | Workspace Build | `yarn --cwd nexa-client build` | PASS | `@my/config` and `@my/ui` built cleanly |
-| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 29 routes prerendered/compiled in 73.2s |
+| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 29 routes prerendered/compiled in 43.0s |
 
 ### Core Improvements Delivered
 1. **Error Recovery with Explicit Retry:**
@@ -409,11 +411,14 @@ Clinical Safety Rules:
    - PatientRecordsScreen: Dedicated in-drilldown error card with retry button (eliminating false empty states).
    - PatientPrescriptionsScreen: Error notice with retry button.
    - PatientReportsScreen: Error notice with retry button.
-2. **Empty State Differentiation:**
+2. **Empty State & Search Differentiation:**
    - Differentiated global empty states ("No {category} on file") from search/filter empty states ("No records match '{query}'").
    - Added actionable "Reset Filters" / "Clear Search" / "Show All Reports" CTAs.
-3. **Network Race Condition Prevention:**
-   - Request sequence tracking (`requestIdRef`) across Timeline, Records, Prescriptions, and Reports screens to discard stale out-of-order responses during rapid tab switching.
+   - Consolidated single intentional search surface on `PatientPrescriptionsScreen` covering medication name, dosage/strength, and frequency/instructions.
+3. **Network Race Condition Prevention & State Invalidation:**
+   - Request sequence tracking (`requestIdRef`) across Timeline, Records, Prescriptions, and Reports screens to discard stale out-of-order responses during rapid tab or filter switching.
+   - Deterministic controlled-promise race condition tests proving newest-request-wins across Timeline, Records, and Reports screens.
+   - Synchronous pagination and record state invalidation upon category switch in `PatientRecordsScreen` preventing stale cursors from lingering across categories.
 4. **Client-Side Discovery & Filtering:**
    - In-category search in `PatientRecordsScreen`.
    - Prescription source filtering (`All Treatments`, `Clinic Prescriptions`, `Uploaded Prescriptions`) and medication name/frequency search.
