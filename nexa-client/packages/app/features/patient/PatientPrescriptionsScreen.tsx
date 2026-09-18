@@ -75,8 +75,8 @@ export default function PatientPrescriptionsScreen() {
 
   const filteredPrescriptions = useMemo(() => {
     return prescriptions.filter((item) => {
-      if (sourceFilter === 'clinic' && item.is_external_document) return false
-      if (sourceFilter === 'external' && !item.is_external_document) return false
+      if (sourceFilter === 'clinic' && (item.is_external_document || item.source === 'patient_uploaded')) return false
+      if (sourceFilter === 'external' && !item.is_external_document && item.source !== 'patient_uploaded') return false
       if (!searchQuery.trim()) return true
       const q = searchQuery.toLowerCase().trim()
       const name = String(item.medication_name || '').toLowerCase()
@@ -101,6 +101,30 @@ export default function PatientPrescriptionsScreen() {
         <Paragraph color="$color10" size="$3">
           Active and historical pharmaceutical treatments with clinical provenance.
         </Paragraph>
+
+        {/* Search Input */}
+        <XStack gap="$2" alignItems="center" paddingTop="$1">
+          <Input
+            flex={1}
+            size="$3"
+            placeholder="Search prescriptions or medications…"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+            accessibilityLabel="Search prescriptions or medications"
+            backgroundColor="$backgroundHover"
+          />
+          {searchQuery.length > 0 ? (
+            <Button
+              size="$3"
+              chromeless
+              onPress={() => setSearchQuery('')}
+              accessibilityRole="button"
+              accessibilityLabel="Clear prescription search"
+            >
+              Clear
+            </Button>
+          ) : null}
+        </XStack>
 
         {/* Source Filter Pills */}
         <XStack gap="$2" flexWrap="wrap" paddingTop="$1">

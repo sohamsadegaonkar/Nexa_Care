@@ -112,6 +112,35 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(await screen.findByText('No recorded allergies on file.')).toBeTruthy()
       expect(screen.getByText('No active medications recorded on file.')).toBeTruthy()
     })
+
+    it('renders error notice with Retry button and triggers retry on press', async () => {
+      const summarySpy = vi
+        .spyOn(NexaApiClient, 'getMyHealthSummary')
+        .mockRejectedValueOnce(new Error('Network error loading summary'))
+        .mockResolvedValueOnce({
+          patient_id: 'pat-1',
+          counts: { allergies: 0, medications: 0, vitals: 0, labs: 0, reports: 0 },
+          allergy_highlights: [],
+          active_medications: [],
+          latest_vitals: [],
+          recent_labs: [],
+          recent_reports: [],
+          recent_timeline_events: [],
+          last_updated: null,
+        })
+
+      renderWithTamagui(<PatientHealthHome />)
+
+      expect(await screen.findByText('Network error loading summary')).toBeTruthy()
+      const retryBtn = screen.getByText('Retry')
+      expect(retryBtn).toBeTruthy()
+      fireEvent.click(retryBtn)
+
+      await waitFor(() => {
+        expect(summarySpy).toHaveBeenCalledTimes(2)
+      })
+      expect(await screen.findByText('No recorded allergies on file.')).toBeTruthy()
+    })
   })
 
   describe('PatientRecordsScreen', () => {
@@ -167,6 +196,119 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(await screen.findByText('BP')).toBeTruthy()
       expect(screen.getByText('120/80 mmHg')).toBeTruthy()
     })
+
+    it('supports in-category search, differentiated empty states, and reset action', async () => {
+      vi.spyOn(NexaApiClient, 'getMyRecordCategories').mockResolvedValue({
+        patient_id: 'pat-1',
+        categories: [
+          {
+            category: 'vitals',
+            label: 'Vitals',
+            icon: '❤️',
+            count: 2,
+            latest_record_date: '2026-07-17',
+            preview: 'BP: 120/80 mmHg',
+          },
+        ],
+      })
+
+      vi.spyOn(NexaApiClient, 'getMyRecordsByCategory').mockResolvedValue({
+        patient_id: 'pat-1',
+        category: 'vitals',
+        records: [
+          {
+            record_id: 'vital-1',
+            category: 'vitals',
+            type: 'BP',
+            value: '120/80',
+            unit: 'mmHg',
+            recorded_at: '2026-07-17T10:00:00Z',
+            source: 'manual',
+          },
+          {
+            record_id: 'vital-2',
+            category: 'vitals',
+            type: 'Heart Rate',
+            value: '72',
+            unit: 'bpm',
+            recorded_at: '2026-07-17T10:00:00Z',
+            source: 'manual',
+          },
+        ],
+        next_cursor: null,
+      })
+
+      renderWithTamagui(<PatientRecordsScreen />)
+      fireEvent.click(await screen.findByText('Vitals'))
+
+      expect(await screen.findByText('BP')).toBeTruthy()
+      expect(screen.getByText('Heart Rate')).toBeTruthy()
+
+      // Search for Heart
+      const searchInput = await screen.findByPlaceholderText('Search Vitals…')
+      fireEvent.change(searchInput, { target: { value: 'Heart' } })
+
+      expect(screen.queryByText('120/80 mmHg')).toBeNull()
+      expect(screen.getByText('72 bpm')).toBeTruthy()
+
+      // Search for non-existent
+      fireEvent.change(searchInput, { target: { value: 'Nonexistent' } })
+      expect(await screen.findByText('No records match "Nonexistent"')).toBeTruthy()
+
+      // Clear search
+      fireEvent.click(screen.getByText('Clear Search'))
+      expect(await screen.findByText('BP')).toBeTruthy()
+      expect(screen.getByText('Heart Rate')).toBeTruthy()
+      expect(screen.getByText('✓ All Vitals records loaded')).toBeTruthy()
+    })
+
+    it('handles category records fetch error with retry button in drilldown', async () => {
+      vi.spyOn(NexaApiClient, 'getMyRecordCategories').mockResolvedValue({
+        patient_id: 'pat-1',
+        categories: [
+          {
+            category: 'vitals',
+            label: 'Vitals',
+            icon: '❤️',
+            count: 1,
+            latest_record_date: '2026-07-17',
+            preview: 'BP: 120/80 mmHg',
+          },
+        ],
+      })
+
+      const categorySpy = vi
+        .spyOn(NexaApiClient, 'getMyRecordsByCategory')
+        .mockRejectedValueOnce(new Error('Failed to load vitals'))
+        .mockResolvedValueOnce({
+          patient_id: 'pat-1',
+          category: 'vitals',
+          records: [
+            {
+              record_id: 'vital-1',
+              category: 'vitals',
+              type: 'BP',
+              value: '120/80',
+              unit: 'mmHg',
+              recorded_at: '2026-07-17T10:00:00Z',
+              source: 'manual',
+            },
+          ],
+          next_cursor: null,
+        })
+
+      renderWithTamagui(<PatientRecordsScreen />)
+      fireEvent.click(await screen.findByText('Vitals'))
+
+      expect(await screen.findByText('Failed to load vitals')).toBeTruthy()
+      const retryBtn = screen.getByText('Retry')
+      fireEvent.click(retryBtn)
+
+      await waitFor(() => {
+        expect(categorySpy).toHaveBeenCalledTimes(2)
+      })
+      expect(await screen.findByText('BP')).toBeTruthy()
+    })
   })
 
   describe('PatientPrescriptionsScreen', () => {
@@ -194,6 +336,87 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(await screen.findByText('Atorvastatin')).toBeTruthy()
       expect(screen.getByText('20mg • Once nightly')).toBeTruthy()
       expect(screen.getByText('Clinician Prescribed')).toBeTruthy()
+    })
+
+    it('filters prescriptions by source and search query with honest empty state', async () => {
+      vi.spyOn(NexaApiClient, 'getMyPrescriptions').mockResolvedValue({
+        patient_id: 'pat-1',
+        prescriptions: [
+          {
+            prescription_id: 'rx-1',
+            medication_name: 'Atorvastatin',
+            strength: '20mg',
+            frequency: 'Once nightly',
+            prescribed_at: '2026-05-15T00:00:00Z',
+            source: 'manual',
+            source_display: 'Clinician Prescribed',
+            risk_level: 'LOW_RISK',
+            has_source_document: true,
+            is_external_document: false,
+          },
+          {
+            prescription_id: 'rx-2',
+            medication_name: 'Amoxicillin',
+            strength: '500mg',
+            frequency: 'Three times daily',
+            prescribed_at: '2026-06-01T00:00:00Z',
+            source: 'patient_uploaded',
+            source_display: 'Uploaded Prescription',
+            risk_level: 'LOW_RISK',
+            has_source_document: true,
+            is_external_document: true,
+          },
+        ],
+        next_cursor: null,
+      })
+
+      renderWithTamagui(<PatientPrescriptionsScreen />)
+
+      expect(await screen.findByText('Atorvastatin')).toBeTruthy()
+      expect(screen.getByText('Amoxicillin')).toBeTruthy()
+      expect(screen.getByText('✓ All prescriptions loaded')).toBeTruthy()
+
+      // Filter by Clinic Prescriptions
+      fireEvent.click(screen.getByText('Clinic Prescriptions'))
+      expect(screen.getByText('Atorvastatin')).toBeTruthy()
+      expect(screen.queryByText('Amoxicillin')).toBeNull()
+
+      // Filter by Uploaded Prescriptions
+      fireEvent.click(screen.getByText('Uploaded Prescriptions'))
+      expect(screen.queryByText('Atorvastatin')).toBeNull()
+      expect(screen.getByText('Amoxicillin')).toBeTruthy()
+
+      // Search query
+      const searchInput = screen.getByPlaceholderText('Search prescriptions or medications…')
+      fireEvent.change(searchInput, { target: { value: 'Zithromax' } })
+      expect(await screen.findByText('No prescriptions match your filter.')).toBeTruthy()
+
+      // Clear filters
+      fireEvent.click(screen.getByText('Reset Filters'))
+      expect(await screen.findByText('Atorvastatin')).toBeTruthy()
+      expect(screen.getByText('Amoxicillin')).toBeTruthy()
+    })
+
+    it('supports retrying prescription loading on failure', async () => {
+      const rxSpy = vi
+        .spyOn(NexaApiClient, 'getMyPrescriptions')
+        .mockRejectedValueOnce(new Error('Network error on prescriptions'))
+        .mockResolvedValueOnce({
+          patient_id: 'pat-1',
+          prescriptions: [],
+          next_cursor: null,
+        })
+
+      renderWithTamagui(<PatientPrescriptionsScreen />)
+
+      expect(await screen.findByText('Network error on prescriptions')).toBeTruthy()
+      const retryBtn = screen.getByText('Retry')
+      fireEvent.click(retryBtn)
+
+      await waitFor(() => {
+        expect(rxSpy).toHaveBeenCalledTimes(2)
+      })
+      expect(await screen.findByText('No active or historical medications on file.')).toBeTruthy()
     })
   })
 
@@ -245,6 +468,49 @@ describe('PatientLongitudinalRecords UX Suite', () => {
         )
       })
     })
+
+    it('renders differentiated tab empty state with reset button', async () => {
+      vi.spyOn(NexaApiClient, 'getMyReports').mockResolvedValue({
+        patient_id: 'pat-1',
+        reports: [],
+        next_cursor: null,
+      })
+
+      renderWithTamagui(<PatientReportsScreen />)
+
+      // Click Imaging
+      fireEvent.click(await screen.findByText('Imaging'))
+      expect(await screen.findByText('No Imaging reports on file.')).toBeTruthy()
+      expect(
+        screen.getByText('There are no documents matching this filter in your health record.')
+      ).toBeTruthy()
+
+      // Click Show All Reports
+      fireEvent.click(screen.getByText('Show All Reports'))
+      expect(await screen.findByText('No diagnostic reports or documents on file.')).toBeTruthy()
+    })
+
+    it('supports retrying reports loading on failure', async () => {
+      const reportsSpy = vi
+        .spyOn(NexaApiClient, 'getMyReports')
+        .mockRejectedValueOnce(new Error('Network error on reports'))
+        .mockResolvedValueOnce({
+          patient_id: 'pat-1',
+          reports: [],
+          next_cursor: null,
+        })
+
+      renderWithTamagui(<PatientReportsScreen />)
+
+      expect(await screen.findByText('Network error on reports')).toBeTruthy()
+      const retryBtn = screen.getByText('Retry')
+      fireEvent.click(retryBtn)
+
+      await waitFor(() => {
+        expect(reportsSpy).toHaveBeenCalledTimes(2)
+      })
+      expect(await screen.findByText('No diagnostic reports or documents on file.')).toBeTruthy()
+    })
   })
 
   describe('PatientRecordDetailModal', () => {
@@ -282,6 +548,33 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(screen.getByText('Clinical Data')).toBeTruthy()
       expect(screen.getByText('Provenance & Clinical Trust')).toBeTruthy()
       expect(screen.getByText('Origin: Clinician Recorded')).toBeTruthy()
+    })
+
+    it('dismisses on Escape key press on web', async () => {
+      const onOpenChange = vi.fn()
+      vi.spyOn(NexaApiClient, 'getMyRecordDetail').mockResolvedValue({
+        record_id: 'rec-1',
+        patient_id: 'pat-1',
+        category: 'vitals',
+        title: 'BP Observation',
+        fields: {},
+        recorded_at: null,
+        provenance: { source: 'manual' },
+      })
+
+      renderWithTamagui(
+        <PatientRecordDetailModal
+          open={true}
+          onOpenChange={onOpenChange}
+          category="vitals"
+          recordId="rec-1"
+        />
+      )
+
+      expect(await screen.findByText('BP Observation')).toBeTruthy()
+
+      fireEvent.keyDown(window, { key: 'Escape', code: 'Escape' })
+      expect(onOpenChange).toHaveBeenCalledWith(false)
     })
   })
 })
