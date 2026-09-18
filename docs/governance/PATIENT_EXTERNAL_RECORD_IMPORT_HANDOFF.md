@@ -5,7 +5,7 @@
 - **Current branch:** `slice-11a-patient-external-record-import`.
 - **PR:** #47, `feat(patient): integrate external medical record import workflow` — **OPEN / DRAFT / UNMERGED**.
 - **Latest observed main:** `a7999054bb24fa7a132295a90892dddaf9b2d422`.
-- **Latest semantic current-main reconciliation candidate:** `95d6175dcb22d659fd9e65ccab7495c85832abcf` (PR #51 landed; branch ref update pending at this handoff edit).
+- **Latest semantic current-main reconciliation:** `95d6175dcb22d659fd9e65ccab7495c85832abcf`; Phase-D1 provenance integration qualified at `7a13384ab07d6542179082ba94eee678b55d7434`.
 - **Phase-B implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
 - **Phase-B final code/qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
 - **Phase-B backend CI:** run `35350346488` — **PASS**.
@@ -42,8 +42,8 @@
 - **Phase C2 Vercel:** SUCCESS on `5292857e...`.
 - **Phase D1 target:** explicit patient Save → canonical `DocumentReference` + completion `TimelineEvent` + value-free audit + import `COMPLETED`, atomically. No Medication/LabResult promotion from lossy review text.
 - **Typed-persistence audit conclusion:** `DocumentReference` is the safe canonical target for all five external source categories. Imaging/discharge/other have no stronger dedicated model. Prescription is backed by `Medication` only when name/strength/frequency are structured; LabResult requires unit/reference range. Current Task-1 candidate persistence did not retain those structured extraction fields, so promoting reviewed strings would violate the no-invention rule.
-- **Phase D1 qualification state:** IMPLEMENTED / NOT YET QUALIFIED at this handoff update point.
-- **New concurrency guard:** PR #51 (`feat(patient-records): project external records into longitudinal timeline, reports, and prescriptions`) is active on `app/api/v2/patient_record_routes.py`, longitudinal frontend, and `tests/test_patient_longitudinal_records.py`. Phase D1 deliberately does not touch those files.
+- **Phase D1 qualification state:** COMPLETE / QUALIFIED at exact code SHA `7a13384ab07d6542179082ba94eee678b55d7434`.
+- **Current concurrency:** PR #51 is MERGED and reconciled. PR #50 remains open on protected Treatment Session V1 gate files and does not overlap Task-1 lifecycle/erasure files.
 - **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
 - **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
@@ -78,7 +78,7 @@ The completed Phase-B coding target is intentionally narrower: extract a patient
 
 ### Current main / concurrency
 
-Latest observed main: `34510ec1e308762cf2836c70de7e1cc8a828b39d`. Slice 11B longitudinal patient-record routes/UI from PR #48 are fully landed and semantically reconciled into Task-1 at `10c7fac1...`.
+Latest observed main: `a7999054bb24fa7a132295a90892dddaf9b2d422`. Slice 11B longitudinal patient-record routes/UI and merged PR #51 projections are reconciled into Task-1.
 
 Reconciliation facts:
 
@@ -257,6 +257,28 @@ Implementation boundary:
 - **Shared route registry:** Slice 11B routes remain; Task-1 registry expands from five to seven external-record routes.
 - **Qualification:** PASS on exact SHA `5292857e...`; backend `35354830638`, frontend `35354830394`, Vercel SUCCESS.
 
+### Phase D2 — lifecycle / cryptographic-erasure hardening
+
+Audit conclusion:
+
+- Patient-self source blobs are encrypted with the document-storage encryption key and patient-bound AAD, not with the patient clinical-data DEK.
+- Destroying the patient DEK therefore blocks candidate/clinical-data decryption but does not by itself make retained patient-self source blobs unreadable.
+- Task-1 must integrate source-object deletion into the existing canonical erasure route; this is an extension of the existing erasure hook, not a parallel erasure architecture.
+
+Staged implementation boundary:
+
+- New `app/services/patient_external_record_lifecycle.py`.
+- Upload/list/detail/source operations check the canonical erasure registry and fail closed on an active tombstone or unavailable registry.
+- Upload rechecks erasure after external storage and again before persistence; an erasure race deletes the just-written patient-self object before returning.
+- Staged orphan cleanup is fail-closed instead of silently swallowing storage-deletion failures.
+- Canonical patient erasure establishes the existing DEK/tombstone block first, then deletes Task-1 patient-self source objects.
+- After successful object deletion, Task-1 neutralizes source `storage_ref`, `original_filename`, `content_hash`, uploader metadata, import content hashes, and finalized `DocumentReference.storage_ref` while preserving non-secret lifecycle/provenance rows.
+- If source enumeration/deletion/metadata neutralization fails, the canonical erasure tombstone is marked `operator_action_required`; the erasure API does not claim historical irrecoverability.
+- No ClinicalAccessSession, Signed Consent V3, treatment-session, provider-delegated authority, or migration file is changed.
+- Merge reassignment semantics and retry/cancel workflow behavior remain separate follow-on work.
+
+Qualification state: **WRITTEN / NOT RUN** until the exact committed SHA passes backend A/B/C zero-skip gates, frontend/native, and Vercel.
+
 ## Test / Qualification Matrix
 
 | Area | State | Evidence |
@@ -279,6 +301,7 @@ Implementation boundary:
 | Phase-C2 review API routes | PASS | Exact SHA `5292857e...`; A 3978 / B 300 / C 130 with zero skips/failures; frontend/native/Vercel green. |
 | Phase-D1 document finalization | PASS | Exact SHA `7a13384ab07d6542179082ba94eee678b55d7434`; backend `35360206624` A 3989 / B 300 / C 130 with zero skips/failures; frontend/native `35360206538` green; Vercel SUCCESS. |
 | Structured Medication/LabResult promotion | DEFERRED / UNSAFE WITH CURRENT CANDIDATE SCHEMA | Required structured regimen/unit/reference fields were not retained in Task-1 candidate persistence; no free-text inference allowed. |
+| Phase-D2 lifecycle / erasure hardening | WRITTEN / NOT RUN | Canonical erasure gate, patient-self source deletion + metadata neutralization, erasure-race handling, and operator-action downgrade tests staged for exact-head qualification. |
 
 ## Open Risks / Blockers
 
@@ -287,7 +310,7 @@ Implementation boundary:
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
 5. Phase D1 DocumentReference finalization, completion-timeline persistence, PR #51 reconciliation, and patient-import provenance projection are qualified at `7a13384a...`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
-6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
+6. Phase-D2 erasure hardening is implemented but not yet qualified. Retry/cancel and patient-merge lifecycle semantics remain incomplete.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
 9. Full decoder-level corruption validation remains unverified beyond the existing structural checks.
@@ -337,7 +360,9 @@ Implementation boundary:
 - [x] Reconcile landed PR #51 patient-facing longitudinal projection onto Task-1.
 - [x] Qualify Phase D1 plus the landed longitudinal-provenance integration on exact SHA `7a13384a...`.
 - [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
-- [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior. Current audit finding: patient-self source blobs use the document-storage encryption key, so patient-DEK destruction alone is insufficient; integrate explicit source-object deletion with canonical erasure before claiming this complete.
+- [x] Implement canonical erasure gating plus patient-self source-object deletion and metadata neutralization.
+- [ ] Qualify Phase-D2 erasure hardening on its exact committed SHA.
+- [ ] Qualify retry/cancel/recovery and patient-merge lifecycle behavior.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
 - [ ] Keep PR draft until all required Task-1 phases are complete.

@@ -24,6 +24,9 @@ from app.models.pipeline import DocumentStorage as DocumentStorageRecord
 from app.security.audit_context import AuditDomain, current_audit_context
 from app.services.audit_outbox import enqueue_audit_event
 from app.services.document_storage import DocumentStorageError, get_document_storage
+from app.services.patient_external_record_lifecycle import (
+    assert_patient_external_record_access_active,
+)
 
 PATIENT_CATEGORY_MAP = {
     "prescription": "PRESCRIPTION",
@@ -163,11 +166,11 @@ async def _find_import_by_hash(
 async def _delete_staged_source(storage, storage_ref: str, *, patient_id: str) -> None:
     try:
         await storage.delete_patient_document(storage_ref, patient_id=patient_id)
-    except DocumentStorageError:
-        # The encrypted orphan is inaccessible without the authoritative
-        # patient namespace and has no DB reference. Cleanup can be retried by
-        # storage operations without changing the API result.
-        pass
+    except Exception as exc:  # noqa: BLE001 - normalize storage cleanup failures
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "SOURCE_CLEANUP_UNAVAILABLE", "retryable": True},
+        ) from exc
 
 
 async def stage_patient_external_record(
@@ -184,6 +187,8 @@ async def stage_patient_external_record(
         patient_uuid = uuid.UUID(patient_id)
     except ValueError as exc:
         raise HTTPException(status_code=401, detail="Invalid patient identity") from exc
+
+    await assert_patient_external_record_access_active(db, patient_id=patient_id)
 
     category = PATIENT_CATEGORY_MAP.get(category_slug)
     if category is None:
@@ -225,6 +230,12 @@ async def stage_patient_external_record(
         ) from exc
 
     try:
+        await assert_patient_external_record_access_active(db, patient_id=patient_id)
+    except HTTPException:
+        await _delete_staged_source(storage, stored.storage_ref, patient_id=patient_id)
+        raise
+
+    try:
         duplicate = await _find_import_by_hash(
             db,
             patient_id=patient_uuid,
@@ -247,6 +258,12 @@ async def stage_patient_external_record(
                 },
             )
         return PatientImportUploadResult(duplicate, True)
+
+    try:
+        await assert_patient_external_record_access_active(db, patient_id=patient_id)
+    except HTTPException:
+        await _delete_staged_source(storage, stored.storage_ref, patient_id=patient_id)
+        raise
 
     now = datetime.now(timezone.utc)
     source_id = uuid.uuid4()
@@ -350,6 +367,7 @@ async def stage_patient_external_record(
 async def list_patient_external_records(
     db: AsyncSession, *, patient_id: str
 ) -> list[PatientExternalRecordImport]:
+    await assert_patient_external_record_access_active(db, patient_id=patient_id)
     patient_uuid = uuid.UUID(patient_id)
     try:
         return list(
@@ -371,6 +389,7 @@ async def list_patient_external_records(
 async def get_patient_external_record(
     db: AsyncSession, *, patient_id: str, import_id: uuid.UUID
 ) -> PatientExternalRecordImport:
+    await assert_patient_external_record_access_active(db, patient_id=patient_id)
     patient_uuid = uuid.UUID(patient_id)
     try:
         row = (
@@ -402,6 +421,7 @@ async def read_patient_external_record_source(
         patient_id=patient_id,
         import_id=import_id,
     )
+    await assert_patient_external_record_access_active(db, patient_id=patient_id)
     try:
         document = (
             await db.execute(
@@ -423,6 +443,7 @@ async def read_patient_external_record_source(
             detail={"error_code": "SOURCE_DOCUMENT_NOT_FOUND"},
         )
 
+    await assert_patient_external_record_access_active(db, patient_id=patient_id)
     try:
         storage = get_document_storage()
         data = await storage.get_patient_document_bytes(
@@ -434,6 +455,12 @@ async def read_patient_external_record_source(
             status_code=503,
             detail={"error_code": "SOURCE_DOCUMENT_UNAVAILABLE", "retryable": True},
         ) from exc
+
+    try:
+        await assert_patient_external_record_access_active(db, patient_id=patient_id)
+    except HTTPException:
+        del data
+        raise
 
     try:
         await enqueue_audit_event(

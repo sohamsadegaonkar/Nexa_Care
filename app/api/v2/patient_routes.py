@@ -35,6 +35,10 @@ from app.services.consent_engine import get_consent_redis_client
 from app.services.consent_gated_crypto import EncryptionProvider, consent_gated_decrypt
 from app.services.crypto_kms import get_encryption_provider
 from app.services.emergency_summary_service import build_emergency_summary
+from app.services.patient_external_record_lifecycle import (
+    PatientExternalSourceErasureUnavailable,
+    delete_patient_external_record_sources,
+)
 from app.services.sharding import decrypt_vault_field
 
 logger = logging.getLogger("nexa_logger")
@@ -329,11 +333,25 @@ async def erase_patient_data(
         metadata={"reason": payload.reason},
     )
 
+    # Establish the canonical erasure tombstone / DEK access block first.
     destroy_succeeded = await kms.destroy_dek(patient_id_str, db)
+
+    # Patient-self external-record sources use the independent document-
+    # storage encryption key, so DEK destruction alone cannot erase them.
+    source_cleanup_succeeded = True
+    deleted_source_count = 0
+    try:
+        deleted_source_count = await delete_patient_external_record_sources(
+            db,
+            patient_id=patient_id_str,
+        )
+    except PatientExternalSourceErasureUnavailable:
+        source_cleanup_succeeded = False
 
     from sqlalchemy import select as _select
 
-    from app.models.erasure_tombstone import PatientErasureTombstone
+    from app.models.erasure_tombstone import ErasureStatus, PatientErasureTombstone
+    from app.security.erasure_registry import mark_operator_action_required
 
     tombstone = (
         await db.execute(
@@ -343,12 +361,35 @@ async def erase_patient_data(
         )
     ).scalar_one_or_none()
 
+    if tombstone is not None and not source_cleanup_succeeded:
+        if tombstone.status != ErasureStatus.OPERATOR_ACTION_REQUIRED.value:
+            await mark_operator_action_required(
+                db,
+                tombstone,
+                failure_code="patient_external_source_delete_failed",
+                retry_required=True,
+            )
+            await db.commit()
+        destroy_succeeded = False
+
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
         actor_uid=provider.actor_uid,
         event_type="CRYPTOGRAPHIC_ERASURE_COMPLETED",
         target_id=patient_id_str,
-        status="SUCCESS" if destroy_succeeded else "OPERATOR_ACTION_REQUIRED",
+        status=(
+            "SUCCESS"
+            if destroy_succeeded and source_cleanup_succeeded
+            else "OPERATOR_ACTION_REQUIRED"
+        ),
+        metadata={
+            "patient_external_source_cleanup": (
+                "completed"
+                if source_cleanup_succeeded
+                else "operator_action_required"
+            ),
+            "deleted_source_count": deleted_source_count,
+        },
     )
 
     if tombstone is None:
@@ -368,7 +409,8 @@ async def erase_patient_data(
         wrapping_key_type=tombstone.wrapping_key_type,
         operator_action_required=tombstone.operator_action_required,
         historical_backup_irrecoverability_proven=(
-            tombstone.wrapping_key_type == "patient"
+            source_cleanup_succeeded
+            and tombstone.wrapping_key_type == "patient"
             and tombstone.assurance_level == "patient_key_destroyed"
         ),
     )
