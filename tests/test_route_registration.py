@@ -159,8 +159,10 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/treatment-session/v1/approve-signed"),
     ("POST", "/api/v2/treatment-session/v1/{request_id}/claim"),
     # Slice 10B.5b: exact CREATE_ENCOUNTER authority materializes one canonical
-    # server-owned Encounter; no general clinical write route consumes it.
+    # server-owned Encounter.
     ("POST", "/api/v2/treatment-session/v1/encounter"),
+    # Slice 10B.5c: exactly one bounded Treatment Session clinical write family.
+    ("POST", "/api/v2/treatment-session/v1/vitals"),
     ("GET", "/api/v2/consent/status/{request_id}"),
     (
         "POST",
