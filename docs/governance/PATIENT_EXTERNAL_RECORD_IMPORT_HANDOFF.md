@@ -2,6 +2,16 @@
 
 ## NEXT AGENT — START HERE
 
+- **Current Task-1 branch:** `task1/external-record-d3`.
+- **D3 starting main SHA:** `337c8229de2267aaa1a07410833a57eaf040411c`.
+- **Repository state at D3 start:** only `main` and this fresh Task-1 branch exist remotely; no open PRs were present.
+- **Historical Task-1 branch:** `slice-11a-patient-external-record-import` is consolidation history only and must not be reused.
+- **D3 scope:** strict `FAILED_RETRYABLE` retry, safe pre-completion cancellation, value-free cancellation audit, retired/merged-patient denial through the shared lifecycle gate, patient-self retry/cancel routes, adversarial qualification.
+- **D3 migration posture:** zero migration expected; existing `FAILED_RETRYABLE` and `CANCELLED` states are authoritative.
+- **Current parallel-work state:** Task 0 PR #54 is active and owns `tests/test_route_registration.py`, `tests/test_audit_event_coverage.py`, migration/CI files, and protected treatment-session/encounter implementation. D3 production files do not overlap. Do not edit those shared governance files again while #54 is active.
+- **Merge boundary:** canonical `PatientMergeService` soft-deletes the old patient and creates a tombstone; it does not reassign Task-1 rows. D3 must deny the retired identity and must not migrate ownership.
+- **Merge authorization:** D3 PR #53 is OPEN / DRAFT / UNMERGED. It may be updated and qualified but must STOP before merge into `main`.
+
 - **Consolidation state:** Task-1 Phase D2 is **MERGED INTO MAIN** via PR #47.
 - **Merged checkpoint:** `48ea8fe3994757a30c746ad539f3913131916559` on `main`.
 - **Former work branch:** `slice-11a-patient-external-record-import` is historical and must not be reused after consolidation.
@@ -328,7 +338,7 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
 5. Phase D1 DocumentReference finalization, completion-timeline persistence, PR #51 reconciliation, and patient-import provenance projection are qualified at `7a13384a...`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
-6. Phase-D2 erasure hardening is qualified at `173c7053...`. Retry/cancel and patient-merge lifecycle semantics remain incomplete.
+6. Phase-D2 erasure hardening is qualified at `173c7053...`. Phase D3 retry/cancel and retired/merged-patient lifecycle are implemented and qualified at code SHA `8d96af096f8e8af072a6c01b0c3322cc2153a57f`.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
 9. Full decoder-level corruption validation remains unverified beyond the existing structural checks.
@@ -380,7 +390,147 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 - [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
 - [x] Implement canonical erasure gating plus patient-self source-object deletion and metadata neutralization.
 - [x] Qualify Phase-D2 erasure hardening on exact SHA `173c7053...`.
-- [ ] Qualify retry/cancel/recovery and patient-merge lifecycle behavior.
+- [x] Qualify retry/cancel/recovery and retired/merged-patient lifecycle behavior on code SHA `8d96af09...`.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
 - [x] Consolidate the qualified Phase-D2 checkpoint into main via PR #47; defer remaining phases to fresh follow-up branches.
+
+
+## Phase D3 — Retry / Cancel / Retired-Merged Patient Lifecycle
+
+### D3 product/security contract
+
+1. Retry is patient-self only and accepted only from canonical internal state `FAILED_RETRYABLE`.
+2. Retry never creates provider, hospital, tenant, consent, treatment-session, or ClinicalAccessSession authority.
+3. Cancellation is not erasure; cancellation retains the source unless canonical erasure later deletes it.
+4. Cancellation is allowed only through an explicit server-controlled pre-completion transition set derived from repository semantics.
+5. `COMPLETED` and `FAILED_TERMINAL` cannot be rewritten by cancellation. Repeated `CANCELLED` may be idempotent only if the implementation preserves the same terminal state without side effects.
+6. The shared Task-1 lifecycle gate must fail closed for erased, missing, retired/soft-deleted, and merged-old patient identities.
+7. D3 never rewrites `PatientExternalRecordImport.patient_id`, `DocumentStorage.patient_id`, `DocumentReference.patient_id`, or `TimelineEvent.patient_id` during patient merge handling.
+8. Cancellation audit uses `PATIENT_EXTERNAL_RECORD_CANCELLED` with structural/value-free metadata only.
+9. D2 erasure/source-deletion semantics remain unchanged.
+10. No migration is introduced.
+
+### D3 work log
+
+- Starting main: `337c8229de2267aaa1a07410833a57eaf040411c`.
+- Fresh branch: `task1/external-record-d3`.
+- Initial remote inventory: no open PRs; no active parallel branch overlap.
+- Landed merge audit: `PatientMergeService` creates a tombstone and sets the old patient `is_deleted = True`; it does not migrate Task-1 ownership.
+- Landed lifecycle audit: `assert_patient_external_record_access_active(...)` currently enforces erasure state but does not yet reject retired/soft-deleted patient identity.
+- Landed extraction audit: `process_patient_external_record(...)` already accepts `FAILED_RETRYABLE` internally and increments attempts under ownership/row-lock checks; D3 will publish a retry-only entrypoint without widening that qualified authority surface.
+
+### D3 implementation commits
+
+- `bfba9670555372d2727f849a08ad29f64f533e77` — start fresh D3 handoff from consolidated main.
+- `d9e15f4fd8b44a24e4094230afcf52ce2bf48852` — shared lifecycle gate denies retired/soft-deleted patient identity.
+- `cc19f1c2c5939caea1e462d4292d657fbd76ac35` — strict `FAILED_RETRYABLE` retry service.
+- `f1ab9dbaf4a60c0da6bca86f73164a2947be6050` — patient-owned cancellation service.
+- `e03e61ec665be4e0add415df230ffbb8a44062e5` — publish patient-self retry/cancel routes.
+- `ca870c44fe986358df4f7e4576b3221e3320b98c` / `412f0c048a9c48fae86e8a043e396d6cea342511` / `603e5eb41f04761498d4de42e2c08c508a29eb3c` — fail-closed audit/race handling and row-lock release hardening.
+- `3ae346174dcb022ce22a67fc546c9efc83abd340` — retired-patient lifecycle gate regression coverage.
+- `ecba4b499a43e76e1000b3d9c0c7133e5dfbe396` — retry/cancel adversarial state, ownership, failure, audit, and source-retention coverage.
+- `c57f0711f4d1b4019298a52fe5c5c5ffbbde0c28` — patient route authority + merged-old identity regression coverage.
+- `782e778f4dd60f77c2d64484086817f523730b04` — additive shared route/audit catalog updates.
+
+### D3 files changed
+
+Runtime:
+- `app/services/patient_external_record_lifecycle.py`
+- `app/services/patient_external_record_extraction.py`
+- `app/services/patient_external_record_cancellation.py`
+- `app/api/v2/patient_external_record_routes.py`
+
+Tests/governance:
+- `tests/test_patient_external_record_lifecycle.py`
+- `tests/test_patient_external_record_extraction.py`
+- `tests/test_patient_external_record_cancellation.py`
+- `tests/test_patient_external_record_d3_lifecycle.py`
+- `tests/test_patient_external_record_api_contract.py`
+- `tests/test_route_registration.py` — integration-controlled, additive only.
+- `tests/test_audit_event_coverage.py` — integration-controlled, additive only.
+- this handoff.
+
+Task-0 implementation files changed: **NONE**.
+Task-2-owned implementation/frontend files changed: **NONE**.
+Migration files changed: **NONE**.
+
+### D3 concurrency checks
+
+- D3 start: main `337c8229de2267aaa1a07410833a57eaf040411c`, no open PRs, no active parallel branches.
+- Immediately before editing `tests/test_route_registration.py` and `tests/test_audit_event_coverage.py`: main remained `337c8229...`, no open PRs, and both branch copies were byte-identical to current main.
+- Candidate diff remains based on main `337c8229...` with no protected Task-0 or Task-2 implementation changes.
+- During qualification, Task-0 PR #54 opened. Its shared-file patches are additive only: one `POST /api/v2/treatment-session/v1/encounter` route registration and one `CLINICAL_ENCOUNTER_CREATED` audit event. D3 must preserve both Task-0 additions if #54 lands before D3.
+- Agent-2 PR #55 opened with only longitudinal patient UX files (`PatientHealthHome`, Records/Prescriptions/Reports/Timeline/detail UI + its handoff/test). D3 has no overlap and must not edit those files.
+
+### D3 qualification candidate
+
+- Final D3 code SHA before documentation freeze: `8d96af096f8e8af072a6c01b0c3322cc2153a57f`.
+- Backend CI run `35374244743`: **PASS** — Ruff PASS; Partition A **4062 passed / 430 deselected / 0 skipped**, Partition B **300 / 4192 / 0**, Partition C **130 / 4362 / 0**; zero failures.
+- Frontend/native CI run `35374244922`: **PASS** — web tests, Next production build, workspace package build, Android native compile, and iOS native compile all PASS.
+- Vercel exact-head status on `8d96af09...`: **SUCCESS**.
+- The next commit is documentation-only; qualify that final branch tip separately before requesting merge.
+
+### D3 qualification state
+
+- **D3 code status:** COMPLETE / QUALIFIED.
+- **Qualified code SHA:** `8d96af096f8e8af072a6c01b0c3322cc2153a57f`.
+- **Focused D3 coverage:** retry/cancel/lifecycle/route/audit cases execute inside Partition A and PASS.
+- **Ruff:** PASS.
+- **Partition A:** 4062 passed / 430 deselected / 0 failed / 0 skipped.
+- **Partition B:** 300 passed / 4192 deselected / 0 failed / 0 skipped.
+- **Partition C:** 130 passed / 4362 deselected / 0 failed / 0 skipped.
+- **Frontend:** web tests + Next production build + workspace packages PASS.
+- **Android:** PASS.
+- **iOS:** PASS.
+- **Vercel:** SUCCESS.
+- **Migration:** NONE.
+- **Task 0 implementation files changed:** NONE.
+- **Task 2 implementation/frontend files changed:** NONE.
+- **Final branch-tip qualification:** pending only for the documentation-freeze commit created from this handoff update.
+
+
+
+### D3 post-#54 reconciliation checkpoint
+
+- Authoritative reconciliation base: `a9b221031256393602b42d3cf93f2af5ec402b5f` (merged PR #54).
+- Semantic shared-file pre-resolution commits: `d0c2a32314c7e9318767ab3da4bcd06ec0b30018` and `6421358f52bf2b038a974b162cfb2e3536af0e85`.
+- Main-to-D3 ancestry reconciliation merge: `520d6c717ae90bc5ed41d8a627c0e4da67213891` via PR #57.
+- PR #53 remains OPEN / DRAFT / UNMERGED pending exact-tip qualification.
+- `tests/test_route_registration.py` preserves the canonical `POST /api/v2/treatment-session/v1/encounter` route plus Task-1 retry and cancel routes.
+- `tests/test_audit_event_coverage.py` preserves both `CLINICAL_ENCOUNTER_CREATED` and `PATIENT_EXTERNAL_RECORD_CANCELLED`.
+- D3 introduces no migration; the inherited single repository head is `20260918_canonical_encounter`, whose parent is `20260916_patient_external_record_import`.
+- Task-0 canonical Encounter runtime/gate behavior is inherited unchanged from main.
+- Task-2 PR #55 remains separate and its patient UX files are not modified by D3.
+
+
+
+### D3 implementation behavior frozen
+
+- Retry route: `POST /api/v2/patient/me/external-records/{import_id}/retry`.
+- Retry accepts only `FAILED_RETRYABLE` with `retryable = true`; `UPLOADED`, `PROCESSING`, `REVIEW_REQUIRED`, `READY_TO_SAVE`, `COMPLETED`, `FAILED_TERMINAL`, and `CANCELLED` are rejected.
+- Retry reuses the qualified extraction service for source availability/integrity, extraction provenance, attempt accounting, encryption, audit, and failure handling.
+- Cancel route: `POST /api/v2/patient/me/external-records/{import_id}/cancel`.
+- Cancellation is allowed only from `UPLOADED`, `FAILED_RETRYABLE`, `REVIEW_REQUIRED`, and `READY_TO_SAVE`.
+- `PROCESSING`, `COMPLETED`, and `FAILED_TERMINAL` are rejected; repeated `CANCELLED` is an idempotent same-state response.
+- Cancellation retains the source and is not erasure.
+- Cancellation audit event is `PATIENT_EXTERNAL_RECORD_CANCELLED` and contains structural metadata only.
+- Shared lifecycle access denies erased, missing, retired/soft-deleted, and merged-old patient identities; no Task-1 ownership row is rebound to the canonical merge target.
+- Retry/cancel routes derive patient authority only from `get_current_patient` and accept no client-selected patient/provider/hospital/tenant/consent/clinical-session/treatment authority.
+- D2 source-erasure and metadata-neutralization behavior is unchanged.
+
+### D3 remaining integration / source-safety gaps
+
+1. PR #54 is merged and its canonical Encounter changes are reconciled into D3; the former shared-file integration blocker is closed.
+2. PR #55 owns longitudinal patient UX files and remains separate. D3 intentionally contains no frontend implementation.
+3. Malware scanning remains **NOT VERIFIED / NOT IMPLEMENTED**; D3 makes no new claim.
+4. Full decoder-level document validation remains outside D3 and unverified beyond the landed structural envelope/signature checks.
+5. Per the release plan, source-safety implementation must not start on this D3 branch. The next Task-1 slice starts only from a fresh consolidated main after Task 2 merges.
+
+
+### Post-reconciliation exact-head qualification
+
+- Reconciliation code head: `520d6c717ae90bc5ed41d8a627c0e4da67213891`.
+- Backend CI on that reconciliation head completed successfully before this governance freeze; it is supporting evidence only because this documentation commit advances the PR tip.
+- The commit containing this section is the governance-freeze tip and requires its own exact-head backend/frontend/native/Vercel qualification before PR #53 may be marked ready or merged.
+- Final exact run IDs and counts are recorded in PR #53 metadata after that tip is green, avoiding another post-qualification repository commit.

@@ -53,6 +53,9 @@ from app.services.crypto_kms import (
     get_encryption_provider,
 )
 from app.services.document_storage import DocumentStorageError, get_document_storage
+from app.services.patient_external_record_lifecycle import (
+    assert_patient_external_record_access_active,
+)
 
 _IDENTITY_FIELDS = frozenset({"patient_name", "phone", "aadhaar_abha_id"})
 _TERMINAL_OR_ALREADY_PROCESSED = frozenset(
@@ -244,6 +247,7 @@ async def process_patient_external_record(
             import_id=import_id,
         )
         if row is None:
+            await db.rollback()
             raise HTTPException(
                 status_code=404,
                 detail={"error_code": "EXTERNAL_RECORD_NOT_FOUND"},
@@ -525,4 +529,60 @@ async def process_patient_external_record(
         raise HTTPException(
             status_code=503,
             detail={"error_code": "EXTRACTION_UNAVAILABLE", "retryable": True},
+        ) from exc
+
+
+
+async def retry_patient_external_record(
+    db: AsyncSession,
+    *,
+    patient_id: str,
+    import_id: uuid.UUID,
+) -> PatientExternalRecordImport:
+    """Retry only an owned import whose canonical state is FAILED_RETRYABLE."""
+    try:
+        patient_uuid = uuid.UUID(patient_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail="Invalid patient identity") from exc
+
+    await assert_patient_external_record_access_active(db, patient_id=patient_id)
+
+    try:
+        row = await _load_owned_import_for_update(
+            db,
+            patient_id=patient_uuid,
+            import_id=import_id,
+        )
+        if row is None:
+            await db.rollback()
+            raise HTTPException(
+                status_code=404,
+                detail={"error_code": "EXTERNAL_RECORD_NOT_FOUND"},
+            )
+        if row.status != "FAILED_RETRYABLE" or not bool(row.retryable):
+            await db.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error_code": "EXTERNAL_RECORD_RETRY_NOT_AVAILABLE",
+                    "retryable": False,
+                },
+            )
+
+        # The existing process service owns source validation, erasure rechecks,
+        # extractor provenance, audit, attempt accounting, and candidate writes.
+        # Calling it here preserves that authority surface rather than creating
+        # a second extraction path.
+        return await process_patient_external_record(
+            db,
+            patient_id=patient_id,
+            import_id=import_id,
+        )
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "IMPORT_PERSISTENCE_UNAVAILABLE", "retryable": True},
         ) from exc

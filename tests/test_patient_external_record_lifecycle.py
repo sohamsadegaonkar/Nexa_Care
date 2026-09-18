@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from fastapi import HTTPException
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 import app.services.patient_external_record_import as import_module
 import app.services.patient_external_record_lifecycle as lifecycle_module
@@ -40,15 +41,59 @@ async def test_lifecycle_access_gate_maps_erased_patient_to_gone(
         raise lifecycle_module._PatientErasedSignal("patient")
 
     monkeypatch.setattr(lifecycle_module, "check_erasure_registry", erased)
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(is_deleted=False))
+    )
 
     with pytest.raises(HTTPException) as exc_info:
         await assert_patient_external_record_access_active(
-            SimpleNamespace(),
+            db,
             patient_id=str(uuid.uuid4()),
         )
 
     assert exc_info.value.status_code == 410
     assert exc_info.value.detail == {"error_code": "PATIENT_DATA_ERASED"}
+
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_access_gate_denies_retired_or_merged_old_patient(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registry = AsyncMock()
+    monkeypatch.setattr(lifecycle_module, "check_erasure_registry", registry)
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(is_deleted=True))
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await assert_patient_external_record_access_active(
+            db,
+            patient_id=str(uuid.uuid4()),
+        )
+
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail == {"error_code": "PATIENT_RECORD_RETIRED"}
+    registry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_lifecycle_access_gate_fails_closed_when_patient_store_unavailable() -> None:
+    db = SimpleNamespace(
+        get=AsyncMock(side_effect=SQLAlchemyError("synthetic db failure"))
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await assert_patient_external_record_access_active(
+            db,
+            patient_id=str(uuid.uuid4()),
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == {
+        "error_code": "PATIENT_DATA_UNAVAILABLE",
+        "retryable": True,
+    }
 
 
 @pytest.mark.asyncio
