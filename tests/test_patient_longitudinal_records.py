@@ -428,13 +428,17 @@ async def test_external_records_projected_into_longitudinal_timeline(patient_uui
     med_events, _ = await _fetch_patient_longitudinal_timeline(
         str(patient_uuid), mock_db, category="medications"
     )
-    assert any(e["event_id"] == str(rx_doc_id) for e in med_events)
+    rx_event = next(e for e in med_events if e["event_id"] == str(rx_doc_id))
+    assert rx_event["source"] == "patient_uploaded"
+    assert rx_event["source_display"] == "Imported by you from an external report"
 
     # 2. Querying labs category should project lab report document
     lab_events, _ = await _fetch_patient_longitudinal_timeline(
         str(patient_uuid), mock_db, category="labs"
     )
-    assert any(e["event_id"] == str(lab_doc_id) for e in lab_events)
+    lab_event = next(e for e in lab_events if e["event_id"] == str(lab_doc_id))
+    assert lab_event["source"] == "patient_uploaded"
+    assert lab_event["source_display"] == "Imported by you from an external report"
 
     # 3. Querying documents category should project both
     doc_events, _ = await _fetch_patient_longitudinal_timeline(
@@ -489,6 +493,7 @@ def test_prescriptions_includes_external_prescription_documents(
             # Verify external prescription is present and clearly labeled
             ext_rx = next(p for p in data["prescriptions"] if p["prescription_id"] == str(doc_id))
             assert ext_rx["source"] == "patient_uploaded"
+            assert ext_rx["source_display"] == "Imported by you from an external report"
             assert ext_rx["is_external_document"] is True
             assert "s3://" not in response.text
     finally:
@@ -524,6 +529,10 @@ def test_reports_filtering_by_document_type(
             assert len(data["reports"]) == 1
             assert data["reports"][0]["document_type"] == "LAB_REPORT"
             assert data["reports"][0]["category"] == "labs"
+            assert (
+                data["reports"][0]["source_display"]
+                == "Imported by you from an external report"
+            )
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 

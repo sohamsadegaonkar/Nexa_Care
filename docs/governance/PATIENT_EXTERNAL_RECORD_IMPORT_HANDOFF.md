@@ -4,8 +4,8 @@
 
 - **Current branch:** `slice-11a-patient-external-record-import`.
 - **PR:** #47, `feat(patient): integrate external medical record import workflow` — **OPEN / DRAFT / UNMERGED**.
-- **Latest observed main:** `34510ec1e308762cf2836c70de7e1cc8a828b39d`.
-- **Latest semantic current-main reconciliation SHA:** `10c7fac1efd88c5a4e31b2cb7eb1cbd5e7a7bf41`.
+- **Latest observed main:** `a7999054bb24fa7a132295a90892dddaf9b2d422`.
+- **Latest semantic current-main reconciliation candidate:** `95d6175dcb22d659fd9e65ccab7495c85832abcf` (PR #51 landed; branch ref update pending at this handoff edit).
 - **Phase-B implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
 - **Phase-B final code/qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
 - **Phase-B backend CI:** run `35350346488` — **PASS**.
@@ -277,7 +277,7 @@ Implementation boundary:
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
 | Phase-C1 review service tests | PASS | Exact SHA `1f53e830...`; backend CI `35353447620`: A 3961 / B 300 / C 130, zero skips/failures; audit catalog repaired. |
 | Phase-C2 review API routes | PASS | Exact SHA `5292857e...`; A 3978 / B 300 / C 130 with zero skips/failures; frontend/native/Vercel green. |
-| Phase-D1 document finalization | WRITTEN / NOT RUN | Service, save route, audit catalog, authority contracts, route governance, and focused atomic-finalization tests staged for exact-head qualification. |
+| Phase-D1 document finalization | WRITTEN / NOT RUN | Service, save route, audit catalog, authority contracts, route governance, focused atomic-finalization tests, and landed longitudinal projection reconciliation staged for exact-head qualification. |
 | Structured Medication/LabResult promotion | DEFERRED / UNSAFE WITH CURRENT CANDIDATE SCHEMA | Required structured regimen/unit/reference fields were not retained in Task-1 candidate persistence; no free-text inference allowed. |
 
 ## Open Risks / Blockers
@@ -286,7 +286,7 @@ Implementation boundary:
 2. Phase C1 review/correction service foundation is qualified at `1f53e830f00290539e5f39ed49ccfcc58f848707`; the initial audit-catalog-only failure was repaired and the exact repaired SHA is green.
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
-5. DocumentReference finalization and completion-timeline persistence are implemented in Phase D1 but still require exact-head qualification. Patient-facing longitudinal projection remains owned by active PR #51 until it lands. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
+5. DocumentReference finalization and completion-timeline persistence are implemented in Phase D1 but still require exact-head qualification. PR #51 is landed and reconciled; patient-uploaded document projections now use the explicit provenance phrase `Imported by you from an external report`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
 6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
@@ -301,7 +301,7 @@ Implementation boundary:
 - Preserve main's approved pilot head separation unless Task-1 migration receives explicit pilot approval.
 - Preserve both treatment-session and patient external-record route registrations.
 - Re-check main/open PR overlap before every major Task-1 increment and before final merge qualification.
-- Preserve the merged Slice 11B longitudinal patient-record routes/frontend byte-for-byte unless a later Task-1 UI integration explicitly requires a semantic change.
+- Preserve the merged Slice 11B/PR #51 longitudinal patient-record behavior; Task-1 changes only the patient-import provenance projection needed for the approved product wording.
 - PR #50 remains active; do not modify protected Slice-10B treatment-session gate semantics to implement patient review/correction or finalization.
 
 ## Final Completion Checklist
@@ -334,8 +334,8 @@ Implementation boundary:
 - [x] Audit canonical typed persistence category-by-category.
 - [x] Implement explicit DocumentReference finalization where repository semantics support it.
 - [x] Implement patient-import completion `TimelineEvent` persistence with `patient_uploaded` provenance.
-- [ ] Reconcile patient-facing longitudinal projection after PR #51 lands; do not edit its active files.
-- [ ] Qualify Phase D1 on its exact committed SHA.
+- [x] Reconcile landed PR #51 patient-facing longitudinal projection onto Task-1.
+- [ ] Qualify Phase D1 plus the landed longitudinal-provenance integration on its exact committed SHA.
 - [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
 - [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
 - [ ] Implement onboarding + Records patient frontend flow.
