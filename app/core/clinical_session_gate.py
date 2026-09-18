@@ -22,6 +22,7 @@ from app.core.database import get_db_session
 from app.core.dependencies import require_clinical_capability
 from app.core.redis import get_async_redis_client
 from app.models.clinical_access_session import ClinicalAccessSessionRecord
+from app.models.clinical_encounter import ClinicalEncounter
 from app.models.consent_grant import ConsentGrantLog
 from app.models.provider_context import ProviderContext
 from app.security.clinical_access_policy import (
@@ -437,6 +438,99 @@ async def stage_server_encounter_binding(
             "TREATMENT_ENCOUNTER_BINDING_UNAVAILABLE"
         ) from exc
     return encounter_id
+
+
+async def lock_treatment_write_authority(
+    *,
+    db: AsyncSession,
+    authority: TreatmentSessionV1Authority,
+    required_operation: ClinicalAccessOperation,
+) -> ClinicalEncounter:
+    """Lock and revalidate durable authority plus the canonical Encounter.
+
+    This helper does not grant a clinical operation.  The authority must already
+    have passed the live Treatment Session V1 gate for the exact operation.  It
+    revalidates the durable session/grant under the same lock order used by
+    canonical Encounter creation, then locks the exact Encounter that belongs
+    to that session.  Callers keep the locks until their transaction commits or
+    rolls back.
+    """
+
+    if not isinstance(required_operation, ClinicalAccessOperation):
+        raise TypeError("required_operation must be ClinicalAccessOperation")
+    if authority.required_operation is not required_operation:
+        raise TreatmentSessionV1GateDenied("TREATMENT_OPERATION_NOT_AUTHORIZED")
+    if authority.encounter_id is None:
+        raise TreatmentSessionV1GateDenied("TREATMENT_ENCOUNTER_REQUIRED")
+
+    try:
+        session_row = (
+            await db.execute(
+                select(ClinicalAccessSessionRecord)
+                .where(
+                    ClinicalAccessSessionRecord.session_id == authority.session_id
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+
+        current = datetime.now(timezone.utc)
+        if session_row is None or not _durable_session_matches(
+            session_row, authority, now=current
+        ):
+            raise _deny()
+
+        try:
+            durable_encounter_id = _uuid(session_row.encounter_id)
+        except TreatmentSessionV1GateDenied:
+            raise TreatmentSessionV1GateDenied(
+                "TREATMENT_ENCOUNTER_REQUIRED"
+            ) from None
+        if durable_encounter_id != authority.encounter_id:
+            raise TreatmentSessionV1GateDenied(
+                "TREATMENT_ENCOUNTER_NOT_AUTHORIZED"
+            )
+
+        grant_row = (
+            await db.execute(
+                select(ConsentGrantLog)
+                .where(
+                    ConsentGrantLog.token_hash == authority.token_hash,
+                    ConsentGrantLog.request_id == str(authority.request_id),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if grant_row is None or not _durable_grant_matches(
+            grant_row, authority, now=current
+        ):
+            raise _deny()
+
+        encounter = (
+            await db.execute(
+                select(ClinicalEncounter)
+                .where(ClinicalEncounter.encounter_id == authority.encounter_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+    except TreatmentSessionV1GateDenied:
+        raise
+    except Exception as exc:
+        raise TreatmentSessionV1GateUnavailable(
+            "TREATMENT_SESSION_DURABLE_STORE_UNAVAILABLE"
+        ) from exc
+
+    if encounter is None:
+        raise TreatmentSessionV1GateDenied("TREATMENT_ENCOUNTER_REQUIRED")
+    if (
+        encounter.clinical_session_id != authority.session_id
+        or encounter.patient_id != authority.patient_id
+        or encounter.provider_id != authority.provider_id
+        or encounter.hospital_id != authority.hospital_id
+    ):
+        raise TreatmentSessionV1GateDenied("TREATMENT_ENCOUNTER_NOT_AUTHORIZED")
+
+    return encounter
 
 
 def require_clinical_session(operation: ClinicalAccessOperation):
