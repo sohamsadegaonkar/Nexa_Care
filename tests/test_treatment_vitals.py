@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -102,6 +103,54 @@ def _audit_context(authority: TreatmentSessionV1Authority) -> AuditContext:
     )
 
 
+def _durable_rows(authority: TreatmentSessionV1Authority):
+    now = datetime.now(timezone.utc)
+    session = SimpleNamespace(
+        session_id=authority.session_id,
+        patient_id=authority.patient_id,
+        provider_id=authority.provider_id,
+        hospital_id=authority.hospital_id,
+        consent_request_id=str(authority.request_id),
+        token_hash=authority.token_hash,
+        purpose=authority.purpose,
+        scope="treatment",
+        allowed_operations=list(authority.allowed_operations),
+        provider_session_binding_hash=authority.provider_session_binding_hash,
+        policy_version=authority.policy_version,
+        issued_at=authority.issued_at,
+        expires_at=authority.expires_at,
+        status="ACTIVE",
+        encounter_id=str(authority.encounter_id),
+        revoked_at=None,
+        revocation_reason=None,
+    )
+    grant = SimpleNamespace(
+        token_hash=authority.token_hash,
+        patient_id=str(authority.patient_id),
+        clinician_id=str(authority.provider_id),
+        hospital_id=authority.hospital_id,
+        purpose=authority.purpose,
+        scope=["treatment"],
+        is_break_glass=False,
+        reason_code=None,
+        issued_at=now,
+        expires_at=authority.expires_at,
+        revoked_at=None,
+        revoked_reason=None,
+        assurance_level="signed_device_treatment_v1",
+        assurance_verified_at=now,
+        request_id=str(authority.request_id),
+    )
+    encounter = SimpleNamespace(
+        encounter_id=authority.encounter_id,
+        clinical_session_id=authority.session_id,
+        patient_id=authority.patient_id,
+        provider_id=authority.provider_id,
+        hospital_id=authority.hospital_id,
+    )
+    return session, grant, encounter
+
+
 def test_typed_observation_factories_are_server_normalized():
     now = datetime.now(timezone.utc)
     bp = service.blood_pressure_observation(
@@ -166,6 +215,200 @@ def test_service_rejects_direct_noncanonical_observation_construction():
         service._validate_normalized_observation(bad)
 
     assert caught.value.code == "TREATMENT_VITAL_VALUE_NOT_CANONICAL"
+
+
+def test_idempotency_hash_binds_every_authority_and_observation_semantic():
+    authority = _authority()
+    observation = service.heart_rate_observation(
+        beats_per_minute=72,
+        recorded_at=datetime.now(timezone.utc),
+    )
+    baseline = service._canonical_request_hash(
+        authority=authority,
+        observation=observation,
+    )
+
+    authority_variants = (
+        replace(authority, session_id=uuid.uuid4()),
+        replace(authority, encounter_id=uuid.uuid4()),
+        replace(authority, patient_id=uuid.uuid4()),
+        replace(authority, provider_id=uuid.uuid4()),
+        replace(authority, hospital_id=uuid.uuid4()),
+    )
+    for changed in authority_variants:
+        assert service._canonical_request_hash(
+            authority=changed,
+            observation=observation,
+        ) != baseline
+
+    observation_variants = (
+        service.heart_rate_observation(
+            beats_per_minute=73,
+            recorded_at=observation.recorded_at,
+        ),
+        service.blood_pressure_observation(
+            systolic_bp=120,
+            diastolic_bp=80,
+            recorded_at=observation.recorded_at,
+        ),
+        replace(observation, unit="beats/min"),
+        replace(
+            observation,
+            recorded_at=observation.recorded_at + timedelta(seconds=1),
+        ),
+    )
+    for changed in observation_variants:
+        assert service._canonical_request_hash(
+            authority=authority,
+            observation=changed,
+        ) != baseline
+
+
+@pytest.mark.asyncio
+async def test_write_authority_lock_requires_authority_encounter_before_query():
+    authority = replace(_authority(), encounter_id=None)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.lock_treatment_write_authority(
+            db=_AuthorityDB(),
+            authority=authority,
+            required_operation=ClinicalAccessOperation.WRITE_VITALS,
+        )
+
+    assert caught.value.code == "TREATMENT_ENCOUNTER_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_write_authority_lock_rejects_durable_session_encounter_mismatch():
+    authority = _authority()
+    session, _grant, _encounter = _durable_rows(authority)
+    session.encounter_id = str(uuid.uuid4())
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.lock_treatment_write_authority(
+            db=_AuthorityDB(session),
+            authority=authority,
+            required_operation=ClinicalAccessOperation.WRITE_VITALS,
+        )
+
+    assert caught.value.code == "TREATMENT_ENCOUNTER_NOT_AUTHORIZED"
+
+
+@pytest.mark.asyncio
+async def test_write_authority_lock_rejects_missing_canonical_encounter_row():
+    authority = _authority()
+    session, grant, _encounter = _durable_rows(authority)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.lock_treatment_write_authority(
+            db=_AuthorityDB(session, grant, None),
+            authority=authority,
+            required_operation=ClinicalAccessOperation.WRITE_VITALS,
+        )
+
+    assert caught.value.code == "TREATMENT_ENCOUNTER_REQUIRED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "expected_code"),
+    [
+        ("clinical_session_id", "TREATMENT_ENCOUNTER_NOT_AUTHORIZED"),
+        ("patient_id", "TREATMENT_ENCOUNTER_NOT_AUTHORIZED"),
+        ("provider_id", "TREATMENT_ENCOUNTER_NOT_AUTHORIZED"),
+        ("hospital_id", "TREATMENT_ENCOUNTER_NOT_AUTHORIZED"),
+    ],
+)
+async def test_write_authority_lock_rejects_canonical_encounter_binding_mismatch(
+    field,
+    expected_code,
+):
+    authority = _authority()
+    session, grant, encounter = _durable_rows(authority)
+    setattr(encounter, field, uuid.uuid4())
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.lock_treatment_write_authority(
+            db=_AuthorityDB(session, grant, encounter),
+            authority=authority,
+            required_operation=ClinicalAccessOperation.WRITE_VITALS,
+        )
+
+    assert caught.value.code == expected_code
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    [
+        "patient_id",
+        "provider_id",
+        "hospital_id",
+        "consent_request_id",
+        "token_hash",
+        "provider_session_binding_hash",
+        "allowed_operations",
+    ],
+)
+async def test_write_authority_lock_rejects_durable_session_disagreement(field):
+    authority = _authority()
+    session, _grant, _encounter = _durable_rows(authority)
+    replacements = {
+        "patient_id": uuid.uuid4(),
+        "provider_id": uuid.uuid4(),
+        "hospital_id": uuid.uuid4(),
+        "consent_request_id": str(uuid.uuid4()),
+        "token_hash": "c" * 64,
+        "provider_session_binding_hash": "d" * 64,
+        "allowed_operations": [ClinicalAccessOperation.READ_DOCUMENTS.value],
+    }
+    setattr(session, field, replacements[field])
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.lock_treatment_write_authority(
+            db=_AuthorityDB(session),
+            authority=authority,
+            required_operation=ClinicalAccessOperation.WRITE_VITALS,
+        )
+
+    assert caught.value.code == "TREATMENT_SESSION_NOT_AUTHORIZED"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    [
+        "patient_id",
+        "clinician_id",
+        "hospital_id",
+        "request_id",
+        "token_hash",
+        "scope",
+        "revoked_at",
+    ],
+)
+async def test_write_authority_lock_rejects_durable_grant_disagreement(field):
+    authority = _authority()
+    session, grant, _encounter = _durable_rows(authority)
+    replacements = {
+        "patient_id": str(uuid.uuid4()),
+        "clinician_id": str(uuid.uuid4()),
+        "hospital_id": uuid.uuid4(),
+        "request_id": str(uuid.uuid4()),
+        "token_hash": "c" * 64,
+        "scope": ["clinical"],
+        "revoked_at": datetime.now(timezone.utc),
+    }
+    setattr(grant, field, replacements[field])
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.lock_treatment_write_authority(
+            db=_AuthorityDB(session, grant),
+            authority=authority,
+            required_operation=ClinicalAccessOperation.WRITE_VITALS,
+        )
+
+    assert caught.value.code == "TREATMENT_SESSION_NOT_AUTHORIZED"
 
 
 @pytest.mark.asyncio
