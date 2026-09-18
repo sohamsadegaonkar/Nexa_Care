@@ -130,39 +130,57 @@ export default function PatientPrescriptionsScreen() {
         <XStack gap="$2" flexWrap="wrap" paddingTop="$1">
           <Button
             size="$2"
+            theme={sourceFilter === 'all' ? 'blue' : undefined}
             backgroundColor={sourceFilter === 'all' ? '$blue9' : '$backgroundHover'}
-            color={sourceFilter === 'all' ? 'white' : '$color'}
             borderRadius="$3"
             onPress={() => setSourceFilter('all')}
             accessibilityRole="button"
             accessibilityLabel="Show all medications and prescriptions"
             accessibilityState={{ selected: sourceFilter === 'all' }}
           >
-            All Treatments
+            <Text
+              color={sourceFilter === 'all' ? 'white' : '$color'}
+              fontSize="$2"
+              fontWeight={sourceFilter === 'all' ? '700' : '500'}
+            >
+              All Treatments
+            </Text>
           </Button>
           <Button
             size="$2"
+            theme={sourceFilter === 'clinic' ? 'blue' : undefined}
             backgroundColor={sourceFilter === 'clinic' ? '$blue9' : '$backgroundHover'}
-            color={sourceFilter === 'clinic' ? 'white' : '$color'}
             borderRadius="$3"
             onPress={() => setSourceFilter('clinic')}
             accessibilityRole="button"
             accessibilityLabel="Show clinician prescribed treatments"
             accessibilityState={{ selected: sourceFilter === 'clinic' }}
           >
-            Clinic Prescriptions
+            <Text
+              color={sourceFilter === 'clinic' ? 'white' : '$color'}
+              fontSize="$2"
+              fontWeight={sourceFilter === 'clinic' ? '700' : '500'}
+            >
+              Clinic Prescriptions
+            </Text>
           </Button>
           <Button
             size="$2"
+            theme={sourceFilter === 'external' ? 'blue' : undefined}
             backgroundColor={sourceFilter === 'external' ? '$blue9' : '$backgroundHover'}
-            color={sourceFilter === 'external' ? 'white' : '$color'}
             borderRadius="$3"
             onPress={() => setSourceFilter('external')}
             accessibilityRole="button"
             accessibilityLabel="Show patient uploaded prescriptions"
             accessibilityState={{ selected: sourceFilter === 'external' }}
           >
-            Uploaded Prescriptions
+            <Text
+              color={sourceFilter === 'external' ? 'white' : '$color'}
+              fontSize="$2"
+              fontWeight={sourceFilter === 'external' ? '700' : '500'}
+            >
+              Uploaded Prescriptions
+            </Text>
           </Button>
         </XStack>
       </YStack>
