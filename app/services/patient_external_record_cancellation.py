@@ -52,11 +52,13 @@ async def cancel_patient_external_record(
             )
         ).scalar_one_or_none()
         if row is None:
+            await db.rollback()
             raise HTTPException(
                 status_code=404,
                 detail={"error_code": "EXTERNAL_RECORD_NOT_FOUND"},
             )
         if row.status == "CANCELLED":
+            await db.commit()
             return row
         if row.status not in _CANCEL_ALLOWED_STATES:
             await db.rollback()
