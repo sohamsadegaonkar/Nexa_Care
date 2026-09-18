@@ -491,14 +491,17 @@ Migration files changed: **NONE**.
 
 
 
-### D3 final concurrency checkpoint
+### D3 post-#54 reconciliation checkpoint
 
-- Current `origin/main`: `337c8229de2267aaa1a07410833a57eaf040411c`; D3 is not behind main.
-- PR #53: Task-1 D3, OPEN / DRAFT / UNMERGED.
-- PR #54: Task-0 canonical encounter, OPEN and non-overlapping with D3 runtime files.
-- PR #54 now also modifies `tests/test_route_registration.py` and `tests/test_audit_event_coverage.py`. D3 made its additive changes to those files before #54 existed; do not edit them again while #54 is active.
-- If PR #54 lands before PR #53 is merged, semantically reconcile its shared governance/migration changes from the new main and rerun exact-head qualification. Never choose `ours` or `theirs` blindly.
-- No D3 migration exists, so D3 does not create or compete for an Alembic head.
+- Authoritative reconciliation base: `a9b221031256393602b42d3cf93f2af5ec402b5f` (merged PR #54).
+- Semantic shared-file pre-resolution commits: `d0c2a32314c7e9318767ab3da4bcd06ec0b30018` and `6421358f52bf2b038a974b162cfb2e3536af0e85`.
+- Main-to-D3 ancestry reconciliation merge: `520d6c717ae90bc5ed41d8a627c0e4da67213891` via PR #57.
+- PR #53 remains OPEN / DRAFT / UNMERGED pending exact-tip qualification.
+- `tests/test_route_registration.py` preserves the canonical `POST /api/v2/treatment-session/v1/encounter` route plus Task-1 retry and cancel routes.
+- `tests/test_audit_event_coverage.py` preserves both `CLINICAL_ENCOUNTER_CREATED` and `PATIENT_EXTERNAL_RECORD_CANCELLED`.
+- D3 introduces no migration; the inherited single repository head is `20260918_canonical_encounter`, whose parent is `20260916_patient_external_record_import`.
+- Task-0 canonical Encounter runtime/gate behavior is inherited unchanged from main.
+- Task-2 PR #55 remains separate and its patient UX files are not modified by D3.
 
 
 
@@ -516,10 +519,18 @@ Migration files changed: **NONE**.
 - Retry/cancel routes derive patient authority only from `get_current_patient` and accept no client-selected patient/provider/hospital/tenant/consent/clinical-session/treatment authority.
 - D2 source-erasure and metadata-neutralization behavior is unchanged.
 
-### D3 known risks / integration dependencies
+### D3 remaining integration / source-safety gaps
 
-1. Task-0 PR #54 overlaps the two integration-controlled test catalogs only. Its changes are additive and compatible, but if #54 lands first D3 must reconcile current main and preserve both encounter + retry/cancel entries before merge qualification.
-2. Agent-2 PR #55 owns longitudinal patient UX files and does not overlap D3. D3 intentionally contains no frontend implementation.
+1. PR #54 is merged and its canonical Encounter changes are reconciled into D3; the former shared-file integration blocker is closed.
+2. PR #55 owns longitudinal patient UX files and remains separate. D3 intentionally contains no frontend implementation.
 3. Malware scanning remains **NOT VERIFIED / NOT IMPLEMENTED**; D3 makes no new claim.
 4. Full decoder-level document validation remains outside D3 and unverified beyond the landed structural envelope/signature checks.
-5. D3 must stop at the PR/qualification boundary and must not merge itself into main.
+5. Per the release plan, source-safety implementation must not start on this D3 branch. The next Task-1 slice starts only from a fresh consolidated main after Task 2 merges.
+
+
+### Post-reconciliation exact-head qualification
+
+- Reconciliation code head: `520d6c717ae90bc5ed41d8a627c0e4da67213891`.
+- Backend CI on that reconciliation head completed successfully before this governance freeze; it is supporting evidence only because this documentation commit advances the PR tip.
+- The commit containing this section is the governance-freeze tip and requires its own exact-head backend/frontend/native/Vercel qualification before PR #53 may be marked ready or merged.
+- Final exact run IDs and counts are recorded in PR #53 metadata after that tip is green, avoiding another post-qualification repository commit.
