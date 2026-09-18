@@ -1,5 +1,127 @@
 # Patient External Record Import — Living Handoff
 
+
+## CURRENT D4 FINAL-INTEGRATION CHECKPOINT
+
+- **Task-1 phase:** D4 — Patient External Record Client Action Capability Contract.
+- **Current Task-1 branch:** `task1/external-record-d4-client-capabilities`.
+- **PR:** #59 `feat(task1): add external-record D4 client capability contract`.
+- **Authoritative integration main:** `db43613de098676de9dfc9007b6e4a416c60de39`.
+- **PR #55:** MERGED into main.
+- **PR #56:** MERGED into main.
+- **Post-#56 D4 reconciliation merge:** `8536bb82cfb90ee66a37a7cc0f886440a9597e38`.
+- **Reconciliation policy:** normal two-parent merge; no rebase, force-push, or history rewrite.
+- **Migration posture:** D4 adds **ZERO migrations**.
+- **Inherited single Alembic head:** `20260918_treatment_vitals_encounter`.
+- **Alembic parent:** `20260918_canonical_encounter`.
+- **Shared route catalog:** preserves canonical Encounter, bounded WRITE_VITALS, D3 retry/cancel, all pre-existing external-record routes, and D4 upload-policy.
+
+### D4 public client-action contract
+
+Every normal patient external-record response includes server-derived `actions`:
+
+- `can_process`
+- `can_retry`
+- `can_cancel`
+- `can_review`
+- `can_save`
+- advisory `can_view_source`
+
+Authoritative mutation-action semantics:
+
+| Internal state | Process | Retry | Cancel | Review | Save |
+| --- | --- | --- | --- | --- | --- |
+| `UPLOADED` | yes | no | yes | no | no |
+| `PROCESSING` | no | no | no | no | no |
+| `FAILED_RETRYABLE` | no | only when durable `retryable=true` | yes | no | no |
+| `FAILED_TERMINAL` | no | no | no | no | no |
+| `REVIEW_REQUIRED` | no | no | yes | yes | no |
+| `READY_TO_SAVE` | no | no | yes | yes | yes |
+| `COMPLETED` | no | no | no | no | no |
+| `CANCELLED` | no | no | no | no | no |
+
+`UPLOADED` and `PROCESSING` deliberately remain the same public status, `processing`.
+D4 resolves client re-entry ambiguity through `actions.can_process` rather than exposing
+the raw internal workflow enum. After restart, an uploaded-but-unprocessed import advertises
+`can_process=true`; an already-processing import advertises `can_process=false`.
+
+### D4 upload-policy contract
+
+Authenticated patient-self endpoint:
+
+`GET /api/v2/patient/me/external-records/upload-policy`
+
+Safe public response only:
+
+- effective `max_upload_bytes`
+- accepted extensions
+- accepted MIME types
+
+The public response and upload validator derive from the same server-owned upload rules.
+Supported patient upload formats remain exactly:
+
+- `.pdf` / `application/pdf`
+- `.png` / `image/png`
+- `.jpg`, `.jpeg` / `image/jpeg`
+
+TIFF is not advertised. AWS Textract clamps the effective maximum to 10 MiB; non-Textract
+configurations use the configured server maximum.
+
+### Source-capability honesty
+
+`can_view_source` and the compatibility `source_available` signal are advisory only.
+They do not guarantee successful retrieval. Patient erasure/retirement, missing source
+metadata, storage unavailability, or integrity failure may still deny the source endpoint.
+D4 does not perform storage reads merely to render list/detail action capabilities.
+
+### D4 security boundary
+
+- Patient identity remains dependency-derived from authenticated patient-self context.
+- No caller-selected patient, provider, hospital, tenant, consent, Treatment Session,
+  ClinicalAccessSession, or Encounter authority is introduced.
+- No provider workflow or treatment authority is added.
+- No storage key, bucket path, extractor credential, or model identifier is exposed.
+- D4 adds no frontend feature code and no Vercel configuration.
+
+### Post-reconciliation pre-final qualification evidence
+
+Exact reconciled code SHA: `8536bb82cfb90ee66a37a7cc0f886440a9597e38`.
+
+Backend CI `35397700109`: **PASS**.
+
+- Ruff: PASS.
+- Partition A: **4179 passed / 436 deselected / 0 failed / 0 skipped**.
+- Partition B: **306 passed / 4309 deselected / 0 failed / 0 skipped**.
+- Partition C: **130 passed / 4485 deselected / 0 failed / 0 skipped**.
+- All A/B/C zero-skip qualification assertions: PASS.
+- D4 capability/API-contract, D3 lifecycle, route-registration, migration-graph, and
+  WRITE_VITALS regressions execute inside the repository qualification partitions.
+
+Frontend/native CI `35397700112`: **PASS**.
+
+- Next/web: 2 files / 6 tests PASS.
+- app/web: 44 files / 290 tests PASS.
+- Next production build: PASS.
+- Workspace package build: PASS.
+- Android native compile: PASS (`BUILD SUCCESSFUL`).
+- iOS native compile: PASS (`BUILD SUCCEEDED`).
+
+### Governance freeze and final exact-head evidence
+
+The commit containing this D4 checkpoint is the governance-freeze candidate and requires
+a fresh exact-head backend/frontend/native qualification before PR #59 may be marked ready
+or merged. The final run IDs, exact final SHA, and Vercel result are recorded in PR #59
+metadata after that frozen tip is green, deliberately avoiding a documentation-only commit
+that would invalidate the final qualification.
+
+The old draft qualification at `c89b976...` and the pre-final evidence above are supporting
+evidence only. Final production/release qualification still requires Vercel green on the
+eventual consolidated release candidate; a quota-only D4 integration exception, if needed,
+must be recorded truthfully and is not a Vercel PASS.
+
+After D4 merges, Task 1 stops. Source safety begins only from a fresh branch based on the
+new authoritative main.
+
 ## NEXT AGENT — START HERE
 
 - **Current Task-1 branch:** `task1/external-record-d3`.
