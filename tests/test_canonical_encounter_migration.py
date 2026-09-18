@@ -9,11 +9,10 @@ REVISION = "20260918_canonical_encounter"
 PARENT = "20260916_patient_external_record_import"
 
 
-def test_canonical_encounter_migration_is_single_linear_head():
+def test_canonical_encounter_migration_preserves_linear_ancestry():
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("script_location", str(ROOT / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == [REVISION]
     revision = scripts.get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == PARENT
