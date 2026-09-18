@@ -277,7 +277,7 @@ Implementation boundary:
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
 | Phase-C1 review service tests | PASS | Exact SHA `1f53e830...`; backend CI `35353447620`: A 3961 / B 300 / C 130, zero skips/failures; audit catalog repaired. |
 | Phase-C2 review API routes | PASS | Exact SHA `5292857e...`; A 3978 / B 300 / C 130 with zero skips/failures; frontend/native/Vercel green. |
-| Phase-D1 document finalization | WRITTEN / NOT RUN | Service, save route, audit catalog, authority contracts, route governance, focused atomic-finalization tests, and landed longitudinal projection reconciliation staged for exact-head qualification. |
+| Phase-D1 document finalization | PASS | Exact SHA `7a13384ab07d6542179082ba94eee678b55d7434`; backend `35360206624` A 3989 / B 300 / C 130 with zero skips/failures; frontend/native `35360206538` green; Vercel SUCCESS. |
 | Structured Medication/LabResult promotion | DEFERRED / UNSAFE WITH CURRENT CANDIDATE SCHEMA | Required structured regimen/unit/reference fields were not retained in Task-1 candidate persistence; no free-text inference allowed. |
 
 ## Open Risks / Blockers
@@ -286,7 +286,7 @@ Implementation boundary:
 2. Phase C1 review/correction service foundation is qualified at `1f53e830f00290539e5f39ed49ccfcc58f848707`; the initial audit-catalog-only failure was repaired and the exact repaired SHA is green.
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
-5. DocumentReference finalization and completion-timeline persistence are implemented in Phase D1 but still require exact-head qualification. PR #51 is landed and reconciled; patient-uploaded document projections now use the explicit provenance phrase `Imported by you from an external report`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
+5. Phase D1 DocumentReference finalization, completion-timeline persistence, PR #51 reconciliation, and patient-import provenance projection are qualified at `7a13384a...`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
 6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
@@ -335,9 +335,9 @@ Implementation boundary:
 - [x] Implement explicit DocumentReference finalization where repository semantics support it.
 - [x] Implement patient-import completion `TimelineEvent` persistence with `patient_uploaded` provenance.
 - [x] Reconcile landed PR #51 patient-facing longitudinal projection onto Task-1.
-- [ ] Qualify Phase D1 plus the landed longitudinal-provenance integration on its exact committed SHA.
+- [x] Qualify Phase D1 plus the landed longitudinal-provenance integration on exact SHA `7a13384a...`.
 - [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
-- [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
+- [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior. Current audit finding: patient-self source blobs use the document-storage encryption key, so patient-DEK destruction alone is insufficient; integrate explicit source-object deletion with canonical erasure before claiming this complete.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
 - [ ] Keep PR draft until all required Task-1 phases are complete.
