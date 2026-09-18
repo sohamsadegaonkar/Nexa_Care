@@ -284,9 +284,6 @@ async def read_external_record_upload_policy(
 ) -> PatientExternalRecordUploadPolicyResponse:
     """Return safe patient-self upload policy derived from server validation."""
     _set_no_store(response)
-    # Touch the dependency-derived identity explicitly: this route must never
-    # accept caller-selected patient authority, even though policy is global.
-    bool(auth.patient_id)
     return PatientExternalRecordUploadPolicyResponse(
         max_upload_bytes=_upload_limit(),
         accepted_extensions=PATIENT_UPLOAD_EXTENSIONS,
