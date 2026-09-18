@@ -54,7 +54,7 @@ from app.main import app
 #   6. Slice 10A adds three authenticated patient-self phone-discoverability
 #      controls; they manage exact-search authority and never replace login,
 #      device, consent, or provider record-access authority.
-#   7. Task 1 adds ten strict patient-self external-record import/review/save
+#   7. Task 1 adds twelve strict patient-self external-record import/review/save
 #      routes under /api/v2/patient/me; none accepts a caller-selected patient identifier.
 #
 # If this file goes red again, confirm the owning route was intentionally
@@ -153,14 +153,16 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/v3/approve-signed"),
     ("POST", "/api/v2/consent/v3/{request_id}/claim-access"),
     # Slice 10B.4: patient-signed treatment context plus one-time mint.
-    # The claim creates bounded authority but no write route consumes it yet.
+    # The claim creates bounded authority; consumption remains exact-operation gated.
     ("POST", "/api/v2/treatment-session/v1/request"),
     ("GET", "/api/v2/treatment-session/v1/challenge/{request_id}"),
     ("POST", "/api/v2/treatment-session/v1/approve-signed"),
     ("POST", "/api/v2/treatment-session/v1/{request_id}/claim"),
     # Slice 10B.5b: exact CREATE_ENCOUNTER authority materializes one canonical
-    # server-owned Encounter; no general clinical write route consumes it.
+    # server-owned Encounter.
     ("POST", "/api/v2/treatment-session/v1/encounter"),
+    # Slice 10B.5c: exactly one bounded Treatment Session clinical write family.
+    ("POST", "/api/v2/treatment-session/v1/vitals"),
     ("GET", "/api/v2/consent/status/{request_id}"),
     (
         "POST",
