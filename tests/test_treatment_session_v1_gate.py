@@ -130,10 +130,13 @@ def _fixture(*, operations: list[str] | None = None):
         purpose="treatment",
         scope=[TREATMENT_SESSION_V1_SCOPE],
         is_break_glass=False,
+        reason_code=None,
         issued_at=now,
         expires_at=expires_at,
         revoked_at=None,
+        revoked_reason=None,
         assurance_level="signed_device_treatment_v1",
+        assurance_verified_at=now,
         request_id=str(request_id),
     )
     provider = SimpleNamespace(
@@ -335,6 +338,38 @@ async def test_gate_rejects_revoked_durable_session(monkeypatch):
     data.session.status = "REVOKED"
     data.session.revoked_at = data.now
     data.session.revocation_reason = "PATIENT_REVOKED"
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gate_rejects_incomplete_durable_assurance(monkeypatch):
+    data = _fixture()
+    data.grant.assurance_verified_at = data.now - timedelta(seconds=1)
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gate_rejects_stale_revocation_reason_without_timestamp(monkeypatch):
+    data = _fixture()
+    data.grant.revoked_reason = "PATIENT_REVOKED"
     monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
 
     with pytest.raises(gate.TreatmentSessionV1GateDenied):
