@@ -395,14 +395,31 @@ async def stage_server_encounter_binding(
                 .with_for_update()
             )
         ).scalar_one_or_none()
+
+        current = datetime.now(timezone.utc)
+        if row is None or not _durable_session_matches(row, authority, now=current):
+            raise _deny()
+
+        grant_row = (
+            await db.execute(
+                select(ConsentGrantLog)
+                .where(
+                    ConsentGrantLog.token_hash == authority.token_hash,
+                    ConsentGrantLog.request_id == str(authority.request_id),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if grant_row is None or not _durable_grant_matches(
+            grant_row, authority, now=current
+        ):
+            raise _deny()
+    except TreatmentSessionV1GateDenied:
+        raise
     except Exception as exc:
         raise TreatmentSessionV1GateUnavailable(
             "TREATMENT_SESSION_DURABLE_STORE_UNAVAILABLE"
         ) from exc
-
-    current = datetime.now(timezone.utc)
-    if row is None or not _durable_session_matches(row, authority, now=current):
-        raise _deny()
 
     existing = getattr(row, "encounter_id", None)
     if existing is not None:
