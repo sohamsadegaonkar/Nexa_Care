@@ -1,44 +1,24 @@
 # Slice 10B.5b — Canonical Encounter Binding
 
-Status: **QUALIFICATION CANDIDATE — NOT YET QUALIFIED**
+Status: **QUALIFIED — GOVERNANCE FINALIZATION TIP REQUIRES EXACT-HEAD REQUALIFICATION BEFORE MERGE**
 
 ## Repository checkpoint
 
 - Starting main: `337c8229de2267aaa1a07410833a57eaf040411c`
 - Branch: `task0/10b5b-canonical-encounter`
-- Current Alembic head at start: `20260916_patient_external_record_import`
+- PR: #54, `security(task0): add canonical Treatment Session encounter boundary`
+- Original exact qualified implementation head: `77eb7ce4cdc0f53d7626e5a8ba60515425a8b56a`
 - Canonical Encounter before this slice: **MISSING**
-- Active parallel PRs/branches observed at start: none; only `main` existed remotely.
+- Alembic head produced by this slice: `20260918_canonical_encounter`
+- Migration parent: `20260916_patient_external_record_import`
 
 ## Bounded objective
 
 Materialize the already-qualified server-generated Treatment Session V1 encounter correlation as one canonical durable Encounter, without enabling prescription, diagnosis, vitals, notes, laboratory, allergy, investigation, document, or other legacy clinical writes.
 
-## Affected security invariants
+## Qualified runtime boundary
 
-- default deny and exact Treatment Session V1 operation membership;
-- server-derived patient/provider/hospital authority;
-- provider-session binding;
-- Redis + PostgreSQL fail-closed treatment authority;
-- expiry and revocation;
-- no client-selected encounter identifier;
-- one canonical encounter per ClinicalAccessSession;
-- transactional clinical mutation + durable audit outbox;
-- one linear Alembic head;
-- Signed Consent V3 remains read-only;
-- no clinical facts are fabricated by encounter creation.
-
-## Data / consent / access / audit impact
-
-- Patient data: adds only structural encounter authority binding; no clinical payload.
-- Consent: no consent protocol change and no Signed Consent V3 widening.
-- Access: requires `ClinicalAccessOperation.CREATE_ENCOUNTER`.
-- Audit: canonical encounter creation requires a structural, value-free durable audit event in the same transaction.
-- Identity disclosure: no new identity evidence disclosure.
-- AI/extraction/storage/erasure/emergency: unchanged.
-- Database: one minimal canonical Encounter table is expected because no canonical Encounter persistence currently exists.
-
-## Intended authority graph
+The implementation at `77eb7ce4cdc0f53d7626e5a8ba60515425a8b56a` is qualified to provide exactly this boundary:
 
 ```text
 authenticated provider + current hospital/session
@@ -47,56 +27,159 @@ X-Treatment-Token
         ↓
 require_clinical_session(CREATE_ENCOUNTER)
         ↓
+durable ClinicalAccessSession revalidation + row lock
+        ↓
+durable ConsentGrant revalidation + row lock
+        ↓
 server-reserved ClinicalAccessSession.encounter_id
         ↓
-canonical Encounter with the same UUID
+one canonical clinical_encounters row
+        ↓
+value-free durable audit outbox in the same transaction
 ```
 
-The client supplies no patient/provider/hospital/encounter authority.
+The client supplies no independent patient/provider/hospital/Encounter authority.
+
+## Security invariants preserved
+
+- default deny and exact Treatment Session V1 operation membership;
+- exact `CREATE_ENCOUNTER` authority is required;
+- server-derived patient/provider/hospital identity;
+- current provider-session binding;
+- Redis + PostgreSQL fail-closed treatment authority;
+- ClinicalAccessSession durable revalidation;
+- ConsentGrant durable revalidation;
+- expiry and revocation checks remain active;
+- no client-selected Encounter identifier;
+- one Encounter per ClinicalAccessSession, database-enforced;
+- transactional structural/value-free audit;
+- one linear Alembic head;
+- Signed Consent V3 remains read-only;
+- no clinical facts are fabricated by Encounter creation.
+
+## Data / consent / access / audit impact
+
+- Patient data: structural Encounter authority binding only; no clinical payload.
+- Consent: no consent protocol change and no Signed Consent V3 widening.
+- Access: requires `ClinicalAccessOperation.CREATE_ENCOUNTER`.
+- Audit: `CLINICAL_ENCOUNTER_CREATED` is structural/value-free and staged in the same transaction as Encounter creation.
+- Identity disclosure: no new identity-evidence disclosure.
+- AI/extraction/storage/erasure/emergency behavior: unchanged.
+- Database: adds the minimal `clinical_encounters` authority container.
 
 ## Migration position
 
-If implemented, the migration must be the single linear child of:
+Current Task-0 Alembic head:
+
+```text
+20260918_canonical_encounter
+```
+
+Parent:
 
 ```text
 20260916_patient_external_record_import
 ```
 
-No sibling or Alembic merge revision is permitted.
+The migration remains a single linear child. No sibling head or Alembic merge revision is introduced.
 
-## Explicit non-scope
+## Exact qualification evidence for implementation head
+
+Qualified implementation head:
+
+```text
+77eb7ce4cdc0f53d7626e5a8ba60515425a8b56a
+```
+
+Backend CI:
+
+- Workflow run: `35374510275` / run #709
+- Ruff: **PASS**
+- Partition A: **PASS**
+- Partition A zero-skip assertion: **PASS**
+- Partition B: **PASS**
+- Partition B zero-skip assertion: **PASS**
+- Partition C: **PASS**
+- Partition C zero-skip assertion: **PASS**
+
+Frontend/native CI:
+
+- Workflow run: `35374510190` / run #658
+- web/frontend tests: **PASS**
+- Next production build: **PASS**
+- workspace build: **PASS**
+- Android native compile: **PASS**
+- iOS native compile: **PASS**
+
+Vercel:
+
+- exact-head status: **SUCCESS**
+
+Focused repository coverage included canonical Encounter contracts, Treatment Session gate coverage, migration graph/current-head assertions, route registration, and audit-event coverage within the repository qualification matrix.
+
+## Exact non-wiring boundary
+
+Slice 10B.5b authorizes **only canonical Encounter creation**.
+
+It does **not** wire Treatment Session V1 authority into:
 
 - prescription writes;
-- diagnoses;
-- vitals;
+- diagnosis writes;
+- vitals writes;
 - clinical notes;
+- laboratory writes;
+- allergy writes;
 - investigation orders;
-- lab/allergy/document writes;
-- frontend treatment workflow;
-- Task 1 patient external-record lifecycle;
-- Task 2 patient longitudinal UX;
-- Signed Consent V3 changes;
-- Treatment Session V1 cryptographic protocol changes.
+- document writes;
+- any other legacy clinical mutation route.
 
-## Required qualification
+A canonical Encounter is an authority container/correlation boundary. It is **not** generic clinical write authority.
 
-Focused treatment-session gate and canonical-encounter tests, migration graph and PostgreSQL migration qualification, audit-event coverage, static proof that legacy clinical writes remain unwired, then exact-head repository Partitions A/B/C with zero skips plus frontend/native/Vercel checks required by repository CI.
+A valid Treatment Session token is **not** generic mutation authority.
 
-## Open design decisions resolved
+Signed Consent V3 remains read-only.
 
-1. Canonical Encounter entity: **MISSING** on starting main; implement the smallest authority container.
-2. Encounter identifier: reuse the already-qualified server-generated correlation UUID.
-3. Idempotency: one ClinicalAccessSession maps to one Encounter; serialize on the session row and enforce a unique database constraint.
-4. Clinical content: none in this slice.
+## Concurrent workstreams at governance finalization
 
+Current `origin/main` at the time of this governance correction:
 
-## Qualification candidate
+```text
+337c8229de2267aaa1a07410833a57eaf040411c
+```
 
-- Implementation code head before this documentation update: `090c16a4e397c45cf7601ea9386dfb68386a83c9`.
-- Intended Alembic head: `20260918_canonical_encounter`.
-- Task 1 concurrent branch observed: `task1/external-record-d3` at `c57f0711f4d1b4019298a52fe5c5c5ffbbde0c28`; its current changed-file set does not overlap Task 0 implementation, migration, CI-head, route-registry, or audit-catalog files.
-- Task 2 branch observed: none at this checkpoint.
-- Current `origin/main`: `337c8229de2267aaa1a07410833a57eaf040411c`.
-- Exact-head CI, PostgreSQL qualification, frontend/native CI, and Vercel are **NOT YET CLAIMED**.
-- No existing clinical write route has been wired to Treatment Session V1 by this slice.
-- Signed Consent V3 and Treatment Session V1 cryptographic protocol remain unchanged.
+Concurrent PRs:
+
+- PR #53 — Task 1 external-record D3, current head `21be606ac4e18c786cd4b2424afc3bd4ced04e87`, **OPEN / DRAFT / qualified on its own pre-#54 base**.
+- PR #55 — Task 2 Slice 11D patient-records UX, current head `8171d261d1fd557c1dbe67f71bdc9fbf35c328af`, **OPEN**.
+
+PR #53 and PR #54 both touch the integration-controlled files:
+
+- `tests/test_route_registration.py`
+- `tests/test_audit_event_coverage.py`
+
+After #54 merges, Task 1 must reconcile those files from the new main and preserve both the canonical Encounter assertions and D3 retry/cancel assertions before Task 1 can be merged.
+
+## Future Treatment Session write rule
+
+No future write operation inherits qualification merely because 10B.5b is qualified.
+
+Each future operation must be designed, implemented, and **independently qualified** against:
+
+- authenticated provider identity;
+- live provider trust;
+- exact patient-signed Treatment Session operation;
+- current hospital/session binding;
+- the same ClinicalAccessSession;
+- the canonical Encounter bound to that session;
+- durable authority revalidation;
+- transactional audit;
+- typed clinical validation;
+- exact-head CI evidence.
+
+Operation names do not justify inventing missing clinical entities.
+
+## Governance-finalization note
+
+This documentation correction intentionally changes no runtime, model, migration, route, test, or CI code.
+
+Because this governance-only commit changes the PR head SHA, the new exact branch tip must still pass the full required qualification matrix before PR #54 is merged. The exact commit merged into `main` must be green.
