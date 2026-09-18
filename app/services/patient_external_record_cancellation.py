@@ -77,19 +77,26 @@ async def cancel_patient_external_record(
         row.retryable = False
 
         await db.flush()
-        await enqueue_audit_event(
-            db,
-            audit_context=current_audit_context(AuditDomain.PIPELINE),
-            idempotency_key=f"patient-external-record-cancel:{row.id}",
-            actor_id=f"patient:{patient_id}",
-            event_type="PATIENT_EXTERNAL_RECORD_CANCELLED",
-            target_id=str(row.id),
-            patient_id=patient_id,
-            metadata={
-                "authority": "patient_self",
-                "previous_status": previous_status,
-            },
-        )
+        try:
+            await enqueue_audit_event(
+                db,
+                audit_context=current_audit_context(AuditDomain.PIPELINE),
+                idempotency_key=f"patient-external-record-cancel:{row.id}",
+                actor_id=f"patient:{patient_id}",
+                event_type="PATIENT_EXTERNAL_RECORD_CANCELLED",
+                target_id=str(row.id),
+                patient_id=patient_id,
+                metadata={
+                    "authority": "patient_self",
+                    "previous_status": previous_status,
+                },
+            )
+        except Exception as exc:  # noqa: BLE001 - audit failure is fail-closed
+            await db.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail={"error_code": "AUDIT_UNAVAILABLE", "retryable": True},
+            ) from exc
         await db.commit()
         return row
     except HTTPException:
