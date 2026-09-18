@@ -40,7 +40,10 @@
 - **Phase C2 backend CI:** run `35354830638` — Ruff PASS; A **3978 passed / 430 deselected / 0 skipped**, B **300 / 4108 / 0**, C **130 / 4278 / 0**; zero failures.
 - **Phase C2 frontend CI:** run `35354830394` — web tests, Next production build, workspace packages, Android native compile, and iOS native compile all PASS.
 - **Phase C2 Vercel:** SUCCESS on `5292857e...`.
-- **Exact next Task-1 increment:** audit canonical typed persistence category-by-category against current repository models and provenance vocabulary. Implement only mappings supported by repository semantics; do not relabel `Medication` as `Prescription`, and do not publish timeline rows until typed persistence semantics are proven.
+- **Phase D1 target:** explicit patient Save → canonical `DocumentReference` + completion `TimelineEvent` + value-free audit + import `COMPLETED`, atomically. No Medication/LabResult promotion from lossy review text.
+- **Typed-persistence audit conclusion:** `DocumentReference` is the safe canonical target for all five external source categories. Imaging/discharge/other have no stronger dedicated model. Prescription is backed by `Medication` only when name/strength/frequency are structured; LabResult requires unit/reference range. Current Task-1 candidate persistence did not retain those structured extraction fields, so promoting reviewed strings would violate the no-invention rule.
+- **Phase D1 qualification state:** IMPLEMENTED / NOT YET QUALIFIED at this handoff update point.
+- **New concurrency guard:** PR #51 (`feat(patient-records): project external records into longitudinal timeline, reports, and prescriptions`) is active on `app/api/v2/patient_record_routes.py`, longitudinal frontend, and `tests/test_patient_longitudinal_records.py`. Phase D1 deliberately does not touch those files.
 - **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
 - **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
@@ -219,6 +222,30 @@ Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests
 - **No schema change. No typed record or timeline write.**
 - **Former route blocker:** RESOLVED after PR #48 merged and was reconciled at `10c7fac1...`.
 
+### Phase D1 — canonical external-document finalization audit
+
+Repository evidence:
+
+- `DocumentReference` is the canonical uploaded clinical-file model and accepts category values such as `LAB_REPORT` and `PRESCRIPTION`.
+- Slice 11B Reports/Records/Timeline already consumes `DocumentReference`; imaging and discharge summaries are intentionally modeled as documents rather than fabricated typed entities.
+- `Medication` requires name, strength, frequency, and prescribed_at. The existing provider ingestion path itself refuses medication extraction without structured strength/frequency adjudication.
+- `LabResult` requires value, unit, reference range, abnormality, and recorded_at. The provider ingestion path refuses lab commit without units and adjudicated reference range.
+- `ProviderFieldEvidence` can carry normalized units/reference range/structured values, but Phase-B Task-1 candidate persistence retained only encrypted raw/source/reviewed values plus confidence/evidence metadata. Those structured fields cannot be reconstructed safely from free text.
+- Therefore Phase D1 canonicalizes only the external source document. Structured clinical promotion remains a later schema/evidence-retention decision, not an inference step.
+
+Implementation boundary:
+
+- New `app/services/patient_external_record_finalization.py`.
+- Explicit patient save only from `READY_TO_SAVE`.
+- Re-lock import, re-check retirement/erasure, patient-owned tenantless source graph, retained SHA-256 metadata, and every candidate resolved by the patient.
+- Create one `DocumentReference` with the existing retained encrypted storage reference and original category.
+- Create one `TimelineEvent` with source `patient_uploaded` and summary `Imported by you from an external report`.
+- Set `final_record_type = DOCUMENT_REFERENCE`, final record/timeline refs, `COMPLETED`, and `completed_at`.
+- Stage `PATIENT_EXTERNAL_RECORD_SAVED` in the same transaction with structural decision counts only; no candidate/source clinical values in audit metadata.
+- The completion `TimelineEvent` is persisted with `source = patient_uploaded` and patient-friendly summary, but Phase D1 does not edit the longitudinal read model while PR #51 owns that seam.
+- PR #51 is contract-compatible with Phase D1: it consumes ordinary `DocumentReference` rows by `document_type`, projects external prescriptions without fabricating Medication fields, and labels external documents `patient_uploaded`. Reconcile its patient-facing projection only after it lands.
+- No schema change, provider authority, treatment consent, ClinicalAccessSession authority, Medication/LabResult write, or auto-commit.
+
 ### Phase C2 — patient review API publication
 
 - **Starting reconciliation SHA:** `10c7fac1efd88c5a4e31b2cb7eb1cbd5e7a7bf41`.
@@ -250,14 +277,16 @@ Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
 | Phase-C1 review service tests | PASS | Exact SHA `1f53e830...`; backend CI `35353447620`: A 3961 / B 300 / C 130, zero skips/failures; audit catalog repaired. |
 | Phase-C2 review API routes | PASS | Exact SHA `5292857e...`; A 3978 / B 300 / C 130 with zero skips/failures; frontend/native/Vercel green. |
+| Phase-D1 document finalization | WRITTEN / NOT RUN | Service, save route, audit catalog, authority contracts, route governance, and focused atomic-finalization tests staged for exact-head qualification. |
+| Structured Medication/LabResult promotion | DEFERRED / UNSAFE WITH CURRENT CANDIDATE SCHEMA | Required structured regimen/unit/reference fields were not retained in Task-1 candidate persistence; no free-text inference allowed. |
 
 ## Open Risks / Blockers
 
 1. Phase B itself has no open qualification blocker; both code SHA and documentation-only branch-tip rerun are green.
 2. Phase C1 review/correction service foundation is qualified at `1f53e830f00290539e5f39ed49ccfcc58f848707`; the initial audit-catalog-only failure was repaired and the exact repaired SHA is green.
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
-4. Candidates remain non-canonical; `READY_TO_SAVE` means review complete, not clinical persistence.
-5. Typed finalization and timeline publication remain later phases. Prescription/Imaging/Discharge semantics must be audited before mapping; do not relabel Medication as Prescription.
+4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
+5. DocumentReference finalization and completion-timeline persistence are implemented in Phase D1 but still require exact-head qualification. Patient-facing longitudinal projection remains owned by active PR #51 until it lands. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
 6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
@@ -302,8 +331,12 @@ Phase C1 intentionally stopped at the service boundary while PR #48 owned `tests
 - [x] Publish patient review/correction API routes after PR #48 route-registry overlap resolved.
 - [x] Qualify the Phase-C1 service increment on exact SHA `1f53e830...` after the audit-catalog repair.
 - [x] Qualify the Phase-C2 review-route increment on exact SHA `5292857e...`.
-- [ ] Audit and implement safe typed finalization where repository semantics support it.
-- [ ] Publish provenance-aware timeline entries.
+- [x] Audit canonical typed persistence category-by-category.
+- [x] Implement explicit DocumentReference finalization where repository semantics support it.
+- [x] Implement patient-import completion `TimelineEvent` persistence with `patient_uploaded` provenance.
+- [ ] Reconcile patient-facing longitudinal projection after PR #51 lands; do not edit its active files.
+- [ ] Qualify Phase D1 on its exact committed SHA.
+- [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
 - [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.

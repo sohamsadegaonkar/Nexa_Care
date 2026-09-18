@@ -37,6 +37,7 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}/source"),
+        ("POST", "/api/v2/patient/me/external-records/{import_id}/save"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}/review"),
         (
             "POST",
@@ -135,6 +136,26 @@ def test_review_item_response_hides_internal_candidate_fields() -> None:
     assert "clinical_fact_key" not in fields
     assert "extractor_provider" not in fields
     assert "extractor_version" not in fields
+
+
+def test_save_authority_is_dependency_derived_without_provider_inputs() -> None:
+    route = _route(
+        "/api/v2/patient/me/external-records/{import_id}/save",
+        "POST",
+    )
+    dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+    client_names = _client_parameter_names(route)
+
+    assert get_current_patient in dependency_calls
+    assert {
+        "patient_id",
+        "provider_id",
+        "hospital_id",
+        "tenant_id",
+        "consent_token",
+        "consent_request_id",
+        "clinical_access_session_id",
+    }.isdisjoint(client_names)
 
 
 def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None:

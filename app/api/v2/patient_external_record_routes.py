@@ -22,6 +22,9 @@ from app.core.database import get_db_session
 from app.core.dependencies import AuthenticatedPatient, get_current_patient
 from app.models.patient_external_record_import import PatientExternalRecordImport
 from app.services.patient_external_record_extraction import process_patient_external_record
+from app.services.patient_external_record_finalization import (
+    finalize_patient_external_record,
+)
 from app.services.patient_external_record_import import (
     get_patient_external_record,
     list_patient_external_records,
@@ -301,6 +304,23 @@ async def review_external_record_item(
         candidate_id=review_item_id,
         decision=payload.decision,
         corrected_value=payload.corrected_value,
+    )
+    return _response(row)
+
+
+@router.post("/{import_id}/save", response_model=PatientExternalRecordResponse)
+async def save_external_record(
+    import_id: uuid.UUID,
+    response: Response,
+    auth: AuthenticatedPatient = Depends(get_current_patient),
+    db: AsyncSession = Depends(get_db_session),
+) -> PatientExternalRecordResponse:
+    """Canonicalize an explicitly reviewed patient import as an external document."""
+    _set_no_store(response)
+    row = await finalize_patient_external_record(
+        db,
+        patient_id=auth.patient_id,
+        import_id=import_id,
     )
     return _response(row)
 
