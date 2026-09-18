@@ -1,6 +1,6 @@
 # Slice 10B.5b — Canonical Encounter Binding
 
-Status: **IMPLEMENTATION IN PROGRESS**
+Status: **QUALIFICATION CANDIDATE — NOT YET QUALIFIED**
 
 ## Repository checkpoint
 
@@ -88,3 +88,15 @@ Focused treatment-session gate and canonical-encounter tests, migration graph an
 2. Encounter identifier: reuse the already-qualified server-generated correlation UUID.
 3. Idempotency: one ClinicalAccessSession maps to one Encounter; serialize on the session row and enforce a unique database constraint.
 4. Clinical content: none in this slice.
+
+
+## Qualification candidate
+
+- Implementation code head before this documentation update: `090c16a4e397c45cf7601ea9386dfb68386a83c9`.
+- Intended Alembic head: `20260918_canonical_encounter`.
+- Task 1 concurrent branch observed: `task1/external-record-d3` at `c57f0711f4d1b4019298a52fe5c5c5ffbbde0c28`; its current changed-file set does not overlap Task 0 implementation, migration, CI-head, route-registry, or audit-catalog files.
+- Task 2 branch observed: none at this checkpoint.
+- Current `origin/main`: `337c8229de2267aaa1a07410833a57eaf040411c`.
+- Exact-head CI, PostgreSQL qualification, frontend/native CI, and Vercel are **NOT YET CLAIMED**.
+- No existing clinical write route has been wired to Treatment Session V1 by this slice.
+- Signed Consent V3 and Treatment Session V1 cryptographic protocol remain unchanged.
