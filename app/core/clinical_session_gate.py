@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import secrets
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from fastapi import Depends, Header, HTTPException, status
@@ -173,8 +173,11 @@ def _parse_live_capability(
     if issued_at > now or expires_at <= issued_at or now >= expires_at:
         raise _deny()
 
-    encounter_id_raw = payload.get("encounter_id")
-    encounter_id = _uuid(encounter_id_raw) if encounter_id_raw is not None else None
+    # Encounter binding is durable server state, not part of the minted Redis
+    # capability.  Reject an injected Redis encounter binding rather than
+    # allowing live state to impersonate the durable correlation.
+    if "encounter_id" in payload:
+        raise _deny()
 
     return TreatmentSessionV1Authority(
         session_id=session_id,
@@ -190,7 +193,7 @@ def _parse_live_capability(
         token_hash=token_digest,
         issued_at=issued_at,
         expires_at=expires_at,
-        encounter_id=encounter_id,
+        encounter_id=None,
     )
 
 
@@ -237,7 +240,6 @@ def _durable_session_matches(
         and row_issued_at == authority.issued_at
         and row_expires_at == authority.expires_at
         and now < row_expires_at
-        and row_encounter_id == authority.encounter_id
     )
 
 
@@ -333,6 +335,15 @@ async def validate_treatment_session_v1(
             session_row, authority, now=current
         ):
             raise _deny()
+        try:
+            durable_encounter_id = (
+                _uuid(session_row.encounter_id)
+                if session_row.encounter_id is not None
+                else None
+            )
+        except TreatmentSessionV1GateDenied:
+            raise _deny() from None
+        authority = replace(authority, encounter_id=durable_encounter_id)
 
         grant_row = (
             await db.execute(
@@ -409,7 +420,7 @@ async def stage_server_encounter_binding(
     return encounter_id
 
 
-def require_clinical_session(ClinicalAccessOperation operation):
+def require_clinical_session(operation: ClinicalAccessOperation):
     """Return a FastAPI dependency for one exact Treatment Session V1 operation."""
 
     if not isinstance(operation, ClinicalAccessOperation):
