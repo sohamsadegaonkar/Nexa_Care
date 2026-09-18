@@ -230,14 +230,20 @@ def _validate_normalized_observation(
         match = re.fullmatch(r"(\d{1,3})/(\d{1,3})", observation.value)
         if match is None:
             raise TreatmentVitalValidationError("TREATMENT_VITAL_BP_INVALID")
-        _bounded_positive_int(int(match.group(1)), field="SYSTOLIC_BP")
-        _bounded_positive_int(int(match.group(2)), field="DIASTOLIC_BP")
+        systolic = _bounded_positive_int(int(match.group(1)), field="SYSTOLIC_BP")
+        diastolic = _bounded_positive_int(int(match.group(2)), field="DIASTOLIC_BP")
+        if observation.value != f"{systolic}/{diastolic}":
+            raise TreatmentVitalValidationError("TREATMENT_VITAL_VALUE_NOT_CANONICAL")
         return
 
     if observation.vital_type is TreatmentVitalType.HEART_RATE:
         if re.fullmatch(r"\d{1,3}", observation.value) is None:
             raise TreatmentVitalValidationError("TREATMENT_VITAL_HEART_RATE_INVALID")
-        _bounded_positive_int(int(observation.value), field="HEART_RATE")
+        heart_rate = _bounded_positive_int(
+            int(observation.value), field="HEART_RATE"
+        )
+        if observation.value != str(heart_rate):
+            raise TreatmentVitalValidationError("TREATMENT_VITAL_VALUE_NOT_CANONICAL")
         return
 
     parsed = _finite_decimal(
