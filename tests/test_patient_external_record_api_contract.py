@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
-import uuid
 
+import pytest
 from fastapi import HTTPException
 from fastapi.responses import Response
 from pydantic import ValidationError
-import pytest
 
 from app.api.v2.patient_external_record_routes import (
     PatientExternalRecordActions,
@@ -16,6 +16,7 @@ from app.api.v2.patient_external_record_routes import (
     _response,
     _set_no_store,
     _upload_limit,
+    read_external_record_upload_policy,
 )
 from app.api.v2.patient_routes import router
 from app.core.dependencies import get_current_patient
@@ -42,7 +43,6 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
     expected = {
         ("POST", "/api/v2/patient/me/external-records"),
         ("GET", "/api/v2/patient/me/external-records"),
-        ("GET", "/api/v2/patient/me/external-records/upload-policy"),
         ("GET", "/api/v2/patient/me/external-records/upload-policy"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
@@ -358,6 +358,8 @@ def test_client_reentry_contract_distinguishes_uploaded_from_processing() -> Non
     assert uploaded.actions.can_cancel is True
     assert processing.actions.can_process is False
     assert processing.actions.can_cancel is False
+    assert uploaded.source_available is True
+    assert processing.source_available is True
 
 
 def test_source_action_capability_is_documented_as_advisory() -> None:
@@ -385,6 +387,29 @@ def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None
     assert "ADJUDICATION_PENDING" not in visible
     assert "OCR_CANDIDATE" not in visible
     assert "PIPELINE_LANE" not in visible
+
+
+@pytest.mark.asyncio
+async def test_upload_policy_response_reflects_effective_runtime_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = 7 * 1024 * 1024
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", str(configured))
+    monkeypatch.setattr(
+        "app.api.v2.patient_external_record_routes.get_document_extraction_config",
+        lambda: SimpleNamespace(provider="remote"),
+    )
+
+    response = Response()
+    policy = await read_external_record_upload_policy(
+        response,
+        SimpleNamespace(patient_id=str(uuid.uuid4())),
+    )
+
+    assert policy.max_upload_bytes == configured
+    assert policy.accepted_extensions == PATIENT_UPLOAD_EXTENSIONS
+    assert policy.accepted_mime_types == PATIENT_UPLOAD_MIME_TYPES
+    assert response.headers["cache-control"] == "private, no-store"
 
 
 def test_upload_limit_defaults_to_20_mib_for_non_textract(
