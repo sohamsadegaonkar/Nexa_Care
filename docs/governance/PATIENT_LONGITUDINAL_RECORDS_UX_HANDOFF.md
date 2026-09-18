@@ -377,3 +377,48 @@ Clinical Safety Rules:
 - [x] No internal storage keys (`s3://...`), pipeline execution IDs, or PHI are leaked in URLs, client errors, or logs.
 - [x] All Main / Web / Expo navigation flows work seamlessly with proper loading, empty, and error states.
 - [x] Full backend and frontend test suites pass with zero regressions.
+
+---
+
+## Slice 11D — Patient Records Discovery & UX Reliability Qualification
+
+- **Branch:** `task2/patient-records-ux-next`
+- **Base Baseline:** `origin/main` @ `337c8229de2267aaa1a07410833a57eaf040411c`
+- **Alembic Head:** `20260916_patient_external_record_import` (singular, zero migrations introduced)
+- **Backend Changes:** ZERO backend files modified. Zero schema changes.
+- **Commit History:**
+  1. `4dfe1d8` `docs(task2): start Slice 11D patient UX audit and handoff`
+  2. `9176a68` `feat(task2): harden longitudinal loading, error recovery, and empty states`
+  3. `b7404d8` `feat(task2): improve patient records drilldown, search, and pagination UX`
+  4. `4e89f24` `feat(task2): improve prescriptions and reports discovery, filtering, and provenance clarity`
+  5. `518626b` `test(task2): add patient records UX reliability coverage`
+  6. `680ae8b` `fix(task2): type-safe button text styling in prescriptions screen`
+
+### Verification Evidence
+| Test Target | Scope | Result | Execution Detail |
+|---|---|---|---|
+| Frontend Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 44 test files, 285 tests passed (including 15 longitudinal records UX tests) |
+| Frontend Vitest Next Suite | `yarn --cwd nexa-client test:next` | PASS | 2 test files, 6 tests passed |
+| Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 164 passed, AST invariant constraints verified |
+| Workspace Build | `yarn --cwd nexa-client build` | PASS | `@my/config` and `@my/ui` built cleanly |
+| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 29 routes prerendered/compiled in 73.2s |
+
+### Core Improvements Delivered
+1. **Error Recovery with Explicit Retry:**
+   - PatientHealthHome: Accessible retry CTA in error state with mounted state guards.
+   - PatientRecordsScreen: Dedicated in-drilldown error card with retry button (eliminating false empty states).
+   - PatientPrescriptionsScreen: Error notice with retry button.
+   - PatientReportsScreen: Error notice with retry button.
+2. **Empty State Differentiation:**
+   - Differentiated global empty states ("No {category} on file") from search/filter empty states ("No records match '{query}'").
+   - Added actionable "Reset Filters" / "Clear Search" / "Show All Reports" CTAs.
+3. **Network Race Condition Prevention:**
+   - Request sequence tracking (`requestIdRef`) across Timeline, Records, Prescriptions, and Reports screens to discard stale out-of-order responses during rapid tab switching.
+4. **Client-Side Discovery & Filtering:**
+   - In-category search in `PatientRecordsScreen`.
+   - Prescription source filtering (`All Treatments`, `Clinic Prescriptions`, `Uploaded Prescriptions`) and medication name/frequency search.
+   - Diagnostic document category tabs with explicit type filtering.
+5. **Accessibility Enhancements:**
+   - `accessibilityState={{ selected: isActive }}` on all filter pills.
+   - Web keyboard `Escape` key dismissal for `PatientRecordDetailModal`.
+   - Descriptive accessibility labels on interactive controls.
