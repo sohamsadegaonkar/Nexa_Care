@@ -384,3 +384,146 @@ def test_patient_me_documents_safe_metadata_never_exposes_s3(
             assert "protected-phi" not in response.text
     finally:
         app.dependency_overrides.pop(get_db_session, None)
+
+
+@pytest.mark.asyncio
+async def test_external_records_projected_into_longitudinal_timeline(patient_uuid):
+    mock_db = AsyncMock()
+    rx_doc_id = uuid.uuid4()
+    rx_doc = DocumentReference(
+        id=rx_doc_id,
+        patient_id=patient_uuid,
+        document_type="PRESCRIPTION",
+        uploaded_at=datetime(2026, 6, 1, 10, 0, 0, tzinfo=timezone.utc),
+        storage_ref="safe-storage-ref",
+    )
+    lab_doc_id = uuid.uuid4()
+    lab_doc = DocumentReference(
+        id=lab_doc_id,
+        patient_id=patient_uuid,
+        document_type="LAB_REPORT",
+        uploaded_at=datetime(2026, 6, 2, 11, 0, 0, tzinfo=timezone.utc),
+        storage_ref="safe-storage-ref",
+    )
+
+    # Empty for vitals, meds, labs, timeline_events, but returns docs
+    empty_result = MagicMock()
+    empty_result.scalars.return_value.all.return_value = []
+    doc_result = MagicMock()
+    doc_result.scalars.return_value.all.return_value = [lab_doc, rx_doc]
+
+    def mock_execute(stmt):
+        # check if querying DocumentReference
+        s = str(stmt)
+        res = MagicMock()
+        if "document_references" in s:
+            res.scalars.return_value.all.return_value = [lab_doc, rx_doc]
+        else:
+            res.scalars.return_value.all.return_value = []
+        return res
+
+    mock_db.execute.side_effect = mock_execute
+
+    # 1. Querying medications category should project prescription document
+    med_events, _ = await _fetch_patient_longitudinal_timeline(
+        str(patient_uuid), mock_db, category="medications"
+    )
+    assert any(e["event_id"] == str(rx_doc_id) for e in med_events)
+
+    # 2. Querying labs category should project lab report document
+    lab_events, _ = await _fetch_patient_longitudinal_timeline(
+        str(patient_uuid), mock_db, category="labs"
+    )
+    assert any(e["event_id"] == str(lab_doc_id) for e in lab_events)
+
+    # 3. Querying documents category should project both
+    doc_events, _ = await _fetch_patient_longitudinal_timeline(
+        str(patient_uuid), mock_db, category="documents"
+    )
+    assert len(doc_events) == 2
+
+
+def test_prescriptions_includes_external_prescription_documents(
+    client, override_patient_auth, patient_uuid
+):
+    mock_db = AsyncMock()
+    med_id = uuid.uuid4()
+    mock_med = Medication(
+        id=med_id,
+        patient_id=patient_uuid,
+        name="Amoxicillin",
+        strength="500mg",
+        frequency="TID",
+        prescribed_at=datetime(2026, 6, 1, 0, 0, 0, tzinfo=timezone.utc),
+        source="manual",
+    )
+    doc_id = uuid.uuid4()
+    mock_doc = DocumentReference(
+        id=doc_id,
+        patient_id=patient_uuid,
+        document_type="PRESCRIPTION",
+        uploaded_at=datetime(2026, 6, 2, 0, 0, 0, tzinfo=timezone.utc),
+        storage_ref="internal-safe-ref",
+    )
+
+    def mock_execute(stmt):
+        s = str(stmt)
+        res = MagicMock()
+        if "patient_medications" in s:
+            res.scalars.return_value.all.return_value = [mock_med]
+        elif "document_references" in s:
+            res.scalars.return_value.all.return_value = [mock_doc]
+        else:
+            res.scalars.return_value.all.return_value = []
+        return res
+
+    mock_db.execute.side_effect = mock_execute
+
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    try:
+        with patch("app.core.consent_gate.append_audit_log_or_503", AsyncMock()):
+            response = client.get("/api/v2/patient/me/prescriptions?include_external=true")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["prescriptions"]) == 2
+            # Verify external prescription is present and clearly labeled
+            ext_rx = next(p for p in data["prescriptions"] if p["prescription_id"] == str(doc_id))
+            assert ext_rx["source"] == "patient_uploaded"
+            assert ext_rx["is_external_document"] is True
+            assert "s3://" not in response.text
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+
+def test_reports_filtering_by_document_type(
+    client, override_patient_auth, patient_uuid
+):
+    mock_db = AsyncMock()
+    lab_doc = DocumentReference(
+        id=uuid.uuid4(),
+        patient_id=patient_uuid,
+        document_type="LAB_REPORT",
+        uploaded_at=datetime(2026, 5, 20, 0, 0, 0, tzinfo=timezone.utc),
+        storage_ref="internal-safe-ref",
+    )
+
+    def mock_execute(stmt):
+        res = MagicMock()
+        res.scalars.return_value.all.return_value = [lab_doc]
+        return res
+
+    mock_db.execute.side_effect = mock_execute
+
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    try:
+        with patch("app.core.consent_gate.append_audit_log_or_503", AsyncMock()):
+            # Filter by lab report
+            response = client.get("/api/v2/patient/me/reports?document_type=lab_report")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["reports"]) == 1
+            assert data["reports"][0]["document_type"] == "LAB_REPORT"
+            assert data["reports"][0]["category"] == "labs"
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
