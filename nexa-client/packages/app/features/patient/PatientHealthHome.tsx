@@ -28,6 +28,15 @@ export default function PatientHealthHome() {
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const isMountedRef = React.useRef(true)
+
+  React.useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
+
   const loadSummary = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true)
     else setLoading(true)
@@ -35,14 +44,20 @@ export default function PatientHealthHome() {
 
     try {
       const res = await NexaApiClient.getMyHealthSummary()
-      setSummary(res)
+      if (isMountedRef.current) {
+        setSummary(res)
+      }
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to load health summary'
-      )
+      if (isMountedRef.current) {
+        setError(
+          err instanceof Error ? err.message : 'Failed to load health summary'
+        )
+      }
     } finally {
-      setLoading(false)
-      setRefreshing(false)
+      if (isMountedRef.current) {
+        setLoading(false)
+        setRefreshing(false)
+      }
     }
   }, [])
 
@@ -72,6 +87,8 @@ export default function PatientHealthHome() {
             size="$2"
             chromeless
             onPress={() => router.push('/patient/access-history')}
+            accessibilityRole="button"
+            accessibilityLabel="View Access History"
           >
             Access History →
           </Button>
@@ -99,11 +116,23 @@ export default function PatientHealthHome() {
             backgroundColor="$red4"
             padding="$3"
             borderRadius="$3"
-            gap="$1"
+            gap="$2"
+            accessibilityRole="alert"
           >
-            <Text color="$red11" fontSize="$3" fontWeight="600">
-              ⚠️ Notice
-            </Text>
+            <XStack justifyContent="space-between" alignItems="center">
+              <Text color="$red11" fontSize="$3" fontWeight="600">
+                ⚠️ Notice
+              </Text>
+              <Button
+                size="$2"
+                theme="red"
+                onPress={() => void loadSummary(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Retry loading health summary"
+              >
+                Retry
+              </Button>
+            </XStack>
             <Paragraph color="$red11" size="$2">
               {error}
             </Paragraph>
@@ -227,6 +256,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/prescriptions')}
+                  accessibilityRole="button"
+                  accessibilityLabel="View all active medications"
                 >
                   View All →
                 </Button>
@@ -280,6 +311,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/records')}
+                  accessibilityRole="button"
+                  accessibilityLabel="View allergy details in medical records"
                 >
                   Details →
                 </Button>
@@ -331,6 +364,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/records')}
+                  accessibilityRole="button"
+                  accessibilityLabel="View vitals history in medical records"
                 >
                   History →
                 </Button>
@@ -381,6 +416,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/reports')}
+                  accessibilityRole="button"
+                  accessibilityLabel="View all laboratory evaluations and reports"
                 >
                   All Reports →
                 </Button>

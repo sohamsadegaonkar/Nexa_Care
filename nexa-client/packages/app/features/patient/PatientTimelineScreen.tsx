@@ -132,18 +132,20 @@ export default function PatientTimelineScreen({
   const [error, setError] = useState<string | null>(null)
   const [selectedEvent, setSelectedEvent] = useState<TimelineEntry | null>(null)
   const timelineRef = useRef(initialTimeline ?? [])
-  const requestInFlightRef = useRef(false)
+  const activeRequestIdRef = useRef(0)
+  const loadingOlderRef = useRef(false)
 
   const fetchTimeline = useCallback(
     async (mode: 'initial' | 'refresh' | 'append', cursor?: string | null, filterKey?: string) => {
-      if (requestInFlightRef.current) return
-      requestInFlightRef.current = true
+      if (mode === 'append' && loadingOlderRef.current) return
+      const currentRequestId = ++activeRequestIdRef.current
 
       if (mode === 'initial') {
         if (timelineRef.current.length === 0) setInitialLoading(true)
       } else if (mode === 'refresh') {
         setRefreshing(true)
       } else if (mode === 'append') {
+        loadingOlderRef.current = true
         setLoadingOlder(true)
       }
       setError(null)
@@ -170,6 +172,10 @@ export default function PatientTimelineScreen({
         const response = (await apiClient.get(url)) as unknown
         const payload = normalizeTimelineResponse(response)
 
+        if (currentRequestId !== activeRequestIdRef.current) {
+          return // stale response superseded by newer filter request
+        }
+
         if (mode === 'append') {
           const merged = [...timelineRef.current, ...payload.events]
           timelineRef.current = merged
@@ -181,16 +187,21 @@ export default function PatientTimelineScreen({
         setNextCursor(payload.next_cursor)
         setError(null)
       } catch (caught) {
+        if (currentRequestId !== activeRequestIdRef.current) {
+          return
+        }
         setError(
           caught instanceof Error && caught.message === 'INVALID_TIMELINE_RESPONSE'
             ? 'Health timeline returned an invalid response.'
             : 'Failed to load health timeline.'
         )
       } finally {
-        requestInFlightRef.current = false
-        setInitialLoading(false)
-        setRefreshing(false)
-        setLoadingOlder(false)
+        if (currentRequestId === activeRequestIdRef.current) {
+          loadingOlderRef.current = false
+          setInitialLoading(false)
+          setRefreshing(false)
+          setLoadingOlder(false)
+        }
       }
     },
     [activeFilter]
@@ -203,6 +214,7 @@ export default function PatientTimelineScreen({
 
   const handleFilterChange = (filterKey: string) => {
     setActiveFilter(filterKey)
+    setNextCursor(null)
     if (initialTimeline !== undefined) {
       if (filterKey === 'ALL') {
         setTimeline(initialTimeline)
@@ -350,6 +362,9 @@ export default function PatientTimelineScreen({
                 color={isActive ? 'white' : '$color'}
                 borderRadius="$3"
                 onPress={() => handleFilterChange(cat.key)}
+                accessibilityRole="button"
+                accessibilityLabel={`Filter timeline by ${cat.label}`}
+                accessibilityState={{ selected: isActive }}
               >
                 {cat.label}
               </Button>
@@ -461,6 +476,35 @@ export default function PatientTimelineScreen({
                   Retry
                 </Button>
               </>
+            ) : activeFilter !== 'ALL' ? (
+              <>
+                <Text fontSize={48}>🔍</Text>
+                <Paragraph
+                  color="$color10"
+                  size="$4"
+                  textAlign="center"
+                >
+                  {`No ${CATEGORY_LABELS[activeFilter] ?? activeFilter} events found for this filter.`}
+                </Paragraph>
+                <Paragraph
+                  color="$color10"
+                  size="$3"
+                  textAlign="center"
+                  opacity={0.6}
+                >
+                  Try selecting another category or view all clinical events.
+                </Paragraph>
+                <Button
+                  size="$3"
+                  theme="blue"
+                  marginTop="$2"
+                  onPress={() => handleFilterChange('ALL')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Show all clinical events"
+                >
+                  Show All Events
+                </Button>
+              </>
             ) : (
               <>
                 <Text fontSize={48}>📊</Text>
@@ -495,6 +539,8 @@ export default function PatientTimelineScreen({
                 theme="blue"
                 disabled={loadingOlder}
                 onPress={() => void fetchTimeline('append', nextCursor)}
+                accessibilityRole="button"
+                accessibilityLabel="Load older timeline events"
               >
                 {loadingOlder ? (
                   <XStack gap="$2" alignItems="center">
@@ -505,6 +551,20 @@ export default function PatientTimelineScreen({
                   'Load older timeline events'
                 )}
               </Button>
+            </YStack>
+          ) : timeline.length > 0 ? (
+            <YStack
+              paddingVertical="$4"
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Paragraph
+                color="$color10"
+                size="$2"
+                opacity={0.6}
+              >
+                ✓ All timeline events loaded
+              </Paragraph>
             </YStack>
           ) : null
         }
