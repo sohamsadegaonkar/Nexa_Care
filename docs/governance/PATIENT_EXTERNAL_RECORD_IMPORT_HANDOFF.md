@@ -279,6 +279,13 @@ Staged implementation boundary:
 
 Qualification state: **WRITTEN / NOT RUN** until the exact committed SHA passes backend A/B/C zero-skip gates, frontend/native, and Vercel.
 
+### Phase D2 qualification attempt 1
+
+- Exact SHA `e79d2a19c01813dab9cd500866cd66cfcbe38963` reached CI run `35363105057`.
+- Ruff stopped Partition A before tests on one static-scope issue: `del data` in the post-source-read erasure recheck caused the later return name to be considered undefined.
+- The exception path already raises immediately; removing that deletion is a semantics-preserving lint repair. No erasure, authority, storage, or audit behavior changes.
+- B/C/frontend results from this failed exact SHA are non-qualifying and must not be used to freeze Phase D2.
+
 ## Test / Qualification Matrix
 
 | Area | State | Evidence |

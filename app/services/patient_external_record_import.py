@@ -459,7 +459,6 @@ async def read_patient_external_record_source(
     try:
         await assert_patient_external_record_access_active(db, patient_id=patient_id)
     except HTTPException:
-        del data
         raise
 
     try:
