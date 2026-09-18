@@ -35,13 +35,13 @@ def test_canonical_encounter_migration_is_minimal_and_authority_bound():
         '"fk_clinical_encounter_patient"',
         '"fk_clinical_encounter_provider"',
         '"fk_clinical_encounter_hospital"',
-        '"Purpose:"',
-        '"Preconditions:"',
-        '"Existing-data behavior:"',
-        '"Locking risk:"',
-        '"Rollback position:"',
-        '"Validation query:"',
-        '"Forward-fix strategy:"',
+        'Purpose:',
+        'Preconditions:',
+        'Existing-data behavior:',
+        'Locking risk:',
+        'Rollback position:',
+        'Validation query:',
+        'Forward-fix strategy:',
     ):
         assert required in source
 
