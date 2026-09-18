@@ -223,6 +223,42 @@ async def test_gate_rejects_current_provider_context_mismatch(monkeypatch, mutat
 
 
 @pytest.mark.asyncio
+async def test_gate_rejects_cross_patient_durable_rebinding(monkeypatch):
+    data = _fixture()
+    data.session.patient_id = uuid.uuid4()
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gate_rejects_expired_live_capability(monkeypatch):
+    data = _fixture()
+    payload = dict(data.payload)
+    payload["expires_at"] = (data.now - timedelta(seconds=1)).isoformat()
+    data.redis.values[f"{TREATMENT_CAPABILITY_PREFIX}{data.token_digest}"] = json.dumps(
+        payload
+    )
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+
+@pytest.mark.asyncio
 async def test_gate_rejects_redis_to_durable_operation_disagreement(monkeypatch):
     data = _fixture()
     data.session.allowed_operations = [
