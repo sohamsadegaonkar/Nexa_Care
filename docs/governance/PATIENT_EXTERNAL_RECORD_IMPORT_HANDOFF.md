@@ -4,7 +4,7 @@
 
 - **Current branch:** `slice-11a-patient-external-record-import`.
 - **PR:** #47, `feat(patient): integrate external medical record import workflow` — **OPEN / DRAFT / UNMERGED**.
-- **Latest observed main:** `342d25cb960a3c81539502e6d3eacde4e7121aee`.
+- **Latest observed main:** `20c75f969657c4e9ea28cd80998724a958a88e03`.
 - **Semantic current-main reconciliation SHA:** `5b9d8a7b444f56aba4fb4ca98fca8af82133e37e`.
 - **Phase-B implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
 - **Phase-B final code/qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
@@ -28,9 +28,14 @@
 - **Route-governance overlap:** RESOLVED semantically. Both treatment-session V1 routes and all five patient external-record routes are preserved.
 - **Phase B target:** COMPLETE / QUALIFIED.
 - **Exact branch-tip rerun:** backend CI `35351247909`, frontend CI `35351247888`, and Vercel on `b0177393...` are all PASS/SUCCESS.
-- **Phase C1 target:** patient review/correction service foundation over encrypted `PatientExternalRecordCandidate` values, preserving extracted evidence and patient correction provenance. No typed clinical finalization or timeline write.
-- **Current concurrency:** PR #48 owns `tests/test_route_registration.py` plus patient longitudinal frontend/routes; PR #49 owns the pilot evidence fixture; PR #50 owns the treatment-session operation gate. Phase C1 avoids all of those files.
-- **Current route blocker:** publishing new review/correction endpoints would require updating `tests/test_route_registration.py`, which is actively modified by PR #48. Implement and qualify the isolated service first; do not edit that shared registry until PR #48 lands or the overlap otherwise resolves.
+- **Phase C1 target:** COMPLETE / QUALIFIED — patient review/correction service foundation over encrypted `PatientExternalRecordCandidate` values, preserving extracted evidence and patient correction provenance. No typed clinical finalization or timeline write.
+- **Phase C1 qualified SHA:** `1f53e830f00290539e5f39ed49ccfcc58f848707`.
+- **Phase C1 backend CI:** run `35353447620` — Ruff PASS; A **3961 passed / 430 deselected / 0 skipped**, B **300 / 4091 / 0**, C **130 / 4261 / 0**; zero failures.
+- **Phase C1 frontend CI:** run `35353447680` — web tests, Next production build, workspace packages, Android native compile, and iOS native compile all PASS.
+- **Phase C1 Vercel:** SUCCESS on `1f53e830...`.
+- **Current concurrency:** PR #48 still owns `tests/test_route_registration.py` plus patient longitudinal frontend/routes; PR #50 owns the treatment-session operation gate. PR #49 has landed into main and is already reconciled in Task-1 ancestry.
+- **Current route blocker:** publishing new review/correction endpoints requires updating `tests/test_route_registration.py`, which is actively modified by PR #48. Do not edit that shared registry until PR #48 lands or the overlap otherwise resolves.
+- **Exact next step after PR #48 resolves:** reconcile its landed route registry semantically, then publish patient-self review GET + candidate-decision mutation routes, add authority/route tests, and re-run exact-head qualification.
 - **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
 - **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
@@ -65,7 +70,7 @@ The completed Phase-B coding target is intentionally narrower: extract a patient
 
 ### Current main / concurrency
 
-Latest observed main: `342d25cb960a3c81539502e6d3eacde4e7121aee` (`test(ci): advance Slice 4 qualification head`).
+Latest observed main: `20c75f969657c4e9ea28cd80998724a958a88e03`. The only change since the prior Task-1 baseline was the pilot evidence fixture already present byte-for-byte on this branch; `1f53e830...` carries that main ancestry.
 
 Reconciliation facts:
 
@@ -75,8 +80,9 @@ Reconciliation facts:
 4. Current-main pilot deployment governance remains authoritative for the approved pilot head (`20260917_treatment_session_operations`); Task-1 CI independently qualifies the later feature head.
 5. No protected Slice-10B authority implementation was rewritten to make Task-1 pass.
 6. Phase-B exact-tip rerun on `b0177393...` is fully green: backend `35351247909`, frontend `35351247888`, Vercel SUCCESS.
-7. Current open PR inventory before Phase C1: #47 (Task-1), #48 (Slice 11B longitudinal records UX), #49 (10B.4 qualification fixture), #50 (10B.5 clinical-session gate).
+7. Current open PR inventory at the Phase-C1 freeze: #47 (Task-1), #48 (Slice 11B longitudinal records UX), #50 (10B.5 clinical-session gate). PR #49 has landed.
 8. PR #48 actively modifies `tests/test_route_registration.py`; Phase C1 does not touch that file.
+9. Phase-C1 exact-head qualification on `1f53e830...` is green across backend, web, Android, iOS, and Vercel.
 
 ## Product Contract
 
@@ -225,15 +231,15 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 | Vercel exact-head deployment | PASS | SUCCESS for `24b46e917...`. |
 | Malware scanning | NOT VERIFIED / NOT IMPLEMENTED | No claim otherwise. |
 | Decoder-level document validation | NOT VERIFIED | Existing checks remain envelope/signature/truncation level. |
-| Phase-C1 review service tests | FIRST RUN: REVIEW TESTS PASS; GLOBAL AUDIT CATALOG FAIL | CI `35353011569` reached 3959 passed / 1 failed in Partition A; the only failure is the new value-free review event missing from `EXPECTED_EVENTS`. |
+| Phase-C1 review service tests | PASS | Exact SHA `1f53e830...`; backend CI `35353447620`: A 3961 / B 300 / C 130, zero skips/failures; audit catalog repaired. |
 | Phase-C1 review API routes | BLOCKED ON ACTIVE OVERLAP | New routes would require `tests/test_route_registration.py`, currently modified by PR #48. |
 
 ## Open Risks / Blockers
 
 1. Phase B itself has no open qualification blocker; both code SHA and documentation-only branch-tip rerun are green.
-2. Phase C1 review/correction service foundation is committed at `5660d94ce33e0dfd53891a6de245c649c78cf669`. Its first Partition-A run passed the new review tests and failed only the global audit-event catalog check because `PATIENT_EXTERNAL_RECORD_CANDIDATE_REVIEWED` was not yet listed in `EXPECTED_EVENTS`.
+2. Phase C1 review/correction service foundation is qualified at `1f53e830f00290539e5f39ed49ccfcc58f848707`; the initial audit-catalog-only failure was repaired and the exact repaired SHA is green.
 3. Review/correction route publication is blocked by active same-file overlap: PR #48 modifies `tests/test_route_registration.py`, which Task-1 must also update for any new route.
-4. Candidates remain non-canonical; `READY_TO_SAVE` will mean review complete, not clinical persistence.
+4. Candidates remain non-canonical; `READY_TO_SAVE` means review complete, not clinical persistence.
 5. Typed finalization and timeline publication remain later phases. Prescription/Imaging/Discharge semantics must be audited before mapping; do not relabel Medication as Prescription.
 6. Retry/cancel UX and complete lifecycle/retention/merge/erasure qualification remain incomplete.
 7. Onboarding + Records patient frontend flow remains incomplete.
@@ -277,7 +283,7 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 - [x] Preserve extracted ciphertext separately from patient corrections.
 - [x] Add patient-visible `ready_to_save` workflow status.
 - [ ] Publish patient review/correction API routes after PR #48 route-registry overlap resolves.
-- [ ] Qualify the Phase-C1 service increment on an exact committed SHA after the audit-catalog repair.
+- [x] Qualify the Phase-C1 service increment on exact SHA `1f53e830...` after the audit-catalog repair.
 - [ ] Implement safe typed finalization where repository semantics support it.
 - [ ] Publish provenance-aware timeline entries.
 - [ ] Qualify retry/cancel/recovery and lifecycle/erasure/merge behavior.
