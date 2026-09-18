@@ -10,6 +10,7 @@ import hashlib
 import os
 import secrets
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
@@ -53,6 +54,63 @@ class PatientImportUploadResult:
     duplicate: bool
 
 
+@dataclass(frozen=True, slots=True)
+class PatientUploadTypeRule:
+    mime_type: str
+    signature_check: Callable[[bytes], bool]
+    completion_check: Callable[[bytes], bool]
+
+
+PATIENT_UPLOAD_TYPE_RULES: dict[str, PatientUploadTypeRule] = {
+    ".pdf": PatientUploadTypeRule(
+        mime_type="application/pdf",
+        signature_check=lambda data: data.startswith(b"%PDF-"),
+        completion_check=lambda data: data.rstrip().endswith(b"%%EOF"),
+    ),
+    ".png": PatientUploadTypeRule(
+        mime_type="image/png",
+        signature_check=lambda data: data.startswith(b"\x89PNG\r\n\x1a\n"),
+        completion_check=lambda data: data.endswith(
+            b"\x00\x00\x00\x00IEND\xaeB\x60\x82"
+        ),
+    ),
+    ".jpg": PatientUploadTypeRule(
+        mime_type="image/jpeg",
+        signature_check=lambda data: data.startswith(b"\xff\xd8\xff"),
+        completion_check=lambda data: data.endswith(b"\xff\xd9"),
+    ),
+    ".jpeg": PatientUploadTypeRule(
+        mime_type="image/jpeg",
+        signature_check=lambda data: data.startswith(b"\xff\xd8\xff"),
+        completion_check=lambda data: data.endswith(b"\xff\xd9"),
+    ),
+}
+PATIENT_UPLOAD_EXTENSIONS = tuple(PATIENT_UPLOAD_TYPE_RULES)
+PATIENT_UPLOAD_MIME_TYPES = tuple(
+    dict.fromkeys(rule.mime_type for rule in PATIENT_UPLOAD_TYPE_RULES.values())
+)
+
+
+def patient_action_capabilities(
+    row: PatientExternalRecordImport,
+) -> dict[str, bool]:
+    """Return fail-closed patient-self client actions for the persisted state.
+
+    can_view_source is advisory: it means the retained source endpoint may be
+    requested for this import. Lifecycle, metadata, storage, and integrity
+    failures can still make the source request fail.
+    """
+    state = row.status
+    return {
+        "can_process": state == "UPLOADED",
+        "can_retry": state == "FAILED_RETRYABLE" and bool(row.retryable),
+        "can_cancel": state
+        in {"UPLOADED", "FAILED_RETRYABLE", "REVIEW_REQUIRED", "READY_TO_SAVE"},
+        "can_review": state in {"REVIEW_REQUIRED", "READY_TO_SAVE"},
+        "can_save": state == "READY_TO_SAVE",
+        "can_view_source": bool(row.source_document_id),
+    }
+
 def validate_patient_upload_type(
     filename: str, content_type: str, data: bytes
 ) -> tuple[str, str]:
@@ -64,45 +122,23 @@ def validate_patient_upload_type(
     """
     safe_name = os.path.basename(filename.replace("\\", "/"))[:255]
     ext = os.path.splitext(safe_name)[1].lower()
-    allowed = {
-        ".pdf": (
-            "application/pdf",
-            lambda b: b.startswith(b"%PDF-"),
-            lambda b: b.rstrip().endswith(b"%%EOF"),
-        ),
-        ".png": (
-            "image/png",
-            lambda b: b.startswith(b"\x89PNG\r\n\x1a\n"),
-            lambda b: b.endswith(b"\x00\x00\x00\x00IEND\xaeB`\x82"),
-        ),
-        ".jpg": (
-            "image/jpeg",
-            lambda b: b.startswith(b"\xff\xd8\xff"),
-            lambda b: b.endswith(b"\xff\xd9"),
-        ),
-        ".jpeg": (
-            "image/jpeg",
-            lambda b: b.startswith(b"\xff\xd8\xff"),
-            lambda b: b.endswith(b"\xff\xd9"),
-        ),
-    }
-    if ext not in allowed:
+    rule = PATIENT_UPLOAD_TYPE_RULES.get(ext)
+    if rule is None:
         raise HTTPException(
             status_code=415,
             detail={"error_code": "UNSUPPORTED_DOCUMENT_TYPE"},
         )
-    expected, signature_check, completion_check = allowed[ext]
-    if content_type != expected or not signature_check(data):
+    if content_type != rule.mime_type or not rule.signature_check(data):
         raise HTTPException(
             status_code=415,
             detail={"error_code": "DOCUMENT_TYPE_MISMATCH"},
         )
-    if not completion_check(data):
+    if not rule.completion_check(data):
         raise HTTPException(
             status_code=422,
             detail={"error_code": "DOCUMENT_MALFORMED"},
         )
-    return safe_name, expected
+    return safe_name, rule.mime_type
 
 
 def patient_status(status: str) -> str:
