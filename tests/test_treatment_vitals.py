@@ -154,6 +154,21 @@ def test_typed_observation_requires_timezone_aware_recorded_at():
     assert caught.value.code == "TREATMENT_VITAL_RECORDED_AT_INVALID"
 
 
+def test_service_rejects_direct_noncanonical_observation_construction():
+    authority = _authority()
+    bad = service.TreatmentVitalObservation(
+        vital_type=service.TreatmentVitalType.HEART_RATE,
+        value="072",
+        unit="bpm",
+        recorded_at=datetime.now(timezone.utc),
+    )
+
+    with pytest.raises(service.TreatmentVitalValidationError) as caught:
+        service._validate_normalized_observation(bad)
+
+    assert caught.value.code == "TREATMENT_VITAL_VALUE_NOT_CANONICAL"
+
+
 @pytest.mark.asyncio
 async def test_stage_treatment_vital_uses_only_server_authority(monkeypatch):
     authority = _authority()
