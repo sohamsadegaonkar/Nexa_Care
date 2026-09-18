@@ -29,38 +29,59 @@ export default function PatientReportsScreen() {
   const [error, setError] = useState<string | null>(null)
   const [selectedReport, setSelectedReport] = useState<PatientReportItem | null>(null)
 
-  const loadReports = useCallback(async (cursor?: string | null, append = false) => {
-    if (append) setLoadingOlder(true)
-    else if (!cursor) setLoading(true)
-    setError(null)
+  const [selectedTypeFilter, setSelectedTypeFilter] = useState<string>('all')
 
-    try {
-      const res = await NexaApiClient.getMyReports({
-        cursor,
-        limit: 20,
-      })
-      if (append) {
-        setReports((prev) => [...prev, ...res.reports])
-      } else {
-        setReports(res.reports)
+  const loadReports = useCallback(
+    async (cursor?: string | null, append = false, typeFilter?: string) => {
+      if (append) setLoadingOlder(true)
+      else if (!cursor) setLoading(true)
+      setError(null)
+
+      const activeFilter = typeFilter !== undefined ? typeFilter : selectedTypeFilter
+
+      try {
+        const res = await NexaApiClient.getMyReports({
+          cursor,
+          limit: 20,
+          documentType: activeFilter !== 'all' ? activeFilter : null,
+        })
+        if (append) {
+          setReports((prev) => [...prev, ...res.reports])
+        } else {
+          setReports(res.reports)
+        }
+        setNextCursor(res.next_cursor)
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : 'Failed to load medical reports'
+        )
+      } finally {
+        setLoading(false)
+        setRefreshing(false)
+        setLoadingOlder(false)
       }
-      setNextCursor(res.next_cursor)
-    } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : 'Failed to load medical reports'
-      )
-    } finally {
-      setLoading(false)
-      setRefreshing(false)
-      setLoadingOlder(false)
-    }
-  }, [])
+    },
+    [selectedTypeFilter]
+  )
 
   useEffect(() => {
     void loadReports()
   }, [loadReports])
+
+  const handleSelectFilter = (filterKey: string) => {
+    setSelectedTypeFilter(filterKey)
+    void loadReports(null, false, filterKey)
+  }
+
+  const REPORT_FILTER_TABS = [
+    { key: 'all', label: 'All Reports' },
+    { key: 'lab_report', label: 'Labs' },
+    { key: 'imaging_report', label: 'Imaging' },
+    { key: 'discharge_summary', label: 'Discharge' },
+    { key: 'prescription', label: 'Prescriptions' },
+  ]
 
   return (
     <YStack flex={1} backgroundColor="$background">
@@ -71,12 +92,50 @@ export default function PatientReportsScreen() {
         paddingBottom="$2"
         gap="$2"
       >
-        <H2 color="$color" size="$7">
-          Diagnostic Reports & Documents
-        </H2>
-        <Paragraph color="$color10" size="$3">
-          Clinical lab evaluations, pathology summaries, and ingested health documents.
-        </Paragraph>
+        <XStack justifyContent="space-between" alignItems="flex-start">
+          <YStack flex={1} gap="$1">
+            <H2 color="$color" size="$7">
+              Diagnostic Reports & Documents
+            </H2>
+            <Paragraph color="$color10" size="$3">
+              Clinical lab evaluations, pathology summaries, and ingested health documents.
+            </Paragraph>
+          </YStack>
+          <Button
+            size="$3"
+            theme="blue"
+            onPress={() => router.push('/patient/records')}
+            accessibilityRole="button"
+            accessibilityLabel="Add Document or Record"
+          >
+            + Add Record
+          </Button>
+        </XStack>
+
+        {/* Filter Pills */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <XStack gap="$2" paddingVertical="$2">
+            {REPORT_FILTER_TABS.map((tab) => {
+              const active = selectedTypeFilter === tab.key
+              return (
+                <Button
+                  key={tab.key}
+                  size="$2.5"
+                  theme={active ? 'blue' : undefined}
+                  backgroundColor={active ? '$blue9' : '$backgroundHover'}
+                  borderRadius="$3"
+                  onPress={() => handleSelectFilter(tab.key)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Filter by ${tab.label}`}
+                >
+                  <Text color={active ? 'white' : '$color'} fontSize="$2" fontWeight={active ? '700' : '500'}>
+                    {tab.label}
+                  </Text>
+                </Button>
+              )
+            })}
+          </XStack>
+        </ScrollView>
       </YStack>
 
       <Separator />
