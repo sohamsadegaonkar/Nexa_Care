@@ -28,9 +28,18 @@ class _FirstResult:
 
 
 class _MutationDB:
-    def __init__(self, *, existing=None, reserve=True):
+    def __init__(
+        self,
+        *,
+        existing=None,
+        reserve=True,
+        fail_flush=False,
+        fail_complete=False,
+    ):
         self.existing = existing
         self.reserve = reserve
+        self.fail_flush = fail_flush
+        self.fail_complete = fail_complete
         self.added = []
         self.executed = []
         self.flushed = 0
@@ -45,6 +54,8 @@ class _MutationDB:
                 SimpleNamespace(id=uuid.uuid4()) if self.reserve else None
             )
         if "UPDATE public.mutation_idempotency" in sql:
+            if self.fail_complete:
+                raise RuntimeError("idempotency completion unavailable")
             return _FirstResult(None)
         raise AssertionError(f"unexpected SQL: {sql}")
 
@@ -53,6 +64,8 @@ class _MutationDB:
 
     async def flush(self):
         self.flushed += 1
+        if self.fail_flush:
+            raise RuntimeError("database flush unavailable")
 
 
 class _ScalarResult:
@@ -644,6 +657,98 @@ async def test_audit_stage_failure_fails_write_staging(monkeypatch):
 
     assert caught.value.code == "TREATMENT_VITAL_STAGE_UNAVAILABLE"
     assert not any(
+        "UPDATE public.mutation_idempotency" in sql for sql, _params in db.executed
+    )
+
+
+def test_idempotency_replay_contract_requires_http_200_status():
+    authority = _authority()
+    observation = service.heart_rate_observation(
+        beats_per_minute=72,
+        recorded_at=datetime.now(timezone.utc),
+    )
+    request_hash = service._canonical_request_hash(
+        authority=authority,
+        observation=observation,
+    )
+    row = SimpleNamespace(
+        request_hash=request_hash,
+        response_status=201,
+        response_payload={
+            "record_id": str(uuid.uuid4()),
+            "encounter_id": str(authority.encounter_id),
+            "vital_type": "HR",
+            "recorded_at": observation.recorded_at.isoformat(),
+            "status": "committed",
+        },
+    )
+
+    with pytest.raises(service.TreatmentVitalUnavailable) as caught:
+        service._replay_result(row, request_hash=request_hash)
+
+    assert caught.value.code == "TREATMENT_VITAL_IDEMPOTENCY_STATE_INCOMPLETE"
+
+
+@pytest.mark.asyncio
+async def test_database_flush_failure_aborts_staging_before_audit(monkeypatch):
+    authority = _authority()
+    monkeypatch.setattr(
+        service,
+        "lock_treatment_write_authority",
+        AsyncMock(return_value=SimpleNamespace(encounter_id=authority.encounter_id)),
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "enqueue_audit_event", audit)
+    db = _MutationDB(fail_flush=True)
+
+    with pytest.raises(service.TreatmentVitalUnavailable) as caught:
+        await service.stage_treatment_vital_write(
+            db=db,
+            authority=authority,
+            observation=service.heart_rate_observation(
+                beats_per_minute=72,
+                recorded_at=datetime.now(timezone.utc),
+            ),
+            idempotency_key="vitals-write-0007",
+            audit_context=_audit_context(authority),
+        )
+
+    assert caught.value.code == "TREATMENT_VITAL_STAGE_UNAVAILABLE"
+    assert db.flushed == 1
+    audit.assert_not_awaited()
+    assert not any(
+        "UPDATE public.mutation_idempotency" in sql for sql, _params in db.executed
+    )
+
+
+@pytest.mark.asyncio
+async def test_idempotency_completion_failure_aborts_staging(monkeypatch):
+    authority = _authority()
+    monkeypatch.setattr(
+        service,
+        "lock_treatment_write_authority",
+        AsyncMock(return_value=SimpleNamespace(encounter_id=authority.encounter_id)),
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr(service, "enqueue_audit_event", audit)
+    db = _MutationDB(fail_complete=True)
+
+    with pytest.raises(service.TreatmentVitalUnavailable) as caught:
+        await service.stage_treatment_vital_write(
+            db=db,
+            authority=authority,
+            observation=service.heart_rate_observation(
+                beats_per_minute=72,
+                recorded_at=datetime.now(timezone.utc),
+            ),
+            idempotency_key="vitals-write-0008",
+            audit_context=_audit_context(authority),
+        )
+
+    assert caught.value.code == "TREATMENT_VITAL_STAGE_UNAVAILABLE"
+    assert db.flushed == 1
+    audit.assert_awaited_once()
+    assert any(
         "UPDATE public.mutation_idempotency" in sql for sql, _params in db.executed
     )
 
