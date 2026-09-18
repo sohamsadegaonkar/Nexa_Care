@@ -36,6 +36,8 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
         ("GET", "/api/v2/patient/me/external-records"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
+        ("POST", "/api/v2/patient/me/external-records/{import_id}/retry"),
+        ("POST", "/api/v2/patient/me/external-records/{import_id}/cancel"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}/source"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/save"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}/review"),
@@ -93,6 +95,30 @@ def test_process_authority_is_dependency_derived_and_has_no_provider_inputs() ->
         "consent_request_id",
         "clinical_access_session_id",
     }.isdisjoint(client_names)
+
+
+
+def test_retry_cancel_authority_is_patient_dependency_only() -> None:
+    forbidden = {
+        "patient_id",
+        "provider_id",
+        "hospital_id",
+        "tenant_id",
+        "consent_token",
+        "consent_request_id",
+        "clinical_access_session_id",
+        "treatment_token",
+    }
+    for path in (
+        "/api/v2/patient/me/external-records/{import_id}/retry",
+        "/api/v2/patient/me/external-records/{import_id}/cancel",
+    ):
+        route = _route(path, "POST")
+        dependency_calls = {
+            dependency.call for dependency in route.dependant.dependencies
+        }
+        assert get_current_patient in dependency_calls
+        assert forbidden.isdisjoint(_client_parameter_names(route))
 
 
 def test_review_routes_are_patient_dependency_derived_without_provider_authority() -> None:

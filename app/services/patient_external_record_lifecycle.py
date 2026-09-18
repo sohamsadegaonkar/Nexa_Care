@@ -16,6 +16,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import ConfigError
+from app.models.patient import Patient
 from app.models.patient_external_record_import import PatientExternalRecordImport
 from app.models.patient_records import DocumentReference
 from app.models.pipeline import DocumentStorage as DocumentStorageRecord
@@ -41,9 +42,22 @@ async def assert_patient_external_record_access_active(
 ) -> None:
     """Fail closed when canonical erasure state denies patient-source access."""
     try:
-        uuid.UUID(patient_id)
+        patient_uuid = uuid.UUID(patient_id)
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=401, detail="Invalid patient identity") from exc
+
+    try:
+        patient = await db.get(Patient, patient_uuid)
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "PATIENT_DATA_UNAVAILABLE", "retryable": True},
+        ) from exc
+    if patient is None or bool(patient.is_deleted):
+        raise HTTPException(
+            status_code=410,
+            detail={"error_code": "PATIENT_RECORD_RETIRED"},
+        )
 
     try:
         await check_erasure_registry(patient_id, db)
