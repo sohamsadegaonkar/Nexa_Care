@@ -155,7 +155,6 @@ def test_typed_observation_requires_timezone_aware_recorded_at():
 
 
 def test_service_rejects_direct_noncanonical_observation_construction():
-    authority = _authority()
     bad = service.TreatmentVitalObservation(
         vital_type=service.TreatmentVitalType.HEART_RATE,
         value="072",
