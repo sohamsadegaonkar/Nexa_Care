@@ -459,7 +459,9 @@ Migration files changed: **NONE**.
 
 - D3 start: main `337c8229de2267aaa1a07410833a57eaf040411c`, no open PRs, no active parallel branches.
 - Immediately before editing `tests/test_route_registration.py` and `tests/test_audit_event_coverage.py`: main remained `337c8229...`, no open PRs, and both branch copies were byte-identical to current main.
-- Candidate diff is ahead of the same main with no behind commits and no protected Task-0 or Task-2 implementation paths.
+- Candidate diff remains based on main `337c8229...` with no protected Task-0 or Task-2 implementation changes.
+- During qualification, Task-0 PR #54 opened. Its shared-file patches are additive only: one `POST /api/v2/treatment-session/v1/encounter` route registration and one `CLINICAL_ENCOUNTER_CREATED` audit event. D3 must preserve both Task-0 additions if #54 lands before D3.
+- Agent-2 PR #55 opened with only longitudinal patient UX files (`PatientHealthHome`, Records/Prescriptions/Reports/Timeline/detail UI + its handoff/test). D3 has no overlap and must not edit those files.
 
 ### D3 qualification candidate
 
@@ -498,3 +500,26 @@ Migration files changed: **NONE**.
 - If PR #54 lands before PR #53 is merged, semantically reconcile its shared governance/migration changes from the new main and rerun exact-head qualification. Never choose `ours` or `theirs` blindly.
 - No D3 migration exists, so D3 does not create or compete for an Alembic head.
 
+
+
+### D3 implementation behavior frozen
+
+- Retry route: `POST /api/v2/patient/me/external-records/{import_id}/retry`.
+- Retry accepts only `FAILED_RETRYABLE` with `retryable = true`; `UPLOADED`, `PROCESSING`, `REVIEW_REQUIRED`, `READY_TO_SAVE`, `COMPLETED`, `FAILED_TERMINAL`, and `CANCELLED` are rejected.
+- Retry reuses the qualified extraction service for source availability/integrity, extraction provenance, attempt accounting, encryption, audit, and failure handling.
+- Cancel route: `POST /api/v2/patient/me/external-records/{import_id}/cancel`.
+- Cancellation is allowed only from `UPLOADED`, `FAILED_RETRYABLE`, `REVIEW_REQUIRED`, and `READY_TO_SAVE`.
+- `PROCESSING`, `COMPLETED`, and `FAILED_TERMINAL` are rejected; repeated `CANCELLED` is an idempotent same-state response.
+- Cancellation retains the source and is not erasure.
+- Cancellation audit event is `PATIENT_EXTERNAL_RECORD_CANCELLED` and contains structural metadata only.
+- Shared lifecycle access denies erased, missing, retired/soft-deleted, and merged-old patient identities; no Task-1 ownership row is rebound to the canonical merge target.
+- Retry/cancel routes derive patient authority only from `get_current_patient` and accept no client-selected patient/provider/hospital/tenant/consent/clinical-session/treatment authority.
+- D2 source-erasure and metadata-neutralization behavior is unchanged.
+
+### D3 known risks / integration dependencies
+
+1. Task-0 PR #54 overlaps the two integration-controlled test catalogs only. Its changes are additive and compatible, but if #54 lands first D3 must reconcile current main and preserve both encounter + retry/cancel entries before merge qualification.
+2. Agent-2 PR #55 owns longitudinal patient UX files and does not overlap D3. D3 intentionally contains no frontend implementation.
+3. Malware scanning remains **NOT VERIFIED / NOT IMPLEMENTED**; D3 makes no new claim.
+4. Full decoder-level document validation remains outside D3 and unverified beyond the landed structural envelope/signature checks.
+5. D3 must stop at the PR/qualification boundary and must not merge itself into main.
