@@ -187,7 +187,6 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/patient/me/external-records"),
     ("GET", "/api/v2/patient/me/external-records"),
     ("GET", "/api/v2/patient/me/external-records/upload-policy"),
-    ("GET", "/api/v2/patient/me/external-records/upload-policy"),
     ("GET", "/api/v2/patient/me/external-records/{import_id}"),
     ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
     ("POST", "/api/v2/patient/me/external-records/{import_id}/retry"),
