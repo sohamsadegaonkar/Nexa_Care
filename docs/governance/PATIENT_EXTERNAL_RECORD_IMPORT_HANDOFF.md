@@ -8,9 +8,9 @@
 - **Historical Task-1 branch:** `slice-11a-patient-external-record-import` is consolidation history only and must not be reused.
 - **D3 scope:** strict `FAILED_RETRYABLE` retry, safe pre-completion cancellation, value-free cancellation audit, retired/merged-patient denial through the shared lifecycle gate, patient-self retry/cancel routes, adversarial qualification.
 - **D3 migration posture:** zero migration expected; existing `FAILED_RETRYABLE` and `CANCELLED` states are authoritative.
-- **Parallel-work result:** no active Agent-0/Agent-2 PR or branch overlaps D3 at this checkpoint. Shared files still require current-main recheck immediately before editing.
+- **Current parallel-work state:** Task 0 PR #54 is active and owns `tests/test_route_registration.py`, `tests/test_audit_event_coverage.py`, migration/CI files, and protected treatment-session/encounter implementation. D3 production files do not overlap. Do not edit those shared governance files again while #54 is active.
 - **Merge boundary:** canonical `PatientMergeService` soft-deletes the old patient and creates a tombstone; it does not reassign Task-1 rows. D3 must deny the retired identity and must not migrate ownership.
-- **Merge authorization:** D3 may open/update its PR but must STOP before merge into `main`.
+- **Merge authorization:** D3 PR #53 is OPEN / DRAFT / UNMERGED. It may be updated and qualified but must STOP before merge into `main`.
 
 - **Consolidation state:** Task-1 Phase D2 is **MERGED INTO MAIN** via PR #47.
 - **Merged checkpoint:** `48ea8fe3994757a30c746ad539f3913131916559` on `main`.
@@ -338,7 +338,7 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
 5. Phase D1 DocumentReference finalization, completion-timeline persistence, PR #51 reconciliation, and patient-import provenance projection are qualified at `7a13384a...`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
-6. Phase-D2 erasure hardening is qualified at `173c7053...`. Retry/cancel and patient-merge lifecycle semantics remain incomplete.
+6. Phase-D2 erasure hardening is qualified at `173c7053...`. Phase D3 retry/cancel and retired/merged-patient lifecycle are implemented and qualified at code SHA `8d96af096f8e8af072a6c01b0c3322cc2153a57f`.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
 9. Full decoder-level corruption validation remains unverified beyond the existing structural checks.
@@ -390,7 +390,7 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 - [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
 - [x] Implement canonical erasure gating plus patient-self source-object deletion and metadata neutralization.
 - [x] Qualify Phase-D2 erasure hardening on exact SHA `173c7053...`.
-- [ ] Qualify retry/cancel/recovery and patient-merge lifecycle behavior.
+- [x] Qualify retry/cancel/recovery and retired/merged-patient lifecycle behavior on code SHA `8d96af09...`.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
 - [x] Consolidate the qualified Phase-D2 checkpoint into main via PR #47; defer remaining phases to fresh follow-up branches.
@@ -463,16 +463,38 @@ Migration files changed: **NONE**.
 
 ### D3 qualification candidate
 
-- Candidate before final handoff refresh: `782e778f4dd60f77c2d64484086817f523730b04`.
-- Focused tests / Ruff / A-B-C / frontend-native / Vercel: **NOT YET QUALIFIED**.
-- Any green result from a different SHA must not be reused.
+- Final D3 code SHA before documentation freeze: `8d96af096f8e8af072a6c01b0c3322cc2153a57f`.
+- Backend CI run `35374244743`: **PASS** — Ruff PASS; Partition A **4062 passed / 430 deselected / 0 skipped**, Partition B **300 / 4192 / 0**, Partition C **130 / 4362 / 0**; zero failures.
+- Frontend/native CI run `35374244922`: **PASS** — web tests, Next production build, workspace package build, Android native compile, and iOS native compile all PASS.
+- Vercel exact-head status on `8d96af09...`: **SUCCESS**.
+- The next commit is documentation-only; qualify that final branch tip separately before requesting merge.
 
 ### D3 qualification state
 
-- Focused tests: NOT RUN.
-- Ruff: NOT RUN.
-- Partition A/B/C: NOT RUN.
-- Frontend/native: NOT RUN; no frontend files are in the D3 backend slice.
-- Vercel: NOT RUN.
-- Exact qualified D3 SHA: NONE YET.
+- **D3 code status:** COMPLETE / QUALIFIED.
+- **Qualified code SHA:** `8d96af096f8e8af072a6c01b0c3322cc2153a57f`.
+- **Focused D3 coverage:** retry/cancel/lifecycle/route/audit cases execute inside Partition A and PASS.
+- **Ruff:** PASS.
+- **Partition A:** 4062 passed / 430 deselected / 0 failed / 0 skipped.
+- **Partition B:** 300 passed / 4192 deselected / 0 failed / 0 skipped.
+- **Partition C:** 130 passed / 4362 deselected / 0 failed / 0 skipped.
+- **Frontend:** web tests + Next production build + workspace packages PASS.
+- **Android:** PASS.
+- **iOS:** PASS.
+- **Vercel:** SUCCESS.
+- **Migration:** NONE.
+- **Task 0 implementation files changed:** NONE.
+- **Task 2 implementation/frontend files changed:** NONE.
+- **Final branch-tip qualification:** pending only for the documentation-freeze commit created from this handoff update.
+
+
+
+### D3 final concurrency checkpoint
+
+- Current `origin/main`: `337c8229de2267aaa1a07410833a57eaf040411c`; D3 is not behind main.
+- PR #53: Task-1 D3, OPEN / DRAFT / UNMERGED.
+- PR #54: Task-0 canonical encounter, OPEN and non-overlapping with D3 runtime files.
+- PR #54 now also modifies `tests/test_route_registration.py` and `tests/test_audit_event_coverage.py`. D3 made its additive changes to those files before #54 existed; do not edit them again while #54 is active.
+- If PR #54 lands before PR #53 is merged, semantically reconcile its shared governance/migration changes from the new main and rerun exact-head qualification. Never choose `ours` or `theirs` blindly.
+- No D3 migration exists, so D3 does not create or compete for an Alembic head.
 
