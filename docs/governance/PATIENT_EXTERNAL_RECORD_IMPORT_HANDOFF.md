@@ -277,7 +277,16 @@ Staged implementation boundary:
 - No ClinicalAccessSession, Signed Consent V3, treatment-session, provider-delegated authority, or migration file is changed.
 - Merge reassignment semantics and retry/cancel workflow behavior remain separate follow-on work.
 
-Qualification state: **WRITTEN / NOT RUN** until the exact committed SHA passes backend A/B/C zero-skip gates, frontend/native, and Vercel.
+Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd423f0b347056826e1180e`.
+
+### Phase D2 exact qualification
+
+- **Qualified code SHA:** `173c705327916d310dd423f0b347056826e1180e`.
+- **Backend CI:** run `35363352664` — Ruff PASS; Partition A **3998 passed / 430 deselected / 0 skipped**, Partition B **300 / 4128 / 0**, Partition C **130 / 4298 / 0**; zero failures.
+- **Frontend/native CI:** run `35363352666` — web tests, Next production build, workspace package build, Android native compile, and iOS native compile all PASS.
+- **Vercel:** SUCCESS on the exact code SHA.
+- **Safety result:** Task-1 upload/list/detail/source reads now fail closed on canonical erasure state; erasure deletes patient-self source objects, clears identifying source metadata, neutralizes finalized document storage refs, and truthfully falls back to operator action when cleanup cannot be proven.
+- **Concurrency:** latest main remains `a7999054bb24fa7a132295a90892dddaf9b2d422`; PR #50 remains non-overlapping protected treatment-session work.
 
 ### Phase D2 qualification attempt 1
 
@@ -308,7 +317,7 @@ Qualification state: **WRITTEN / NOT RUN** until the exact committed SHA passes 
 | Phase-C2 review API routes | PASS | Exact SHA `5292857e...`; A 3978 / B 300 / C 130 with zero skips/failures; frontend/native/Vercel green. |
 | Phase-D1 document finalization | PASS | Exact SHA `7a13384ab07d6542179082ba94eee678b55d7434`; backend `35360206624` A 3989 / B 300 / C 130 with zero skips/failures; frontend/native `35360206538` green; Vercel SUCCESS. |
 | Structured Medication/LabResult promotion | DEFERRED / UNSAFE WITH CURRENT CANDIDATE SCHEMA | Required structured regimen/unit/reference fields were not retained in Task-1 candidate persistence; no free-text inference allowed. |
-| Phase-D2 lifecycle / erasure hardening | WRITTEN / NOT RUN | Canonical erasure gate, patient-self source deletion + metadata neutralization, erasure-race handling, and operator-action downgrade tests staged for exact-head qualification. |
+| Phase-D2 lifecycle / erasure hardening | PASS | Exact SHA `173c705327916d310dd423f0b347056826e1180e`; backend `35363352664` A 3998 / B 300 / C 130 with zero skips/failures; frontend/native `35363352666` green; Vercel SUCCESS. |
 
 ## Open Risks / Blockers
 
@@ -317,7 +326,7 @@ Qualification state: **WRITTEN / NOT RUN** until the exact committed SHA passes 
 3. The prior route-registry blocker is resolved and Phase C2 route publication is fully qualified at `5292857e...`.
 4. `READY_TO_SAVE` remains non-canonical until the explicit Phase-D1 Save transaction succeeds. Phase D1 creates only a canonical external document, not a clinical observation.
 5. Phase D1 DocumentReference finalization, completion-timeline persistence, PR #51 reconciliation, and patient-import provenance projection are qualified at `7a13384a...`. Structured Medication/LabResult promotion remains deferred because current candidate persistence is lossy for required structured fields.
-6. Phase-D2 erasure hardening is implemented but not yet qualified. Retry/cancel and patient-merge lifecycle semantics remain incomplete.
+6. Phase-D2 erasure hardening is qualified at `173c7053...`. Retry/cancel and patient-merge lifecycle semantics remain incomplete.
 7. Onboarding + Records patient frontend flow remains incomplete.
 8. Malware scanning is not verified/implemented.
 9. Full decoder-level corruption validation remains unverified beyond the existing structural checks.
@@ -368,7 +377,7 @@ Qualification state: **WRITTEN / NOT RUN** until the exact committed SHA passes 
 - [x] Qualify Phase D1 plus the landed longitudinal-provenance integration on exact SHA `7a13384a...`.
 - [ ] Decide whether to extend encrypted candidate persistence before any Medication/LabResult promotion.
 - [x] Implement canonical erasure gating plus patient-self source-object deletion and metadata neutralization.
-- [ ] Qualify Phase-D2 erasure hardening on its exact committed SHA.
+- [x] Qualify Phase-D2 erasure hardening on exact SHA `173c7053...`.
 - [ ] Qualify retry/cancel/recovery and patient-merge lifecycle behavior.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
