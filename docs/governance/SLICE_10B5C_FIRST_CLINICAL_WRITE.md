@@ -1,6 +1,6 @@
 # Slice 10B.5c — First Bounded Treatment Session V1 Clinical Write
 
-Status: **DESIGN FROZEN / IMPLEMENTATION STARTING — NOT QUALIFIED / NOT MERGEABLE YET**
+Status: **ISOLATED HTTP ROUTE CORE IMPLEMENTED — DIAGNOSTIC / NOT APP-MOUNTED / NOT FINAL**
 
 ## Repository checkpoint
 
@@ -8,7 +8,7 @@ Status: **DESIGN FROZEN / IMPLEMENTATION STARTING — NOT QUALIFIED / NOT MERGEA
 - Branch: `task0/10b5c-first-clinical-write`
 - Starting Alembic head: `20260918_canonical_encounter`
 - Task 0 10B.5b canonical Encounter: **MERGED**
-- Task 1 PR #53: open/draft and reconciling after #54
+- Task 1 PR #53: frozen at `f775e1d56745ff6d108737b5980b12869482da97`, zero-behind, open/draft/unmerged, blocked on Vercel quota
 - Task 2 PR #55: open and must reconcile current main before merge
 
 Task 0 must not edit these integration-controlled files while PR #53 reconciles:
@@ -275,7 +275,7 @@ post-PR-#53 main. Never create a sibling head or Alembic merge revision.
 
 ## Concurrency plan
 
-While PR #53 reconciles:
+While PR #53 remains frozen but unmerged:
 
 Allowed Task 0 work:
 
@@ -285,7 +285,7 @@ Allowed Task 0 work:
 - dedicated unit/PostgreSQL tests;
 - other non-overlapping Task 0 runtime code.
 
-Deferred until Task 1 is reconciled/merged:
+Deferred until Task 1 is merged:
 
 - edits to `tests/test_route_registration.py`;
 - edits to `tests/test_audit_event_coverage.py`;
@@ -476,16 +476,130 @@ No parallel or shortcut trust model is permitted.
 
 ### Current Task-1 integration gate
 
-At this checkpoint PR #53 remains open/draft/unmerged.
+PR #53 is frozen at
+`f775e1d56745ff6d108737b5980b12869482da97`, zero-behind current main,
+green on backend/frontend/native CI, and still open/draft/unmerged because its
+exact-head Vercel deployment is quota-blocked.
 
-Therefore Task 0 continues to expose **no WRITE_VITALS HTTP route** and does not
-modify:
+Task 0 may implement the bounded WRITE_VITALS router in isolated Task-0 files,
+but it must remain **unmounted from `app.main`** until the shared route catalog
+can be updated after #53 merges. Task 0 still does not modify:
 
 - `tests/test_route_registration.py`;
 - `tests/test_audit_event_coverage.py`.
 
-The route and shared integration assertions remain blocked until GitHub reports
-PR #53 merged.
+No final release qualification or merge claim is permitted while #53 is
+unmerged.
+
+## Isolated HTTP runtime checkpoint
+
+Starting implementation head:
+
+```text
+4c1862e149b14529b6373081dab488117b889a31
+```
+
+The isolated Task-0 router implements exactly one new surface:
+
+```text
+POST /api/v2/treatment-session/v1/vitals
+```
+
+The router is intentionally **not mounted in `app.main` yet**. This preserves
+the release-integration boundary while PR #53 is unmerged and keeps the shared
+route/audit catalogs untouched. Dedicated Task-0 route tests exercise the
+isolated APIRouter directly.
+
+### Request contract
+
+One request represents one typed observation through a strict discriminated
+union:
+
+- `blood_pressure`: `systolic_bp`, `diastolic_bp`, `recorded_at`;
+- `heart_rate`: `beats_per_minute`, `recorded_at`;
+- `temperature`: `celsius`, `recorded_at`;
+- `spo2`: `percentage`, `recorded_at`.
+
+Unknown fields are rejected. The request cannot carry patient, provider,
+hospital, Encounter, ClinicalAccessSession, operation, source, confidence, or
+risk authority. Canonical Vitals type/unit and manual provenance remain
+server-owned.
+
+### recorded_at implementation
+
+The route preserves the repository-backed historical-observation meaning:
+`recorded_at` is clinician-supplied observation time, not server receipt time
+and not implicitly Encounter creation time.
+
+For this isolated route:
+
+- the timestamp must be timezone-aware;
+- it is normalized to UTC before the canonical observation is created;
+- the normalized timestamp is therefore the value bound into durable
+  idempotency semantics;
+- no Encounter-time cutoff or clinical plausibility window is invented because
+  the repository still has no approved manual-entry policy for one.
+
+### Provider trust and transaction order
+
+Route admission reuses:
+
+```text
+require_clinical_capability(ClinicalCapability.RECORD_READ)
++
+require_clinical_session(ClinicalAccessOperation.WRITE_VITALS)
+```
+
+The Treatment Session dependency independently binds the exact operation,
+provider/hospital session, ClinicalAccessSession, and treatment bearer.
+
+After the already-qualified staging service has locked/revalidated durable
+session, grant, and canonical Encounter and staged Vitals + TimelineEvent +
+audit outbox + idempotency completion, the route immediately re-runs:
+
+```text
+enforce_current_clinical_capability(...)
+```
+
+It also rechecks the provider, hospital, and provider-session binding against
+the TreatmentSessionV1Authority. Only then does the route commit exactly once.
+
+Any staging, final-trust, binding, or commit failure rolls back the request
+transaction. Stable value-free HTTP errors expose only error codes; raw clinical
+values, treatment tokens, SQL, Redis keys, audit internals, and secret hashes
+are not returned.
+
+### HTTP idempotency
+
+- first successful mutation: HTTP 200;
+- same key + same semantic request: HTTP 200 with the original logical result
+  and `idempotent_replay=true`;
+- same key + changed semantic request: HTTP 409;
+- persisted mutation-idempotency success remains `response_status = 200`.
+
+### Dedicated isolated tests
+
+The Task-0-specific route test file covers:
+
+- exact isolated router path/method and deliberate non-registration in
+  `app.main`;
+- all four typed observations and UTC time normalization;
+- caller authority/provenance injection denial;
+- naive timestamp denial;
+- entry provider-trust denial;
+- missing treatment token;
+- wrong operation;
+- successful stage -> final trust -> single commit ordering;
+- idempotent replay;
+- invalid idempotency key;
+- semantic idempotency conflict;
+- staging failure rollback;
+- trust revocation before commit rollback;
+- final provider-session binding mismatch rollback;
+- commit failure rollback.
+
+Diagnostic CI for the implementation head remains required before this
+checkpoint can be described as green.
 
 ## Qualification required before merge
 
