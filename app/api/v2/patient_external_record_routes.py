@@ -32,8 +32,11 @@ from app.services.patient_external_record_finalization import (
     finalize_patient_external_record,
 )
 from app.services.patient_external_record_import import (
+    PATIENT_UPLOAD_EXTENSIONS,
+    PATIENT_UPLOAD_MIME_TYPES,
     get_patient_external_record,
     list_patient_external_records,
+    patient_action_capabilities,
     patient_status,
     read_patient_external_record_source,
     stage_patient_external_record,
@@ -64,15 +67,46 @@ PatientVisibleStatus = Literal[
 ]
 
 
+class PatientExternalRecordActions(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    can_process: bool
+    can_retry: bool
+    can_cancel: bool
+    can_review: bool
+    can_save: bool
+    can_view_source: bool = Field(
+        description=(
+            "Advisory source-request capability only; source retrieval can still fail "
+            "because of lifecycle, metadata, storage, or integrity conditions."
+        )
+    )
+
+
 class PatientExternalRecordResponse(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     import_id: uuid.UUID
     category: PatientCategory
     status: PatientVisibleStatus
+    actions: PatientExternalRecordActions
     duplicate: bool = False
-    source_available: bool = True
+    source_available: bool = Field(
+        default=True,
+        description=(
+            "Advisory compatibility signal; a true value does not guarantee that "
+            "the source endpoint will succeed."
+        ),
+    )
     created_at: str
+
+
+class PatientExternalRecordUploadPolicyResponse(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    max_upload_bytes: int
+    accepted_extensions: tuple[str, ...]
+    accepted_mime_types: tuple[str, ...]
 
 
 PatientReviewDecision = Literal["accept", "correct", "reject"]
@@ -127,12 +161,14 @@ def _response(
     row: PatientExternalRecordImport, *, duplicate: bool = False
 ) -> PatientExternalRecordResponse:
     public_status = patient_status(row.status)
+    actions = PatientExternalRecordActions(**patient_action_capabilities(row))
     return PatientExternalRecordResponse(
         import_id=row.id,
         category=_INTERNAL_TO_PUBLIC_CATEGORY[row.category],
         status=public_status,  # type: ignore[arg-type]
+        actions=actions,
         duplicate=duplicate,
-        source_available=True,
+        source_available=actions.can_view_source,
         created_at=row.created_at.isoformat(),
     )
 
@@ -236,6 +272,23 @@ async def list_external_records(
     _set_no_store(response)
     rows = await list_patient_external_records(db, patient_id=auth.patient_id)
     return [_response(row) for row in rows]
+
+
+@router.get(
+    "/upload-policy",
+    response_model=PatientExternalRecordUploadPolicyResponse,
+)
+async def read_external_record_upload_policy(
+    response: Response,
+    auth: AuthenticatedPatient = Depends(get_current_patient),
+) -> PatientExternalRecordUploadPolicyResponse:
+    """Return safe patient-self upload policy derived from server validation."""
+    _set_no_store(response)
+    return PatientExternalRecordUploadPolicyResponse(
+        max_upload_bytes=_upload_limit(),
+        accepted_extensions=PATIENT_UPLOAD_EXTENSIONS,
+        accepted_mime_types=PATIENT_UPLOAD_MIME_TYPES,
+    )
 
 
 @router.get("/{import_id}", response_model=PatientExternalRecordResponse)

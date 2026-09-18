@@ -1,23 +1,32 @@
 from __future__ import annotations
 
+import uuid
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi import HTTPException
 from fastapi.responses import Response
 from pydantic import ValidationError
-import pytest
 
 from app.api.v2.patient_external_record_routes import (
+    PatientExternalRecordActions,
     PatientExternalRecordReviewDecisionRequest,
     PatientExternalRecordReviewItemResponse,
+    _response,
     _set_no_store,
+    _upload_limit,
+    read_external_record_upload_policy,
 )
 from app.api.v2.patient_routes import router
 from app.core.dependencies import get_current_patient
 from app.models.patient_external_record_import import PatientExternalRecordImport
 from app.services.patient_external_record_import import (
     PATIENT_STATUS_MAP,
+    PATIENT_UPLOAD_EXTENSIONS,
+    PATIENT_UPLOAD_MIME_TYPES,
     _request_matches_existing,
+    patient_action_capabilities,
     validate_patient_upload_type,
 )
 
@@ -34,6 +43,7 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
     expected = {
         ("POST", "/api/v2/patient/me/external-records"),
         ("GET", "/api/v2/patient/me/external-records"),
+        ("GET", "/api/v2/patient/me/external-records/upload-policy"),
         ("GET", "/api/v2/patient/me/external-records/{import_id}"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/process"),
         ("POST", "/api/v2/patient/me/external-records/{import_id}/retry"),
@@ -67,6 +77,24 @@ def _client_parameter_names(route) -> set[str]:
         )
         for item in collection
     }
+
+
+def test_upload_policy_authority_is_patient_dependency_only() -> None:
+    route = _route("/api/v2/patient/me/external-records/upload-policy", "GET")
+    dependency_calls = {dependency.call for dependency in route.dependant.dependencies}
+    forbidden = {
+        "patient_id",
+        "provider_id",
+        "hospital_id",
+        "tenant_id",
+        "consent_token",
+        "consent_request_id",
+        "clinical_access_session_id",
+        "treatment_token",
+    }
+
+    assert get_current_patient in dependency_calls
+    assert forbidden.isdisjoint(_client_parameter_names(route))
 
 
 def test_upload_authority_is_dependency_derived_not_patient_input() -> None:
@@ -184,6 +212,165 @@ def test_save_authority_is_dependency_derived_without_provider_inputs() -> None:
     }.isdisjoint(client_names)
 
 
+@pytest.mark.parametrize(
+    ("internal_status", "retryable", "expected"),
+    [
+        (
+            "UPLOADED",
+            False,
+            {
+                "can_process": True,
+                "can_retry": False,
+                "can_cancel": True,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "PROCESSING",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": False,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "FAILED_RETRYABLE",
+            True,
+            {
+                "can_process": False,
+                "can_retry": True,
+                "can_cancel": True,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "FAILED_RETRYABLE",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": True,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "FAILED_TERMINAL",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": False,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "REVIEW_REQUIRED",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": True,
+                "can_review": True,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "READY_TO_SAVE",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": True,
+                "can_review": True,
+                "can_save": True,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "COMPLETED",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": False,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+        (
+            "CANCELLED",
+            False,
+            {
+                "can_process": False,
+                "can_retry": False,
+                "can_cancel": False,
+                "can_review": False,
+                "can_save": False,
+                "can_view_source": True,
+            },
+        ),
+    ],
+)
+def test_patient_action_capabilities_are_server_derived_per_internal_state(
+    internal_status: str,
+    retryable: bool,
+    expected: dict[str, bool],
+) -> None:
+    row = SimpleNamespace(
+        status=internal_status,
+        retryable=retryable,
+        source_document_id=uuid.uuid4(),
+    )
+    assert patient_action_capabilities(row) == expected
+
+
+def _response_row(status: str, *, retryable: bool = False) -> SimpleNamespace:
+    return SimpleNamespace(
+        id=uuid.uuid4(),
+        category="LAB_REPORT",
+        status=status,
+        retryable=retryable,
+        source_document_id=uuid.uuid4(),
+        created_at=datetime(2026, 9, 19, tzinfo=timezone.utc),
+    )
+
+
+def test_client_reentry_contract_distinguishes_uploaded_from_processing() -> None:
+    uploaded = _response(_response_row("UPLOADED"))
+    processing = _response(_response_row("PROCESSING"))
+
+    assert uploaded.status == processing.status == "processing"
+    assert uploaded.actions.can_process is True
+    assert uploaded.actions.can_cancel is True
+    assert processing.actions.can_process is False
+    assert processing.actions.can_cancel is False
+    assert uploaded.source_available is True
+    assert processing.source_available is True
+
+
+def test_source_action_capability_is_documented_as_advisory() -> None:
+    description = PatientExternalRecordActions.model_fields[
+        "can_view_source"
+    ].description
+    assert description is not None
+    assert "Advisory" in description
+    assert "can still fail" in description
+
+
 def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None:
     visible = set(PATIENT_STATUS_MAP.values())
     assert visible == {
@@ -200,6 +387,81 @@ def test_patient_status_contract_never_exposes_internal_pipeline_lanes() -> None
     assert "ADJUDICATION_PENDING" not in visible
     assert "OCR_CANDIDATE" not in visible
     assert "PIPELINE_LANE" not in visible
+
+
+@pytest.mark.asyncio
+async def test_upload_policy_response_reflects_effective_runtime_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = 7 * 1024 * 1024
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", str(configured))
+    monkeypatch.setattr(
+        "app.api.v2.patient_external_record_routes.get_document_extraction_config",
+        lambda: SimpleNamespace(provider="remote"),
+    )
+
+    response = Response()
+    policy = await read_external_record_upload_policy(
+        response,
+        SimpleNamespace(patient_id=str(uuid.uuid4())),
+    )
+
+    assert policy.max_upload_bytes == configured
+    assert policy.accepted_extensions == PATIENT_UPLOAD_EXTENSIONS
+    assert policy.accepted_mime_types == PATIENT_UPLOAD_MIME_TYPES
+    assert response.headers["cache-control"] == "private, no-store"
+
+
+def test_upload_limit_defaults_to_20_mib_for_non_textract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("MAX_UPLOAD_BYTES", raising=False)
+    monkeypatch.setattr(
+        "app.api.v2.patient_external_record_routes.get_document_extraction_config",
+        lambda: SimpleNamespace(provider="remote"),
+    )
+    assert _upload_limit() == 20 * 1024 * 1024
+
+
+def test_upload_limit_clamps_textract_to_10_mib(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", str(20 * 1024 * 1024))
+    monkeypatch.setattr(
+        "app.api.v2.patient_external_record_routes.get_document_extraction_config",
+        lambda: SimpleNamespace(provider="aws_textract"),
+    )
+    assert _upload_limit() == 10 * 1024 * 1024
+
+
+def test_upload_limit_uses_configured_max_for_non_textract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    configured = 7 * 1024 * 1024
+    monkeypatch.setenv("MAX_UPLOAD_BYTES", str(configured))
+    monkeypatch.setattr(
+        "app.api.v2.patient_external_record_routes.get_document_extraction_config",
+        lambda: SimpleNamespace(provider="remote"),
+    )
+    assert _upload_limit() == configured
+
+
+def test_public_upload_formats_exactly_match_patient_validator_policy() -> None:
+    assert PATIENT_UPLOAD_EXTENSIONS == (".pdf", ".png", ".jpg", ".jpeg")
+    assert PATIENT_UPLOAD_MIME_TYPES == (
+        "application/pdf",
+        "image/png",
+        "image/jpeg",
+    )
+
+    with pytest.raises(HTTPException) as unsupported_tiff:
+        validate_patient_upload_type(
+            "scan.tiff",
+            "image/tiff",
+            b"II*\x00synthetic",
+        )
+    assert unsupported_tiff.value.status_code == 415
+    assert unsupported_tiff.value.detail["error_code"] == "UNSUPPORTED_DOCUMENT_TYPE"
 
 
 def test_upload_type_validation_accepts_supported_structural_envelopes() -> None:
