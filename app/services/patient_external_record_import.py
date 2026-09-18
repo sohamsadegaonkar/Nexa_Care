@@ -111,6 +111,7 @@ def patient_action_capabilities(
         "can_view_source": bool(row.source_document_id),
     }
 
+
 def validate_patient_upload_type(
     filename: str, content_type: str, data: bytes
 ) -> tuple[str, str]:
