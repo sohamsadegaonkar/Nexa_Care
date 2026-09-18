@@ -2,9 +2,11 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `slice-11a-patient-external-record-import`.
-- **PR:** #47, `feat(patient): integrate external medical record import workflow` — **OPEN / DRAFT / UNMERGED**.
-- **Latest observed main:** `a7999054bb24fa7a132295a90892dddaf9b2d422`.
+- **Consolidation state:** Task-1 Phase D2 is **MERGED INTO MAIN** via PR #47.
+- **Merged checkpoint:** `48ea8fe3994757a30c746ad539f3913131916559` on `main`.
+- **Former work branch:** `slice-11a-patient-external-record-import` is historical and must not be reused after consolidation.
+- **PR #47:** **MERGED**. Phase D3 retry/cancel + retired/merged-patient lifecycle work was not committed remotely and remains deferred to a fresh branch from current `main`.
+- **Current active branch policy:** start any follow-on Task-1 work from `main`; do not revive the old feature branch.
 - **Latest semantic current-main reconciliation:** `95d6175dcb22d659fd9e65ccab7495c85832abcf`; Phase-D1 provenance integration qualified at `7a13384ab07d6542179082ba94eee678b55d7434`.
 - **Phase-B implementation SHA:** `392ba90670cb2518ba216d123cc108071473942f`.
 - **Phase-B final code/qualification SHA:** `24b46e9176459a787886b0524e9e0dd3339d7b0f`.
@@ -33,7 +35,7 @@
 - **Phase C1 backend CI:** run `35353447620` — Ruff PASS; A **3961 passed / 430 deselected / 0 skipped**, B **300 / 4091 / 0**, C **130 / 4261 / 0**; zero failures.
 - **Phase C1 frontend CI:** run `35353447680` — web tests, Next production build, workspace packages, Android native compile, and iOS native compile all PASS.
 - **Phase C1 Vercel:** SUCCESS on `1f53e830...`.
-- **Current concurrency:** PR #48 is MERGED and reconciled. PR #50 remains open on the protected treatment-session operation gate and does not overlap the review-route files.
+- **Current concurrency:** PR #48, PR #50, and PR #51 are MERGED. No open PR remains from the prior Task-0/Task-1/Task-2 consolidation.
 - **Phase C2 target:** patient-self review route publication — GET review snapshot + POST per-item accept/correct/reject, strict patient authority, opaque review-item IDs, no internal candidate field names or provider/tenant/consent/session inputs.
 - **Phase C2 target:** COMPLETE / QUALIFIED.
 - **Phase C2 qualified SHA:** `5292857e3fc632668be1c6cced5bdcedf74b5846`.
@@ -43,7 +45,7 @@
 - **Phase D1 target:** explicit patient Save → canonical `DocumentReference` + completion `TimelineEvent` + value-free audit + import `COMPLETED`, atomically. No Medication/LabResult promotion from lossy review text.
 - **Typed-persistence audit conclusion:** `DocumentReference` is the safe canonical target for all five external source categories. Imaging/discharge/other have no stronger dedicated model. Prescription is backed by `Medication` only when name/strength/frequency are structured; LabResult requires unit/reference range. Current Task-1 candidate persistence did not retain those structured extraction fields, so promoting reviewed strings would violate the no-invention rule.
 - **Phase D1 qualification state:** COMPLETE / QUALIFIED at exact code SHA `7a13384ab07d6542179082ba94eee678b55d7434`.
-- **Current concurrency:** PR #51 is MERGED and reconciled. PR #50 remains open on protected Treatment Session V1 gate files and does not overlap Task-1 lifecycle/erasure files.
+- **Current concurrency:** PR #51 and PR #50 are MERGED and reconciled into main. Follow-on work must branch from current main.
 - **Protected Slice-10B behavior:** remains unchanged by Task-1 extraction. Do not alter `ClinicalAccessSession`, Signed Consent V3, treatment-session authority, provider treatment-consent authority, or provider delegated-trust semantics.
 - **Unexpected leftover refs:** prior tooling left `tmp-inspect-fe57-patient-import`, `ops/task1-exact-head-qualification-2`, and `_phaseb-object-check`. The available connector exposes no ref-deletion action. Do not use or repurpose these refs.
 
@@ -334,7 +336,7 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 
 ## Merge / Rebase Safety
 
-- Keep PR #47 draft and unmerged; Phase-B success does not complete the overall Task-1 workstream.
+- PR #47 is merged as the qualified Phase-D2 consolidation checkpoint. Remaining Task-1 work is deferred and must use a fresh branch from current main.
 - The current reconciliation includes main `34510ec1...` at `10c7fac1...`; do not rebase again merely because history is non-linear.
 - Preserve the single Alembic chain ending in `20260916_patient_external_record_import`.
 - Preserve main's approved pilot head separation unless Task-1 migration receives explicit pilot approval.
@@ -381,4 +383,4 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 - [ ] Qualify retry/cancel/recovery and patient-merge lifecycle behavior.
 - [ ] Implement onboarding + Records patient frontend flow.
 - [ ] Complete final end-to-end Task-1 qualification.
-- [ ] Keep PR draft until all required Task-1 phases are complete.
+- [x] Consolidate the qualified Phase-D2 checkpoint into main via PR #47; defer remaining phases to fresh follow-up branches.

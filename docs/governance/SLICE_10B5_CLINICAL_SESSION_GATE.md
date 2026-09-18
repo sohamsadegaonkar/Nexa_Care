@@ -1,13 +1,18 @@
 # Slice 10B.5a — Central Treatment Session Gate and Encounter Correlation
 
-Status: **IMPLEMENTED — EXACT-HEAD QUALIFICATION PENDING**
+Status: **QUALIFIED AND MERGED INTO MAIN**
 
 Parent qualified claim/mint tree:
 `f30a9b47ee6db331d22aba0dbd5862134be282a3`
 (tree `8acae69b0b2bbde011d22c2ca024ef4bf6a50df1`).
 
-Implementation branch:
-`slice-10b5-clinical-session-gate`.
+Qualified implementation head:
+`22799e682602b3bf39fe53174f57c802db6725ca`.
+
+Merged by PR #50 into main at:
+`a92033cfc32629584c3ce0b50987a65bc5b10445`.
+
+The former implementation branch is historical after consolidation and must not be reused.
 
 ## Purpose
 
@@ -196,4 +201,4 @@ This slice does not claim:
 - production deployment;
 - physical-device qualification;
 - legal/regulatory compliance; or
-- that PR integration into `main` has occurred.
+- production/pilot qualification beyond the repository evidence recorded for this slice.
