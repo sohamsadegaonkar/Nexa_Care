@@ -9,16 +9,43 @@ import {
   User,
   ShieldCheck,
   LogOut,
+  FileText,
+  Pill,
+  FlaskConical,
 } from '@tamagui/lucide-icons'
 import { usePathname, useRouter } from 'next/navigation'
 import { clearPatientAuthSession, usePatientAuthSession } from '../../services/patientAuthSession'
 
 const navigation = [
   {
-    label: 'Dashboard',
+    label: 'Home',
     path: '/patient/dashboard',
     icon: LayoutDashboard,
     matches: (path: string) => path === '/patient/dashboard' || path === '/patient',
+  },
+  {
+    label: 'Timeline',
+    path: '/patient/timeline',
+    icon: Activity,
+    matches: (path: string) => path === '/patient/timeline',
+  },
+  {
+    label: 'Records',
+    path: '/patient/records',
+    icon: FileText,
+    matches: (path: string) => path.startsWith('/patient/records'),
+  },
+  {
+    label: 'Prescriptions',
+    path: '/patient/prescriptions',
+    icon: Pill,
+    matches: (path: string) => path === '/patient/prescriptions',
+  },
+  {
+    label: 'Reports',
+    path: '/patient/reports',
+    icon: FlaskConical,
+    matches: (path: string) => path === '/patient/reports',
   },
   {
     label: 'Access History',
@@ -27,19 +54,13 @@ const navigation = [
     matches: (path: string) => path === '/patient/access-history',
   },
   {
-    label: 'Health Timeline',
-    path: '/patient/timeline',
-    icon: Activity,
-    matches: (path: string) => path === '/patient/timeline',
-  },
-  {
-    label: 'Phone Discoverability',
+    label: 'Discoverability',
     path: '/patient/discoverability',
     icon: ShieldCheck,
     matches: (path: string) => path === '/patient/discoverability',
   },
   {
-    label: 'My Profile',
+    label: 'Profile',
     path: '/patient/profile',
     icon: User,
     matches: (path: string) => path === '/patient/profile',
