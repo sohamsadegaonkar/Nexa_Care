@@ -420,6 +420,53 @@ Qualification state: **COMPLETE / QUALIFIED** on exact SHA `173c705327916d310dd4
 - Landed lifecycle audit: `assert_patient_external_record_access_active(...)` currently enforces erasure state but does not yet reject retired/soft-deleted patient identity.
 - Landed extraction audit: `process_patient_external_record(...)` already accepts `FAILED_RETRYABLE` internally and increments attempts under ownership/row-lock checks; D3 will publish a retry-only entrypoint without widening that qualified authority surface.
 
+### D3 implementation commits
+
+- `bfba9670555372d2727f849a08ad29f64f533e77` — start fresh D3 handoff from consolidated main.
+- `d9e15f4fd8b44a24e4094230afcf52ce2bf48852` — shared lifecycle gate denies retired/soft-deleted patient identity.
+- `cc19f1c2c5939caea1e462d4292d657fbd76ac35` — strict `FAILED_RETRYABLE` retry service.
+- `f1ab9dbaf4a60c0da6bca86f73164a2947be6050` — patient-owned cancellation service.
+- `e03e61ec665be4e0add415df230ffbb8a44062e5` — publish patient-self retry/cancel routes.
+- `ca870c44fe986358df4f7e4576b3221e3320b98c` / `412f0c048a9c48fae86e8a043e396d6cea342511` / `603e5eb41f04761498d4de42e2c08c508a29eb3c` — fail-closed audit/race handling and row-lock release hardening.
+- `3ae346174dcb022ce22a67fc546c9efc83abd340` — retired-patient lifecycle gate regression coverage.
+- `ecba4b499a43e76e1000b3d9c0c7133e5dfbe396` — retry/cancel adversarial state, ownership, failure, audit, and source-retention coverage.
+- `c57f0711f4d1b4019298a52fe5c5c5ffbbde0c28` — patient route authority + merged-old identity regression coverage.
+- `782e778f4dd60f77c2d64484086817f523730b04` — additive shared route/audit catalog updates.
+
+### D3 files changed
+
+Runtime:
+- `app/services/patient_external_record_lifecycle.py`
+- `app/services/patient_external_record_extraction.py`
+- `app/services/patient_external_record_cancellation.py`
+- `app/api/v2/patient_external_record_routes.py`
+
+Tests/governance:
+- `tests/test_patient_external_record_lifecycle.py`
+- `tests/test_patient_external_record_extraction.py`
+- `tests/test_patient_external_record_cancellation.py`
+- `tests/test_patient_external_record_d3_lifecycle.py`
+- `tests/test_patient_external_record_api_contract.py`
+- `tests/test_route_registration.py` — integration-controlled, additive only.
+- `tests/test_audit_event_coverage.py` — integration-controlled, additive only.
+- this handoff.
+
+Task-0 implementation files changed: **NONE**.
+Task-2-owned implementation/frontend files changed: **NONE**.
+Migration files changed: **NONE**.
+
+### D3 concurrency checks
+
+- D3 start: main `337c8229de2267aaa1a07410833a57eaf040411c`, no open PRs, no active parallel branches.
+- Immediately before editing `tests/test_route_registration.py` and `tests/test_audit_event_coverage.py`: main remained `337c8229...`, no open PRs, and both branch copies were byte-identical to current main.
+- Candidate diff is ahead of the same main with no behind commits and no protected Task-0 or Task-2 implementation paths.
+
+### D3 qualification candidate
+
+- Candidate before final handoff refresh: `782e778f4dd60f77c2d64484086817f523730b04`.
+- Focused tests / Ruff / A-B-C / frontend-native / Vercel: **NOT YET QUALIFIED**.
+- Any green result from a different SHA must not be reused.
+
 ### D3 qualification state
 
 - Focused tests: NOT RUN.
