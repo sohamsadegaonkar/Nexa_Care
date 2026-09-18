@@ -14,6 +14,12 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clinical_session_gate import (
+    TreatmentSessionV1Authority,
+    TreatmentSessionV1GateDenied,
+    TreatmentSessionV1GateUnavailable,
+    require_clinical_session,
+)
 from app.core.database import get_db_session
 from app.core.dependencies import require_clinical_capability
 from app.core.redis import get_async_redis_client
@@ -23,7 +29,10 @@ from app.models.patient_device_keys import PatientDeviceKey
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import AuditDomain, current_audit_context
+from app.security.clinical_access_policy import ClinicalAccessOperation
 from app.security.provider_capabilities import ClinicalCapability
+from app.services.audit_outbox import enqueue_audit_event
+from app.services.canonical_encounter import stage_canonical_encounter
 from app.services.clinical_access_session_store import revoke_by_request
 from app.services.signed_treatment_session_v1 import (
     SIGNED_TREATMENT_SESSION_V1_PROTOCOL_VERSION,
@@ -70,6 +79,11 @@ class TreatmentSessionV1ClaimResponse(BaseModel):
     purpose: str
     allowed_operations: list[str]
     expires_at: str
+
+
+class TreatmentEncounterResponse(BaseModel):
+    encounter_id: str
+    clinical_session_id: str
 
 
 def _authority_http(exc: Exception) -> HTTPException:
@@ -402,3 +416,62 @@ async def claim_treatment_session_v1(
         allowed_operations=list(capability.allowed_operations),
         expires_at=capability.expires_at,
     )
+
+@router.post(
+    "/encounter",
+    status_code=status.HTTP_200_OK,
+    response_model=TreatmentEncounterResponse,
+)
+async def create_treatment_encounter(
+    response: Response,
+    authority: TreatmentSessionV1Authority = Depends(
+        require_clinical_session(ClinicalAccessOperation.CREATE_ENCOUNTER)
+    ),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Create or return the canonical Encounter for one qualified treatment session."""
+
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        encounter, _created = await stage_canonical_encounter(
+            db=db,
+            authority=authority,
+        )
+        await enqueue_audit_event(
+            db,
+            audit_context=current_audit_context(AuditDomain.PATIENT_RECORD),
+            idempotency_key=f"clinical-encounter:{authority.session_id}",
+            actor_id=str(authority.provider_id),
+            event_type="CLINICAL_ENCOUNTER_CREATED",
+            target_id=str(encounter.encounter_id),
+            patient_id=str(authority.patient_id),
+            metadata={
+                "clinical_session_id": str(authority.session_id),
+                "operation": ClinicalAccessOperation.CREATE_ENCOUNTER.value,
+            },
+        )
+        await db.commit()
+    except TreatmentSessionV1GateDenied as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": exc.code},
+        ) from exc
+    except TreatmentSessionV1GateUnavailable as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": exc.code},
+        ) from exc
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "TREATMENT_ENCOUNTER_CREATION_UNAVAILABLE"},
+        ) from exc
+
+    return TreatmentEncounterResponse(
+        encounter_id=str(encounter.encounter_id),
+        clinical_session_id=str(authority.session_id),
+    )
+
