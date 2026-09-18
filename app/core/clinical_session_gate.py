@@ -213,8 +213,6 @@ def _durable_session_matches(
         row_provider_id = _uuid(getattr(row, "provider_id"))
         row_hospital_id = _uuid(getattr(row, "hospital_id"))
         row_request_id = _uuid(getattr(row, "consent_request_id"))
-        row_encounter_raw = getattr(row, "encounter_id")
-        row_encounter_id = _uuid(row_encounter_raw) if row_encounter_raw is not None else None
         row_operations = normalize_treatment_operations(getattr(row, "allowed_operations"))
     except (AttributeError, TreatmentSessionV1GateDenied, TreatmentSessionV1ProtocolError):
         return False
