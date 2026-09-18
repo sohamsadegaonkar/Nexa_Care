@@ -1,8 +1,7 @@
-"""Isolated Treatment Session V1 WRITE_VITALS HTTP boundary.
+"""Treatment Session V1 WRITE_VITALS HTTP boundary.
 
-This router is intentionally not mounted in app.main until the Task-1
-shared-route integration gate lands. The endpoint is nevertheless complete
-and directly testable as an isolated APIRouter surface.
+The router is mounted only after the Task-1 shared-route integration gate
+landed. It exposes exactly one bounded clinical write family.
 """
 
 from __future__ import annotations
