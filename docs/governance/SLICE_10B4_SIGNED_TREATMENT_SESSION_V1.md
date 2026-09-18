@@ -1,6 +1,6 @@
 # Slice 10B.4 — Patient-Signed Treatment Session V1
 
-Status: **SIGNED PROTOCOL QUALIFIED — ONE-TIME CLAIM/MINT IMPLEMENTED, EXACT-HEAD QUALIFICATION PENDING**
+Status: **SIGNED PROTOCOL + ONE-TIME CLAIM/MINT QUALIFIED — 10B.5 GATE QUALIFICATION PENDING**
 
 Qualified signed-protocol checkpoint:
 `87ee87e011206f1684e8590500e2584c4ea15c14` on `main`.
@@ -8,7 +8,19 @@ Qualified signed-protocol checkpoint:
 Claim/mint implementation checkpoint:
 `3891ae72a48da0e4bafbf4f5995a05abd39aebca` on `main`.
 
-This documentation commit is the immutable exact-head qualification target for the claim/mint increment.
+Claim/mint qualified tree checkpoint:
+`f30a9b47ee6db331d22aba0dbd5862134be282a3`
+(tree `8acae69b0b2bbde011d22c2ca024ef4bf6a50df1`).
+
+PR #49's GitHub merge-test commit
+`449c59e0bfa47496ae3d7d6482f0dca4ac518feb` has the exact same tree SHA.
+Backend CI #674 passed Partition A, PostgreSQL Partition B, and PostgreSQL +
+Redis Partition C, including all three zero-skip assertions. The only delta
+from `342d25c` is the stale Slice 7B evidence-fixture migration-head marker;
+the production validator and treatment authority were unchanged.
+
+This records qualification of the exact tree. It does not claim PR #49 has
+been merged to `main`; merge/integration remains a separate governed action.
 
 ## Why this protocol exists
 
@@ -128,4 +140,12 @@ Focused staging qualification before landing on `main` passed Ruff and 60 focuse
 
 ## Next implementation step
 
-After the claim/mint target is fully qualified, implement the central `require_clinical_session(operation)` authority gate and encounter binding. Do not connect treatment authority to prescription, diagnosis, vitals, notes, investigation, or encounter write endpoints until that gate has its own fail-closed adversarial qualification.
+Claim/mint qualification is now closed on the exact tree recorded above.
+Slice 10B.5a implements the central `require_clinical_session(operation)`
+authority gate plus a server-owned durable encounter-correlation primitive.
+
+The 10B.5a gate must qualify independently before any existing clinical write
+route is changed to consume the treatment token. Prescription, diagnosis,
+vitals, notes, investigation, document, allergy, or encounter write behavior
+must remain unchanged until that boundary has its own fail-closed adversarial
+qualification.
