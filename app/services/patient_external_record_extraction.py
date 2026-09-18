@@ -520,3 +520,9 @@ async def process_patient_external_record(
             status_code=503,
             detail={"error_code": "IMPORT_PERSISTENCE_UNAVAILABLE", "retryable": True},
         ) from exc
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=503,
+            detail={"error_code": "EXTRACTION_UNAVAILABLE", "retryable": True},
+        ) from exc

@@ -2,9 +2,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import inspect
+from types import SimpleNamespace
 import uuid
+from unittest.mock import AsyncMock, MagicMock
 
+from fastapi import HTTPException
 import pytest
+
+import app.services.patient_external_record_extraction as extraction_module
 
 from app.ai.extractor import (
     DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
@@ -16,6 +21,7 @@ from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
 from app.services.patient_external_record_extraction import (
     _candidate_evidence_id,
     _failure_status,
+    _load_owned_import_for_update,
     _reviewable_field_evidence,
     _source_digest,
     _validated_provider_result,
@@ -145,3 +151,87 @@ def test_source_integrity_digest_is_sha256_and_deterministic() -> None:
     assert len(_source_digest(data)) == 64
     assert _source_digest(data) == _source_digest(data)
     assert _source_digest(data) != _source_digest(data + b"-changed")
+
+
+@pytest.mark.asyncio
+async def test_owned_import_lookup_binds_patient_and_import_under_row_lock() -> None:
+    db = AsyncMock()
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = None
+    db.execute.return_value = result
+    patient_id = uuid.uuid4()
+    import_id = uuid.uuid4()
+
+    await _load_owned_import_for_update(
+        db,
+        patient_id=patient_id,
+        import_id=import_id,
+    )
+
+    statement = db.execute.await_args.args[0]
+    compiled = statement.compile()
+    bound_values = set(compiled.params.values())
+    assert patient_id in bound_values
+    assert import_id in bound_values
+    assert "patient_external_record_imports.patient_id" in str(statement)
+    assert "FOR UPDATE" in str(statement).upper()
+
+
+@pytest.mark.asyncio
+async def test_retired_patient_is_denied_before_source_or_extractor_access(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = AsyncMock()
+    row = SimpleNamespace(status="UPLOADED")
+
+    async def owned_import(*args, **kwargs):
+        return row
+
+    monkeypatch.setattr(
+        extraction_module,
+        "_load_owned_import_for_update",
+        owned_import,
+    )
+    db.get.return_value = SimpleNamespace(is_deleted=True)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await process_patient_external_record(
+            db,
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 410
+    assert exc_info.value.detail == {"error_code": "PATIENT_RECORD_RETIRED"}
+    db.rollback.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_unexpected_runtime_failure_rolls_back_with_value_free_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = AsyncMock()
+
+    async def unexpected_failure(*args, **kwargs):
+        raise RuntimeError("synthetic-sensitive-clinical-value")
+
+    monkeypatch.setattr(
+        extraction_module,
+        "_load_owned_import_for_update",
+        unexpected_failure,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await process_patient_external_record(
+            db,
+            patient_id=str(uuid.uuid4()),
+            import_id=uuid.uuid4(),
+        )
+
+    assert exc_info.value.status_code == 503
+    assert exc_info.value.detail == {
+        "error_code": "EXTRACTION_UNAVAILABLE",
+        "retryable": True,
+    }
+    assert "synthetic-sensitive-clinical-value" not in str(exc_info.value.detail)
+    db.rollback.assert_awaited_once()
