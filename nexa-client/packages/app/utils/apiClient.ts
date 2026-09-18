@@ -230,6 +230,150 @@ export interface PatientTimelineResponse {
   next_cursor: string | null
 }
 
+export interface PatientHealthSummaryResponse {
+  patient_id: string
+  counts: {
+    allergies: number
+    medications: number
+    vitals: number
+    labs: number
+    reports: number
+  }
+  allergy_highlights: Array<{
+    allergen: string
+    severity: string
+    risk_level: string
+    source: string
+    confidence?: number | null
+  }>
+  active_medications: Array<{
+    medication_name: string
+    dosage: string
+    frequency: string
+    prescribed_at?: string | null
+    source: string
+    confidence?: number | null
+  }>
+  latest_vitals: Array<{
+    type: string
+    value: string
+    unit: string
+    recorded_at?: string | null
+    source: string
+  }>
+  recent_labs: Array<{
+    test_name: string
+    value: string
+    unit: string
+    is_abnormal: boolean
+    recorded_at?: string | null
+    source: string
+  }>
+  recent_reports: Array<{
+    report_id: string
+    document_type: string
+    uploaded_at?: string | null
+    source: string
+  }>
+  recent_timeline_events: Array<{
+    event_id: string
+    event_type: string
+    title: string
+    summary: string
+    occurred_at: string
+    source: string
+    source_display?: string
+    confidence?: number | null
+    risk_level?: string | null
+    record_id?: string | null
+    category?: string | null
+  }>
+  last_updated: string | null
+}
+
+export interface PatientRecordCategoryItem {
+  category: 'allergies' | 'medications' | 'vitals' | 'labs' | 'documents'
+  label: string
+  icon: string
+  count: number
+  latest_record_date: string | null
+  preview: string | null
+}
+
+export interface PatientRecordsCategoriesResponse {
+  patient_id: string
+  categories: PatientRecordCategoryItem[]
+}
+
+export interface PatientCategoryRecordsResponse {
+  patient_id: string
+  category: string
+  records: Array<Record<string, any>>
+  next_cursor: string | null
+}
+
+export interface PatientRecordDetailResponse {
+  record_id: string
+  patient_id: string
+  category: string
+  title: string
+  fields: Record<string, any>
+  recorded_at: string | null
+  provenance: {
+    source: string
+    source_display: string
+    confidence?: number | null
+    risk_level?: string | null
+    source_document_id?: string | null
+    has_source_document: boolean
+  }
+}
+
+export interface PatientPrescriptionItem {
+  prescription_id: string
+  medication_name: string
+  strength: string
+  frequency: string
+  prescribed_at: string | null
+  source: string
+  source_display: string
+  risk_level: string
+  confidence?: number | null
+  has_source_document: boolean
+  source_document_id?: string | null
+}
+
+export interface PatientPrescriptionsResponse {
+  patient_id: string
+  prescriptions: PatientPrescriptionItem[]
+  next_cursor: string | null
+}
+
+export interface PatientReportItem {
+  report_id: string
+  report_title: string
+  document_type: string
+  uploaded_at: string | null
+  source: string
+  source_display: string
+  can_view_source: boolean
+}
+
+export interface PatientReportsResponse {
+  patient_id: string
+  reports: PatientReportItem[]
+  next_cursor: string | null
+}
+
+export interface PatientDocumentDetailResponse {
+  document_id: string
+  patient_id: string
+  document_type: string
+  uploaded_at: string | null
+  is_owner: boolean
+  view_authorized: boolean
+}
+
 export interface AppendVitalsRequest {
   encounter_id: string
   systolic_bp: number
@@ -1317,6 +1461,90 @@ export const NexaApiClient = {
       method: 'POST',
       body: JSON.stringify({ code }),
     })
+  },
+
+  // Patient Longitudinal Health Record (Self-Access)
+  getMyHealthSummary(): Promise<PatientHealthSummaryResponse> {
+    return request<PatientHealthSummaryResponse>('/api/v2/patient/me/summary', { method: 'GET' })
+  },
+
+  getMyTimeline(options?: {
+    cursor?: string | null
+    category?: string | null
+    limit?: number
+  }): Promise<PatientTimelineResponse> {
+    const params = new URLSearchParams()
+    if (options?.limit) params.set('limit', String(options.limit))
+    if (options?.cursor) params.set('cursor', options.cursor)
+    if (options?.category) params.set('category', options.category)
+    const qs = params.toString()
+    return request<PatientTimelineResponse>(
+      `/api/v2/patient/me/timeline${qs ? `?${qs}` : ''}`,
+      { method: 'GET' }
+    )
+  },
+
+  getMyRecordCategories(): Promise<PatientRecordsCategoriesResponse> {
+    return request<PatientRecordsCategoriesResponse>('/api/v2/patient/me/records', { method: 'GET' })
+  },
+
+  getMyRecordsByCategory(
+    category: string,
+    options?: { cursor?: string | null; limit?: number }
+  ): Promise<PatientCategoryRecordsResponse> {
+    const params = new URLSearchParams()
+    if (options?.limit) params.set('limit', String(options.limit))
+    if (options?.cursor) params.set('cursor', options.cursor)
+    const qs = params.toString()
+    return request<PatientCategoryRecordsResponse>(
+      `/api/v2/patient/me/records/${encodeURIComponent(category)}${qs ? `?${qs}` : ''}`,
+      { method: 'GET' }
+    )
+  },
+
+  getMyRecordDetail(
+    category: string,
+    recordId: string
+  ): Promise<PatientRecordDetailResponse> {
+    return request<PatientRecordDetailResponse>(
+      `/api/v2/patient/me/records/${encodeURIComponent(category)}/${encodeURIComponent(recordId)}`,
+      { method: 'GET' }
+    )
+  },
+
+  getMyPrescriptions(options?: {
+    cursor?: string | null
+    limit?: number
+  }): Promise<PatientPrescriptionsResponse> {
+    const params = new URLSearchParams()
+    if (options?.limit) params.set('limit', String(options.limit))
+    if (options?.cursor) params.set('cursor', options.cursor)
+    const qs = params.toString()
+    return request<PatientPrescriptionsResponse>(
+      `/api/v2/patient/me/prescriptions${qs ? `?${qs}` : ''}`,
+      { method: 'GET' }
+    )
+  },
+
+  getMyReports(options?: {
+    cursor?: string | null
+    limit?: number
+  }): Promise<PatientReportsResponse> {
+    const params = new URLSearchParams()
+    if (options?.limit) params.set('limit', String(options.limit))
+    if (options?.cursor) params.set('cursor', options.cursor)
+    const qs = params.toString()
+    return request<PatientReportsResponse>(
+      `/api/v2/patient/me/reports${qs ? `?${qs}` : ''}`,
+      { method: 'GET' }
+    )
+  },
+
+  getMyDocumentDetail(documentId: string): Promise<PatientDocumentDetailResponse> {
+    return request<PatientDocumentDetailResponse>(
+      `/api/v2/patient/me/documents/${encodeURIComponent(documentId)}`,
+      { method: 'GET' }
+    )
   },
 }
 

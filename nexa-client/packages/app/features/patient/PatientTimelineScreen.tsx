@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { apiClient } from '../../utils/apiClient'
 import SourceBadge from './badges/SourceBadge'
 import RiskBadge, { type RiskLevel } from './badges/RiskBadge'
+import PatientRecordDetailModal from './PatientRecordDetailModal'
 
 interface TimelineEntry {
   event_id: string
@@ -19,6 +20,9 @@ interface TimelineEntry {
   source_display?: string
   confidence?: number | null
   risk_level?: string | null
+  record_id?: string | null
+  category?: string | null
+  has_source_document?: boolean
 }
 
 interface TimelineResponse {
@@ -55,6 +59,15 @@ const CATEGORY_LABELS: Record<string, string> = {
   DIAGNOSIS: 'Diagnosis',
 }
 
+const FILTER_CATEGORIES = [
+  { key: 'ALL', label: 'All Events' },
+  { key: 'VITALS', label: 'Vitals' },
+  { key: 'MEDICATION', label: 'Medications' },
+  { key: 'LAB_RESULT', label: 'Labs' },
+  { key: 'DOCUMENT', label: 'Documents' },
+  { key: 'ALLERGY', label: 'Allergies' },
+]
+
 function sectionTitle(event: TimelineEntry): string {
   for (const candidate of [event.occurred_at, event.event_date]) {
     if (!candidate) continue
@@ -84,14 +97,20 @@ function normalizeTimelineResponse(response: unknown): TimelineResponse {
   if (response && typeof response === 'object') {
     const direct = response as Partial<TimelineResponse>
     if (Array.isArray(direct.events)) {
-      return direct as TimelineResponse
+      return {
+        events: direct.events,
+        next_cursor: direct.next_cursor ?? null,
+      }
     }
 
     const data = (response as { data?: unknown }).data
     if (data && typeof data === 'object') {
       const wrapped = data as Partial<TimelineResponse>
       if (Array.isArray(wrapped.events)) {
-        return wrapped as TimelineResponse
+        return {
+          events: wrapped.events,
+          next_cursor: wrapped.next_cursor ?? null,
+        }
       }
     }
   }
@@ -107,40 +126,93 @@ export default function PatientTimelineScreen({
   const [timeline, setTimeline] = useState<TimelineEntry[]>(initialTimeline ?? [])
   const [initialLoading, setInitialLoading] = useState(initialTimeline === undefined)
   const [refreshing, setRefreshing] = useState(false)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [activeFilter, setActiveFilter] = useState<string>('ALL')
   const [error, setError] = useState<string | null>(null)
+  const [selectedEvent, setSelectedEvent] = useState<TimelineEntry | null>(null)
   const timelineRef = useRef(initialTimeline ?? [])
   const requestInFlightRef = useRef(false)
 
-  const fetchTimeline = useCallback(async (mode: 'initial' | 'refresh') => {
-    if (requestInFlightRef.current) return
-    requestInFlightRef.current = true
-    if (timelineRef.current.length === 0) setInitialLoading(true)
-    else setRefreshing(true)
-    setError(null)
+  const fetchTimeline = useCallback(
+    async (mode: 'initial' | 'refresh' | 'append', cursor?: string | null, filterKey?: string) => {
+      if (requestInFlightRef.current) return
+      requestInFlightRef.current = true
 
-    try {
-      const response = (await apiClient.get('/api/v2/patient/me/timeline')) as unknown
-      const payload = normalizeTimelineResponse(response)
-      timelineRef.current = payload.events
-      setTimeline(payload.events)
+      if (mode === 'initial') {
+        if (timelineRef.current.length === 0) setInitialLoading(true)
+      } else if (mode === 'refresh') {
+        setRefreshing(true)
+      } else if (mode === 'append') {
+        setLoadingOlder(true)
+      }
       setError(null)
-    } catch (caught) {
-      setError(
-        caught instanceof Error && caught.message === 'INVALID_TIMELINE_RESPONSE'
-          ? 'Health timeline returned an invalid response.'
-          : 'Failed to load health timeline.'
-      )
-    } finally {
-      requestInFlightRef.current = false
-      setInitialLoading(false)
-      setRefreshing(false)
-    }
-  }, [])
+
+      try {
+        const params = new URLSearchParams()
+        params.set('limit', '20')
+        if (cursor) {
+          params.set('cursor', cursor)
+        }
+        const effectiveFilter = filterKey !== undefined ? filterKey : activeFilter
+        if (effectiveFilter && effectiveFilter !== 'ALL') {
+          // Map to backend category name
+          let catParam = effectiveFilter.toLowerCase()
+          if (catParam === 'lab_result') catParam = 'labs'
+          else if (catParam === 'medication') catParam = 'medications'
+          else if (catParam === 'allergy') catParam = 'allergies'
+          else if (catParam === 'document') catParam = 'documents'
+          params.set('category', catParam)
+        }
+
+        const qs = params.toString()
+        const url = `/api/v2/patient/me/timeline${qs ? `?${qs}` : ''}`
+        const response = (await apiClient.get(url)) as unknown
+        const payload = normalizeTimelineResponse(response)
+
+        if (mode === 'append') {
+          const merged = [...timelineRef.current, ...payload.events]
+          timelineRef.current = merged
+          setTimeline(merged)
+        } else {
+          timelineRef.current = payload.events
+          setTimeline(payload.events)
+        }
+        setNextCursor(payload.next_cursor)
+        setError(null)
+      } catch (caught) {
+        setError(
+          caught instanceof Error && caught.message === 'INVALID_TIMELINE_RESPONSE'
+            ? 'Health timeline returned an invalid response.'
+            : 'Failed to load health timeline.'
+        )
+      } finally {
+        requestInFlightRef.current = false
+        setInitialLoading(false)
+        setRefreshing(false)
+        setLoadingOlder(false)
+      }
+    },
+    [activeFilter]
+  )
 
   useEffect(() => {
     if (initialTimeline !== undefined) return
     void fetchTimeline('initial')
   }, [initialTimeline, fetchTimeline])
+
+  const handleFilterChange = (filterKey: string) => {
+    setActiveFilter(filterKey)
+    if (initialTimeline !== undefined) {
+      if (filterKey === 'ALL') {
+        setTimeline(initialTimeline)
+      } else {
+        setTimeline(initialTimeline.filter((ev) => ev.event_type === filterKey))
+      }
+      return
+    }
+    void fetchTimeline('initial', null, filterKey)
+  }
 
   const sections = useMemo(() => buildSections(timeline), [timeline])
 
@@ -158,6 +230,10 @@ export default function PatientTimelineScreen({
         borderRadius="$4"
         padding="$3"
         gap="$2"
+        pressStyle={{ opacity: 0.85 }}
+        onPress={() => setSelectedEvent(event)}
+        accessibilityRole="button"
+        accessibilityLabel={`View details for ${event.title}`}
       >
         <XStack
           alignItems="center"
@@ -209,11 +285,16 @@ export default function PatientTimelineScreen({
         <XStack
           alignItems="center"
           gap="$2"
+          justifyContent="space-between"
+          flexWrap="wrap"
         >
           <SourceBadge
             source={event.source === 'manual' ? 'manual' : 'ai_extracted'}
             confidence={event.confidence != null ? Math.round(event.confidence * 100) : undefined}
           />
+          <Text color="$color10" fontSize="$2">
+            View Details →
+          </Text>
         </XStack>
 
         {typeof event.source_display === 'string' && event.source_display.length > 0 ? (
@@ -238,6 +319,7 @@ export default function PatientTimelineScreen({
         paddingHorizontal="$4"
         paddingTop="$4"
         paddingBottom="$2"
+        gap="$2"
       >
         <H2
           color="$color"
@@ -251,6 +333,29 @@ export default function PatientTimelineScreen({
         >
           Your clinical events, consent-gated and de-identified.
         </Paragraph>
+
+        {/* Category Filter Pills */}
+        <XStack
+          gap="$2"
+          flexWrap="wrap"
+          paddingTop="$1"
+        >
+          {FILTER_CATEGORIES.map((cat) => {
+            const isActive = activeFilter === cat.key
+            return (
+              <Button
+                key={cat.key}
+                size="$2"
+                backgroundColor={isActive ? '$blue9' : '$backgroundHover'}
+                color={isActive ? 'white' : '$color'}
+                borderRadius="$3"
+                onPress={() => handleFilterChange(cat.key)}
+              >
+                {cat.label}
+              </Button>
+            )
+          })}
+        </XStack>
       </YStack>
 
       <SectionList
@@ -378,6 +483,31 @@ export default function PatientTimelineScreen({
             )}
           </YStack>
         }
+        ListFooterComponent={
+          nextCursor ? (
+            <YStack
+              paddingVertical="$3"
+              alignItems="center"
+              justifyContent="center"
+            >
+              <Button
+                size="$3"
+                theme="blue"
+                disabled={loadingOlder}
+                onPress={() => void fetchTimeline('append', nextCursor)}
+              >
+                {loadingOlder ? (
+                  <XStack gap="$2" alignItems="center">
+                    <Spinner size="small" color="white" />
+                    <Text color="white">Loading older events…</Text>
+                  </XStack>
+                ) : (
+                  'Load older timeline events'
+                )}
+              </Button>
+            </YStack>
+          ) : null
+        }
       />
 
       <YStack
@@ -396,6 +526,33 @@ export default function PatientTimelineScreen({
           ← Access History
         </Button>
       </YStack>
+
+      {/* Record Detail Modal */}
+      <PatientRecordDetailModal
+        open={selectedEvent !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedEvent(null)
+        }}
+        category={
+          selectedEvent?.category ||
+          (selectedEvent?.event_type ? selectedEvent.event_type.toLowerCase() : 'vitals')
+        }
+        recordId={selectedEvent?.record_id || selectedEvent?.event_id || null}
+        initialTitle={selectedEvent?.title}
+        initialFields={{
+          Summary: selectedEvent?.summary,
+          EventType: selectedEvent?.event_type,
+          Date: selectedEvent?.occurred_at || selectedEvent?.event_date,
+        }}
+        initialProvenance={{
+          source: selectedEvent?.source || 'manual',
+          source_display: selectedEvent?.source_display,
+          confidence: selectedEvent?.confidence,
+          risk_level: selectedEvent?.risk_level,
+          has_source_document: selectedEvent?.has_source_document,
+        }}
+        initialRecordedAt={selectedEvent?.occurred_at || selectedEvent?.event_date}
+      />
     </YStack>
   )
 }
