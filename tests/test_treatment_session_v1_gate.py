@@ -313,6 +313,78 @@ async def test_gate_rejects_encounter_binding_injected_into_redis(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_gate_rejects_missing_treatment_token(monkeypatch):
+    data = _fixture()
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied) as caught:
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=None,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+    assert caught.value.code == "TREATMENT_SESSION_TOKEN_REQUIRED"
+
+
+@pytest.mark.asyncio
+async def test_gate_rejects_revoked_durable_session(monkeypatch):
+    data = _fixture()
+    data.session.status = "REVOKED"
+    data.session.revoked_at = data.now
+    data.session.revocation_reason = "PATIENT_REVOKED"
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gate_rejects_durable_grant_scope_mismatch(monkeypatch):
+    data = _fixture()
+    data.grant.scope = ["clinical"]
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    with pytest.raises(gate.TreatmentSessionV1GateDenied):
+        await gate.validate_treatment_session_v1(
+            db=_DB(data.session, data.grant),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+
+@pytest.mark.asyncio
+async def test_gate_fails_closed_when_durable_store_is_unavailable(monkeypatch):
+    data = _fixture()
+    monkeypatch.setattr(gate, "get_async_redis_client", lambda: data.redis)
+
+    class _BrokenDB:
+        async def execute(self, _statement):
+            raise RuntimeError("postgres unavailable")
+
+    with pytest.raises(gate.TreatmentSessionV1GateUnavailable) as caught:
+        await gate.validate_treatment_session_v1(
+            db=_BrokenDB(),
+            token=data.token,
+            provider=data.provider,
+            required_operation=ClinicalAccessOperation.CREATE_ENCOUNTER,
+            now=data.now,
+        )
+
+    assert caught.value.code == "TREATMENT_SESSION_DURABLE_STORE_UNAVAILABLE"
+
+
+@pytest.mark.asyncio
 async def test_gate_fails_closed_when_redis_is_unavailable(monkeypatch):
     data = _fixture()
     monkeypatch.setattr(
