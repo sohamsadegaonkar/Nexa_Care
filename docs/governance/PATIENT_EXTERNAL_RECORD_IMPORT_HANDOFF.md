@@ -250,7 +250,7 @@ PR #48 is actively changing `tests/test_route_registration.py`. Adding new Task-
 ## Merge / Rebase Safety
 
 - Keep PR #47 draft and unmerged; Phase-B success does not complete the overall Task-1 workstream.
-- The current reconciliation already includes main `342d25cb...`; do not rebase again merely because history is non-linear.
+- The current reconciliation already includes main `20c75f96...`; do not rebase again merely because history is non-linear.
 - Preserve the single Alembic chain ending in `20260916_patient_external_record_import`.
 - Preserve main's approved pilot head separation unless Task-1 migration receives explicit pilot approval.
 - Preserve both treatment-session and patient external-record route registrations.
