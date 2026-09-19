@@ -96,7 +96,10 @@ production-like runtime, API startup then independently refuses to start unless:
 4. Redis is reachable;
 5. both configured KMS keys are enabled for encrypt/decrypt;
 6. the S3 bucket is reachable, uses default SSE-KMS, has all four public-access
-   block controls enabled, and has versioning enabled.
+   block controls enabled, and has versioning enabled;
+7. patient-source scanning is configured as task-local `clamd`, the daemon is
+   reachable, its signature database is within the configured freshness budget,
+   and the real scan readiness probe returns CLEAN.
 
 Discovery-index keyring validation additionally occurs at the security-sensitive
 phone binding/lookup boundary and fails closed with an unavailable result when
