@@ -169,3 +169,58 @@ def test_template_contract_contains_no_real_secret_or_account_value() -> None:
     assert payload["ROLE_ARN"].startswith("<")
     assert payload["OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE"].startswith("<")
     assert "OPERATIONS_AUTH_TOKEN" not in payload
+
+
+def test_activation_rejects_non_origin_url_and_invalid_proxy_cidr() -> None:
+    values = _valid_values()
+    values["API_BASE_URL"] = "https://api.pilot.example.test/unexpected-path"
+    values["FINAL_TRUSTED_PROXY_CIDRS"] = "not-a-cidr"
+    errors = validate_activation_values(values)
+    assert "API_BASE_URL: clean https origin required" in errors
+    assert "FINAL_TRUSTED_PROXY_CIDRS: valid CIDR required" in errors
+
+
+def test_activation_schema_requires_account_runtime_and_image_inputs() -> None:
+    schema = json.loads(
+        (ROOT / "deploy" / "ecs" / "pilot-deployment-values.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    required = set(schema["required"])
+    assert {
+        "ROLE_ARN",
+        "AWS_REGION",
+        "ECS_CLUSTER",
+        "ECS_SERVICE",
+        "ECR_REPOSITORY",
+        "CLAMD_ECR_REPOSITORY",
+        "API_IMAGE_DIGEST",
+        "CLAMD_IMAGE_DIGEST",
+        "ECS_EXECUTION_ROLE_ARN",
+        "ECS_TASK_ROLE_ARN",
+        "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST",
+        "QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST",
+        "OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE",
+        "API_BASE_URL",
+    } <= required
+    assert "OPERATIONS_AUTH_TOKEN" not in schema["properties"]
+
+
+def test_activation_runbook_preserves_security_cost_and_live_nonclaims() -> None:
+    text = (
+        ROOT / "docs" / "runbooks" / "AWS_PILOT_ACTIVATION_READINESS.md"
+    ).read_text(encoding="utf-8")
+    for marker in (
+        "GitHub deployment / qualification identity",
+        "ECS task execution role",
+        "Application runtime role",
+        "desiredCount=1",
+        "Do not add S3 lifecycle/retention rules",
+        "same Fargate task",
+        "DOCUMENT_EXTRACTION_PROVIDER=aws_textract",
+        "PRODUCTION SCANNER DEPLOYMENT NOT_RUN",
+        "LIVE AWS PILOT NOT_RUN",
+    ):
+        assert marker in text
+    assert "AdministratorAccess" in text
+    assert "Do not fabricate any of them" in text
