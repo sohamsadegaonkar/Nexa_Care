@@ -23,6 +23,10 @@ from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
 from app.models.patient import Patient
 from app.models.patient_external_record_import import PatientExternalRecordCandidate
 from app.models.patient_records import DocumentReference, TimelineEvent
+from app.security.audit_context import (
+    bind_trusted_audit_tenant,
+    reset_trusted_audit_scope,
+)
 from app.security.patient_source_malware_scanner import (
     ClamdPatientSourceMalwareScanner,
     MalwareScanOutcome,
@@ -51,6 +55,16 @@ from app.services.patient_external_record_source_safety import (
 
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _trusted_synthetic_audit_scope():
+    token = bind_trusted_audit_tenant("d6-integration-tenant")
+    try:
+        yield
+    finally:
+        reset_trusted_audit_scope(token)
+
 
 _EICAR = (
     b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!"
