@@ -28,7 +28,7 @@ ECR_IMAGE_RE = re.compile(
 ECS_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,255}$")
 ECR_REPOSITORY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{1,255}$")
 HOST_RE = re.compile(r"^[A-Za-z0-9.-]+$")
-PLACEHOLDER_RE = re.compile(r"^<[^<>]+>$")
+PLACEHOLDER_FRAGMENT_RE = re.compile(r"<[^<>]+>")
 TASK_PLACEHOLDER_RE = re.compile(r"<([A-Z0-9_]+)>")
 
 ACCOUNT_INPUTS = (
@@ -111,7 +111,12 @@ def _validate_role_arn(value: str, name: str, errors: list[str]) -> str | None:
     return match.group("account")
 
 
-def _validate_secret_reference(value: str, name: str, account: str | None, errors: list[str]) -> None:
+def _validate_secret_reference(
+    value: str,
+    name: str,
+    account: str | None,
+    errors: list[str],
+) -> None:
     prefix = f"arn:aws:secretsmanager:{EXPECTED_REGION}:"
     if not value.startswith(prefix) or ":secret:" not in value:
         errors.append(f"{name}: ap-south-1 Secrets Manager ARN required")
@@ -151,7 +156,9 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
         _require(values, name, errors)
 
     if "OPERATIONS_AUTH_TOKEN" in values:
-        errors.append("OPERATIONS_AUTH_TOKEN: raw token values must not be stored in the activation file")
+        errors.append(
+            "OPERATIONS_AUTH_TOKEN: raw token values must not be stored in the activation file"
+        )
 
     region = _string(values, "AWS_REGION")
     if region and region != EXPECTED_REGION:
@@ -171,17 +178,29 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
 
     for name in ("ECS_CLUSTER", "ECS_SERVICE"):
         value = _string(values, name)
-        if value and not PLACEHOLDER_FRAGMENT_RE.search(value) and not ECS_NAME_RE.fullmatch(value):
+        if (
+            value
+            and not PLACEHOLDER_FRAGMENT_RE.search(value)
+            and not ECS_NAME_RE.fullmatch(value)
+        ):
             errors.append(f"{name}: invalid ECS name")
 
     for name in ("ECR_REPOSITORY", "CLAMD_ECR_REPOSITORY"):
         value = _string(values, name)
-        if value and not PLACEHOLDER_FRAGMENT_RE.search(value) and not ECR_REPOSITORY_RE.fullmatch(value):
+        if (
+            value
+            and not PLACEHOLDER_FRAGMENT_RE.search(value)
+            and not ECR_REPOSITORY_RE.fullmatch(value)
+        ):
             errors.append(f"{name}: invalid ECR repository name")
 
     for name in ("API_IMAGE_DIGEST", "CLAMD_IMAGE_DIGEST"):
         value = _string(values, name)
-        if value and not PLACEHOLDER_FRAGMENT_RE.search(value) and not DIGEST_RE.fullmatch(value):
+        if (
+            value
+            and not PLACEHOLDER_FRAGMENT_RE.search(value)
+            and not DIGEST_RE.fullmatch(value)
+        ):
             errors.append(f"{name}: immutable sha256 digest required")
 
     api_digest = _string(values, "API_IMAGE_DIGEST")
@@ -312,7 +331,9 @@ def validate_task_definition(
     if api.get("essential") is not True or scanner.get("essential") is not True:
         errors.append("task.containerDefinitions: API and clamd must both be essential")
     if scanner.get("portMappings"):
-        errors.append("patient-source-clamd.portMappings: scanner must not be publicly exposed")
+        errors.append(
+            "patient-source-clamd.portMappings: scanner must not be publicly exposed"
+        )
 
     api_image = str(api.get("image") or "")
     scanner_image = str(scanner.get("image") or "")
@@ -326,7 +347,9 @@ def validate_task_definition(
         if api_image != _string(values, "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST"):
             errors.append("api.image: does not match qualified activation input")
         if scanner_image != _string(values, "QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST"):
-            errors.append("scanner.image: does not match qualified activation input")
+            errors.append(
+                "scanner.image: does not match qualified activation input"
+            )
         if task.get("executionRoleArn") != _string(values, "ECS_EXECUTION_ROLE_ARN"):
             errors.append("task.executionRoleArn: does not match activation input")
         if task.get("taskRoleArn") != _string(values, "ECS_TASK_ROLE_ARN"):
@@ -335,7 +358,9 @@ def validate_task_definition(
     environment = _container_environment(api)
     for name, expected_value in EXPECTED_API_ENVIRONMENT.items():
         if environment.get(name) != expected_value:
-            errors.append(f"api.environment.{name}: expected {expected_value}")
+            errors.append(
+                f"api.environment.{name}: expected {expected_value}"
+            )
 
     depends_on = api.get("dependsOn") or []
     if {
@@ -363,7 +388,9 @@ def validate_task_definition(
             continue
         value_from = str(secret.get("valueFrom") or "")
         if not value_from.startswith(f"arn:aws:secretsmanager:{EXPECTED_REGION}:"):
-            errors.append(f"api.secrets.{secret.get('name')}: Secrets Manager ARN required")
+            errors.append(
+                f"api.secrets.{secret.get('name')}: Secrets Manager ARN required"
+            )
 
     return list(dict.fromkeys(errors))
 
@@ -433,9 +460,14 @@ def main() -> int:
         print("FAIL: AWS pilot activation inputs are not safe to deploy")
         return 1
 
-    print("PASS: activation inputs are complete, immutable, and region-consistent")
+    print(
+        "PASS: activation inputs are complete, immutable, and region-consistent"
+    )
     print("PASS: rendered task preserves API + task-local clamd topology")
-    print("PASS: task uses Textract, S3, KMS, Secrets Manager references, and no static AWS keys")
+    print(
+        "PASS: task uses Textract, S3, KMS, Secrets Manager references, "
+        "and no static AWS keys"
+    )
     print("INFO: no AWS API was called")
 
     if args.render_output is not None:
