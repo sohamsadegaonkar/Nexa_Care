@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.ai.extractor import (
     DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION,
+    DemoExtractionProvider,
     ExtractionProviderResult,
 )
 from app.models.ai_models import ExtractedMedicalDocument, ProviderFieldEvidence
@@ -72,7 +73,7 @@ _EICAR = (
 )
 
 
-class _SyntheticReviewableExtractor:
+class _SyntheticReviewableExtractor(DemoExtractionProvider):
     adapter_identity = "demo"
     contract_version = DEMO_MEDICAL_DOCUMENT_CONTRACT_VERSION
 
