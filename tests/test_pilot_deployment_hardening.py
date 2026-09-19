@@ -35,6 +35,7 @@ def valid_pilot_environment() -> dict[str, str]:
         "ENCRYPTION_BACKEND": "kms",
         "AWS_REGION": "ap-south-1",
         "KMS_KEY_ID": "alias/synthetic-envelope",
+        "MEDICATION_CATALOG_SIGNING_KEY_ID": "alias/synthetic-medication-catalog-signing",
         "AWS_PATIENT_SPECIFIC_KMS_KEYS": "false",
         "DATABASE_URL": (
             "postgresql+asyncpg://synthetic:synthetic@db.example.test:5432/nexa"
@@ -111,7 +112,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 
 def test_migration_script_remains_pinned_to_approved_pilot_head() -> None:
-    assert run_pilot_migrations.EXPECTED_HEAD == "20260919_prescriber_eligibility"
+    assert run_pilot_migrations.EXPECTED_HEAD == "20260919_medication_catalog"
 
 
 def test_migration_script_scopes_url_and_redacts_command_output(
