@@ -13,25 +13,18 @@ Phase 13 security invariants:
 
 from __future__ import annotations
 
-import hashlib
-import hmac
 import uuid
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v2.consent_history_routes import (
-    ConsentHistoryItem,
     _serialize_history,
     mint_public_grant_ref,
     parse_and_verify_public_grant_ref,
-    revoke_self_consent_grant,
 )
 from app.core.clinical_session_gate import (
-    TreatmentSessionV1GateDenied,
     _durable_grant_matches,
     _durable_session_matches,
 )

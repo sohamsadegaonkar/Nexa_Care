@@ -9,7 +9,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
