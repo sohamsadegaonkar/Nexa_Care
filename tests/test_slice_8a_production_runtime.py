@@ -60,6 +60,7 @@ def valid_production_environment() -> dict[str, str]:
         "PATIENT_SOURCE_CLAMD_CONNECT_TIMEOUT_SECONDS": "2",
         "PATIENT_SOURCE_CLAMD_SCAN_TIMEOUT_SECONDS": "30",
         "PATIENT_SOURCE_CLAMD_MAX_BYTES": "10485760",
+        "PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS": "48",
     }
 
 
