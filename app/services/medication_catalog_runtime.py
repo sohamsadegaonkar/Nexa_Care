@@ -105,38 +105,43 @@ class MedicationCatalogRuntimeService:
         if len(active) != 1:
             raise MedicationCatalogRuntimeError("CATALOG_UNAVAILABLE")
         release = active[0]
-        await self._verify_release(release)
+        try:
+            await self._verify_release(release)
 
-        entry = (
-            await self.db.execute(
-                select(MedicationCatalogEntry).where(
-                    MedicationCatalogEntry.release_id == release.id,
-                    MedicationCatalogEntry.medication_code == code,
+            entry = (
+                await self.db.execute(
+                    select(MedicationCatalogEntry).where(
+                        MedicationCatalogEntry.release_id == release.id,
+                        MedicationCatalogEntry.medication_code == code,
+                    )
                 )
-            )
-        ).scalar_one_or_none()
-        if entry is None:
-            raise MedicationCatalogRuntimeError("CATALOG_MEDICATION_DENIED")
-        if (
-            not entry.v1_universal_allowed
-            or entry.terminology_status != TerminologyConceptStatus.ACTIVE.value
-        ):
-            raise MedicationCatalogRuntimeError("CATALOG_MEDICATION_DENIED")
+            ).scalar_one_or_none()
+            if entry is None:
+                raise MedicationCatalogRuntimeError("CATALOG_MEDICATION_DENIED")
+            if (
+                not entry.v1_universal_allowed
+                or entry.terminology_status != TerminologyConceptStatus.ACTIVE.value
+            ):
+                raise MedicationCatalogRuntimeError("CATALOG_MEDICATION_DENIED")
 
-        latest_emergency = (
-            await self.db.execute(
-                select(MedicationCatalogEmergencyDeny)
-                .where(
-                    MedicationCatalogEmergencyDeny.medication_code == code,
-                    MedicationCatalogEmergencyDeny.effective_at <= moment,
+            latest_emergency = (
+                await self.db.execute(
+                    select(MedicationCatalogEmergencyDeny)
+                    .where(
+                        MedicationCatalogEmergencyDeny.medication_code == code,
+                        MedicationCatalogEmergencyDeny.effective_at <= moment,
+                    )
+                    .order_by(
+                        MedicationCatalogEmergencyDeny.version.desc(),
+                        MedicationCatalogEmergencyDeny.id.desc(),
+                    )
+                    .limit(1)
                 )
-                .order_by(
-                    MedicationCatalogEmergencyDeny.version.desc(),
-                    MedicationCatalogEmergencyDeny.id.desc(),
-                )
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+            ).scalar_one_or_none()
+        except MedicationCatalogRuntimeError:
+            raise
+        except Exception as exc:
+            raise MedicationCatalogRuntimeError("CATALOG_UNAVAILABLE") from exc
         if (
             latest_emergency is not None
             and latest_emergency.action == MedicationEmergencyAction.DENY.value
