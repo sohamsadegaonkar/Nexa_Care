@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import os
@@ -25,6 +26,7 @@ from app.models.patient_records import DocumentReference, TimelineEvent
 from app.security.patient_source_malware_scanner import (
     ClamdPatientSourceMalwareScanner,
     MalwareScanOutcome,
+    PatientSourceMalwareScannerConfig,
     get_patient_source_malware_scanner_config,
 )
 from app.services.patient_external_record_extraction import (
@@ -140,6 +142,81 @@ async def _real_scanner() -> ClamdPatientSourceMalwareScanner:
     scanner = ClamdPatientSourceMalwareScanner(config)
     assert await scanner.ready() is True
     return scanner
+
+
+async def _serve_once(
+    handler,
+) -> tuple[asyncio.AbstractServer, int]:
+    server = await asyncio.start_server(handler, "127.0.0.1", 0)
+    socket = server.sockets[0]
+    return server, int(socket.getsockname()[1])
+
+
+async def test_malformed_clamd_reply_fails_closed_at_socket_boundary() -> None:
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(4096)
+        writer.write(b"malformed-response\0")
+        await writer.drain()
+        writer.close()
+        await writer.wait_closed()
+
+    server, port = await _serve_once(handler)
+    try:
+        scanner = ClamdPatientSourceMalwareScanner(
+            PatientSourceMalwareScannerConfig(
+                provider="clamd",
+                host="127.0.0.1",
+                port=port,
+                connect_timeout_seconds=1.0,
+                scan_timeout_seconds=1.0,
+                max_bytes=1024,
+                max_signature_age_hours=168,
+            )
+        )
+        result = await scanner.scan(
+            b"synthetic",
+            content_hash="e" * 64,
+            mime_type="application/pdf",
+        )
+        assert result.outcome is MalwareScanOutcome.UNAVAILABLE
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+async def test_delayed_clamd_reply_times_out_fail_closed() -> None:
+    async def handler(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        await reader.read(4096)
+        await asyncio.sleep(0.2)
+        writer.write(b"stream: OK\0")
+        try:
+            await writer.drain()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+    server, port = await _serve_once(handler)
+    try:
+        scanner = ClamdPatientSourceMalwareScanner(
+            PatientSourceMalwareScannerConfig(
+                provider="clamd",
+                host="127.0.0.1",
+                port=port,
+                connect_timeout_seconds=1.0,
+                scan_timeout_seconds=0.05,
+                max_bytes=1024,
+                max_signature_age_hours=168,
+            )
+        )
+        result = await scanner.scan(
+            b"synthetic",
+            content_hash="f" * 64,
+            mime_type="application/pdf",
+        )
+        assert result.outcome is MalwareScanOutcome.UNAVAILABLE
+    finally:
+        server.close()
+        await server.wait_closed()
 
 
 async def test_real_clamd_clean_and_eicar_verdicts_and_exact_hash_binding() -> None:
