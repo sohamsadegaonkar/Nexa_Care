@@ -58,10 +58,10 @@ def required_evidence_dimensions() -> frozenset[MedicationEvidenceDimension]:
     return _REQUIRED_EVIDENCE_DIMENSIONS
 
 
-def derive_v1_universal_allowed(
+def classifications_support_v1_universal(
     facts: MedicationCatalogEntryPolicyFacts,
 ) -> bool:
-    """Return the sole server-owned v1 universal/CARE_MODE_UNKNOWN decision."""
+    """Return whether non-review classification facts support a positive entry."""
 
     if facts.terminology_status is not TerminologyConceptStatus.ACTIVE:
         return False
@@ -83,6 +83,16 @@ def derive_v1_universal_allowed(
     if facts.regulatory_product_status is not RegulatoryProductStatus.CURRENT:
         return False
     if not _REQUIRED_EVIDENCE_DIMENSIONS.issubset(facts.evidence_dimensions):
+        return False
+    return True
+
+
+def derive_v1_universal_allowed(
+    facts: MedicationCatalogEntryPolicyFacts,
+) -> bool:
+    """Return the sole server-owned v1 universal/CARE_MODE_UNKNOWN decision."""
+
+    if not classifications_support_v1_universal(facts):
         return False
 
     first = facts.first_reviewer_provider_id
