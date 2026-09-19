@@ -208,9 +208,10 @@ async def test_changed_source_hash_never_reuses_clean_verdict(
     )
     scanner = _Scanner(MalwareScanOutcome.CLEAN)
 
+    changed = data[:-1] + (b"X" if data[-1:] != b"X" else b"Y")
     with pytest.raises(PatientSourceSafetyError) as caught:
         await qualify_patient_source_for_extraction(
-            data + b"changed",
+            changed,
             mime_type="application/pdf",
             expected_hash=hashlib.sha256(data).hexdigest(),
             scanner=scanner,
