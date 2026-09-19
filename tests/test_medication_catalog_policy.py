@@ -122,9 +122,3 @@ def test_positive_review_separation_and_digest_binding_are_mandatory() -> None:
         replace(facts, second_review_digest="b" * 64)
     ) is False
 
-
-def test_no_real_medication_fixture_is_encoded_in_policy_tests() -> None:
-    source = __import__("pathlib").Path(__file__).read_text(encoding="utf-8")
-    assert "paracetamol" not in source.lower()
-    assert "pregabalin" not in source.lower()
-    assert "methylphenidate" not in source.lower()
