@@ -204,6 +204,28 @@ export default function PatientHealthHome() {
             </Paragraph>
           </YStack>
 
+
+          <YStack
+            flex={1}
+            minWidth={140}
+            backgroundColor="$backgroundHover"
+            padding="$3.5"
+            borderRadius="$4"
+            gap="$1.5"
+            pressStyle={{ opacity: 0.8 }}
+            onPress={() => router.push('/patient/treatment-request')}
+            accessibilityRole="button"
+            accessibilityLabel="Review Treatment Session request"
+          >
+            <Text fontSize={24}>🩺</Text>
+            <Text color="$color" fontSize="$4" fontWeight="700">
+              Treatment Approval
+            </Text>
+            <Paragraph color="$color10" size="$1">
+              Review provider operations
+            </Paragraph>
+          </YStack>
+
           <YStack
             flex={1}
             minWidth={140}

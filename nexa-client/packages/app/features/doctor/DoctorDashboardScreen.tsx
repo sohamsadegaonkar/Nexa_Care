@@ -22,12 +22,20 @@ import {
   ArrowUpRight,
   ShieldAlert,
   UserCheck,
+  HeartPulse,
 } from '@tamagui/lucide-icons'
 import { useRouter } from 'next/navigation'
 import { useEffect } from 'react'
 import { useProviderAuth } from './ProviderAuthContext'
 
 const actions = [
+  {
+    title: 'Record treatment vitals',
+    description: 'Request a patient-signed Treatment Session before entering one bounded vital observation.',
+    label: 'Start Vitals Session',
+    icon: HeartPulse,
+    route: '/doctor/patient-search?intent=treatment_vitals',
+  },
   {
     title: 'Find a patient',
     description: 'Start with a Nexa patient ID, then request access.',

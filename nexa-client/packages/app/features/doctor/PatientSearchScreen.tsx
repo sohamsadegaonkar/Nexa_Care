@@ -80,6 +80,7 @@ export function PatientSearchScreen() {
   const [error, setError] = useState<string | null>(null)
   const { isAuthenticated, session, setDiscoverySelection } = useProviderAuth()
   const documentUploadIntent = searchParams.get('intent') === 'document_upload'
+  const treatmentVitalsIntent = searchParams.get('intent') === 'treatment_vitals'
 
   const selectMode = useCallback((next: SearchMode) => {
     setMode(next)
@@ -111,13 +112,25 @@ export function PatientSearchScreen() {
         expiresAt: result.expires_at,
         ...display,
       })
-      router.push(`/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`)
+      if (treatmentVitalsIntent) {
+        router.push('/doctor/treatment-vitals')
+      } else {
+        router.push(`/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`)
+      }
     } catch (caught) {
       setError(discoveryError(caught))
     } finally {
       setLoading(false)
     }
-  }, [documentUploadIntent, mode, router, session?.hospital.hospital_id, setDiscoverySelection, value])
+  }, [
+    documentUploadIntent,
+    mode,
+    router,
+    session?.hospital.hospital_id,
+    setDiscoverySelection,
+    treatmentVitalsIntent,
+    value,
+  ])
 
   if (!isAuthenticated) {
     return (
@@ -141,9 +154,11 @@ export function PatientSearchScreen() {
         eyebrow="PATIENT DISCOVERY"
         title="Find Patient"
         description={
-          documentUploadIntent
-            ? 'Identify the patient before requesting document processing and clinical upload consent.'
-            : 'Locate the patient to initiate a scoped consent request.'
+          treatmentVitalsIntent
+            ? 'Identify the patient before requesting an operation-bound Treatment Session for vitals entry.'
+            : documentUploadIntent
+              ? 'Identify the patient before requesting document processing and clinical upload consent.'
+              : 'Locate the patient to initiate a scoped consent request.'
         }
       />
 

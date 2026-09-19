@@ -90,6 +90,7 @@ class TreatmentSessionV1ChallengePayload(BaseModel):
     hospital_id: str
     provider_name: str
     hospital_name: str
+    provider_session_binding_hash: str = Field(min_length=64, max_length=64)
     purpose: str
     allowed_operations: list[str]
     access_duration: int
@@ -452,6 +453,7 @@ async def get_treatment_session_v1_challenge(
         hospital_id=str(data["hospital_id"]),
         provider_name=str(data["provider_name"]),
         hospital_name=str(data["hospital_name"]),
+        provider_session_binding_hash=str(data["provider_session_binding_hash"]),
         purpose=str(data["purpose"]),
         allowed_operations=list(data["allowed_operations"]),
         access_duration=int(data["access_duration"]),
