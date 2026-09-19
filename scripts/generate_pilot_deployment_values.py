@@ -82,6 +82,34 @@ def _required_string(payload: dict, name: str) -> str:
     return value
 
 
+def _resolve_ecr_image_uri(
+    *,
+    profile: str,
+    region: str,
+    repository_name: str,
+    image_tag: str,
+) -> str:
+    image = _aws(
+        profile,
+        region,
+        "ecr",
+        "describe-images",
+        "--repository-name",
+        repository_name,
+        "--image-ids",
+        f"imageTag={image_tag}",
+    )
+    details = image.get("imageDetails")
+    if not isinstance(details, list) or len(details) != 1:
+        raise RuntimeError("qualified ECR image was not found")
+    digest = _required_string(details[0], "imageDigest")
+    registry = _required_string(details[0], "registryId")
+    return (
+        f"{registry}.dkr.ecr.{region}.amazonaws.com/"
+        f"{repository_name}@{digest}"
+    )
+
+
 def _validate_bucket_security(arguments: argparse.Namespace) -> None:
     location_payload = _aws(
         arguments.storage_profile,
@@ -163,21 +191,18 @@ def generate(arguments: argparse.Namespace) -> dict[str, str]:
         "--role-name",
         arguments.task_role_name,
     )
-    image = _aws(
-        arguments.profile,
-        arguments.region,
-        "ecr",
-        "describe-images",
-        "--repository-name",
-        arguments.repository_name,
-        "--image-ids",
-        f"imageTag={arguments.image_tag}",
+    api_image = _resolve_ecr_image_uri(
+        profile=arguments.profile,
+        region=arguments.region,
+        repository_name=arguments.repository_name,
+        image_tag=arguments.image_tag,
     )
-    details = image.get("imageDetails")
-    if not isinstance(details, list) or len(details) != 1:
-        raise RuntimeError("qualified ECR image was not found")
-    digest = _required_string(details[0], "imageDigest")
-    repository = _required_string(details[0], "registryId")
+    scanner_image = _resolve_ecr_image_uri(
+        profile=arguments.profile,
+        region=arguments.region,
+        repository_name=arguments.scanner_repository_name,
+        image_tag=arguments.scanner_image_tag,
+    )
 
     _validate_bucket_security(arguments)
 
@@ -213,14 +238,12 @@ def generate(arguments: argparse.Namespace) -> dict[str, str]:
         )
 
     return {
-        "TASK_CPU": "512",
-        "TASK_MEMORY": "1024",
+        "TASK_CPU": "1024",
+        "TASK_MEMORY": "3072",
         "ECS_EXECUTION_ROLE_ARN": _required_string(execution.get("Role", {}), "Arn"),
         "ECS_TASK_ROLE_ARN": _required_string(task.get("Role", {}), "Arn"),
-        "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST": (
-            f"{repository}.dkr.ecr.{arguments.region}.amazonaws.com/"
-            f"{arguments.repository_name}@{digest}"
-        ),
+        "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST": api_image,
+        "QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST": scanner_image,
         "DOCUMENT_STORAGE_S3_BUCKET": arguments.bucket,
         "DOCUMENT_STORAGE_S3_KMS_KEY_ID": arguments.storage_kms_key_id,
         "APPLICATION_ENVELOPE_KMS_KEY_ID": arguments.envelope_kms_key_id,
@@ -236,6 +259,8 @@ def main() -> int:
         "region",
         "repository-name",
         "image-tag",
+        "scanner-repository-name",
+        "scanner-image-tag",
         "execution-role-name",
         "task-role-name",
         "log-group-name",
@@ -257,7 +282,8 @@ def main() -> int:
         return 1
     print("PASS: execution role resolved")
     print("PASS: task role resolved")
-    print("PASS: immutable image digest resolved")
+    print("PASS: immutable API image digest resolved")
+    print("PASS: immutable scanner image digest resolved")
     print("PASS: bucket encryption/public-block/versioning metadata resolved")
     print("PASS: KMS, log group, and secret metadata resolved")
     print("INFO: secret values were not read")
