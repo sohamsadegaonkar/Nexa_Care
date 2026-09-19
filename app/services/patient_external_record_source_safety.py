@@ -32,6 +32,19 @@ from app.security.patient_source_malware_scanner import (
     get_patient_source_malware_scanner,
 )
 
+__all__ = (
+    "MalwareScanOutcome",
+    "MalwareScanResult",
+    "PatientSourceMalwareScanner",
+    "UnavailablePatientSourceMalwareScanner",
+    "PatientSourceSafetyDecision",
+    "PatientSourceSafetyError",
+    "effective_patient_source_max_bytes",
+    "qualify_patient_source_for_extraction",
+    "validate_patient_source_decoder",
+)
+
+
 _DEFAULT_MAX_PDF_PAGES = 500
 _DEFAULT_MAX_PDF_PAGE_POINTS = 14_400
 _DEFAULT_MAX_IMAGE_PIXELS = 25_000_000
