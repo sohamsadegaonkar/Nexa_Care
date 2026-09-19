@@ -692,12 +692,7 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
 
 class PrescribingEligibilityDecision(Base, UUIDPrimaryKeyMixin):
-    """Immutable, append-only prescribing-specific professional authority decision.
-
-    This record is deliberately separate from ProfessionalVerification.  It
-    never grants authority by itself: current ProfessionalVerification and all
-    ordinary clinical trust still have to pass at the use boundary.
-    """
+    """Immutable, append-only prescribing-specific professional authority decision."""
 
     __tablename__ = "prescribing_eligibility_decision"
 
@@ -711,17 +706,13 @@ class PrescribingEligibilityDecision(Base, UUIDPrimaryKeyMixin):
         ForeignKey("professional_verification.id", ondelete="RESTRICT"),
         nullable=False,
     )
-    professional_verification_version: Mapped[int] = mapped_column(
-        Integer, nullable=False
-    )
+    professional_verification_version: Mapped[int] = mapped_column(Integer, nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     practitioner_class: Mapped[str] = mapped_column(String(64), nullable=False)
     source_type: Mapped[str] = mapped_column(String(64), nullable=False)
     registration_authority_code: Mapped[str] = mapped_column(String(64), nullable=False)
-    registration_number_normalized: Mapped[str] = mapped_column(
-        String(128), nullable=False
-    )
+    registration_number_normalized: Mapped[str] = mapped_column(String(128), nullable=False)
     source_reference: Mapped[str] = mapped_column(String(255), nullable=False)
     evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -746,19 +737,9 @@ class PrescribingEligibilityDecision(Base, UUIDPrimaryKeyMixin):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "provider_id",
-            "version",
-            name="uq_prescribing_eligibility_provider_version",
-        ),
-        UniqueConstraint(
-            "previous_decision_id",
-            name="uq_prescribing_eligibility_previous_decision",
-        ),
-        CheckConstraint(
-            "version > 0",
-            name="ck_prescribing_eligibility_version_positive",
-        ),
+        UniqueConstraint("provider_id", "version", name="uq_prescribing_eligibility_provider_version"),
+        UniqueConstraint("previous_decision_id", name="uq_prescribing_eligibility_previous_decision"),
+        CheckConstraint("version > 0", name="ck_prescribing_eligibility_version_positive"),
         CheckConstraint(
             "professional_verification_version > 0",
             name="ck_prescribing_eligibility_prof_version_positive",
@@ -795,7 +776,8 @@ class PrescribingEligibilityDecision(Base, UUIDPrimaryKeyMixin):
             name="ck_prescribing_eligibility_restriction",
         ),
         CheckConstraint(
-            "evidence_sha256 ~ '^[0-9a-f]{64}    """Independent, reviewable trust evidence for a hospital facility."""
+            "evidence_sha256 ~ '^[0-9a-f]{64}
+    """Independent, reviewable trust evidence for a hospital facility."""
 
     __tablename__ = "facility_verification"
 
@@ -1253,8 +1235,8 @@ class ProviderVerificationWork(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             name="ck_prescribing_eligibility_source_reference",
         ),
         CheckConstraint(
-            "length(trim(registration_authority_code)) > 0 "
-            "AND length(trim(registration_number_normalized)) > 0",
+            "length(trim(registration_authority_code)) > 0 AND "
+            "length(trim(registration_number_normalized)) > 0",
             name="ck_prescribing_eligibility_registration_binding",
         ),
         CheckConstraint(
@@ -1272,19 +1254,12 @@ class ProviderVerificationWork(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             "AND restriction_code IS NULL)",
             name="ck_prescribing_eligibility_positive_shape",
         ),
-        Index(
-            "ix_prescribing_eligibility_provider_version",
-            "provider_id",
-            "version",
-        ),
+        Index("ix_prescribing_eligibility_provider_version", "provider_id", "version"),
         Index(
             "ix_prescribing_eligibility_professional_verification_id",
             "professional_verification_id",
         ),
-        Index(
-            "ix_prescribing_eligibility_valid_until",
-            "valid_until",
-        ),
+        Index("ix_prescribing_eligibility_valid_until", "valid_until"),
     )
 
 
