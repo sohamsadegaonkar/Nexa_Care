@@ -469,7 +469,7 @@ async def read_patient_external_record_source(
         patient_id=patient_id,
         import_id=import_id,
     )
-    if row.error_code == "SOURCE_MALWARE_DETECTED":
+    if getattr(row, "error_code", None) == "SOURCE_MALWARE_DETECTED":
         raise HTTPException(
             status_code=409,
             detail={
