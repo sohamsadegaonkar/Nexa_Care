@@ -91,7 +91,7 @@ Database migration remains separate from API startup:
    `python scripts/run_pilot_migrations.py`.
 3. Provide only `MIGRATION_DATABASE_URL` for that release task.
 4. Require exit zero and exact repository/database head
-   `20260918_treatment_vitals_encounter`.
+   `20260919_prescriber_eligibility`.
 5. The API container must never run `alembic upgrade`, stamp, or downgrade on
    startup.
 
