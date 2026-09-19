@@ -252,4 +252,31 @@ describe('PatientTimelineScreen', () => {
       expect(screen.getByText('Blood Pressure Check')).toBeTruthy()
     })
   })
+
+  it('renders clinician recorded provenance and hospital name badge on timeline card', async () => {
+    const clinicalVitalEvent = {
+      event_id: 'event-vitals-clin-1',
+      event_type: 'VITALS',
+      title: 'Vitals Recorded (BP)',
+      summary: 'BP: 120/80 mmHg',
+      occurred_at: '2026-07-28T10:00:00Z',
+      source: 'clinician_recorded',
+      source_display: 'Clinician recorded at Apollo Hospital',
+      hospital_name: 'Apollo Hospital',
+    }
+
+    vi.mocked(apiClient.get).mockResolvedValueOnce({
+      events: [clinicalVitalEvent],
+      next_cursor: null,
+    } as never)
+
+    renderWithTamagui(<PatientTimelineScreen />)
+
+    expect(await screen.findByText('Vitals Recorded (BP)')).toBeTruthy()
+    expect(screen.getByText('BP: 120/80 mmHg')).toBeTruthy()
+    expect(screen.getByText('Clinician recorded • Apollo Hospital')).toBeTruthy()
+    expect(screen.getByText('Clinician recorded at Apollo Hospital')).toBeTruthy()
+    expect(screen.queryByText('Manual entry')).toBeNull()
+    expect(screen.queryByText('AI-extracted')).toBeNull()
+  })
 })
