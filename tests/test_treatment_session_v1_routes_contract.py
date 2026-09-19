@@ -93,6 +93,26 @@ async def test_challenge_is_patient_bound(monkeypatch):
     assert caught.value.detail["error_code"] == "TREATMENT_PATIENT_MISMATCH"
 
 
+
+@pytest.mark.asyncio
+async def test_challenge_exposes_only_provider_session_binding_hash(monkeypatch):
+    data = _pending_request()
+    raw_binding = "provider-session-a"
+    expected_hash = hashlib.sha256(raw_binding.encode("utf-8")).hexdigest()
+    assert data["provider_session_binding_hash"] == expected_hash
+
+    redis = _MemoryRedis({routes._request_key(data["request_id"]): json.dumps(data)})
+    monkeypatch.setattr(routes, "get_async_redis_client", lambda: redis)
+
+    challenge = await routes.get_treatment_session_v1_challenge(
+        request_id=data["request_id"],
+        response=Response(),
+        session=_patient_session(data["patient_id"]),
+    )
+
+    assert challenge.provider_session_binding_hash == expected_hash
+    assert raw_binding not in challenge.model_dump_json()
+
 @pytest.mark.asyncio
 async def test_challenge_rejects_operation_set_tampering(monkeypatch):
     data = _pending_request()
