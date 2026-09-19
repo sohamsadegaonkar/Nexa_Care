@@ -4,7 +4,9 @@ import asyncio
 import base64
 
 import pytest
+from unittest.mock import AsyncMock
 
+import app.core.production_runtime as runtime_module
 from app.core.production_runtime import (
     RuntimePreflightError,
     _verify_aws_runtime_sync,
@@ -244,6 +246,81 @@ class _AwsSession:
         if name == "s3":
             return _S3Client()
         raise AssertionError(name)
+
+
+@pytest.mark.asyncio
+async def test_production_startup_requires_ready_patient_source_scanner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = valid_production_environment()
+    head = repository_migration_heads()[0]
+
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_database_runtime",
+        AsyncMock(return_value=head),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_redis_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_aws_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "patient_source_scanner_health",
+        AsyncMock(return_value=("configured", "unavailable")),
+    )
+
+    with pytest.raises(
+        RuntimePreflightError,
+        match="PATIENT_SOURCE_SCANNER_NOT_READY",
+    ):
+        await runtime_module.run_production_startup_preflight(
+            environment=environment,
+            engine=object(),
+            redis_client=object(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_production_startup_report_records_ready_scanner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = valid_production_environment()
+    head = repository_migration_heads()[0]
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_database_runtime",
+        AsyncMock(return_value=head),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_redis_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_aws_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "patient_source_scanner_health",
+        AsyncMock(return_value=("configured", "ready")),
+    )
+
+    report = await runtime_module.run_production_startup_preflight(
+        environment=environment,
+        engine=object(),
+        redis_client=object(),
+    )
+    assert report.production_like is True
+    assert "patient_source_scanner" in report.checks
 
 
 def test_aws_runtime_preflight_checks_kms_and_s3_guards() -> None:
