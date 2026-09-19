@@ -145,6 +145,18 @@ def check_live_aws(environment: Mapping[str, str]) -> bool:
             ):
                 raise RuntimeError("KMS key not ready")
 
+        signing_metadata = kms.describe_key(
+            KeyId=_value(environment, "MEDICATION_CATALOG_SIGNING_KEY_ID")
+        ).get("KeyMetadata", {})
+        if (
+            signing_metadata.get("KeyState") != "Enabled"
+            or signing_metadata.get("KeyUsage") != "SIGN_VERIFY"
+            or signing_metadata.get("KeySpec") != "ECC_NIST_P256"
+            or "ECDSA_SHA_256"
+            not in set(signing_metadata.get("SigningAlgorithms") or ())
+        ):
+            raise RuntimeError("Medication catalog signing key not ready")
+
         s3 = session.client("s3", config=client_config)
         bucket = _value(environment, "DOCUMENT_STORAGE_S3_BUCKET")
         s3.head_bucket(Bucket=bucket)
