@@ -36,6 +36,7 @@ def valid_production_environment() -> dict[str, str]:
         "OTP_RATE_LIMIT_HMAC_SECRET": "o" * 48,
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET": "r" * 48,
         "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET": "c" * 48,
+        "PATIENT_GRANT_REFERENCE_HMAC_SECRET": "g" * 48,
         "OPERATIONS_AUTH_TOKEN": "x" * 48,
         "DOCUMENT_EXTRACTION_PROVIDER": "aws_textract",
         "DOCUMENT_AI_AWS_REGION": "ap-south-1",
@@ -107,6 +108,7 @@ def test_production_configuration_rejects_fail_open_or_unsafe_values(
     [
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET",
         "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET",
+        "PATIENT_GRANT_REFERENCE_HMAC_SECRET",
         "OPERATIONS_AUTH_TOKEN",
     ],
 )

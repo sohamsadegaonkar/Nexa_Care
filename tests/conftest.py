@@ -20,6 +20,9 @@ if "document_processor" not in sys.modules:
 
 
 os.environ.setdefault("KEK_ROOT_SECRET", "test-kek-root-secret-32-bytes-minimum")
+os.environ.setdefault(
+    "PATIENT_GRANT_REFERENCE_HMAC_SECRET", "test-patient-grant-ref-secret-32-bytes"
+)
 os.environ.setdefault("NEXA_PEPPER_KEY", "test-pepper-key")
 os.environ["ENVIRONMENT"] = "test"
 os.environ["ENV"] = "test"

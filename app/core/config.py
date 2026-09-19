@@ -67,6 +67,13 @@ class ProviderContactAssuranceConfig:
 
 
 @dataclass(frozen=True)
+class PatientGrantReferenceConfig:
+    """Independent HMAC key for opaque patient grant reference generation."""
+
+    hmac_secret: str
+
+
+@dataclass(frozen=True)
 class HandshakeConfig:
     pepper_secret: str
 
@@ -435,6 +442,22 @@ def get_provider_contact_assurance_config() -> ProviderContactAssuranceConfig:
             "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET must be at least 32 bytes"
         )
     return ProviderContactAssuranceConfig(hmac_secret=secret)
+
+
+def get_patient_grant_reference_config() -> PatientGrantReferenceConfig:
+    """Load the independent secret for opaque patient grant references.
+
+    This key is used to derive deterministic HMAC tokens for patient-facing
+    grant references (gref_v2_...) without exposing database primary keys or
+    internal identifiers to clients.
+    """
+
+    secret = _require_env("PATIENT_GRANT_REFERENCE_HMAC_SECRET")
+    if len(secret.encode("utf-8")) < 32:
+        raise ConfigError(
+            "PATIENT_GRANT_REFERENCE_HMAC_SECRET must be at least 32 bytes"
+        )
+    return PatientGrantReferenceConfig(hmac_secret=secret)
 
 
 def get_handshake_config() -> HandshakeConfig:

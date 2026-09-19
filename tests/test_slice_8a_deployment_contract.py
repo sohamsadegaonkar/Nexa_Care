@@ -83,6 +83,7 @@ def test_ecs_task_supplies_complete_runtime_secret_set() -> None:
     assert {
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET",
         "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET",
+        "PATIENT_GRANT_REFERENCE_HMAC_SECRET",
         "OPERATIONS_AUTH_TOKEN",
         "DOCUMENT_STORAGE_ENCRYPTION_KEY",
         "DATABASE_URL",
@@ -132,6 +133,7 @@ def test_runtime_contract_pins_preflight_and_protected_operations_surfaces() -> 
     assert {
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET",
         "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET",
+        "PATIENT_GRANT_REFERENCE_HMAC_SECRET",
         "OPERATIONS_AUTH_TOKEN",
     } <= runtime_keys
     assert contract["startupPreflight"] == {

@@ -53,6 +53,7 @@ def valid_pilot_environment() -> dict[str, str]:
         "OTP_RATE_LIMIT_HMAC_SECRET": "o" * 48,
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET": "r" * 48,
         "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET": "c" * 48,
+        "PATIENT_GRANT_REFERENCE_HMAC_SECRET": "g" * 48,
         "OPERATIONS_AUTH_TOKEN": "x" * 48,
         "PUSH_STATUS_TRANSPORT": "poll",
         "AUTO_COMMIT": "false",
@@ -198,6 +199,7 @@ def test_pilot_preflight_rejects_static_aws_credentials(name: str) -> None:
     [
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET",
         "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET",
+        "PATIENT_GRANT_REFERENCE_HMAC_SECRET",
         "OPERATIONS_AUTH_TOKEN",
     ],
 )

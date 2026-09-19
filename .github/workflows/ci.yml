@@ -45,6 +45,7 @@ jobs:
           DATABASE_URL: "postgresql+asyncpg://ci:ci@127.0.0.1:5432/nexa_ci"
           PII_ENCRYPTION_KEY: "vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw="
           MFA_ENCRYPTION_KEY: "ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8="
+          PATIENT_GRANT_REFERENCE_HMAC_SECRET: "ci-test-patient-grant-ref-secret-32-bytes"
 
       - name: Assert Zero Skips (Partition A)
         run: python scripts/ci/assert_pytest_junit.py .test-results/quality.xml
@@ -109,6 +110,7 @@ jobs:
           OTP_RATE_LIMIT_HMAC_SECRET: "ci-test-otp-rate-limit-secret-32-bytes"
           PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET: "ci-test-registration-hmac-secret-32-bytes"
           PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET: "ci-test-contact-assurance-secret-32-bytes"
+          PATIENT_GRANT_REFERENCE_HMAC_SECRET: "ci-test-patient-grant-ref-secret-32-bytes"
           PATIENT_JWT_SECRET: "synthetic-patient-jwt-secret-at-least-32-chars-long"
           TRUST_PERMISSION_DATABASE_URL: "postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared"
 
@@ -189,6 +191,7 @@ jobs:
           OTP_RATE_LIMIT_HMAC_SECRET: "ci-test-otp-rate-limit-secret-32-bytes"
           PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET: "ci-test-registration-hmac-secret-32-bytes"
           PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET: "ci-test-contact-assurance-secret-32-bytes"
+          PATIENT_GRANT_REFERENCE_HMAC_SECRET: "ci-test-patient-grant-ref-secret-32-bytes"
 
       - name: Assert Zero Skips (Partition C)
         run: python scripts/ci/assert_pytest_junit.py .test-results/postgres-redis.xml
