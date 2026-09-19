@@ -56,6 +56,10 @@ from app.services.document_storage import DocumentStorageError, get_document_sto
 from app.services.patient_external_record_lifecycle import (
     assert_patient_external_record_access_active,
 )
+from app.services.patient_external_record_source_safety import (
+    PatientSourceSafetyError,
+    qualify_patient_source_for_extraction,
+)
 
 _IDENTITY_FIELDS = frozenset({"patient_name", "phone", "aadhaar_abha_id"})
 _TERMINAL_OR_ALREADY_PROCESSED = frozenset(
@@ -339,13 +343,32 @@ async def process_patient_external_record(
 
         try:
             digest = _source_digest(source_bytes)
-            if digest != source.content_hash or digest != row.content_hash:
+            if (
+                digest != source.content_hash
+                or digest != row.content_hash
+                or len(source_bytes) != int(source.size)
+            ):
                 return await _commit_failure(
                     db,
                     row=row,
                     patient_id=patient_id,
                     error_code="SOURCE_INTEGRITY_MISMATCH",
                     retryable=False,
+                )
+
+            try:
+                await qualify_patient_source_for_extraction(
+                    source_bytes,
+                    mime_type=source.content_type,
+                    expected_hash=digest,
+                )
+            except PatientSourceSafetyError as exc:
+                return await _commit_failure(
+                    db,
+                    row=row,
+                    patient_id=patient_id,
+                    error_code=exc.code,
+                    retryable=exc.retryable,
                 )
 
             try:

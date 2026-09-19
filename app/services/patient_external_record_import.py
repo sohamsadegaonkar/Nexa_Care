@@ -28,6 +28,10 @@ from app.services.document_storage import DocumentStorageError, get_document_sto
 from app.services.patient_external_record_lifecycle import (
     assert_patient_external_record_access_active,
 )
+from app.services.patient_external_record_source_safety import (
+    PatientSourceSafetyError,
+    validate_patient_source_decoder,
+)
 
 PATIENT_CATEGORY_MAP = {
     "prescription": "PRESCRIPTION",
@@ -235,6 +239,13 @@ async def stage_patient_external_record(
         )
 
     safe_name, mime_type = validate_patient_upload_type(filename, content_type, data)
+    try:
+        validate_patient_source_decoder(data, mime_type=mime_type)
+    except PatientSourceSafetyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": exc.code, "retryable": False},
+        ) from exc
     content_hash = _content_digest(data)
 
     try:
@@ -458,6 +469,14 @@ async def read_patient_external_record_source(
         patient_id=patient_id,
         import_id=import_id,
     )
+    if getattr(row, "error_code", None) == "SOURCE_MALWARE_DETECTED":
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "SOURCE_DOCUMENT_QUARANTINED",
+                "retryable": False,
+            },
+        )
     await assert_patient_external_record_access_active(db, patient_id=patient_id)
     try:
         document = (
