@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Validate sanitized Slice 7B pilot-runtime qualification evidence.
+"""Validate sanitized pilot-runtime qualification evidence.
 
-This validator is intentionally cloud-provider-read-only: it consumes an evidence
-manifest produced by an authorized pilot run and refuses to label that run PASS
-unless every authority-relevant gate is explicitly evidenced as PASS.
+Historical Slice 7B evidence remains accepted under its original v1 schema.
+Current AWS pilot activation uses v2, which additionally binds the exact D6
+scanner image/topology and live scanner qualification gates.
 """
 
 from __future__ import annotations
@@ -14,13 +14,15 @@ import re
 from pathlib import Path
 from typing import Any
 
-EXPECTED_SCHEMA = "nexa-slice-7b-pilot-runtime-evidence-v1"
-EXPECTED_MIGRATION_HEAD = "20260917_treatment_session_operations"
+LEGACY_SCHEMA = "nexa-slice-7b-pilot-runtime-evidence-v1"
+LEGACY_MIGRATION_HEAD = "20260917_treatment_session_operations"
+CURRENT_SCHEMA = "nexa-aws-pilot-runtime-evidence-v2"
+CURRENT_MIGRATION_HEAD = "20260918_treatment_vitals_encounter"
 EXPECTED_REGION = "ap-south-1"
 SHA256_IMAGE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:/@+=-]{3,256}$")
 
-REQUIRED_CHECKS = (
+LEGACY_REQUIRED_CHECKS = (
     "task_role_credentials",
     "kms_envelope_encryption",
     "s3_encrypted_storage",
@@ -40,6 +42,21 @@ REQUIRED_CHECKS = (
     "s3_unavailability_fail_closed",
     "database_unavailability_fail_closed",
 )
+
+SCANNER_REQUIRED_CHECKS = (
+    "scanner_same_task_topology",
+    "scanner_not_public",
+    "scanner_signature_fresh",
+    "protected_scanner_ready_health",
+    "clean_synthetic_import",
+    "eicar_blocked_before_extraction",
+    "scanner_outage_fail_closed",
+)
+
+CURRENT_REQUIRED_CHECKS = LEGACY_REQUIRED_CHECKS + SCANNER_REQUIRED_CHECKS
+
+# Backward-compatible import used by historical tests and tooling.
+REQUIRED_CHECKS = LEGACY_REQUIRED_CHECKS
 
 FORBIDDEN_KEYS = {
     "aws_access_key_id",
@@ -69,16 +86,20 @@ def _walk_keys(value: Any) -> list[str]:
     return keys
 
 
-def validate_manifest(manifest: dict[str, Any]) -> list[str]:
-    errors: list[str] = []
+def _contract_for_schema(schema: object) -> tuple[str | None, tuple[str, ...], bool]:
+    if schema == LEGACY_SCHEMA:
+        return LEGACY_MIGRATION_HEAD, LEGACY_REQUIRED_CHECKS, False
+    if schema == CURRENT_SCHEMA:
+        return CURRENT_MIGRATION_HEAD, CURRENT_REQUIRED_CHECKS, True
+    return None, (), False
 
-    if manifest.get("schema") != EXPECTED_SCHEMA:
-        errors.append("schema: unsupported or missing")
 
-    status = manifest.get("status")
-    if status not in {"PASS", "FAIL", "BLOCKED"}:
-        errors.append("status: must be PASS, FAIL, or BLOCKED")
-
+def _validate_common_cloud_contract(
+    manifest: dict[str, Any],
+    *,
+    expected_migration_head: str,
+    errors: list[str],
+) -> None:
     backend_digest = manifest.get("backend_image_digest")
     if not isinstance(backend_digest, str) or not SHA256_IMAGE.fullmatch(backend_digest):
         errors.append("backend_image_digest: immutable sha256 digest required")
@@ -94,8 +115,8 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
         if not re.fullmatch(r"[0-9a-f]{40}", commit):
             errors.append("repository_commit: exact 40-character git SHA required")
 
-    if manifest.get("migration_head") != EXPECTED_MIGRATION_HEAD:
-        errors.append(f"migration_head: must equal {EXPECTED_MIGRATION_HEAD}")
+    if manifest.get("migration_head") != expected_migration_head:
+        errors.append(f"migration_head: must equal {expected_migration_head}")
 
     if manifest.get("aws_region") != EXPECTED_REGION:
         errors.append(f"aws_region: must equal {EXPECTED_REGION}")
@@ -123,7 +144,9 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             errors.append("encryption.backend: kms required")
         for name in ("kms_key_arn", "s3_kms_key_arn"):
             value = encryption.get(name)
-            if not isinstance(value, str) or not value.startswith("arn:aws:kms:ap-south-1:"):
+            if not isinstance(value, str) or not value.startswith(
+                "arn:aws:kms:ap-south-1:"
+            ):
                 errors.append(f"encryption.{name}: ap-south-1 KMS ARN required")
         if encryption.get("context_bound") is not True:
             errors.append("encryption.context_bound: must be true")
@@ -147,7 +170,7 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             errors.append("database.engine: postgresql required")
         if database.get("dedicated") is not True:
             errors.append("database.dedicated: must be true")
-        if database.get("migration_head") != EXPECTED_MIGRATION_HEAD:
+        if database.get("migration_head") != expected_migration_head:
             errors.append("database.migration_head: exact current head required")
 
     redis = manifest.get("redis")
@@ -159,29 +182,79 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
         if redis.get("dedicated") is not True:
             errors.append("redis.dedicated: must be true")
 
+
+def _validate_scanner_contract(manifest: dict[str, Any], errors: list[str]) -> None:
+    scanner_digest = manifest.get("scanner_image_digest")
+    if not isinstance(scanner_digest, str) or not SHA256_IMAGE.fullmatch(scanner_digest):
+        errors.append("scanner_image_digest: immutable sha256 digest required")
+
+    scanner = manifest.get("scanner")
+    if not isinstance(scanner, dict):
+        errors.append("scanner: required for current pilot evidence")
+        return
+
+    if scanner.get("provider") != "clamd":
+        errors.append("scanner.provider: clamd required")
+    if scanner.get("topology") != "same-task-clamd-sidecar":
+        errors.append("scanner.topology: same-task-clamd-sidecar required")
+    if scanner.get("task_local_transport") is not True:
+        errors.append("scanner.task_local_transport: must be true")
+    if scanner.get("public_port_exposed") is not False:
+        errors.append("scanner.public_port_exposed: must be false")
+    if scanner.get("signature_max_age_hours") != 48:
+        errors.append("scanner.signature_max_age_hours: must equal 48")
+
+
+def validate_manifest(manifest: dict[str, Any]) -> list[str]:
+    errors: list[str] = []
+
+    schema = manifest.get("schema")
+    expected_migration_head, required_checks, current = _contract_for_schema(schema)
+    if expected_migration_head is None:
+        errors.append("schema: unsupported or missing")
+        return errors
+
+    status = manifest.get("status")
+    if status not in {"PASS", "FAIL", "BLOCKED"}:
+        errors.append("status: must be PASS, FAIL, or BLOCKED")
+
+    _validate_common_cloud_contract(
+        manifest,
+        expected_migration_head=expected_migration_head,
+        errors=errors,
+    )
+    if current:
+        _validate_scanner_contract(manifest, errors)
+
     checks = manifest.get("checks")
     if not isinstance(checks, dict):
         errors.append("checks: required")
         checks = {}
 
-    missing = [name for name in REQUIRED_CHECKS if name not in checks]
+    missing = [name for name in required_checks if name not in checks]
     if missing:
         errors.append("checks: missing " + ", ".join(missing))
 
-    for name in REQUIRED_CHECKS:
+    for name in required_checks:
         value = checks.get(name)
         if value not in {"PASS", "FAIL", "BLOCKED", "NOT_RUN"}:
             errors.append(f"checks.{name}: invalid status")
 
     if status == "PASS":
-        non_pass = [name for name in REQUIRED_CHECKS if checks.get(name) != "PASS"]
+        non_pass = [name for name in required_checks if checks.get(name) != "PASS"]
         if non_pass:
-            errors.append("status PASS forbidden while checks are not PASS: " + ", ".join(non_pass))
+            errors.append(
+                "status PASS forbidden while checks are not PASS: "
+                + ", ".join(non_pass)
+            )
 
     evidence_keys = set(_walk_keys(manifest))
     forbidden_present = sorted(FORBIDDEN_KEYS & evidence_keys)
     if forbidden_present:
-        errors.append("manifest contains forbidden sensitive key names: " + ", ".join(forbidden_present))
+        errors.append(
+            "manifest contains forbidden sensitive key names: "
+            + ", ".join(forbidden_present)
+        )
 
     return errors
 
@@ -205,10 +278,13 @@ def main() -> int:
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
-        print("FAIL: Slice 7B pilot-runtime evidence is not qualification-ready")
+        print("FAIL: pilot-runtime evidence is not qualification-ready")
         return 1
 
-    print(f"PASS: Slice 7B evidence manifest is structurally valid with status={payload['status']}")
+    print(
+        "PASS: pilot-runtime evidence manifest is structurally valid "
+        f"with schema={payload['schema']} status={payload['status']}"
+    )
     return 0
 
 

@@ -1,5 +1,10 @@
 # Milestone 6 / Slice 8A Fargate deployment and qualification runbook
 
+> Current account-owner activation entry point:
+> `docs/runbooks/AWS_PILOT_ACTIVATION_READINESS.md`. This historical runbook
+> remains the underlying runtime/security contract; use the activation runbook
+> for the current external-input, IAM, cost-control, render and live-evidence sequence.
+
 This operator plan creates no infrastructure by itself. Use only approved
 synthetic environments and never commit domains, account identifiers, role
 ARNs, database/Redis URLs, credentials, secret ARNs, or secret values.
@@ -86,7 +91,7 @@ Database migration remains separate from API startup:
    `python scripts/run_pilot_migrations.py`.
 3. Provide only `MIGRATION_DATABASE_URL` for that release task.
 4. Require exit zero and exact repository/database head
-   `20260909_device_trust_lifecycle`.
+   `20260918_treatment_vitals_encounter`.
 5. The API container must never run `alembic upgrade`, stamp, or downgrade on
    startup.
 

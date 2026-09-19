@@ -1,8 +1,16 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
 
-from scripts.validate_pilot_runtime_evidence import REQUIRED_CHECKS, validate_manifest
+from scripts.validate_pilot_runtime_evidence import (
+    CURRENT_MIGRATION_HEAD,
+    CURRENT_REQUIRED_CHECKS,
+    CURRENT_SCHEMA,
+    REQUIRED_CHECKS,
+    validate_manifest,
+)
 
 
 CURRENT_HEAD = "20260917_treatment_session_operations"
@@ -153,3 +161,70 @@ def test_failure_manifest_can_truthfully_record_failed_checks() -> None:
     manifest["checks"]["health"] = "FAIL"
 
     assert validate_manifest(manifest) == []
+
+
+def _valid_v2_manifest() -> dict:
+    manifest = _valid_manifest()
+    manifest["schema"] = CURRENT_SCHEMA
+    manifest["migration_head"] = CURRENT_MIGRATION_HEAD
+    manifest["database"]["migration_head"] = CURRENT_MIGRATION_HEAD
+    manifest["scanner_image_digest"] = "sha256:" + "b" * 64
+    manifest["scanner"] = {
+        "provider": "clamd",
+        "topology": "same-task-clamd-sidecar",
+        "task_local_transport": True,
+        "public_port_exposed": False,
+        "signature_max_age_hours": 48,
+    }
+    manifest["checks"] = {name: "PASS" for name in CURRENT_REQUIRED_CHECKS}
+    return manifest
+
+
+def test_current_v2_manifest_requires_complete_d6_live_evidence() -> None:
+    assert validate_manifest(_valid_v2_manifest()) == []
+
+
+def test_current_v2_manifest_requires_immutable_scanner_digest() -> None:
+    manifest = _valid_v2_manifest()
+    manifest["scanner_image_digest"] = "clamd:latest"
+    errors = validate_manifest(manifest)
+    assert "scanner_image_digest: immutable sha256 digest required" in errors
+
+
+def test_current_v2_manifest_rejects_public_scanner_exposure() -> None:
+    manifest = _valid_v2_manifest()
+    manifest["scanner"]["public_port_exposed"] = True
+    errors = validate_manifest(manifest)
+    assert "scanner.public_port_exposed: must be false" in errors
+
+
+def test_current_v2_pass_cannot_hide_unrun_eicar_or_outage_gate() -> None:
+    manifest = _valid_v2_manifest()
+    manifest["checks"]["eicar_blocked_before_extraction"] = "NOT_RUN"
+    manifest["checks"]["scanner_outage_fail_closed"] = "NOT_RUN"
+    errors = validate_manifest(manifest)
+    assert any("status PASS forbidden" in error for error in errors)
+    assert any("eicar_blocked_before_extraction" in error for error in errors)
+    assert any("scanner_outage_fail_closed" in error for error in errors)
+
+
+def test_current_v2_blocked_manifest_may_truthfully_record_not_run_scanner_checks() -> None:
+    manifest = _valid_v2_manifest()
+    manifest["status"] = "BLOCKED"
+    for name in CURRENT_REQUIRED_CHECKS:
+        manifest["checks"][name] = "NOT_RUN"
+    assert validate_manifest(manifest) == []
+
+
+def test_current_v2_template_starts_blocked_with_all_live_checks_not_run() -> None:
+    root = Path(__file__).resolve().parents[1]
+    payload = json.loads(
+        (root / "deploy" / "ecs" / "pilot-runtime-evidence-v2.template.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert payload["schema"] == CURRENT_SCHEMA
+    assert payload["status"] == "BLOCKED"
+    assert payload["migration_head"] == CURRENT_MIGRATION_HEAD
+    assert set(payload["checks"]) == set(CURRENT_REQUIRED_CHECKS)
+    assert set(payload["checks"].values()) == {"NOT_RUN"}
