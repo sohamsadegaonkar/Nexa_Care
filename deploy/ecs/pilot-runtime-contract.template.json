@@ -68,7 +68,8 @@
     "PATIENT_SOURCE_CLAMD_PORT": "3310",
     "PATIENT_SOURCE_CLAMD_CONNECT_TIMEOUT_SECONDS": "2",
     "PATIENT_SOURCE_CLAMD_SCAN_TIMEOUT_SECONDS": "30",
-    "PATIENT_SOURCE_CLAMD_MAX_BYTES": "10485760"
+    "PATIENT_SOURCE_CLAMD_MAX_BYTES": "10485760",
+    "PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS": "48"
   },
   "deploymentSpecificValues": [
     "ECS_EXECUTION_ROLE_ARN",
@@ -129,6 +130,7 @@
     "publicPortExposed": false,
     "immutableImageRequired": true,
     "signatures": "non-base image starts with signature database; FreshClam refresh is sidecar-owned and outside request handling",
-    "productionDeploymentQualification": "NOT_RUN"
+    "productionDeploymentQualification": "NOT_RUN",
+    "signatureMaxAgeHours": "48"
   }
 }
