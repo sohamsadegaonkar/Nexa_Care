@@ -71,7 +71,7 @@ The repository policy below is based on official Indian primary or first-party r
 | Narcotic Drugs and Psychotropic Substances Rules, 1985 | current official India Code rule compilation | Rules 52F/52G impose prescription conditions for essential narcotic drugs and additional controlled handling | https://upload.indiacode.nic.in/showfile?actid=AC_CG_61_1073_00014_00014_1563259383370&filename=the_narcotic_drugs_and_psychotropic_substances_rules%2C_1985_date_14.11.1985.pdf&type=rule |
 | Telemedicine Practice Guidelines | 2020-03-25 | Appendix 5 to the 2002 professional-conduct regulations; mode/consultation-specific medicine matrix | https://www.nmc.org.in/wp-content/uploads/2019/10/Public_Notice_for_TMG_Website_Notice-merged.pdf |
 | Modification in Medicine Lists in Telemedicine Practice Guidelines | 2020-04-11 | Added Phenobarbitone, Clobazam and Clonazepam to List A despite the broader prohibited-category rule | https://www.nmc.org.in/MCIRest/open/getDocument?path=%2FDocuments%2FPublic%2FPortal%2FLatestNews%2FModification+in+Medicine+lists+in+Telemedicine+Practice+Guidelin.pdf |
-| NMC Rules & Regulations page | checked 2026-09-19 | Records the 2023 RMP Conduct Regulations and the 2023-08-23 amendment keeping them in abeyance | https://www.nmc.org.in/rules-regulations-nmc/ |
+| NMC Registered Medical Practitioners (Professional Conduct) (Amendment) Regulations, 2023 | 2023-08-23 | Holds the 2023 regulations in abeyance and expressly adopts/makes effective the 2002 regulations pending further Gazette notification | https://www.nmc.org.in/wp-content/uploads/2026/02/NationalMedicalCommissionRegisteredMedicalPractionerProfessionalonduct.pdf |\n| NMC Rules & Regulations page | checked 2026-09-19 | Current first-party index showing the 2023 conduct regulations and the 2023-08-23 abeyance amendment | https://www.nmc.org.in/rules-regulations-nmc/ |
 | Indian Medical Council (Professional Conduct, Etiquette and Ethics) Regulations, 2002 | published 2002-04-06; current NMC page | Current professional-conduct baseline re-adopted when the 2023 regulations were held in abeyance | https://www.nmc.org.in/rules-regulations/code-of-medical-ethics-regulations-2002/ |
 | NMC/MCI telemedicine archive | 2020 archive | First-party index for Telemedicine Guidelines, FAQ, and medicine-list modification | https://www.nmc.org.in/old-archive-news/ |
 
@@ -985,7 +985,7 @@ This matrix is the binding Nexa v1 product decision. **DENY** can be stricter th
 | Catalog-selected medication | **ALLOW** | Allowed only when exact entry is in an approved active catalog version and marked `V1_UNIVERSAL_ALLOWED`; server code, not display text, is authority. |
 | Ordinary prescription medicines | **BLOCKED** | They may depend on Schedule H/H1 and telemedicine mode/type. Current Encounter care mode is UNKNOWN and no catalog exists. |
 | Schedule H | **DENY** | Nexa v1 intentionally excludes prescription-schedule medicines from the universal/unknown-mode first scope. Rule 65/97 establishes prescription controls; later expansion requires catalog + care-mode policy. |
-| Schedule H1 | **DENY** | Additional H1 recordkeeping plus changing membership; product excludes it from narrow v1. G.S.R. 588(E), G.S.R. 95(E), G.S.R. 377(E). |
+| Schedule H1 | **DENY** | Nexa v1 excludes H1; Rule 65 imposes additional downstream retail-supply recordkeeping and H1 membership changes over time. G.S.R. 588(E), G.S.R. 95(E), G.S.R. 377(E). |
 | Schedule X | **DENY** | Stricter Nexa policy; Schedule X has special controls and is prohibited by the operative telemedicine base matrix. |
 | NDPS narcotic/psychotropic substances | **DENY** | Separate NDPS Act/Rules controls and telemedicine prohibition; v1 aggregate intentionally does not model those special prescription semantics. |
 | Oncology / specialist therapies | **DENY** | No specialist/formulary/context classifier; official telemedicine materials identify anti-cancer drugs as a prohibited/high-risk example. Narrow v1 excludes them. |
@@ -994,7 +994,7 @@ This matrix is the binding Nexa v1 product decision. **DENY** can be stricter th
 | OTC / ordinary List-O-style approved catalog entry | **ALLOW** | Only after exact catalog validation and only when marked `V1_UNIVERSAL_ALLOWED`, not emergency-only, restricted, or otherwise excluded. |
 | Emergency medication scenario | **DENY** | Routine Prescription persistence must not become emergency authority; emergency care has separate product/clinical policy. |
 | Remote/telemedicine Encounter | **BLOCKED** | Current Encounter does not durably establish remote mode/type. Modality-dependent medicine scope cannot be authorized. Universal catalog subset avoids relying on this fact, but the system cannot label a particular Encounter remote today. |
-| Care-mode UNKNOWN | **BLOCKED** for modality-dependent medicines | UNKNOWN must fail closed. Only catalog entries independently approved for the universal ANY-mode boundary may later be accepted despite UNKNOWN. |
+| Care-mode UNKNOWN | **BLOCKED** | Modality-dependent medicines fail closed under UNKNOWN. Only a separately catalog-approved universal ANY-mode subset may later bypass the need for modality knowledge. |
 
 ---
 
