@@ -7408,6 +7408,7 @@ __metadata:
     burnt: "npm:^0.12.2"
     expo-constants: "npm:~18.0.13"
     expo-crypto: "npm:~15.0.8"
+    expo-document-picker: "npm:~14.0.7"
     expo-linking: "npm:~8.0.12"
     expo-local-authentication: "npm:~17.0.8"
     expo-notifications: "npm:~0.32.17"
@@ -10080,6 +10081,7 @@ __metadata:
     expo-constants: "npm:~18.0.13"
     expo-crypto: "npm:~15.0.8"
     expo-dev-client: "npm:~6.0.21"
+    expo-document-picker: "npm:~14.0.7"
     expo-font: "npm:~14.0.12"
     expo-linear-gradient: "npm:~15.0.8"
     expo-linking: "npm:~8.0.12"
@@ -10207,6 +10209,15 @@ __metadata:
   peerDependencies:
     expo: "*"
   checksum: 10/bb20018df23761fb9cff380a032f8566a05083c7f3dced293b9156cbaa2de321b9c3cd92f04e50ad8e6cab066ed0faba09a032cadfd298b4c4a295fee0b62944
+  languageName: node
+  linkType: hard
+
+"expo-document-picker@npm:~14.0.7":
+  version: 14.0.8
+  resolution: "expo-document-picker@npm:14.0.8"
+  peerDependencies:
+    expo: "*"
+  checksum: 10/6bc2a41a87c840ac13d9bc872f5838e396b90eaeeeddcee19e88ca62614ec57c3517ab1f5725d4efc43470760e9c6b7035e7d35d6c600d246771a0cee93a45b1
   languageName: node
   linkType: hard
 

@@ -21,6 +21,7 @@
     "burnt": "^0.12.2",
     "expo-constants": "~18.0.13",
     "expo-crypto": "~15.0.8",
+    "expo-document-picker": "~14.0.7",
     "expo-linking": "~8.0.12",
     "expo-local-authentication": "~17.0.8",
     "expo-notifications": "~0.32.17",
