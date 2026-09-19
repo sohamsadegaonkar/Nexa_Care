@@ -303,7 +303,7 @@ export default function PatientHealthHome() {
                         </Paragraph>
                       </YStack>
                       <SourceBadge
-                        source={m.source === 'manual' ? 'manual' : 'ai_extracted'}
+                        source={m.source}
                       />
                     </XStack>
                   ))}

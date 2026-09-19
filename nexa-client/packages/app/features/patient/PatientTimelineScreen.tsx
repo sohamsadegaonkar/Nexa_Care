@@ -18,6 +18,7 @@ interface TimelineEntry {
   occurred_at?: string
   source: 'manual' | 'ai_extracted' | string
   source_display?: string
+  hospital_name?: string | null
   confidence?: number | null
   risk_level?: string | null
   record_id?: string | null
@@ -303,8 +304,9 @@ export default function PatientTimelineScreen({
           flexWrap="wrap"
         >
           <SourceBadge
-            source={event.source === 'manual' ? 'manual' : 'ai_extracted'}
+            source={event.source}
             confidence={event.confidence != null ? Math.round(event.confidence * 100) : undefined}
+            hospitalName={event.hospital_name || undefined}
           />
           <Text color="$color10" fontSize="$2">
             View Details →
@@ -590,31 +592,34 @@ export default function PatientTimelineScreen({
       </YStack>
 
       {/* Record Detail Modal */}
-      <PatientRecordDetailModal
-        open={selectedEvent !== null}
-        onOpenChange={(open) => {
-          if (!open) setSelectedEvent(null)
-        }}
-        category={
-          selectedEvent?.category ||
-          (selectedEvent?.event_type ? selectedEvent.event_type.toLowerCase() : 'vitals')
-        }
-        recordId={selectedEvent?.record_id || selectedEvent?.event_id || null}
-        initialTitle={selectedEvent?.title}
-        initialFields={{
-          Summary: selectedEvent?.summary,
-          EventType: selectedEvent?.event_type,
-          Date: selectedEvent?.occurred_at || selectedEvent?.event_date,
-        }}
-        initialProvenance={{
-          source: selectedEvent?.source || 'manual',
-          source_display: selectedEvent?.source_display,
-          confidence: selectedEvent?.confidence,
-          risk_level: selectedEvent?.risk_level,
-          has_source_document: selectedEvent?.has_source_document,
-        }}
-        initialRecordedAt={selectedEvent?.occurred_at || selectedEvent?.event_date}
-      />
+      {selectedEvent !== null && (
+        <PatientRecordDetailModal
+          open={true}
+          onOpenChange={(open) => {
+            if (!open) setSelectedEvent(null)
+          }}
+          category={
+            selectedEvent.category ||
+            (selectedEvent.event_type ? selectedEvent.event_type.toLowerCase() : 'vitals')
+          }
+          recordId={selectedEvent.record_id || selectedEvent.event_id || null}
+          initialTitle={selectedEvent.title}
+          initialFields={{
+            Summary: selectedEvent.summary,
+            EventType: selectedEvent.event_type,
+            Date: selectedEvent.occurred_at || selectedEvent.event_date,
+          }}
+          initialProvenance={{
+            source: selectedEvent.source,
+            source_display: selectedEvent.source_display,
+            hospital_name: selectedEvent.hospital_name,
+            confidence: selectedEvent.confidence,
+            risk_level: selectedEvent.risk_level,
+            has_source_document: selectedEvent.has_source_document,
+          }}
+          initialRecordedAt={selectedEvent.occurred_at || selectedEvent.event_date}
+        />
+      )}
     </YStack>
   )
 }

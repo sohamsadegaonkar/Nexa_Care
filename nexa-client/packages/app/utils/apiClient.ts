@@ -429,6 +429,8 @@ export interface PatientRecordDetailResponse {
   provenance: {
     source: string
     source_display: string
+    hospital_name?: string | null
+    encounter_recorded_at?: string | null
     confidence?: number | null
     risk_level?: string | null
     source_document_id?: string | null
