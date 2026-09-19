@@ -4,10 +4,10 @@ This module decides whether retained patient-supplied bytes are structurally
 safe enough to hand to an extraction provider. It does not decide clinical
 truth and it does not grant provider/treatment authority.
 
-Production malware scanning is intentionally not faked. Until an executable
-scanner adapter is deployed, the default scanner reports UNAVAILABLE and
-extraction remains fail-closed. Tests inject deterministic scanners only at
-this seam.
+Production malware scanning is never faked. The executable scanner is selected
+through a closed server-owned configuration. An explicit unavailable mode
+remains fail-closed for non-production development/test contexts; production-
+like startup requires a ready scanner before traffic is accepted.
 """
 
 from __future__ import annotations
