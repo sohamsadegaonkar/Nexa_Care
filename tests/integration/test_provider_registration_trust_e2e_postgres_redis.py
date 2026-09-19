@@ -2222,8 +2222,8 @@ async def test_12_route_surface_audit():
     """Inspect FastAPI route table to confirm approved command routes exist and no unauthorized endpoints exist.
 
     Validates exact route surface contract:
-    - Exactly 26 command-specific POST endpoints:
-      - 24 Slice 3F lifecycle routes (1 professional self-submit + 9 professional reviewer + 8 facility + 6 affiliation)
+    - Exactly 27 command-specific POST endpoints:
+      - 25 provider-trust lifecycle/authority routes (1 professional self-submit + 10 professional reviewer/authority + 8 facility + 6 affiliation)
       - 2 Slice 4E permission administration routes (grant + revoke)
     - Zero generic status PATCH, zero generic transition routes.
     - Zero begin_nested() calls in provider_contact_assurance_service.py (architectural invariant).
@@ -2231,12 +2231,12 @@ async def test_12_route_surface_audit():
     routes = [route for route in app.routes if hasattr(route, "path")]
     trust_routes = [r for r in routes if "/provider-trust" in r.path]
     assert (
-        len(trust_routes) == 26
-    ), f"Expected exactly 26 provider-trust routes, found {len(trust_routes)}"
+        len(trust_routes) == 27
+    ), f"Expected exactly 27 provider-trust routes, found {len(trust_routes)}"
 
     lifecycle_routes = [r for r in trust_routes if "/permissions" not in r.path]
     permission_routes = [r for r in trust_routes if "/permissions" in r.path]
-    assert len(lifecycle_routes) == 24
+    assert len(lifecycle_routes) == 25
     assert len(permission_routes) == 2
 
     prof_me_routes = [r for r in lifecycle_routes if "/professional/me" in r.path]
@@ -2246,7 +2246,7 @@ async def test_12_route_surface_audit():
     prof_reviewer_routes = [
         r for r in lifecycle_routes if "/professional/{provider_id}" in r.path
     ]
-    assert len(prof_reviewer_routes) == 9
+    assert len(prof_reviewer_routes) == 10
     expected_prof_actions = {
         "verify",
         "reject",
@@ -2257,6 +2257,7 @@ async def test_12_route_surface_audit():
         "mark-stale",
         "complete-recheck",
         "expire",
+        "prescribing-eligibility",
     }
     actual_prof_actions = {r.path.split("/")[-1] for r in prof_reviewer_routes}
     assert actual_prof_actions == expected_prof_actions
