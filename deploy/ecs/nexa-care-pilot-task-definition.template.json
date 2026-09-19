@@ -172,6 +172,10 @@
         {
           "name": "PATIENT_SOURCE_CLAMD_MAX_BYTES",
           "value": "10485760"
+        },
+        {
+          "name": "PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS",
+          "value": "48"
         }
       ],
       "secrets": [
