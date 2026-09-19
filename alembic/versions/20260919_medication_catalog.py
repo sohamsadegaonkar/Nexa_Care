@@ -673,27 +673,38 @@ def upgrade() -> None:
               RAISE EXCEPTION 'MEDICATION_CATALOG_RELEASE_TRANSITION_INVALID'
                 USING ERRCODE = '55000';
             END IF;
+            IF (
+              to_jsonb(NEW) - ARRAY[
+                'status','activated_by','activated_at',
+                'superseded_at','revoked_at','previous_release_id'
+              ]::text[]
+            ) IS DISTINCT FROM (
+              to_jsonb(OLD) - ARRAY[
+                'status','activated_by','activated_at',
+                'superseded_at','revoked_at','previous_release_id'
+              ]::text[]
+            ) THEN
+              RAISE EXCEPTION 'MEDICATION_CATALOG_RELEASE_IMMUTABLE'
+                USING ERRCODE = '55000';
+            END IF;
           ELSIF OLD.status = 'ACTIVE' THEN
             IF NEW.status NOT IN ('SUPERSEDED', 'REVOKED') THEN
               RAISE EXCEPTION 'MEDICATION_CATALOG_RELEASE_TRANSITION_INVALID'
                 USING ERRCODE = '55000';
             END IF;
+            IF (
+              to_jsonb(NEW) - ARRAY[
+                'status','superseded_at','revoked_at'
+              ]::text[]
+            ) IS DISTINCT FROM (
+              to_jsonb(OLD) - ARRAY[
+                'status','superseded_at','revoked_at'
+              ]::text[]
+            ) THEN
+              RAISE EXCEPTION 'MEDICATION_CATALOG_RELEASE_IMMUTABLE'
+                USING ERRCODE = '55000';
+            END IF;
           ELSE
-            RAISE EXCEPTION 'MEDICATION_CATALOG_RELEASE_IMMUTABLE'
-              USING ERRCODE = '55000';
-          END IF;
-
-          IF (
-            to_jsonb(NEW) - ARRAY[
-              'status','activated_by','activated_at',
-              'superseded_at','revoked_at'
-            ]::text[]
-          ) IS DISTINCT FROM (
-            to_jsonb(OLD) - ARRAY[
-              'status','activated_by','activated_at',
-              'superseded_at','revoked_at'
-            ]::text[]
-          ) THEN
             RAISE EXCEPTION 'MEDICATION_CATALOG_RELEASE_IMMUTABLE'
               USING ERRCODE = '55000';
           END IF;
