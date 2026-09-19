@@ -1,6 +1,80 @@
 # Patient External Record Import — Living Handoff
 
 
+## CURRENT D5 SOURCE-SAFETY CHECKPOINT
+
+- **Task-1 phase:** D5 — Patient External Record Source-Safety Hardening.
+- **Branch / PR:** `task1/external-record-d5-source-safety` / PR #63.
+- **D5 starting main:** `0b9cb40d4125d7a02f2a08513b67cc7b40639bde`.
+- **Task-2 Slice 11E (#62):** MERGED; authoritative main advanced to `a787eddf17223cae0433758444d36dba6d020a96`.
+- **Post-11E D5 reconciliation:** `e09050d385bafd184090564c830e6a2e66fe386d`; normal two-parent merge, no rebase/history rewrite.
+- **Alembic:** D5 adds **ZERO migrations**; inherited single head remains `20260918_treatment_vitals_encounter`.
+- **Frontend ownership:** D5 changes no `nexa-client/**` files and does not edit Task-2 governance.
+
+### Source-safety audit matrix
+
+| Control | Before D5 | D5 disposition |
+| --- | --- | --- |
+| Extension allowlist | EXISTS | Preserved: PDF, PNG, JPG/JPEG only. |
+| Declared MIME allowlist | EXISTS | Preserved and coupled to extension. |
+| Magic/signature checks | EXISTS | Preserved. |
+| End-marker/truncation envelope checks | PARTIAL | Preserved as transport guard; real decoder is now authoritative for structure. |
+| Maximum bytes | EXISTS | Preserved; runtime maximum and Textract 10 MiB clamp remain authoritative. |
+| PDF decoder parse | WRONG_FLOW / PARTIAL | **COMPLETE for patient flow** with strict `pypdf` parsing. |
+| PDF encryption/password handling | WRONG_FLOW | **COMPLETE for patient flow**: encrypted PDFs fail closed. |
+| PDF page limits/dimensions | WRONG_FLOW / PARTIAL | **COMPLETE for patient flow** with bounded configurable limits. |
+| PNG/JPEG real decode | MISSING | **COMPLETE** with Pillow verify + full decode. |
+| Decompression/dimension defenses | MISSING | **COMPLETE for patient images** with bomb warnings plus explicit dimension/pixel ceilings. |
+| Polyglot/type mismatch | PARTIAL | Strengthened: transport MIME/magic plus decoder-reported format must agree. |
+| Malware scanner abstraction | MISSING | **COMPLETE as a closed interface/gate foundation**: CLEAN / MALICIOUS / UNAVAILABLE. |
+| Executable production malware scanner | MISSING | **EXTERNALLY BLOCKED / NOT PRODUCTION-QUALIFIED**. No ClamAV/clamd/equivalent runtime exists in dependencies, container, CI, or deployment configuration. |
+| Scanner-unavailable behavior | MISSING | **COMPLETE**: fail closed and retryable; never treated as CLEAN. |
+| Provider retry-failure quarantine | WRONG_FLOW | Not reused as patient authority. Patient safety failures use stable terminal/retryable import failure codes. |
+| Exact-byte/hash binding | EXISTS | Strengthened: stored/import SHA-256 + stored byte length + decoder hash + scanner-result hash must match the exact bytes passed to extraction. |
+| Scan-before-extraction guarantee | MISSING | **COMPLETE mechanically**: the central safety gate runs before provider selection/submission; retry reuses the same process path. Production extraction remains blocked while scanner is unavailable. |
+| Known-malicious source viewing | MISSING | **COMPLETE**: `SOURCE_MALWARE_DETECTED` sources are denied by the patient source endpoint. |
+| Value-free source-safety audit | PARTIAL | **COMPLETE for D5 failures** through existing structural `EXTRACTION_JOB_FAILED` metadata: authority, stable code, retryable only. |
+
+### D5 decoder hardening
+
+**Decoder hardening: COMPLETE in the D5 implementation, subject to final exact-head release qualification.**
+
+Patient PDF validation now uses strict `pypdf` parsing and fails closed for malformed/truncated structure, encrypted/password-blocked documents, zero pages, excessive page counts, and invalid/absurd page dimensions.
+
+Patient PNG/JPEG validation now uses Pillow. The decoder must agree with the declared patient MIME type; decompression-bomb warnings are errors; configured dimension/pixel ceilings apply; `verify()` is followed by a fresh full `load()` so truncated/corrupt pixel data cannot pass on header structure alone. OCR is not used as a structural validator.
+
+### D5 malware boundary
+
+**Production malware scanner: EXTERNALLY BLOCKED / NOT PRODUCTION-QUALIFIED.**
+
+The repository contains no executable ClamAV/clamd/clamscan or equivalent approved scanner service/configuration. D5 therefore introduces a narrow scanner protocol and a truthful production default that returns `UNAVAILABLE`. It never silently returns CLEAN. Scanner exceptions, transport failure, malformed results, and result/hash disagreement all fail closed. Test fakes exist only at the scanner seam and are not production protection.
+
+A future production scanner adapter must be deployed and independently qualified with bounded timeout/input, fail-closed transport behavior, safe labels/logging, and a real scanner-backed integration test before Nexa Care may claim malware protection.
+
+### Exact-byte extraction gate
+
+For patient process/retry, the service decrypts the retained source, verifies SHA-256 against both `document_storage.content_hash` and the patient import hash, verifies persisted byte length, performs decoder qualification, then requests a malware verdict bound to that same SHA-256. Only CLEAN for the exact bytes can proceed. The exact same in-memory byte string is then passed to the configured extractor. Retry calls the same process service and has no second extraction path.
+
+No durable safety-state migration is required: every process/retry attempt requalifies the authoritative retained bytes. This avoids a stale verdict being rebound to changed content.
+
+### Legacy source behavior and source viewing
+
+D5 does not backfill or mark historical imports safe. Legacy rows remain unqualified until a future process/retry attempt traverses the D5 gate. Scanner-unavailable means unknown/unqualified, not clean.
+
+Known-malicious patient sources are denied by the source endpoint. Legacy/unknown sources are not labelled safe; existing lifecycle/storage/integrity failures remain possible and D4 `can_view_source` stays advisory.
+
+### Other upload flows
+
+The provider/generic pipeline remains a separate authorization/provenance flow. It has bounded upload/type checks and existing operational failure-quarantine infrastructure; asynchronous Textract staging already performs strict PDF/page validation. Those controls are not silently treated as patient malware qualification, and D5 does not rewrite provider authority. Reuse of the source-safety primitive for provider uploads is a separate follow-on opportunity.
+
+### D5 completion classification
+
+- **Patient decoder hardening:** COMPLETE in implementation; final exact-head qualification pending.
+- **Scanner interface + exact-byte extraction gate:** COMPLETE in implementation; final exact-head qualification pending.
+- **Production executable malware scanner:** EXTERNALLY BLOCKED / NOT PRODUCTION-QUALIFIED.
+- **Overall D5 scope:** decoder hardening + scanner interface/quarantine foundation. This is **not** “malware complete.”
+
+
 ## CURRENT D4 FINAL-INTEGRATION CHECKPOINT
 
 - **Task-1 phase:** D4 — Patient External Record Client Action Capability Contract.
