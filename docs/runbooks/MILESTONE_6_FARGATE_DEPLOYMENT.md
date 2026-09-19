@@ -91,7 +91,7 @@ Database migration remains separate from API startup:
    `python scripts/run_pilot_migrations.py`.
 3. Provide only `MIGRATION_DATABASE_URL` for that release task.
 4. Require exit zero and exact repository/database head
-   `20260919_prescriber_eligibility`.
+   `20260919_medication_catalog`.
 5. The API container must never run `alembic upgrade`, stamp, or downgrade on
    startup.
 
@@ -201,3 +201,15 @@ identities/documents may be used for pilot/physical qualification.
 A rollback is not complete merely because a container is running. The previous
 qualified image must be compatible with the current schema and all security
 readiness gates must pass before traffic resumes.
+
+
+### Medication catalog signing KMS boundary
+
+The API/task runtime receives only the identifier
+`MEDICATION_CATALOG_SIGNING_KEY_ID`; it never receives private key bytes. The
+catalog signing key is a separate asymmetric KMS SIGN_VERIFY key, qualified as
+`ECC_NIST_P256` with `ECDSA_SHA_256`. Runtime IAM is narrowly limited to the
+catalog key operations required by the signing provider (`kms:Sign`,
+`kms:Verify`, and optional `kms:GetPublicKey`), and must not grant `kms:*` or
+access to unrelated patient encryption keys. Slice 10B.5k does not provision this
+key or change LIVE AWS PILOT / scanner deployment status.
