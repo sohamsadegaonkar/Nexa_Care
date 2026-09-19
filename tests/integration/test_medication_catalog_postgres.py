@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -440,12 +441,9 @@ async def test_draft_change_invalidates_reviews_and_stale_mfa_fails(session_fact
                 now=NOW,
             )
 
-    changed = _entry("SYNTH-CHANGE-001", allowed_shape=True)
-    changed = DraftMedicationEntryInput(
-        **{
-            **changed.__dict__,
-            "medication_display": "Synthetic Display CHANGED",
-        }
+    changed = replace(
+        _entry("SYNTH-CHANGE-001", allowed_shape=True),
+        medication_display="Synthetic Display CHANGED",
     )
     async with session_factory() as db:
         await MedicationCatalogApplicationService(
