@@ -257,6 +257,7 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
             or parsed.password
             or parsed.query
             or parsed.fragment
+            or parsed.path not in {"", "/"}
         ):
             errors.append("API_BASE_URL: clean https origin required")
 
