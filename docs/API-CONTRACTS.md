@@ -531,7 +531,7 @@ canonical:
   search-index match, Redis capability alone, or durable session row alone does
   not independently authorize routine clinical access.
 - The current single database migration head is
-  `20260918_treatment_vitals_encounter`.
+  `20260919_prescriber_eligibility`.
 
 ### Registration recovery manual review (Slice 9A)
 
