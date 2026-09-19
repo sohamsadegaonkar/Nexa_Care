@@ -4,7 +4,9 @@ import asyncio
 import base64
 
 import pytest
+from unittest.mock import AsyncMock
 
+import app.core.production_runtime as runtime_module
 from app.core.production_runtime import (
     RuntimePreflightError,
     _verify_aws_runtime_sync,
@@ -54,6 +56,13 @@ def valid_production_environment() -> dict[str, str]:
         "AUTO_COMMIT": "false",
         "DATABASE_ECHO_SQL": "false",
         "MAX_UPLOAD_BYTES": "20971520",
+        "PATIENT_SOURCE_MALWARE_SCANNER": "clamd",
+        "PATIENT_SOURCE_CLAMD_HOST": "127.0.0.1",
+        "PATIENT_SOURCE_CLAMD_PORT": "3310",
+        "PATIENT_SOURCE_CLAMD_CONNECT_TIMEOUT_SECONDS": "2",
+        "PATIENT_SOURCE_CLAMD_SCAN_TIMEOUT_SECONDS": "30",
+        "PATIENT_SOURCE_CLAMD_MAX_BYTES": "10485760",
+        "PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS": "48",
     }
 
 
@@ -72,6 +81,16 @@ def test_valid_production_configuration_is_accepted() -> None:
         ("MAX_UPLOAD_BYTES", "20971521", "MAX_UPLOAD_BYTES"),
         ("MFA_ENCRYPTION_KEY", "not-a-fernet-key", "MFA_ENCRYPTION_KEY"),
         ("OPERATIONS_AUTH_TOKEN", "short", "OPERATIONS_AUTH_TOKEN"),
+        (
+            "PATIENT_SOURCE_MALWARE_SCANNER",
+            "unavailable",
+            "PATIENT_SOURCE_MALWARE_SCANNER",
+        ),
+        (
+            "PATIENT_SOURCE_CLAMD_HOST",
+            "scanner.example.test",
+            "PATIENT_SOURCE_MALWARE_SCANNER",
+        ),
     ],
 )
 def test_production_configuration_rejects_fail_open_or_unsafe_values(
@@ -227,6 +246,81 @@ class _AwsSession:
         if name == "s3":
             return _S3Client()
         raise AssertionError(name)
+
+
+@pytest.mark.asyncio
+async def test_production_startup_requires_ready_patient_source_scanner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = valid_production_environment()
+    head = repository_migration_heads()[0]
+
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_database_runtime",
+        AsyncMock(return_value=head),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_redis_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_aws_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "patient_source_scanner_health",
+        AsyncMock(return_value=("configured", "unavailable")),
+    )
+
+    with pytest.raises(
+        RuntimePreflightError,
+        match="PATIENT_SOURCE_SCANNER_NOT_READY",
+    ):
+        await runtime_module.run_production_startup_preflight(
+            environment=environment,
+            engine=object(),
+            redis_client=object(),
+        )
+
+
+@pytest.mark.asyncio
+async def test_production_startup_report_records_ready_scanner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    environment = valid_production_environment()
+    head = repository_migration_heads()[0]
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_database_runtime",
+        AsyncMock(return_value=head),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_redis_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "verify_aws_runtime",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        runtime_module,
+        "patient_source_scanner_health",
+        AsyncMock(return_value=("configured", "ready")),
+    )
+
+    report = await runtime_module.run_production_startup_preflight(
+        environment=environment,
+        engine=object(),
+        redis_client=object(),
+    )
+    assert report.production_like is True
+    assert "patient_source_scanner" in report.checks
 
 
 def test_aws_runtime_preflight_checks_kms_and_s3_guards() -> None:

@@ -16,6 +16,8 @@ def _args(tmp_path: Path) -> Namespace:
         region="ap-south-1",
         repository_name="repo",
         image_tag="tag",
+        scanner_repository_name="clamd-repo",
+        scanner_image_tag="clamd-tag",
         execution_role_name="execution",
         task_role_name="task",
         log_group_name="logs",
@@ -89,6 +91,9 @@ def test_generates_strings_from_read_only_metadata(
     values = generator.generate(_args(tmp_path))
     assert all(isinstance(value, str) for value in values.values())
     assert "@sha256:" in values["QUALIFIED_ECR_IMAGE_URI_BY_DIGEST"]
+    assert "@sha256:" in values["QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST"]
+    assert values["TASK_CPU"] == "1024"
+    assert values["TASK_MEMORY"] == "3072"
     assert {
         (command[0], command[1]) for command in calls
     } == generator.APPROVED_AWS_COMMANDS
