@@ -11,7 +11,7 @@ import {
   YStack,
 } from 'tamagui'
 import React, { useCallback, useEffect, useState } from 'react'
-import { RefreshControl, ScrollView } from 'react-native'
+import { Platform, RefreshControl, ScrollView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   NexaApiClient,
@@ -213,7 +213,13 @@ export default function PatientHealthHome() {
             borderRadius="$4"
             gap="$1.5"
             pressStyle={{ opacity: 0.8 }}
-            onPress={() => router.push('/patient/treatment-request')}
+            onPress={() =>
+              router.push(
+                Platform.OS === 'web'
+                  ? '/patient/treatment-access'
+                  : '/patient/treatment-request'
+              )
+            }
             accessibilityRole="button"
             accessibilityLabel="Review Treatment Session request"
           >

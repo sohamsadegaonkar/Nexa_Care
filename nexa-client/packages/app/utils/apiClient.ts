@@ -155,6 +155,19 @@ export interface SignedApprovalResponse {
   responded_at: string
 }
 
+export interface PatientConsentHistoryItem {
+  id: string
+  public_ref: string
+  patient_id: string
+  purpose: string
+  status: 'active' | 'expired' | 'revoked'
+  scope: string[]
+  issued_at: string
+  expires_at: string
+  revoked_at: string | null
+  type: 'break-glass' | 'routine'
+  is_treatment_session?: boolean
+}
 
 export type TreatmentSessionV1Operation = 'CREATE_ENCOUNTER' | 'WRITE_VITALS'
 
@@ -1668,6 +1681,23 @@ export const NexaApiClient = {
   ): Promise<{ request_id: string; status: 'revoked'; revoked_at: string }> {
     return request<{ request_id: string; status: 'revoked'; revoked_at: string }>(
       `/api/v2/consent/request/${encodeURIComponent(requestId)}/revoke`,
+      { method: 'DELETE' }
+    )
+  },
+
+  /** Fetch the authenticated patient's consent and treatment grant history. */
+  getSelfConsentHistory(): Promise<PatientConsentHistoryItem[]> {
+    return request<PatientConsentHistoryItem[]>('/api/v2/consent/history/self', {
+      method: 'GET',
+    })
+  },
+
+  /** Revoke one consent or treatment grant owned by the authenticated patient. */
+  revokeSelfConsentGrant(
+    publicRef: string
+  ): Promise<{ public_ref: string; status: 'revoked'; revoked_at: string }> {
+    return request<{ public_ref: string; status: 'revoked'; revoked_at: string }>(
+      `/api/v2/consent/history/self/${encodeURIComponent(publicRef)}`,
       { method: 'DELETE' }
     )
   },

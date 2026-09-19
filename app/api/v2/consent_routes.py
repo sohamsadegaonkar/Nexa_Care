@@ -1382,6 +1382,13 @@ async def revoke_patient_approved_access(
 
     try:
         await invalidate_request(request_id)
+        try:
+            from app.services.treatment_session_v1_mint import (
+                invalidate_treatment_session_v1_request,
+            )
+            await invalidate_treatment_session_v1_request(request_id)
+        except Exception:
+            pass
         revoked_when = datetime.fromisoformat(revoked_at)
         for grant in grant_rows:
             if grant.revoked_at is None:
