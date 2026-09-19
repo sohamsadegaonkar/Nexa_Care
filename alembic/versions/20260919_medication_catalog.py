@@ -728,10 +728,17 @@ def upgrade() -> None:
         LANGUAGE plpgsql
         AS $$
         DECLARE parent_status text;
+        DECLARE target_release_id uuid;
         BEGIN
+          target_release_id := CASE
+            WHEN TG_OP = 'DELETE' THEN OLD.release_id
+            ELSE NEW.release_id
+          END;
+
           SELECT status INTO parent_status
           FROM public.medication_catalog_release
-          WHERE id = OLD.release_id;
+          WHERE id = target_release_id
+          FOR SHARE;
 
           IF parent_status IS DISTINCT FROM 'DRAFT' THEN
             RAISE EXCEPTION 'MEDICATION_CATALOG_PUBLISHED_CONTENT_IMMUTABLE'
@@ -745,14 +752,14 @@ def upgrade() -> None:
     op.execute(
         f"""
         CREATE TRIGGER {_ENTRY_GUARD_TRIGGER}
-        BEFORE UPDATE OR DELETE ON public.medication_catalog_entry
+        BEFORE INSERT OR UPDATE OR DELETE ON public.medication_catalog_entry
         FOR EACH ROW EXECUTE FUNCTION public.{_CHILD_GUARD_FN}();
         """
     )
     op.execute(
         f"""
         CREATE TRIGGER {_EVIDENCE_GUARD_TRIGGER}
-        BEFORE UPDATE OR DELETE ON public.medication_catalog_evidence
+        BEFORE INSERT OR UPDATE OR DELETE ON public.medication_catalog_evidence
         FOR EACH ROW EXECUTE FUNCTION public.{_CHILD_GUARD_FN}();
         """
     )
