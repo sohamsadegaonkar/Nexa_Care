@@ -34,7 +34,7 @@ Google Cloud is not part of this plan.
 | `scripts/check_pilot_environment.py` | READY | Reuse for final runtime configuration and optional read-only in-task AWS checks. |
 | `scripts/generate_pilot_deployment_values.py` | READY | Reuse once authorized AWS identity exists; it resolves metadata only and never reads secret values or mutates AWS. |
 | `scripts/check_aws_pilot_activation.py` | MISSING | Added as an offline account-input/task renderer and security preflight; it makes no AWS calls. |
-| `scripts/run_pilot_migrations.py` | STALE | Reconciled to current single head `20260919_prescriber_eligibility`. No migration is introduced. |
+| `scripts/run_pilot_migrations.py` | STALE | Reconciled to current single head `20260919_medication_catalog`. No migration is introduced. |
 | `.github/workflows/clamd-integration.yml` | READY | Reuse as controlled real-clamd repository qualification; it is not a deployed-pilot claim. |
 | `.github/workflows/live-cloud-qualification.yml` | PARTIAL | Reuse for OIDC/ECS/ECR/health verification. It is verification-only and does not deploy or perform the clean/EICAR/outage functional sequence. |
 | `.github/workflows/rollback-runtime-qualification.yml` | STALE | Reconciled to require the post-D6 essential API + clamd rollback pair, both digest-pinned and scanner task-local. |
@@ -385,7 +385,7 @@ Supply only the protected `MIGRATION_DATABASE_URL` to that release task. It
 must exit zero and prove repository/database head:
 
 ```text
-20260919_prescriber_eligibility
+20260919_medication_catalog
 ```
 
 The API container never performs schema migration on startup.
@@ -614,3 +614,15 @@ LIVE AWS PILOT NOT_RUN
 
 Repository readiness, controlled clamd integration, task-definition validation,
 or a successful offline render must never be reported as a live AWS deployment.
+
+
+### Slice 10B.5k medication-catalog signing readiness
+
+The pilot runtime contract now requires the deployment-specific key identifier
+`MEDICATION_CATALOG_SIGNING_KEY_ID`. The key is not provisioned by this
+repository slice. Before live activation, operations must supply an existing
+dedicated asymmetric KMS key whose metadata proves `SIGN_VERIFY`,
+`ECC_NIST_P256`, and `ECDSA_SHA_256`, and scope task-role IAM to the exact key
+with only the required catalog signing/verification actions. This readiness
+contract does not change `PRODUCTION SCANNER DEPLOYMENT NOT_RUN` or
+`LIVE AWS PILOT NOT_RUN`.

@@ -106,6 +106,10 @@
           "value": "<APPLICATION_ENVELOPE_KMS_KEY_ID>"
         },
         {
+          "name": "MEDICATION_CATALOG_SIGNING_KEY_ID",
+          "value": "<MEDICATION_CATALOG_SIGNING_KEY_ID>"
+        },
+        {
           "name": "AWS_PATIENT_SPECIFIC_KMS_KEYS",
           "value": "false"
         },

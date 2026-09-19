@@ -302,6 +302,7 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
         "DOCUMENT_STORAGE_S3_BUCKET",
         "DOCUMENT_STORAGE_S3_KMS_KEY_ID",
         "APPLICATION_ENVELOPE_KMS_KEY_ID",
+        "MEDICATION_CATALOG_SIGNING_KEY_ID",
         "CLOUDWATCH_LOG_GROUP",
         "RUNTIME_SECRET_ID",
         "DOCUMENT_STORAGE_SECRET_ID",

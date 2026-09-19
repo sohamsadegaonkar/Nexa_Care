@@ -111,6 +111,7 @@ def test_permission_vocabulary_is_closed_and_nonclinical():
     assert {item.value for item in TrustManagementPermission} == {
         "PROFESSIONAL_REVIEW",
         "PRESCRIBING_ELIGIBILITY_REVIEW",
+        "MEDICATION_CATALOG_RELEASE_REVIEW",
         "FACILITY_REVIEW",
         "AFFILIATION_MANAGE",
         "TRUST_PERMISSION_MANAGE",
@@ -122,6 +123,9 @@ def test_permission_vocabulary_is_closed_and_nonclinical():
     assert scope_for_permission(TrustManagementPermission.PROFESSIONAL_REVIEW) is (
         TrustPermissionScope.GLOBAL
     )
+    assert scope_for_permission(
+        TrustManagementPermission.MEDICATION_CATALOG_RELEASE_REVIEW
+    ) is TrustPermissionScope.GLOBAL
     assert scope_for_permission(TrustManagementPermission.FACILITY_REVIEW) is (
         TrustPermissionScope.FACILITY
     )

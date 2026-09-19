@@ -302,6 +302,25 @@ class ProviderTrustAuthorizationService:
             now or datetime.now(timezone.utc),
         )
 
+    async def authorize_medication_catalog_review(
+        self,
+        db: AsyncSession,
+        *,
+        actor_id: UUID,
+        authentication: TrustManagementAuthentication,
+        now: datetime | None = None,
+    ) -> TrustAuthorizationDecision:
+        """Authorize global medication-catalog governance work."""
+
+        return await self._authorize(
+            db,
+            actor_id,
+            authentication,
+            TrustManagementPermission.MEDICATION_CATALOG_RELEASE_REVIEW,
+            None,
+            now or datetime.now(timezone.utc),
+        )
+
     async def authorize_professional_self_submission(
         self,
         db: AsyncSession,

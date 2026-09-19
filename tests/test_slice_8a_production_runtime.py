@@ -48,6 +48,7 @@ def valid_production_environment() -> dict[str, str]:
         "ENCRYPTION_BACKEND": "kms",
         "AWS_REGION": "ap-south-1",
         "KMS_KEY_ID": "alias/synthetic-envelope",
+        "MEDICATION_CATALOG_SIGNING_KEY_ID": "alias/synthetic-medication-catalog-signing",
         "AWS_PATIENT_SPECIFIC_KMS_KEYS": "false",
         "CORS_ALLOWED_ORIGINS": "https://doctor.example.test",
         "TRUSTED_HOSTS": "api.example.test",
@@ -203,7 +204,21 @@ def test_redis_preflight_fails_closed() -> None:
 class _KmsClient:
     def describe_key(self, *, KeyId: str) -> dict:
         assert KeyId
-        return {"KeyMetadata": {"KeyState": "Enabled", "KeyUsage": "ENCRYPT_DECRYPT"}}
+        if KeyId == "alias/synthetic-medication-catalog-signing":
+            return {
+                "KeyMetadata": {
+                    "KeyState": "Enabled",
+                    "KeyUsage": "SIGN_VERIFY",
+                    "KeySpec": "ECC_NIST_P256",
+                    "SigningAlgorithms": ["ECDSA_SHA_256"],
+                }
+            }
+        return {
+            "KeyMetadata": {
+                "KeyState": "Enabled",
+                "KeyUsage": "ENCRYPT_DECRYPT",
+            }
+        }
 
 
 class _S3Client:

@@ -15,7 +15,7 @@ TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 PATIENT_EXTERNAL_RECORD_REVISION = "20260916_patient_external_record_import"
 CANONICAL_ENCOUNTER_REVISION = "20260918_canonical_encounter"
 TREATMENT_VITALS_REVISION = "20260918_treatment_vitals_encounter"
-EXPECTED_HEAD = "20260919_prescriber_eligibility"
+EXPECTED_HEAD = "20260919_medication_catalog"
 
 
 def _scripts() -> ScriptDirectory:
@@ -147,9 +147,15 @@ def test_treatment_vitals_descends_from_canonical_encounter() -> None:
 
 
 def test_prescriber_eligibility_descends_from_treatment_vitals() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision("20260919_prescriber_eligibility")
     assert revision is not None
     assert revision.down_revision == TREATMENT_VITALS_REVISION
+
+
+def test_medication_catalog_descends_from_prescriber_eligibility() -> None:
+    revision = _scripts().get_revision(EXPECTED_HEAD)
+    assert revision is not None
+    assert revision.down_revision == "20260919_prescriber_eligibility"
 
 
 def test_patient_public_id_migration_explicitly_refuses_downgrade() -> None:
