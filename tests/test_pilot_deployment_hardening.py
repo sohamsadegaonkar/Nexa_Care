@@ -58,6 +58,12 @@ def valid_pilot_environment() -> dict[str, str]:
         "AUTO_COMMIT": "false",
         "DATABASE_ECHO_SQL": "false",
         "MAX_UPLOAD_BYTES": "20971520",
+        "PATIENT_SOURCE_MALWARE_SCANNER": "clamd",
+        "PATIENT_SOURCE_CLAMD_HOST": "127.0.0.1",
+        "PATIENT_SOURCE_CLAMD_PORT": "3310",
+        "PATIENT_SOURCE_CLAMD_CONNECT_TIMEOUT_SECONDS": "2",
+        "PATIENT_SOURCE_CLAMD_SCAN_TIMEOUT_SECONDS": "30",
+        "PATIENT_SOURCE_CLAMD_MAX_BYTES": "10485760",
     }
 
 
