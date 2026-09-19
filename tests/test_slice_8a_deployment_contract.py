@@ -111,6 +111,7 @@ def test_ecs_task_uses_private_digest_pinned_clamd_sidecar() -> None:
     assert env["PATIENT_SOURCE_CLAMD_HOST"] == "127.0.0.1"
     assert env["PATIENT_SOURCE_CLAMD_PORT"] == "3310"
     assert env["PATIENT_SOURCE_CLAMD_MAX_BYTES"] == "10485760"
+    assert env["PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS"] == "48"
 
     assert scanner["image"] == "<QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST>"
     assert scanner["essential"] is True
