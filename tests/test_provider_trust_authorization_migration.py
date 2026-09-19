@@ -71,7 +71,7 @@ def test_trust_authorization_migration_is_single_head_and_forward_only() -> None
     head_revision = scripts.get_revision(HEAD_REVISION)
     assert (
         head_revision is not None
-        and head_revision.down_revision == CANONICAL_ENCOUNTER_REVISION
+        and head_revision.down_revision == TREATMENT_VITALS_REVISION
     )
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (
