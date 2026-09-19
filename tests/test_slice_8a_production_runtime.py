@@ -54,6 +54,12 @@ def valid_production_environment() -> dict[str, str]:
         "AUTO_COMMIT": "false",
         "DATABASE_ECHO_SQL": "false",
         "MAX_UPLOAD_BYTES": "20971520",
+        "PATIENT_SOURCE_MALWARE_SCANNER": "clamd",
+        "PATIENT_SOURCE_CLAMD_HOST": "127.0.0.1",
+        "PATIENT_SOURCE_CLAMD_PORT": "3310",
+        "PATIENT_SOURCE_CLAMD_CONNECT_TIMEOUT_SECONDS": "2",
+        "PATIENT_SOURCE_CLAMD_SCAN_TIMEOUT_SECONDS": "30",
+        "PATIENT_SOURCE_CLAMD_MAX_BYTES": "10485760",
     }
 
 
@@ -72,6 +78,16 @@ def test_valid_production_configuration_is_accepted() -> None:
         ("MAX_UPLOAD_BYTES", "20971521", "MAX_UPLOAD_BYTES"),
         ("MFA_ENCRYPTION_KEY", "not-a-fernet-key", "MFA_ENCRYPTION_KEY"),
         ("OPERATIONS_AUTH_TOKEN", "short", "OPERATIONS_AUTH_TOKEN"),
+        (
+            "PATIENT_SOURCE_MALWARE_SCANNER",
+            "unavailable",
+            "PATIENT_SOURCE_MALWARE_SCANNER",
+        ),
+        (
+            "PATIENT_SOURCE_CLAMD_HOST",
+            "scanner.example.test",
+            "PATIENT_SOURCE_MALWARE_SCANNER",
+        ),
     ],
 )
 def test_production_configuration_rejects_fail_open_or_unsafe_values(
