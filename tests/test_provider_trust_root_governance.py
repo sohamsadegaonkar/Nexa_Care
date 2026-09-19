@@ -513,16 +513,16 @@ def test_no_root_bypass_flags_in_subordinate_layers() -> None:
             ), f"{file_path} contains forbidden param {token}:"
 
 
-def test_fastapi_provider_trust_route_surface_remains_26() -> None:
-    """Verify FastAPI public surface under /api/v2/provider-trust remains exactly 26 POST routes."""
+def test_fastapi_provider_trust_route_surface_remains_27() -> None:
+    """Verify FastAPI public surface under /api/v2/provider-trust remains exactly 27 POST routes."""
     trust_routes = [
         route
         for route in app.routes
         if hasattr(route, "path") and route.path.startswith("/api/v2/provider-trust")
     ]
-    assert len(trust_routes) == 26
+    assert len(trust_routes) == 27
 
-    # Verify all 26 are POST routes
+    # Verify all 27 are POST routes
     for route in trust_routes:
         methods = getattr(route, "methods", set())
         assert methods == {
