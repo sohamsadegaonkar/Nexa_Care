@@ -210,7 +210,12 @@ class ClinicalEligibilityService:
         if not isinstance(capability, ClinicalCapability):
             raise ValueError("capability must be a server-owned ClinicalCapability")
         trust = await self._load_current_trust(
-            db, provider.id, authentication.hospital_id
+            db,
+            provider.id,
+            authentication.hospital_id,
+            include_prescribing_decision=(
+                capability is ClinicalCapability.PRESCRIBE_MEDICATION
+            ),
         )
         result = self._evaluate_current_trust(
             trust,
@@ -275,7 +280,14 @@ class ClinicalEligibilityService:
         checked_at = self._checked_at(now)
         if not isinstance(capability, ClinicalCapability):
             raise ValueError("capability must be a server-owned ClinicalCapability")
-        trust = await self._load_current_trust(db, provider_id, hospital_id)
+        trust = await self._load_current_trust(
+            db,
+            provider_id,
+            hospital_id,
+            include_prescribing_decision=(
+                capability is ClinicalCapability.PRESCRIBE_MEDICATION
+            ),
+        )
         result = self._evaluate_current_trust(
             trust,
             hospital_id,
@@ -348,7 +360,12 @@ class ClinicalEligibilityService:
             raise ValueError("now must be timezone-aware") from exc
 
     async def _load_current_trust(
-        self, db: AsyncSession, provider_id: UUID, hospital_id: UUID
+        self,
+        db: AsyncSession,
+        provider_id: UUID,
+        hospital_id: UUID,
+        *,
+        include_prescribing_decision: bool = False,
     ) -> _CurrentTrust:
         try:
             provider_result = await db.execute(
@@ -365,15 +382,19 @@ class ClinicalEligibilityService:
                 .where(HospitalRegistry.id == hospital_id)
                 .options(selectinload(HospitalRegistry.verification))
             )
-            prescribing_result = await db.execute(
-                select(PrescribingEligibilityDecision)
-                .where(PrescribingEligibilityDecision.provider_id == provider_id)
-                .order_by(PrescribingEligibilityDecision.version.desc())
-                .limit(1)
-            )
+            prescribing_decision = None
+            if include_prescribing_decision:
+                prescribing_result = await db.execute(
+                    select(PrescribingEligibilityDecision)
+                    .where(
+                        PrescribingEligibilityDecision.provider_id == provider_id
+                    )
+                    .order_by(PrescribingEligibilityDecision.version.desc())
+                    .limit(1)
+                )
+                prescribing_decision = prescribing_result.scalar_one_or_none()
             provider = provider_result.scalar_one_or_none()
             hospital = hospital_result.scalar_one_or_none()
-            prescribing_decision = prescribing_result.scalar_one_or_none()
         except Exception as exc:
             raise ClinicalEligibilityUnavailable(
                 "authoritative trust store unavailable"
