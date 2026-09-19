@@ -9,6 +9,7 @@ unsafe or mutable deployment inputs before any account credentials are needed.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import json
 import re
 from pathlib import Path
@@ -267,15 +268,33 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
     doctor_origin = _require(values, "FINAL_DOCTOR_HTTPS_ORIGIN", errors)
     if doctor_origin and not PLACEHOLDER_FRAGMENT_RE.search(doctor_origin):
         parsed = urlparse(doctor_origin)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or parsed.path not in {"", "/"}
+        ):
             errors.append("FINAL_DOCTOR_HTTPS_ORIGIN: https origin required")
 
     for name in ("FINAL_TRUSTED_PROXY_CIDRS", "FINAL_FORWARDED_PROXY_CIDRS"):
         value = _require(values, name, errors)
         if value and not PLACEHOLDER_FRAGMENT_RE.search(value):
-            lowered = {item.strip() for item in value.split(",")}
-            if not lowered or {"0.0.0.0/0", "::/0", "*"} & lowered:
+            raw_networks = [item.strip() for item in value.split(",") if item.strip()]
+            if not raw_networks:
+                errors.append(f"{name}: at least one CIDR is required")
+                continue
+            if {"0.0.0.0/0", "::/0", "*"} & set(raw_networks):
                 errors.append(f"{name}: wildcard/public CIDRs are forbidden")
+                continue
+            for raw_network in raw_networks:
+                try:
+                    ipaddress.ip_network(raw_network, strict=False)
+                except ValueError:
+                    errors.append(f"{name}: valid CIDR required")
+                    break
 
     for name in (
         "DOCUMENT_STORAGE_S3_BUCKET",
