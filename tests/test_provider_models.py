@@ -10,6 +10,7 @@ from app.models.provider import (
     ProviderCredential,
     ProviderHospitalAffiliation,
     ProviderIdentity,
+    ProviderTrustPermissionGrant,
 )
 
 
@@ -38,6 +39,16 @@ class TestProviderModels(unittest.TestCase):
             if constraint.name
         }
         self.assertIn("uq_provider_hospital_affiliation", unique_names)
+
+    def test_prescribing_review_permission_is_present_in_model_constraints(self) -> None:
+        table = ProviderTrustPermissionGrant.__table__
+        sql = "\n".join(
+            str(constraint.sqltext)
+            for constraint in table.constraints
+            if hasattr(constraint, "sqltext")
+        )
+        self.assertIn("PRESCRIBING_ELIGIBILITY_REVIEW", sql)
+        self.assertIn("scope_type = 'GLOBAL'", sql)
 
     def test_phase_a_provider_auth_columns_present(self) -> None:
         identity_columns = ProviderIdentity.__table__.columns
