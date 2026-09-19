@@ -51,6 +51,9 @@ def _valid_values() -> dict[str, str]:
         "APPLICATION_ENVELOPE_KMS_KEY_ID": (
             "arn:aws:kms:ap-south-1:123456789012:key/envelope"
         ),
+        "MEDICATION_CATALOG_SIGNING_KEY_ID": (
+            "arn:aws:kms:ap-south-1:123456789012:key/catalog-signing"
+        ),
         "CLOUDWATCH_LOG_GROUP": "/nexa/pilot/api",
         "FINAL_API_HOST": "api.pilot.example.test",
         "FINAL_DOCTOR_HTTPS_ORIGIN": "https://doctor.pilot.example.test",
@@ -168,6 +171,7 @@ def test_template_contract_contains_no_real_secret_or_account_value() -> None:
     assert payload["AWS_REGION"] == "ap-south-1"
     assert payload["ROLE_ARN"].startswith("<")
     assert payload["OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE"].startswith("<")
+    assert payload["MEDICATION_CATALOG_SIGNING_KEY_ID"].startswith("<")
     assert "OPERATIONS_AUTH_TOKEN" not in payload
 
 
@@ -201,6 +205,7 @@ def test_activation_schema_requires_account_runtime_and_image_inputs() -> None:
         "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST",
         "QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST",
         "OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE",
+        "MEDICATION_CATALOG_SIGNING_KEY_ID",
         "API_BASE_URL",
     } <= required
     assert "OPERATIONS_AUTH_TOKEN" not in schema["properties"]
