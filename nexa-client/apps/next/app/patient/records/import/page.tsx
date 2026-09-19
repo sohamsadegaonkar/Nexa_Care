@@ -7,7 +7,8 @@ import React, { Suspense } from 'react'
 function PatientImportContent() {
   const searchParams = useSearchParams()
   const importId = searchParams.get('import_id')
-  return <PatientImportScreen initialImportId={importId} />
+  const returnTo = searchParams.get('returnTo')
+  return <PatientImportScreen initialImportId={importId} returnTo={returnTo} />
 }
 
 export default function PatientImportPage() {

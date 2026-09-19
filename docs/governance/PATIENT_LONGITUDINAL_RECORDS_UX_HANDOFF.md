@@ -2,9 +2,13 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `task2/slice-11e-patient-import-ux`
-- **Reconciled Main Baseline:** `0b9cb40d4125d7a02f2a08513b67cc7b40639bde`
+- **Current branch:** `task2/slice-11f-patient-onboarding-import`
+- **Reconciled Main Baseline:** `3d8706f75aa5383b785840d395744f449ef715d4` (Post Task 0 PR #66 + Task 1 D6 PR #64)
 - **Consolidated Merged PRs:**
+  - PR #66: Task 0 integrate provider WRITE_VITALS Treatment Session client (merged, `3d8706f`)
+  - PR #64: Task 1 add executable clamd patient-source scanning (merged, `5c4f309`)
+  - PR #63: D5 external record source-safety policy enforcement (merged, `789e248`)
+  - PR #62: Slice 11E patient external medical record import UX (merged, `df971b5`)
   - PR #59: Task 1 Patient External Record Actions & D4 Capabilities + Task 0 Encounter Vitals Write (merged, `0b9cb40`)
   - PR #57: Merge Task 2 Slice 11D onto main (merged, `06c9a3d`)
   - PR #55: Slice 11D Patient Records Discovery & UX Reliability (Task 2 merged, `cb7df25`)
@@ -18,11 +22,11 @@
   - PR #49: Qualification Fixture Repair (merged, `20c75f9`)
 - **Current Alembic head:** `20260918_treatment_vitals_encounter` (singular, inherited unchanged from main)
 - **New Migrations:** NONE (Zero Task-2 migrations)
-- **Current phase:** Slice 11E — Patient External Medical Record Import UX
-- **Last completed step:** Complete implementation and qualification of Slice 11E (dynamic upload policy, actions-driven workflow, candidate review, save semantics, cancel retention warning, advisory source viewer, Next.js Suspense route, Expo route, 20 comprehensive Vitest tests, Next production build verified).
-- **Exact next task:** Open PR targeting `main`, monitor remote CI and Vercel qualification.
-- **Current blockers:** None
-- **Tests to run next:** `yarn --cwd nexa-client test:app`, `yarn --cwd nexa-client test:next`, `yarn verify:next-build`, `pytest tests/test_patient_screens.py tests/test_patient_external_record_d4_capabilities.py`
+- **Current phase:** Slice 11F — Patient Onboarding External Record Import Integration
+- **Last completed step:** Reconcile consolidated main (`3d8706f`), resolve `PatientHealthHome.tsx` and Expo `_layout.tsx` overlaps, remove record-emptiness onboarding inference from `PatientHealthHome.tsx`, add comprehensive tests, qualify on exact reconciled head.
+- **Exact next task:** Mark PR #65 ready for review, qualify on GitHub CI, merge into `main`.
+- **Current blockers:** None (D6 clamd production scanner and Task 0 #66 Treatment Session are both merged).
+- **Tests to run next:** Full qualification matrix (Vitest patient features, Vitest Next, Pytest suites, Next production build, Alembic heads).
 - **Protected files not to touch:**
   - `app/services/clinical_access_session.py`
   - `app/models/clinical_access_session.py`
@@ -32,8 +36,43 @@
   - `app/api/v2/consent_v3_routes.py`
   - `app/api/v2/treatment_session_v1_routes.py`
   - `app/api/v2/treatment_session_v1_claim_routes.py`
-  - Raw import pipeline internals in `app/services/patient_external_record_import.py`
+  - `app/services/patient_external_record_import.py`
   - Any Alembic migrations
+
+---
+
+## Slice 11F Scope & Invariants
+
+This branch (`task2/slice-11f-patient-onboarding-import`) implements **Slice 11F — Patient Onboarding External Record Import Integration**:
+1. **Non-Coercive Onboarding Card (`PatientOnboardingCard.tsx`):**
+   - Headed "Do you have previous medical records?" with an explicit "OPTIONAL" badge.
+   - Non-coercive copy explaining that records can be imported now or added anytime later from the Medical Records tab.
+   - Dual actions: "Add Medical Record →" (`/patient/records/import?returnTo=onboarding`) and "Skip for now" (`/patient/dashboard`).
+   - Accessible touch targets >= 44px, screen-reader `role="region"`.
+2. **Dedicated Onboarding Screen (`PatientOnboardingScreen.tsx`):**
+   - Cross-platform onboarding screen hosting `PatientOnboardingCard` and introductory privacy overview.
+3. **Route Parity:**
+   - Next.js: `/patient/onboarding` (`apps/next/app/patient/onboarding/page.tsx` with `'use client'` and `<Suspense>` boundary).
+   - Expo: `/patient/onboarding` (`apps/expo/app/patient/onboarding.tsx` + registered in `apps/expo/app/patient/_layout.tsx`).
+4. **Closed `returnTo` Allowlist Contract:**
+   - `resolveReturnDestination(param)` accepts only `'onboarding'` or `'records'` (defaulting to `'records'`).
+   - Rejects arbitrary or malicious URLs (`https://...`, `javascript:...`, `//...`).
+   - No PHI travels in query parameters.
+5. **Single Import Authority Model:**
+   - Reuses `PatientImportScreen` without duplicating upload or extraction logic.
+   - Dynamic header back button: "← Onboarding" vs "← Medical Records".
+   - Step 4 (Completed) in onboarding mode offers "Continue onboarding →" (primary), "+ Add Another Document", and "View in Medical Records".
+6. **Non-Blocking Onboarding Error / Cancellation Affordances:**
+   - If extraction is paused (retryable failure), Step 2 provides "Skip for now & continue onboarding →".
+   - If an import is cancelled, Step 2 provides a clean cancelled state with "Continue onboarding →".
+   - Patients are never trapped in onboarding due to scanner failures or transient issues.
+7. **Health Home Separation (Mandatory Product Invariant):**
+   - `PatientHealthHome` does NOT infer onboarding from clinical record emptiness. Returning patients with zero records are not shown onboarding UI.
+   - Onboarding flow is presented only on the actual onboarding route (`/patient/onboarding`).
+8. **Zero Backend / Regulatory Invariants:**
+   - Zero database migrations (Alembic head `20260918_treatment_vitals_encounter` unchanged).
+   - External records do NOT alter backend `OnboardingStatus.complete` (account creation succeeds independently).
+   - No deceptive claims ("virus free", "malware scanned").
 
 ---
 

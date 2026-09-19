@@ -77,17 +77,50 @@ export const IMPORT_CATEGORIES: ImportCategoryOption[] = [
 
 export type ImportStep = 'picker' | 'processing' | 'review' | 'completed'
 
+export type PatientImportReturnDestination = 'records' | 'onboarding'
+
+/**
+ * Validates and resolves the return destination using a strict closed allowlist.
+ * Prevents open redirects, URL-based PHI injection, and unexpected navigation.
+ */
+export function resolveReturnDestination(
+  param?: string | null
+): PatientImportReturnDestination {
+  if (param === 'onboarding') {
+    return 'onboarding'
+  }
+  return 'records'
+}
+
 export interface PatientImportScreenProps {
   initialImportId?: string | null
+  returnTo?: string | null
+  onReturn?: (dest: PatientImportReturnDestination) => void
 }
 
 export default function PatientImportScreen({
   initialImportId = null,
+  returnTo = null,
+  onReturn,
 }: PatientImportScreenProps) {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const errorLiveId = useId()
   const statusLiveId = useId()
+
+  const effectiveReturnTo = resolveReturnDestination(returnTo)
+
+  const handleReturn = useCallback(() => {
+    if (onReturn) {
+      onReturn(effectiveReturnTo)
+      return
+    }
+    if (effectiveReturnTo === 'onboarding') {
+      router.push('/patient/onboarding')
+    } else {
+      router.push('/patient/records')
+    }
+  }, [effectiveReturnTo, onReturn, router])
 
   // ── Flow & State Variables ───────────────────────────────────────────
   const [step, setStep] = useState<ImportStep>('picker')
@@ -647,11 +680,23 @@ export default function PatientImportScreen({
           <Button
             size="$2.5"
             chromeless
-            onPress={() => router.push('/patient/records')}
+            onPress={handleReturn}
             accessibilityRole="button"
-            accessibilityLabel="Back to Medical Records"
+            accessibilityLabel={
+              effectiveReturnTo === 'onboarding'
+                ? 'Back to Onboarding'
+                : 'Back to Medical Records'
+            }
+            aria-label={
+              effectiveReturnTo === 'onboarding'
+                ? 'Back to Onboarding'
+                : 'Back to Medical Records'
+            }
+            minHeight={44}
           >
-            ← Medical Records
+            {effectiveReturnTo === 'onboarding'
+              ? '← Onboarding'
+              : '← Medical Records'}
           </Button>
           {importId && (
             <Text color="$color10" fontSize="$2" fontFamily="$body">
@@ -974,94 +1019,208 @@ export default function PatientImportScreen({
         {/* STEP 2: PROCESSING & EXTRACTION */}
         {step === 'processing' && (
           <YStack padding="$5" gap="$5" alignItems="center">
-            <YStack
-              backgroundColor="$backgroundHover"
-              padding="$6"
-              borderRadius="$6"
-              width="100%"
-              alignItems="center"
-              gap="$4"
-            >
-              <Spinner size="large" color="$blue10" />
-              <YStack alignItems="center" gap="$1.5">
-                <H3 color="$color" fontSize="$5" fontWeight="800">
-                  Processing document
-                </H3>
-                <Paragraph
-                  color="$color10"
-                  size="$3"
-                  textAlign="center"
-                  maxWidth={380}
-                >
-                  Nexa is extracting information for review. This typically takes
-                  a few moments.
-                </Paragraph>
-              </YStack>
-
-              {/* Retry Card if Extraction Failed Retryable */}
-              {currentImport?.actions.can_retry && (
-                <YStack
-                  backgroundColor="$yellow3"
-                  borderWidth={1}
-                  borderColor="$yellow8"
-                  padding="$4"
-                  borderRadius="$4"
-                  width="100%"
-                  gap="$2"
-                  alignItems="center"
-                >
-                  <Text color="$yellow11" fontSize="$3" fontWeight="800">
-                    Extraction Paused
-                  </Text>
-                  <Paragraph color="$yellow10" size="$2" textAlign="center">
-                    Document extraction encountered a temporary issue. You can
-                    retry the extraction.
-                  </Paragraph>
-                  <Button
+            {currentImport?.status === 'cancelled' ? (
+              <YStack
+                backgroundColor="$backgroundHover"
+                borderWidth={1}
+                borderColor="$borderColor"
+                padding="$6"
+                borderRadius="$6"
+                width="100%"
+                alignItems="center"
+                gap="$4"
+              >
+                <Text fontSize={48}>🚫</Text>
+                <YStack alignItems="center" gap="$1.5">
+                  <H3 color="$color" fontSize="$5" fontWeight="800">
+                    Import Cancelled
+                  </H3>
+                  <Paragraph
+                    color="$color10"
                     size="$3"
-                    theme="yellow"
-                    disabled={actionLoading}
-                    onPress={handleRetry}
-                    accessibilityRole="button"
-                    accessibilityLabel="Retry document extraction"
+                    textAlign="center"
+                    maxWidth={380}
                   >
-                    {actionLoading ? 'Retrying...' : '🔄 Retry Extraction'}
-                  </Button>
+                    This import was cancelled. No information was added to your
+                    medical records. The uploaded source file remains in your
+                    import history unless separately erased.
+                  </Paragraph>
                 </YStack>
-              )}
 
-              {/* Cancel Import Button (if allowed by server actions) */}
-              {currentImport?.actions.can_cancel && (
-                <YStack paddingTop="$2">
-                  <Button
-                    size="$2.5"
-                    chromeless
-                    onPress={() => setShowCancelModal(true)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Cancel this import"
+                <Separator borderColor="$borderColor" width="100%" />
+
+                <YStack width="100%" gap="$2.5">
+                  {effectiveReturnTo === 'onboarding' ? (
+                    <>
+                      <Button
+                        size="$4"
+                        theme="blue"
+                        onPress={() => router.push('/patient/onboarding')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Continue onboarding"
+                        minHeight={48}
+                      >
+                        Continue onboarding →
+                      </Button>
+                      <Button
+                        size="$3.5"
+                        chromeless
+                        onPress={handleResetFlow}
+                        accessibilityRole="button"
+                        accessibilityLabel="Try Another Document"
+                        minHeight={44}
+                      >
+                        Try Another Document
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="$4"
+                        theme="blue"
+                        onPress={handleResetFlow}
+                        accessibilityRole="button"
+                        accessibilityLabel="Import Another Document"
+                        minHeight={48}
+                      >
+                        Import Another Document
+                      </Button>
+                      <Button
+                        size="$3.5"
+                        chromeless
+                        onPress={() => router.push('/patient/records')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Back to Medical Records"
+                        minHeight={44}
+                      >
+                        Back to Medical Records
+                      </Button>
+                    </>
+                  )}
+                </YStack>
+              </YStack>
+            ) : (
+              <YStack
+                backgroundColor="$backgroundHover"
+                padding="$6"
+                borderRadius="$6"
+                width="100%"
+                alignItems="center"
+                gap="$4"
+              >
+                <Spinner size="large" color="$blue10" />
+                <YStack alignItems="center" gap="$1.5">
+                  <H3 color="$color" fontSize="$5" fontWeight="800">
+                    Processing document
+                  </H3>
+                  <Paragraph
+                    color="$color10"
+                    size="$3"
+                    textAlign="center"
+                    maxWidth={380}
                   >
-                    Cancel Import
-                  </Button>
+                    Nexa is extracting information for review. This typically takes
+                    a few moments.
+                  </Paragraph>
                 </YStack>
-              )}
 
-              {/* Status note */}
-              {currentImport && (
-                <Text color="$color10" fontSize="$1" opacity={0.6}>
-                  Category: {currentImport.category} · Status:{' '}
-                  {currentImport.status}
-                </Text>
-              )}
+                {/* Retry Card if Extraction Failed Retryable */}
+                {currentImport?.actions.can_retry && (
+                  <YStack
+                    backgroundColor="$yellow3"
+                    borderWidth={1}
+                    borderColor="$yellow8"
+                    padding="$4"
+                    borderRadius="$4"
+                    width="100%"
+                    gap="$2"
+                    alignItems="center"
+                  >
+                    <Text color="$yellow11" fontSize="$3" fontWeight="800">
+                      Extraction Paused
+                    </Text>
+                    <Paragraph color="$yellow10" size="$2" textAlign="center">
+                      Document extraction encountered a temporary issue. You can
+                      retry the extraction.
+                    </Paragraph>
+                    <Button
+                      size="$3"
+                      theme="yellow"
+                      disabled={actionLoading}
+                      onPress={handleRetry}
+                      accessibilityRole="button"
+                      accessibilityLabel="Retry document extraction"
+                    >
+                      {actionLoading ? 'Retrying...' : '🔄 Retry Extraction'}
+                    </Button>
+                    {effectiveReturnTo === 'onboarding' && (
+                      <Button
+                        size="$2.5"
+                        chromeless
+                        onPress={() => router.push('/patient/onboarding')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Skip for now and continue onboarding"
+                        aria-label="Skip for now and continue onboarding"
+                        minHeight={44}
+                      >
+                        Skip for now & continue onboarding →
+                      </Button>
+                    )}
+                  </YStack>
+                )}
 
-              {/* Processing Error Notice */}
-              {processingError && (
-                <YStack backgroundColor="$red4" padding="$3" borderRadius="$3">
-                  <Text color="$red10" fontSize="$2" fontWeight="700">
-                    ⚠️ {processingError}
+                {/* Cancel Import Button (if allowed by server actions) */}
+                {currentImport?.actions.can_cancel && (
+                  <YStack paddingTop="$2">
+                    <Button
+                      size="$2.5"
+                      chromeless
+                      onPress={() => setShowCancelModal(true)}
+                      accessibilityRole="button"
+                      accessibilityLabel="Cancel this import"
+                      aria-label="Cancel this import"
+                    >
+                      Cancel Import
+                    </Button>
+                  </YStack>
+                )}
+
+                {/* Non-blocking skip affordance during processing if in onboarding */}
+                {effectiveReturnTo === 'onboarding' &&
+                  !currentImport?.actions.can_retry && (
+                    <YStack paddingTop="$1">
+                      <Button
+                        size="$2.5"
+                        chromeless
+                        onPress={() => router.push('/patient/onboarding')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Skip for now and continue onboarding"
+                        aria-label="Skip for now and continue onboarding"
+                        minHeight={44}
+                      >
+                        Skip for now & continue onboarding →
+                      </Button>
+                    </YStack>
+                  )}
+
+                {/* Status note */}
+                {currentImport && (
+                  <Text color="$color10" fontSize="$1" opacity={0.6}>
+                    Category: {currentImport.category} · Status:{' '}
+                    {currentImport.status}
                   </Text>
-                </YStack>
-              )}
-            </YStack>
+                )}
+
+                {/* Processing Error Notice */}
+                {processingError && (
+                  <YStack backgroundColor="$red4" padding="$3" borderRadius="$3">
+                    <Text color="$red10" fontSize="$2" fontWeight="700">
+                      ⚠️ {processingError}
+                    </Text>
+                  </YStack>
+                )}
+              </YStack>
+            )}
           </YStack>
         )}
 
@@ -1508,34 +1667,71 @@ export default function PatientImportScreen({
               <Separator borderColor="$green6" width="100%" />
 
               <YStack width="100%" gap="$2.5">
-                <Button
-                  size="$4"
-                  theme="blue"
-                  onPress={() => router.push('/patient/records')}
-                  accessibilityRole="button"
-                  accessibilityLabel="View in Medical Records"
-                  minHeight={48}
-                >
-                  View in Medical Records
-                </Button>
-                <Button
-                  size="$3.5"
-                  chromeless
-                  onPress={() => router.push('/patient/timeline')}
-                  accessibilityRole="button"
-                  accessibilityLabel="View Health Timeline"
-                >
-                  View Health Timeline
-                </Button>
-                <Button
-                  size="$3"
-                  chromeless
-                  onPress={handleResetFlow}
-                  accessibilityRole="button"
-                  accessibilityLabel="Import Another Document"
-                >
-                  + Import Another Document
-                </Button>
+                {effectiveReturnTo === 'onboarding' ? (
+                  <>
+                    <Button
+                      size="$4"
+                      theme="blue"
+                      onPress={() => router.push('/patient/onboarding')}
+                      accessibilityRole="button"
+                      accessibilityLabel="Continue onboarding"
+                      minHeight={48}
+                    >
+                      Continue onboarding →
+                    </Button>
+                    <Button
+                      size="$3.5"
+                      chromeless
+                      onPress={handleResetFlow}
+                      accessibilityRole="button"
+                      accessibilityLabel="Add Another Document"
+                      minHeight={44}
+                    >
+                      + Add Another Document
+                    </Button>
+                    <Button
+                      size="$3"
+                      chromeless
+                      onPress={() => router.push('/patient/records')}
+                      accessibilityRole="button"
+                      accessibilityLabel="View in Medical Records"
+                      minHeight={44}
+                    >
+                      View in Medical Records
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      size="$4"
+                      theme="blue"
+                      onPress={() => router.push('/patient/records')}
+                      accessibilityRole="button"
+                      accessibilityLabel="View in Medical Records"
+                      minHeight={48}
+                    >
+                      View in Medical Records
+                    </Button>
+                    <Button
+                      size="$3.5"
+                      chromeless
+                      onPress={() => router.push('/patient/timeline')}
+                      accessibilityRole="button"
+                      accessibilityLabel="View Health Timeline"
+                    >
+                      View Health Timeline
+                    </Button>
+                    <Button
+                      size="$3"
+                      chromeless
+                      onPress={handleResetFlow}
+                      accessibilityRole="button"
+                      accessibilityLabel="Import Another Document"
+                    >
+                      + Import Another Document
+                    </Button>
+                  </>
+                )}
               </YStack>
             </YStack>
           </YStack>
