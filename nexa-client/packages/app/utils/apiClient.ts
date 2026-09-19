@@ -415,6 +415,14 @@ export interface PatientExternalRecordUploadPolicy {
   accepted_mime_types: string[]
 }
 
+export interface SelectedSourceFile {
+  name: string
+  type: string
+  size: number
+  file?: File | Blob
+  uri?: string
+}
+
 export interface PatientExternalRecordReviewItem {
   review_item_id: string
   label: string
@@ -1628,17 +1636,42 @@ export const NexaApiClient = {
 
   uploadPatientExternalRecord(
     category: string,
-    file: File | Blob,
+    fileSource: SelectedSourceFile | File | Blob,
     filename?: string,
     idempotencyKey?: string
   ): Promise<PatientExternalRecordResponse> {
     const formData = new FormData()
     formData.append('category', category)
-    if (typeof File !== 'undefined' && file instanceof File) {
-      formData.append('file', file)
+
+    if (
+      typeof fileSource === 'object' &&
+      fileSource !== null &&
+      'uri' in fileSource &&
+      fileSource.uri
+    ) {
+      // Native React Native / Expo FormData contract
+      formData.append('file', {
+        uri: fileSource.uri,
+        name: fileSource.name || filename || 'medical-record',
+        type: fileSource.type || 'application/octet-stream',
+      } as any)
+    } else if (
+      typeof fileSource === 'object' &&
+      fileSource !== null &&
+      'file' in fileSource &&
+      fileSource.file
+    ) {
+      formData.append(
+        'file',
+        fileSource.file,
+        fileSource.name || filename || 'medical-record'
+      )
+    } else if (typeof File !== 'undefined' && fileSource instanceof File) {
+      formData.append('file', fileSource)
     } else {
-      formData.append('file', file, filename || 'medical-record')
+      formData.append('file', fileSource as Blob, filename || 'medical-record')
     }
+
     const headers: Record<string, string> = {}
     if (idempotencyKey) {
       headers['Idempotency-Key'] = idempotencyKey

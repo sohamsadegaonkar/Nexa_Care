@@ -16,6 +16,7 @@ import {
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Platform, RefreshControl, ScrollView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import * as DocumentPicker from 'expo-document-picker'
 import {
   ApiError,
   NexaApiClient,
@@ -24,6 +25,7 @@ import {
   type PatientExternalRecordReviewItem,
   type PatientExternalRecordReviewResponse,
   type PatientExternalRecordUploadPolicy,
+  type SelectedSourceFile,
 } from '../../utils/apiClient'
 
 // ── Category Definitions ──────────────────────────────────────────────
@@ -103,11 +105,12 @@ export default function PatientImportScreen({
   const [selectedCategory, setSelectedCategory] = useState<
     ImportCategoryOption['slug'] | null
   >(null)
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [selectedFile, setSelectedFile] = useState<SelectedSourceFile | null>(null)
   const [fileValidationError, setFileValidationError] = useState<string | null>(
     null
   )
   const [uploading, setUploading] = useState(false)
+  const [uploadIdempotencyKey, setUploadIdempotencyKey] = useState<string | null>(null)
 
   // Processing & Polling
   const [processingError, setProcessingError] = useState<string | null>(null)
@@ -134,6 +137,7 @@ export default function PatientImportScreen({
   const [sourceLoading, setSourceLoading] = useState(false)
   const [sourceError, setSourceError] = useState<string | null>(null)
   const [sourceObjectUrl, setSourceObjectUrl] = useState<string | null>(null)
+  const sourceObjectUrlRef = useRef<string | null>(null)
 
   // File input ref for web
   const fileInputRef = useRef<HTMLInputElement | null>(null)
@@ -160,9 +164,19 @@ export default function PatientImportScreen({
     void loadPolicy()
   }, [loadPolicy])
 
+  // Clean up any active object URL on import change or unmount
+  useEffect(() => {
+    return () => {
+      if (sourceObjectUrlRef.current) {
+        URL.revokeObjectURL(sourceObjectUrlRef.current)
+        sourceObjectUrlRef.current = null
+      }
+    }
+  }, [importId])
+
   // ── Step 2: Validate Selected File Against Dynamic Policy ────────────
   const validateFile = useCallback(
-    (file: File): string | null => {
+    (file: SelectedSourceFile): string | null => {
       if (!policy) return null
 
       // Check size
@@ -171,22 +185,28 @@ export default function PatientImportScreen({
         return `File size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds maximum allowed size of ${maxMb} MB.`
       }
 
-      // Check extension
+      const formats = policy.accepted_extensions
+        .map((e) => e.replace('.', '').toUpperCase())
+        .join(', ')
+
+      // Check extension: must match an accepted extension
       const fileNameLower = file.name.toLowerCase()
       const hasValidExt = policy.accepted_extensions.some((ext) =>
         fileNameLower.endsWith(ext.toLowerCase())
       )
-
-      // Check MIME type
-      const hasValidMime = policy.accepted_mime_types.some(
-        (mime) => mime.toLowerCase() === file.type.toLowerCase()
-      )
-
-      if (!hasValidExt && !hasValidMime) {
-        const formats = policy.accepted_extensions
-          .map((e) => e.replace('.', '').toUpperCase())
-          .join(', ')
+      if (!hasValidExt) {
         return `Unsupported file format. Supported formats: ${formats}.`
+      }
+
+      // Check MIME type: when present and non-generic, must match accepted MIME
+      const mimeType = file.type ? file.type.toLowerCase().trim() : ''
+      if (mimeType && mimeType !== 'application/octet-stream') {
+        const hasValidMime = policy.accepted_mime_types.some(
+          (mime) => mime.toLowerCase() === mimeType
+        )
+        if (!hasValidMime) {
+          return `Unsupported file format. Supported formats: ${formats}.`
+        }
       }
 
       return null
@@ -194,10 +214,54 @@ export default function PatientImportScreen({
     [policy]
   )
 
-  const handleFileSelect = (file: File) => {
+  const handleFileSelect = (file: SelectedSourceFile) => {
     const error = validateFile(file)
     setFileValidationError(error)
     setSelectedFile(error ? null : file)
+    setUploadIdempotencyKey(null) // Intent changed: reset idempotency key
+  }
+
+  const handleCategorySelect = (catSlug: ImportCategoryOption['slug']) => {
+    setSelectedCategory(catSlug)
+    setUploadIdempotencyKey(null) // Intent changed: reset idempotency key
+  }
+
+  const handlePickNativeDocument = async () => {
+    try {
+      const types =
+        policy?.accepted_mime_types && policy.accepted_mime_types.length > 0
+          ? policy.accepted_mime_types
+          : ['application/pdf', 'image/*']
+
+      const result = await DocumentPicker.getDocumentAsync({
+        type: types,
+        copyToCacheDirectory: true,
+      })
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0]
+        const sourceFile: SelectedSourceFile = {
+          name: asset.name,
+          type: asset.mimeType || 'application/octet-stream',
+          size: asset.size || 0,
+          uri: asset.uri,
+          file: asset.file,
+        }
+        handleFileSelect(sourceFile)
+      }
+    } catch (err) {
+      const errMsg =
+        err instanceof Error ? err.message : 'Failed to select document.'
+      setFileValidationError(errMsg)
+    }
+  }
+
+  const handleBrowsePress = () => {
+    if (Platform.OS === 'web') {
+      fileInputRef.current?.click()
+    } else {
+      void handlePickNativeDocument()
+    }
   }
 
   // ── Handle Upload Submission ──────────────────────────────────────────
@@ -208,7 +272,12 @@ export default function PatientImportScreen({
     setFileValidationError(null)
 
     try {
-      const idempotencyKey = `pt-up-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+      let idempotencyKey = uploadIdempotencyKey
+      if (!idempotencyKey) {
+        idempotencyKey = `pt-up-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
+        setUploadIdempotencyKey(idempotencyKey)
+      }
+
       const res = await NexaApiClient.uploadPatientExternalRecord(
         selectedCategory,
         selectedFile,
@@ -295,14 +364,14 @@ export default function PatientImportScreen({
           }
         }
 
-        if (detail.actions.can_review || detail.status === 'needs_review') {
+        if (detail.actions.can_review) {
           setPollingActive(false)
           setStep('review')
           void loadReviewItems(targetImportId)
           return
         }
 
-        if (detail.actions.can_save || detail.status === 'ready_to_save') {
+        if (detail.actions.can_save) {
           setPollingActive(false)
           setStep('review')
           void loadReviewItems(targetImportId)
@@ -484,12 +553,22 @@ export default function PatientImportScreen({
     if (!importId || sourceLoading) return
 
     setShowSourceModal(true)
+    if (Platform.OS !== 'web') {
+      // Native disposition: truthful notice without calling browser URL.createObjectURL
+      return
+    }
+
     setSourceLoading(true)
     setSourceError(null)
 
     try {
       const blob = await NexaApiClient.getPatientExternalRecordSourceBlob(importId)
+      if (sourceObjectUrlRef.current) {
+        URL.revokeObjectURL(sourceObjectUrlRef.current)
+        sourceObjectUrlRef.current = null
+      }
       const url = URL.createObjectURL(blob)
+      sourceObjectUrlRef.current = url
       setSourceObjectUrl(url)
     } catch (err) {
       if (err instanceof ApiError) {
@@ -516,8 +595,9 @@ export default function PatientImportScreen({
 
   const handleCloseSource = () => {
     setShowSourceModal(false)
-    if (sourceObjectUrl) {
-      URL.revokeObjectURL(sourceObjectUrl)
+    if (sourceObjectUrlRef.current) {
+      URL.revokeObjectURL(sourceObjectUrlRef.current)
+      sourceObjectUrlRef.current = null
       setSourceObjectUrl(null)
     }
     setSourceError(null)
@@ -530,6 +610,7 @@ export default function PatientImportScreen({
     setCurrentImport(null)
     setSelectedCategory(null)
     setSelectedFile(null)
+    setUploadIdempotencyKey(null)
     setFileValidationError(null)
     setReviewData(null)
     setProcessingError(null)
@@ -696,7 +777,7 @@ export default function PatientImportScreen({
                       alignItems="center"
                       justifyContent="space-between"
                       pressStyle={{ opacity: 0.85 }}
-                      onPress={() => setSelectedCategory(cat.slug)}
+                      onPress={() => handleCategorySelect(cat.slug)}
                       accessibilityRole="radio"
                       accessibilityState={{ selected: isSelected }}
                       accessibilityLabel={cat.label}
@@ -755,7 +836,13 @@ export default function PatientImportScreen({
                   onChange={(e) => {
                     const files = e.target.files
                     if (files && files[0]) {
-                      handleFileSelect(files[0])
+                      const file = files[0]
+                      handleFileSelect({
+                        name: file.name,
+                        type: file.type || 'application/octet-stream',
+                        size: file.size,
+                        file: file,
+                      })
                     }
                   }}
                 />
@@ -811,7 +898,7 @@ export default function PatientImportScreen({
                   padding="$6"
                   alignItems="center"
                   gap="$3"
-                  onPress={() => fileInputRef.current?.click()}
+                  onPress={handleBrowsePress}
                   accessibilityRole="button"
                   accessibilityLabel="Browse medical document file"
                   pressStyle={{ opacity: 0.8 }}
@@ -830,7 +917,7 @@ export default function PatientImportScreen({
                   <Button
                     size="$3"
                     theme="blue"
-                    onPress={() => fileInputRef.current?.click()}
+                    onPress={handleBrowsePress}
                     accessibilityRole="button"
                     accessibilityLabel="Browse Files button"
                   >
@@ -1558,7 +1645,20 @@ export default function PatientImportScreen({
 
             <Separator />
 
-            {sourceLoading ? (
+            {Platform.OS !== 'web' ? (
+              <YStack
+                flex={1}
+                justifyContent="center"
+                alignItems="center"
+                gap="$3"
+                padding="$4"
+              >
+                <Text fontSize={32}>📱</Text>
+                <Paragraph color="$color10" size="$3" textAlign="center">
+                  Document preview is available in the Nexa Care web portal. In-app native preview is currently in development.
+                </Paragraph>
+              </YStack>
+            ) : sourceLoading ? (
               <YStack
                 flex={1}
                 justifyContent="center"
@@ -1588,24 +1688,11 @@ export default function PatientImportScreen({
               </YStack>
             ) : sourceObjectUrl ? (
               <YStack flex={1} borderRadius="$3" overflow="hidden">
-                {Platform.OS === 'web' ? (
-                  <iframe
-                    src={sourceObjectUrl}
-                    title="Source Document"
-                    style={{ width: '100%', height: '100%', border: 'none' }}
-                  />
-                ) : (
-                  <YStack
-                    flex={1}
-                    justifyContent="center"
-                    alignItems="center"
-                    gap="$2"
-                  >
-                    <Paragraph color="$color10" size="$3">
-                      Source document is ready for viewing.
-                    </Paragraph>
-                  </YStack>
-                )}
+                <iframe
+                  src={sourceObjectUrl}
+                  title="Source Document"
+                  style={{ width: '100%', height: '100%', border: 'none' }}
+                />
               </YStack>
             ) : null}
           </Dialog.Content>

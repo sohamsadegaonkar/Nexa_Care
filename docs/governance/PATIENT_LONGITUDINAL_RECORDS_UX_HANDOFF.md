@@ -444,8 +444,10 @@ Clinical Safety Rules:
 - **Alembic Head:** `20260918_treatment_vitals_encounter` (singular, zero migrations introduced)
 - **Routes Delivered:**
   - Next.js: `/patient/records/import` (wrapped in `<Suspense>` boundary)
-  - Expo: `/patient/import`
+  - Expo: `/patient/records/import` and `/patient/import`
   - Deep-link from `PatientRecordsScreen` and `PatientReportsScreen` `+ Add Record` buttons
+- **Cross-Platform File Abstraction:**
+  - `SelectedSourceFile` contract supporting Web `File/Blob` and Expo / React Native `expo-document-picker` assets (`{ uri, name, type }`).
 - **TypeScript DTOs & API Methods:**
   - `PatientExternalRecordActions`, `PatientExternalRecordResponse`, `PatientExternalRecordUploadPolicy`, `PatientExternalRecordReviewItem`, `PatientExternalRecordReviewResponse`
   - `getPatientUploadPolicy`, `uploadPatientExternalRecord`, `getPatientExternalRecord`, `processPatientExternalRecord`, `retryPatientExternalRecord`, `cancelPatientExternalRecord`, `getPatientExternalRecordReview`, `reviewPatientExternalRecordItem`, `savePatientExternalRecord`, `getPatientExternalRecordSourceBlob`
@@ -454,34 +456,42 @@ Clinical Safety Rules:
 1. **Strict `actions`-Driven Authority:**
    - UI capability checks rely strictly on server-returned `response.actions` (`can_process`, `can_retry`, `can_cancel`, `can_review`, `can_save`, `can_view_source`).
    - Never infer capability from public status strings or local boolean heuristics.
-2. **Dynamic Upload Policy:**
+   - Adversarially verified: `status === 'needs_review'` with `can_review === false` halts advancement; `status === 'ready_to_save'` with `can_save === false` keeps save disabled.
+2. **Dynamic Upload Policy & Mismatch Validation:**
    - Limits (`max_upload_bytes`), file extensions, and MIME types fetched dynamically via `GET /upload-policy`.
-   - No hardcoded byte limits; no advertising unsupported formats (e.g. TIFF not offered unless policy returns it).
-3. **Truthful Copy & Non-Deceptive Clinical Claims:**
+   - File validation checks both file extension and explicit non-generic MIME types, rejecting invalid types or spoofed extensions.
+3. **Upload Idempotency Preservation:**
+   - Client generates a unique upload idempotency key upon first submission attempt.
+   - Key is preserved across transient network errors to allow safe retries, and is reset only when the selected file, category, or workflow intent changes.
+4. **Truthful Copy & Non-Deceptive Clinical Claims:**
    - Progress copy: *"Processing document"*, *"Nexa is extracting information for review"*.
    - Strictly prohibits claiming *"clinically verified"*, *"doctor reviewed"*, *"malware free"*, or *"virus scanned"*.
-4. **Save Semantics:**
+   - In-app native document preview truthfully informs patients that document preview is available via the web portal while native preview is in development.
+5. **Save Semantics:**
    - Server creates `DocumentReference` and `TimelineEvent` only; does NOT fabricate typed clinical facts (medications, conditions, observations).
    - Save CTA reads: *"Save document to medical records"*.
-5. **Cancel Semantics:**
+6. **Cancel Semantics:**
    - Cancel != erasure. Prominent retention warning: *"Cancel this import? No information will be added to your medical records. The uploaded source remains in your import history unless it is separately erased."*
    - Cancel action is unavailable while extraction is actively running (`can_cancel: false`).
-6. **Provenance & Evidence Integrity:**
+7. **Provenance & Evidence Integrity:**
    - Provenance labels: *"Document extracted"*, *"Patient corrected"*, *"Patient uploaded"*.
    - Original extracted value is preserved and displayed alongside patient correction.
-7. **Security & Privacy:**
+8. **Security & Privacy:**
    - Server-derived self-patient authority only (`/api/v2/patient/me/*`).
    - Zero patient identifiers, tokens, or internal S3 storage keys in URLs, error messages, or logs.
-   - Advisory source viewing uses short-lived blob URLs revoked on modal close.
+   - Advisory source viewing uses short-lived blob URLs revoked on modal close, active import change, and component unmount.
+   - Zero hardcoded `localhost` references across client packages (verified by architecture guardrails).
 
 ### Verification Evidence
 | Test Target | Scope | Result | Execution Detail |
 |---|---|---|---|
-| Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 45 test files, 310 tests passed (including 20/20 in `PatientImportWorkflow.test.tsx`) |
+| Architecture Guardrails | `pytest tests/test_architecture.py` | PASS | 8 passed, 0 localhost violations |
+| Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 45 test files, 316 tests (including 26/26 in `PatientImportWorkflow.test.tsx`) |
 | Vitest Next Suite | `yarn --cwd nexa-client test:next` | PASS | 2 test files, 6 tests passed |
-| Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 164 passed, AST invariant constraints verified |
+| Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 166 passed, AST invariant constraints verified |
 | Route Registration Invariants | `pytest tests/test_route_registration.py` | PASS | 3/3 route invariant suites passed |
 | D4 Contract Tests | `pytest tests/test_patient_external_record_d4_capabilities.py` | PASS | 18/18 capability and actions tests passed |
 | Alembic Migration Head | `python -m alembic heads` | PASS | Singular head `20260918_treatment_vitals_encounter`, 0 migrations |
 | Package Builds | `yarn --cwd nexa-client build` | PASS | `@my/config` and `@my/ui` built cleanly |
 | Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 30 routes (including `/patient/records/import`) compiled & prerendered cleanly |
+

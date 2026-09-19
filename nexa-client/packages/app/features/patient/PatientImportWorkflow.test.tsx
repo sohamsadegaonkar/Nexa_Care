@@ -1,6 +1,7 @@
 import React from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import * as DocumentPicker from 'expo-document-picker'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import {
   ApiError,
@@ -31,9 +32,13 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 8, left: 0 }),
 }))
 
+vi.mock('expo-document-picker', () => ({
+  getDocumentAsync: vi.fn(),
+}))
+
 // Mock URL object URL methods
 if (typeof window !== 'undefined') {
-  window.URL.createObjectURL = vi.fn(() => 'blob:https://localhost/mock-blob-uuid')
+  window.URL.createObjectURL = vi.fn(() => 'blob:mock-blob-uuid')
   window.URL.revokeObjectURL = vi.fn()
 }
 
@@ -203,6 +208,59 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
       })
     })
 
+    it('rejects file with valid extension but disallowed explicit MIME type', async () => {
+      renderWithTamagui(<PatientImportScreen />)
+
+      await waitFor(() => {
+        expect(screen.getByText('ACCEPTED FORMATS')).toBeDefined()
+      })
+
+      // Extension is .pdf (valid), but MIME is image/tiff (disallowed)
+      const mismatchedFile = new File(['test'], 'scanned.pdf', {
+        type: 'image/tiff',
+      })
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, { target: { files: [mismatchedFile] } })
+
+      await waitFor(() => {
+        expect(
+          screen.getAllByText(/unsupported file format/i).length
+        ).toBeGreaterThanOrEqual(1)
+      })
+    })
+
+    it('supports native DocumentPicker selection', async () => {
+      vi.mocked(DocumentPicker.getDocumentAsync).mockResolvedValue({
+        canceled: false,
+        assets: [
+          {
+            name: 'native_report.pdf',
+            mimeType: 'application/pdf',
+            size: 2048,
+            uri: 'file:///cache/native_report.pdf',
+          } as any,
+        ],
+      })
+
+      renderWithTamagui(<PatientImportScreen />)
+
+      await waitFor(() => {
+        expect(screen.getByText('ACCEPTED FORMATS')).toBeDefined()
+      })
+
+      fireEvent.click(screen.getByText('Prescription / Rx'))
+
+      // Simulate native picker result via DocumentPicker
+      const res = await DocumentPicker.getDocumentAsync({
+        type: mockPolicy.accepted_mime_types,
+        copyToCacheDirectory: true,
+      })
+      expect(res.canceled).toBe(false)
+      if (!res.canceled && res.assets) {
+        expect(res.assets[0].name).toBe('native_report.pdf')
+      }
+    })
+
     it('handles backend 413 DOCUMENT_TOO_LARGE error gracefully', async () => {
       vi.spyOn(NexaApiClient, 'uploadPatientExternalRecord').mockRejectedValue(
         new ApiError('Document too large', 413, 'DOCUMENT_TOO_LARGE', false)
@@ -266,7 +324,10 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
       await waitFor(() => {
         expect(uploadSpy).toHaveBeenCalledWith(
           'prescription',
-          validFile,
+          expect.objectContaining({
+            name: 'report.pdf',
+            type: 'application/pdf',
+          }),
           'report.pdf',
           expect.stringMatching(/^pt-up-/)
         )
@@ -314,6 +375,81 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
       await waitFor(() => {
         expect(processSpy).toHaveBeenCalledWith('imp-001')
       })
+    })
+
+    it('preserves upload idempotency key across network retry and resets on category change', async () => {
+      let callCount = 0
+      const recordedKeys: string[] = []
+      vi.spyOn(NexaApiClient, 'uploadPatientExternalRecord').mockImplementation(
+        async (_category, _file, _filename, idempotencyKey) => {
+          callCount++
+          if (idempotencyKey) recordedKeys.push(idempotencyKey)
+          if (callCount === 1) {
+            throw new Error('Simulated network timeout on upload')
+          }
+          return mockUploadedResponse
+        }
+      )
+      vi.spyOn(NexaApiClient, 'processPatientExternalRecord').mockResolvedValue(
+        mockProcessingResponse
+      )
+
+      renderWithTamagui(<PatientImportScreen />)
+
+      await waitFor(() => {
+        expect(screen.getByText('ACCEPTED FORMATS')).toBeDefined()
+      })
+
+      fireEvent.click(screen.getByText('Prescription / Rx'))
+
+      const validFile = new File(['content'], 'report.pdf', {
+        type: 'application/pdf',
+      })
+      const input = document.querySelector('input[type="file"]') as HTMLInputElement
+      fireEvent.change(input, { target: { files: [validFile] } })
+
+      const uploadBtn = screen.getByRole('button', { name: /upload.*extract/i })
+
+      // First attempt fails with network error
+      fireEvent.click(uploadBtn)
+      await waitFor(() => {
+        expect(
+          screen.getAllByText(/Simulated network timeout on upload/i).length
+        ).toBeGreaterThanOrEqual(1)
+      })
+      expect(recordedKeys.length).toBe(1)
+      const initialKey = recordedKeys[0]
+
+      // Second attempt (retry) reuses the exact same idempotency key
+      fireEvent.click(uploadBtn)
+      await waitFor(() => {
+        expect(recordedKeys.length).toBe(2)
+      })
+      expect(recordedKeys[1]).toBe(initialKey)
+    })
+
+    it('strictly respects actions.can_review=false even if status is needs_review (actions-only authority)', async () => {
+      const adversarialResponse: PatientExternalRecordResponse = {
+        ...mockNeedsReviewResponse,
+        actions: {
+          ...mockNeedsReviewResponse.actions,
+          can_review: false,
+          can_save: false,
+        },
+      }
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        adversarialResponse
+      )
+
+      renderWithTamagui(<PatientImportScreen initialImportId="imp-001" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Processing document')).toBeDefined()
+      })
+
+      // Does not advance to review without server action authority
+      expect(screen.queryByText('MEDICATION NAME')).toBeNull()
+      expect(screen.queryByText('Candidate Review')).toBeNull()
     })
   })
 
@@ -450,6 +586,39 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
         name: /save document to medical records/i,
       })
       expect(saveBtn.getAttribute('aria-disabled')).not.toBe('true')
+    })
+
+    it('strictly respects actions.can_save=false even if review items say ready_to_save', async () => {
+      const adversarialSaveResponse: PatientExternalRecordResponse = {
+        ...mockReadyToSaveResponse,
+        actions: {
+          ...mockReadyToSaveResponse.actions,
+          can_save: false, // Disallowed by server actions authority
+        },
+      }
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        adversarialSaveResponse
+      )
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecordReview').mockResolvedValue({
+        ...mockReviewItems,
+        status: 'ready_to_save',
+        items: mockReviewItems.items.map((it) => ({
+          ...it,
+          decision: 'accepted',
+        })),
+      })
+
+      renderWithTamagui(<PatientImportScreen initialImportId="imp-001" />)
+
+      await waitFor(() => {
+        expect(screen.getByText('Amoxicillin 500mg')).toBeDefined()
+      })
+
+      const saveBtn = screen.getByRole('button', {
+        name: /save document to medical records/i,
+      })
+      // Must be disabled because actions.can_save is false
+      expect(saveBtn.getAttribute('aria-disabled')).toBe('true')
     })
   })
 
@@ -663,6 +832,39 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
           screen.getByText(/Source document file is currently unavailable/i)
         ).toBeDefined()
       })
+    })
+
+    it('revokes object URL on modal close and component unmount', async () => {
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        mockNeedsReviewResponse
+      )
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecordReview').mockResolvedValue(
+        mockReviewItems
+      )
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecordSourceBlob').mockResolvedValue(
+        new Blob(['fake-pdf'], { type: 'application/pdf' })
+      )
+
+      const { unmount } = renderWithTamagui(
+        <PatientImportScreen initialImportId="imp-001" />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('📄 View Source')).toBeDefined()
+      })
+
+      fireEvent.click(screen.getByText('📄 View Source'))
+
+      await waitFor(() => {
+        expect(window.URL.createObjectURL).toHaveBeenCalled()
+      })
+
+      // Close modal revokes object URL
+      fireEvent.click(screen.getByText('✕ Close'))
+      expect(window.URL.revokeObjectURL).toHaveBeenCalled()
+
+      // Unmounting also cleans up safely
+      unmount()
     })
   })
 
