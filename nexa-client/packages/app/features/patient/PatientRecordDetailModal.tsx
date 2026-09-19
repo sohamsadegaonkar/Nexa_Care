@@ -26,6 +26,8 @@ interface PatientRecordDetailModalProps {
   initialProvenance?: {
     source: string
     source_display?: string
+    hospital_name?: string | null
+    encounter_recorded_at?: string | null
     confidence?: number | null
     risk_level?: string | null
     has_source_document?: boolean
@@ -122,6 +124,8 @@ export default function PatientRecordDetailModal({
         timeStyle: 'short',
       })
     : null
+
+  if (!open) return null
 
   return (
     <Sheet
@@ -284,7 +288,8 @@ export default function PatientRecordDetailModal({
 
               <XStack alignItems="center" gap="$2" flexWrap="wrap">
                 <SourceBadge
-                  source={provenance.source === 'manual' ? 'manual' : 'ai_extracted'}
+                  source={provenance.source}
+                  hospitalName={provenance.hospital_name || undefined}
                   confidence={
                     provenance.confidence != null
                       ? Math.round(provenance.confidence * 100)
@@ -299,6 +304,18 @@ export default function PatientRecordDetailModal({
               {provenance.source_display ? (
                 <Text color="$color11" fontSize="$3">
                   Origin: {provenance.source_display}
+                </Text>
+              ) : null}
+
+              {provenance.hospital_name ? (
+                <Text color="$color11" fontSize="$3">
+                  Facility: {provenance.hospital_name}
+                </Text>
+              ) : null}
+
+              {provenance.encounter_recorded_at ? (
+                <Text color="$color11" fontSize="$3">
+                  Recorded: {new Date(provenance.encounter_recorded_at).toLocaleString()}
                 </Text>
               ) : null}
 

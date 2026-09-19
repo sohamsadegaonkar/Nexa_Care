@@ -825,6 +825,49 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(screen.getByText('Origin: Clinician Recorded')).toBeTruthy()
     })
 
+    it('renders clinician recorded provenance with hospital facility without leaking internal IDs', async () => {
+      vi.spyOn(NexaApiClient, 'getMyRecordDetail').mockResolvedValue({
+        record_id: 'rec-1',
+        patient_id: 'pat-1',
+        category: 'vitals',
+        title: 'Vitals Observation: BP',
+        fields: {
+          type: 'BP',
+          value: '120/80',
+          unit: 'mmHg',
+        },
+        recorded_at: '2026-07-17T10:00:00Z',
+        provenance: {
+          source: 'clinician_recorded',
+          source_display: 'Clinician recorded at Apollo Hospital',
+          hospital_name: 'Apollo Hospital',
+          encounter_recorded_at: '2026-07-17T09:30:00Z',
+          confidence: null,
+          risk_level: 'LOW_RISK',
+          has_source_document: false,
+        },
+      })
+
+      renderWithTamagui(
+        <PatientRecordDetailModal
+          open={true}
+          onOpenChange={vi.fn()}
+          category="vitals"
+          recordId="rec-1"
+        />
+      )
+
+      expect(await screen.findByText('Vitals Observation: BP')).toBeTruthy()
+      expect(screen.getByText('Clinician recorded • Apollo Hospital')).toBeTruthy()
+      expect(screen.getByText('Origin: Clinician recorded at Apollo Hospital')).toBeTruthy()
+      expect(screen.getByText('Facility: Apollo Hospital')).toBeTruthy()
+      expect(screen.getByText(/Recorded:/)).toBeTruthy()
+      // Internal IDs must never be shown
+      expect(screen.queryByText(/encounter_id/i)).toBeNull()
+      expect(screen.queryByText(/hospital_id/i)).toBeNull()
+      expect(screen.queryByText(/provider_id/i)).toBeNull()
+    })
+
     it('dismisses on Escape key press on web', async () => {
       const onOpenChange = vi.fn()
       vi.spyOn(NexaApiClient, 'getMyRecordDetail').mockResolvedValue({

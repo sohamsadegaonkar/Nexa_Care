@@ -31,6 +31,7 @@ from app.core.dependencies import (
     require_role,
 )
 from app.security.provider_capabilities import ClinicalCapability
+from app.models.clinical_encounter import ClinicalEncounter
 from app.models.patient_records import (
     Allergy,
     DocumentReference,
@@ -687,7 +688,41 @@ async def get_my_records_by_category(
         page = v_rows[:bounded_limit]
         if len(v_rows) > bounded_limit and page:
             next_cursor = _encode_keyset_cursor(page[-1].recorded_at, page[-1].id)
+
+        # Batch resolve encounter hospital names for vitals to prevent N+1 queries
+        encounter_ids = [v.encounter_id for v in page if v.encounter_id is not None]
+        encounter_hospital_map: dict[uuid.UUID, str | None] = {}
+        if encounter_ids:
+            stmt_encs = (
+                select(ClinicalEncounter.encounter_id, HospitalRegistry.display_name)
+                .outerjoin(HospitalRegistry, ClinicalEncounter.hospital_id == HospitalRegistry.id)
+                .where(
+                    ClinicalEncounter.encounter_id.in_(encounter_ids),
+                    ClinicalEncounter.patient_id == pid_uuid,
+                )
+            )
+            res_encs = await db.execute(stmt_encs)
+            encounter_hospital_map = {row[0]: row[1] for row in res_encs.all()}
+
         for v in page:
+            if v.encounter_id and v.encounter_id in encounter_hospital_map:
+                h_name = encounter_hospital_map[v.encounter_id]
+                v_source = "clinician_recorded"
+                v_source_display = f"Clinician recorded at {h_name}" if h_name else "Clinician recorded"
+                v_hosp = h_name
+            elif v.source == "ai_extracted":
+                v_source = "ai_extracted"
+                v_source_display = "Document Extracted"
+                v_hosp = None
+            elif v.source == "patient_uploaded":
+                v_source = "patient_uploaded"
+                v_source_display = "Imported by you from an external report"
+                v_hosp = None
+            else:
+                v_source = "manual"
+                v_source_display = "Manual entry"
+                v_hosp = None
+
             records.append({
                 "record_id": str(v.id),
                 "category": "vitals",
@@ -695,7 +730,9 @@ async def get_my_records_by_category(
                 "value": v.value,
                 "unit": v.unit,
                 "recorded_at": v.recorded_at.isoformat() if v.recorded_at else None,
-                "source": v.source,
+                "source": v_source,
+                "source_display": v_source_display,
+                "hospital_name": v_hosp,
                 "risk_level": v.risk_level,
                 "confidence": v.confidence,
                 "source_document_id": str(v.source_document_id) if v.source_document_id else None,
@@ -845,6 +882,40 @@ async def get_my_record_detail(
         v = res.scalar_one_or_none()
         if not v:
             raise HTTPException(status_code=404, detail={"error_code": "RECORD_NOT_FOUND", "message": "Vitals record not found"})
+
+        hospital_name: str | None = None
+        encounter_recorded_at: str | None = None
+        if v.encounter_id:
+            stmt_enc = (
+                select(ClinicalEncounter, HospitalRegistry.display_name)
+                .outerjoin(HospitalRegistry, ClinicalEncounter.hospital_id == HospitalRegistry.id)
+                .where(
+                    ClinicalEncounter.encounter_id == v.encounter_id,
+                    ClinicalEncounter.patient_id == pid_uuid,
+                )
+                .limit(1)
+            )
+            res_enc = await db.execute(stmt_enc)
+            enc_row = res_enc.first()
+            if enc_row:
+                enc_obj, h_name = enc_row
+                hospital_name = h_name
+                if enc_obj and enc_obj.created_at:
+                    encounter_recorded_at = enc_obj.created_at.isoformat()
+
+        if hospital_name or encounter_recorded_at or (v.encounter_id and enc_row):
+            source_key = "clinician_recorded"
+            source_display = f"Clinician recorded at {hospital_name}" if hospital_name else "Clinician recorded"
+        elif v.source == "ai_extracted":
+            source_key = "ai_extracted"
+            source_display = "Document Extracted"
+        elif v.source == "patient_uploaded":
+            source_key = "patient_uploaded"
+            source_display = "Imported by you from an external report"
+        else:
+            source_key = "manual"
+            source_display = "Manual entry"
+
         return {
             "record_id": str(v.id),
             "patient_id": patient_id,
@@ -858,8 +929,10 @@ async def get_my_record_detail(
             },
             "recorded_at": v.recorded_at.isoformat() if v.recorded_at else None,
             "provenance": {
-                "source": v.source,
-                "source_display": "Clinician Recorded" if v.source == "manual" else "Document Extracted",
+                "source": source_key,
+                "source_display": source_display,
+                "hospital_name": hospital_name,
+                "encounter_recorded_at": encounter_recorded_at,
                 "confidence": v.confidence,
                 "risk_level": v.risk_level,
                 "source_document_id": str(v.source_document_id) if v.source_document_id else None,
@@ -1510,6 +1583,7 @@ def _enrich_timeline_provenance(
     source_page: int | None = None,
     record_id: str | None = None,
     category: str | None = None,
+    hospital_name: str | None = None,
 ) -> dict[str, Any]:
     if raw_source == "ai_extracted" or "ai_" in str(raw_source).lower():
         conf_val = float(confidence) if confidence is not None else None
@@ -1544,6 +1618,18 @@ def _enrich_timeline_provenance(
         source_detail = "Patient-imported external medical record"
         rev_val = "Patient reviewed"
         badges = ["Imported by you", "External record"]
+    elif raw_source == "clinician_recorded":
+        conf_val = None
+        risk_val = str(risk_level or "LOW_RISK") if risk_level else None
+        hname = hospital_name
+        source_display = (
+            f"Clinician recorded at {hname}" if hname else "Clinician recorded"
+        )
+        source_detail = (
+            f"Clinical encounter at {hname}" if hname else "Clinical encounter"
+        )
+        rev_val = "Clinician verified"
+        badges = ["Clinician recorded"] + ([hname] if hname else [])
     else:
         conf_val = None
         risk_val = str(risk_level or "LOW_RISK") if risk_level else None
@@ -1573,6 +1659,7 @@ def _enrich_timeline_provenance(
         "review_status": rev_val,
         "source_detail": source_detail,
         "badges": badges,
+        "hospital_name": hospital_name,
     }
 
 
@@ -1606,10 +1693,32 @@ async def _fetch_and_merge_timeline(
         .limit(limit)
     )
     res_v = await db.execute(stmt_v)
-    for v in res_v.scalars().all():
+    vitals_all = res_v.scalars().all()
+
+    v_enc_ids = [v.encounter_id for v in vitals_all if v.encounter_id is not None]
+    enc_hosp_map: dict[uuid.UUID, str | None] = {}
+    if v_enc_ids:
+        stmt_encs = (
+            select(ClinicalEncounter.encounter_id, HospitalRegistry.display_name)
+            .outerjoin(HospitalRegistry, ClinicalEncounter.hospital_id == HospitalRegistry.id)
+            .where(
+                ClinicalEncounter.encounter_id.in_(v_enc_ids),
+                ClinicalEncounter.patient_id == pid_uuid,
+            )
+        )
+        res_encs = await db.execute(stmt_encs)
+        enc_hosp_map = {row[0]: row[1] for row in res_encs.all()}
+
+    for v in vitals_all:
         if v.recorded_at is None:
             continue
         dt_str = v.recorded_at.isoformat()
+        if v.encounter_id and v.encounter_id in enc_hosp_map:
+            v_src = "clinician_recorded"
+            h_nm = enc_hosp_map[v.encounter_id]
+        else:
+            v_src = v.source
+            h_nm = None
         events.append(
             _enrich_timeline_provenance(
                 str(v.id),
@@ -1617,9 +1726,10 @@ async def _fetch_and_merge_timeline(
                 f"Vitals Recorded ({v.type})",
                 f"{v.type}: {v.value} {v.unit}",
                 dt_str,
-                v.source,
+                v_src,
                 v.confidence,
                 v.risk_level,
+                hospital_name=h_nm,
             )
         )
 
@@ -1760,12 +1870,37 @@ async def _fetch_patient_longitudinal_timeline(
             stmt_v = stmt_v.where(Vitals.recorded_at <= cursor_dt)
         stmt_v = stmt_v.order_by(Vitals.recorded_at.desc(), Vitals.id.desc()).limit(fetch_limit)
         res_v = await db.execute(stmt_v)
-        for v in res_v.scalars().all():
+        vitals_page = res_v.scalars().all()
+
+        # Batch resolve encounter hospital names for vitals to prevent N+1 queries
+        encounter_ids = [v.encounter_id for v in vitals_page if v.encounter_id is not None]
+        encounter_hospital_map: dict[uuid.UUID, str | None] = {}
+        if encounter_ids:
+            stmt_encs = (
+                select(ClinicalEncounter.encounter_id, HospitalRegistry.display_name)
+                .outerjoin(HospitalRegistry, ClinicalEncounter.hospital_id == HospitalRegistry.id)
+                .where(
+                    ClinicalEncounter.encounter_id.in_(encounter_ids),
+                    ClinicalEncounter.patient_id == pid_uuid,
+                )
+            )
+            res_encs = await db.execute(stmt_encs)
+            encounter_hospital_map = {row[0]: row[1] for row in res_encs.all()}
+
+        for v in vitals_page:
             if v.recorded_at is None:
                 continue
             dt_str = v.recorded_at.isoformat()
             seen_entity_keys.add(f"vitals:{str(v.id)}")
             seen_entity_keys.add(f"vitals_dt:{dt_str}")
+
+            if v.encounter_id and v.encounter_id in encounter_hospital_map:
+                v_source = "clinician_recorded"
+                h_name = encounter_hospital_map[v.encounter_id]
+            else:
+                v_source = v.source
+                h_name = None
+
             candidates.append(
                 _enrich_timeline_provenance(
                     str(v.id),
@@ -1773,11 +1908,12 @@ async def _fetch_patient_longitudinal_timeline(
                     f"Vitals Recorded ({v.type})",
                     f"{v.type}: {v.value} {v.unit}",
                     dt_str,
-                    v.source,
+                    v_source,
                     v.confidence,
                     v.risk_level,
                     record_id=str(v.id),
                     category="vitals",
+                    hospital_name=h_name,
                 )
             )
 

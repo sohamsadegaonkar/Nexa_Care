@@ -317,7 +317,7 @@ export default function PatientPrescriptionsScreen() {
                 gap="$2"
               >
                 <SourceBadge
-                  source={item.source === 'manual' ? 'manual' : 'ai_extracted'}
+                  source={item.source}
                   confidence={
                     item.confidence != null
                       ? Math.round(item.confidence * 100)
