@@ -4,7 +4,9 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "AWS_REGION": { "const": "ap-south-1" },
+    "AWS_REGION": {
+      "const": "ap-south-1"
+    },
     "ROLE_ARN": {
       "type": "string",
       "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$"
@@ -45,8 +47,12 @@
       "type": "string",
       "pattern": "^https://"
     },
-    "TASK_CPU": { "const": "1024" },
-    "TASK_MEMORY": { "const": "3072" },
+    "TASK_CPU": {
+      "const": "1024"
+    },
+    "TASK_MEMORY": {
+      "const": "3072"
+    },
     "ECS_EXECUTION_ROLE_ARN": {
       "type": "string",
       "pattern": "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]+$"
@@ -79,20 +85,48 @@
       "type": "string",
       "minLength": 1
     },
-    "DATABASE_URL_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "REDIS_URL_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "SUPABASE_URL_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "SUPABASE_KEY_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "DOCUMENT_STORAGE_ENCRYPTION_KEY_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "HANDSHAKE_PEPPER_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "MFA_ENCRYPTION_KEY_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "PII_ENCRYPTION_KEY_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "PATIENT_JWT_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "OTP_RATE_LIMIT_HMAC_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "PATIENT_GRANT_REFERENCE_HMAC_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
-    "OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE": { "$ref": "#/$defs/secretArn" },
+    "DATABASE_URL_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "REDIS_URL_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "SUPABASE_URL_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "SUPABASE_KEY_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "DOCUMENT_STORAGE_ENCRYPTION_KEY_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "HANDSHAKE_PEPPER_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "MFA_ENCRYPTION_KEY_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "PII_ENCRYPTION_KEY_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "PATIENT_JWT_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "OTP_RATE_LIMIT_HMAC_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "PATIENT_GRANT_REFERENCE_HMAC_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
+    "OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE": {
+      "$ref": "#/$defs/secretArn"
+    },
     "FINAL_API_HOST": {
       "type": "string",
       "minLength": 1
@@ -106,6 +140,10 @@
       "minLength": 1
     },
     "FINAL_FORWARDED_PROXY_CIDRS": {
+      "type": "string",
+      "minLength": 1
+    },
+    "MEDICATION_CATALOG_SIGNING_KEY_ID": {
       "type": "string",
       "minLength": 1
     }
@@ -137,6 +175,7 @@
     "DOCUMENT_STORAGE_S3_BUCKET",
     "DOCUMENT_STORAGE_S3_KMS_KEY_ID",
     "APPLICATION_ENVELOPE_KMS_KEY_ID",
+    "MEDICATION_CATALOG_SIGNING_KEY_ID",
     "CLOUDWATCH_LOG_GROUP",
     "DATABASE_URL_SECRET_REFERENCE",
     "REDIS_URL_SECRET_REFERENCE",
