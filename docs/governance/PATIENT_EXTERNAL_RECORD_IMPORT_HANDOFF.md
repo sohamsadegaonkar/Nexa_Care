@@ -1,6 +1,53 @@
 # Patient External Record Import — Living Handoff
 
 
+## CURRENT D6 ARCHITECTURE DECISION — PRODUCTION EXECUTABLE MALWARE SCANNING
+
+- **Task-1 phase:** D6 — production executable patient-source malware scanning.
+- **Starting main:** `789e2488ee5d3b35b071978d246d488b8a6c431d`.
+- **Branch:** `task1/external-record-d6-production-malware-scanner`.
+- **Migration posture:** D6 expects **ZERO migrations**.
+- **D5 invariant preserved:** exact retained bytes must pass decoder + malware policy before the same in-memory bytes reach extraction; retry has no second extraction path.
+
+### Runtime audit decision
+
+The authoritative API image remains `python:3.12-slim` and intentionally contains no local OCR/ML daemon packages. Pilot deployment uses ECS/Fargate `awsvpc`, immutable digest-pinned images, protected operational health, and task-role AWS credentials. The existing `512 CPU / 1024 MiB` task is explicitly a qualification starting point and is not adequate for adding an antivirus daemon inside the API container.
+
+**Selected topology: same-task clamd sidecar.**
+
+`API container -> bounded task-local TCP client -> dedicated clamd sidecar`
+
+Rationale:
+
+- keeps the API image/process free of antivirus daemon/signature-update lifecycle;
+- preserves one Fargate task and the existing `awsvpc` network boundary;
+- permits task-local communication on loopback without a public scanner listener;
+- lets the scanner image be independently digest-pinned and resource-bounded;
+- lets API startup/readiness fail closed when the scanner is required but not ready;
+- avoids arbitrary executable paths and request-handler shell-outs.
+
+The scanner sidecar will receive no patient IDs, filenames, clinical text, or extraction text. The API streams only the exact bounded source bytes through clamd INSTREAM and binds the scanner verdict to the application SHA-256.
+
+### Signature readiness model
+
+D6 will not perform uncontrolled signature downloads from request handlers. The scanner image/runtime is responsible for initializing and refreshing its signature database outside the API request path. API readiness treats scanner communication/engine readiness as required in production-like environments configured for `clamd`.
+
+The ECS template must use a scanner image supplied by immutable digest placeholder, never `latest`. Actual account/image material remains external deployment input. A pilot/production deployment is not qualified merely because repository/CI integration is green.
+
+### Qualification-state separation
+
+D6 keeps these states distinct:
+
+1. scanner adapter software qualified;
+2. real clamd integration qualified in controlled CI;
+3. actual pilot/production Fargate scanner deployment qualified.
+
+Until an actual Fargate deployment is executed and evidenced, governance must state:
+
+`PRODUCTION SCANNER DEPLOYMENT NOT_RUN`.
+
+
+
 ## CURRENT D5 SOURCE-SAFETY CHECKPOINT
 
 - **Task-1 phase:** D5 — Patient External Record Source-Safety Hardening.
