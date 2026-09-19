@@ -222,11 +222,13 @@ class MedicationCatalogRelease(Base):
         ),
         CheckConstraint(
             "(status <> 'ACTIVE') OR "
-            "(activated_by IS NOT NULL AND activated_at IS NOT NULL)",
+            "(activated_by IS NOT NULL AND activated_at IS NOT NULL "
+            "AND superseded_at IS NULL AND revoked_at IS NULL)",
             name="ck_medication_catalog_release_active_shape",
         ),
         CheckConstraint(
-            "(status <> 'SUPERSEDED') OR superseded_at IS NOT NULL",
+            "(status <> 'SUPERSEDED') OR "
+            "(superseded_at IS NOT NULL AND revoked_at IS NULL)",
             name="ck_medication_catalog_release_superseded_shape",
         ),
         CheckConstraint(
