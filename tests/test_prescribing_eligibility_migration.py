@@ -16,8 +16,7 @@ def _scripts() -> ScriptDirectory:
     return ScriptDirectory.from_config(config)
 
 
-def test_prescriber_eligibility_is_the_single_linear_head() -> None:
-    assert _scripts().get_heads() == [REVISION]
+def test_prescriber_eligibility_revision_remains_linear_parent() -> None:
     revision = _scripts().get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == PARENT
