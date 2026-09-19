@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from copy import deepcopy
+import json
+from pathlib import Path
 
 from scripts.validate_pilot_runtime_evidence import (
     CURRENT_MIGRATION_HEAD,
@@ -215,9 +217,6 @@ def test_current_v2_blocked_manifest_may_truthfully_record_not_run_scanner_check
 
 
 def test_current_v2_template_starts_blocked_with_all_live_checks_not_run() -> None:
-    import json
-    from pathlib import Path
-
     root = Path(__file__).resolve().parents[1]
     payload = json.loads(
         (root / "deploy" / "ecs" / "pilot-runtime-evidence-v2.template.json").read_text(
