@@ -65,7 +65,7 @@ def test_pilot_operations_migration_head_matches_runtime_migration_tool() -> Non
     assert match is not None
     expected_head = match.group(1)
 
-    assert expected_head == "20260919_prescriber_eligibility"
+    assert expected_head == "20260919_medication_catalog"
     assert f"`{expected_head}`" in runbook
     assert f"`{expected_head}`" in _read("docs/API-CONTRACTS.md")
     assert "`20260906_verification_scheduler`" not in runbook
