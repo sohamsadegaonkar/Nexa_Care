@@ -94,19 +94,45 @@ jobs:
           PY
           rm -f "$service_json"
 
-      - name: Verify immutable ECR image exists
+      - name: Verify immutable API and scanner images
         shell: bash
         run: |
           set -euo pipefail
           task_def_arn="$(aws ecs describe-services --region "$AWS_REGION" --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE" --query 'services[0].taskDefinition' --output text)"
-          image="$(aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_def_arn" --query 'taskDefinition.containerDefinitions[0].image' --output text)"
-          case "$image" in
-            *@sha256:*) ;;
-            *) echo "deployed image is not pinned by digest"; exit 51 ;;
-          esac
-          digest="${image##*@}"
-          aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageDigest="$digest" >/dev/null
-          echo "IMMUTABLE_IMAGE=PASS"
+          task_json="$(mktemp)"
+          aws ecs describe-task-definition --region "$AWS_REGION" --task-definition "$task_def_arn" >"$task_json"
+          python - "$task_json" <<'PY' >/tmp/d6-images.env
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))["taskDefinition"]
+          containers = {item.get("name"): item for item in data.get("containerDefinitions", [])}
+          api = containers.get("nexa-care-pilot-api")
+          scanner = containers.get("patient-source-clamd")
+          if api is None or scanner is None:
+              raise SystemExit("D6 API/scanner container topology is incomplete")
+          for label, container in (("API", api), ("SCANNER", scanner)):
+              image = container.get("image") or ""
+              if "@sha256:" not in image:
+                  raise SystemExit(f"{label} image is not pinned by digest")
+              print(f"{label}_IMAGE={image}")
+          if scanner.get("portMappings"):
+              raise SystemExit("scanner must not expose a task port")
+          environment = {item.get("name"): item.get("value") for item in api.get("environment", [])}
+          if environment.get("PATIENT_SOURCE_MALWARE_SCANNER") != "clamd":
+              raise SystemExit("API is not configured for clamd")
+          if environment.get("PATIENT_SOURCE_CLAMD_HOST") not in {"127.0.0.1", "localhost"}:
+              raise SystemExit("scanner host is not task-local")
+          print("D6_SCANNER_TOPOLOGY=PASS")
+          PY
+          # shellcheck disable=SC1091
+          source /tmp/d6-images.env
+          api_digest="${API_IMAGE##*@}"
+          aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageDigest="$api_digest" >/dev/null
+          scanner_repo_with_digest="${SCANNER_IMAGE#*.amazonaws.com/}"
+          scanner_repo="${scanner_repo_with_digest%@*}"
+          scanner_digest="${SCANNER_IMAGE##*@}"
+          aws ecr describe-images --region "$AWS_REGION" --repository-name "$scanner_repo" --image-ids imageDigest="$scanner_digest" >/dev/null
+          rm -f "$task_json" /tmp/d6-images.env
+          echo "IMMUTABLE_API_AND_SCANNER_IMAGES=PASS"
 
       - name: Verify task definition has no static AWS credentials
         shell: bash
@@ -171,6 +197,9 @@ jobs:
           obj = json.load(open("/tmp/ops-health.json", encoding="utf-8"))
           if obj.get("status") not in {"ok", "healthy"}:
               raise SystemExit("protected operational health is not healthy")
+          scanner = (obj.get("details") or {}).get("patient_source_scanner") or {}
+          if scanner.get("configuration") != "configured" or scanner.get("status") != "ready":
+              raise SystemExit("patient source scanner is not configured and ready")
           metrics = open("/tmp/metrics.txt", encoding="utf-8").read()
           if not metrics.strip():
               raise SystemExit("protected metrics response is empty")
