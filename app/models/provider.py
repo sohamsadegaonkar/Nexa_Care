@@ -567,7 +567,7 @@ class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "permission IN ('PROFESSIONAL_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
+            "permission IN ('PROFESSIONAL_REVIEW', 'PRESCRIBING_ELIGIBILITY_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
             name="ck_provider_trust_permission_grant_permission",
         ),
         CheckConstraint(
@@ -575,7 +575,7 @@ class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             name="ck_provider_trust_permission_grant_scope_type",
         ),
         CheckConstraint(
-            "(permission IN ('PROFESSIONAL_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
+            "(permission IN ('PROFESSIONAL_REVIEW', 'PRESCRIBING_ELIGIBILITY_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
             name="ck_provider_trust_permission_grant_scope_binding",
         ),
         CheckConstraint(
