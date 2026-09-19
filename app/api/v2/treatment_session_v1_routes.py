@@ -24,6 +24,7 @@ from app.core.database import get_db_session
 from app.core.dependencies import (
     AuthenticatedPatientSession,
     capture_clinical_initiation_assurance,
+    enforce_current_clinical_capability,
     get_current_patient_session,
     require_clinical_capability,
 )
@@ -32,6 +33,7 @@ from app.models.patient_device_keys import PatientDeviceKey
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import AuditDomain, bind_trusted_audit_hospital, current_audit_context
+from app.security.clinical_access_policy import ClinicalAccessOperation
 from app.security.provider_capabilities import ClinicalCapability
 from app.services.patient_discovery_service import (
     DiscoveryHandleInvalid,
@@ -268,6 +270,14 @@ async def create_treatment_session_v1_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error_code": "TREATMENT_OPERATION_SET_INVALID"},
         ) from exc
+
+    if ClinicalAccessOperation.WRITE_PRESCRIPTION.value in operations:
+        provider = await enforce_current_clinical_capability(
+            request=request,
+            provider=provider,
+            db=db,
+            capability=ClinicalCapability.PRESCRIBE_MEDICATION,
+        )
 
     try:
         patient = await PatientDiscoveryService(
