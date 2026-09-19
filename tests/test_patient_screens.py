@@ -895,4 +895,22 @@ class TestRoutesAndDeepLinks:
         assert "effectiveReturnTo" in import_code
         assert "/patient/onboarding" in import_code
 
+    def test_slice_11f_treatment_session_and_onboarding_routes_preserved(self) -> None:
+        """Slice 11F: Both Task-0 Treatment Session and Task-2 Onboarding routes are preserved."""
+        expo_layout = (
+            ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
+        )
+        assert expo_layout.exists()
+        layout_content = expo_layout.read_text(encoding="utf-8")
+        assert 'name="treatment-request"' in layout_content
+        assert 'name="onboarding"' in layout_content
+        assert 'name="consent-request"' in layout_content
+
+    def test_slice_11f_health_home_does_not_infer_onboarding_from_emptiness(self) -> None:
+        """Slice 11F: PatientHealthHome must NOT render PatientOnboardingCard or infer onboarding from empty records."""
+        health_home_code = _read_screen("PatientHealthHome")
+        assert "PatientOnboardingCard" not in health_home_code
+        assert "showImportPrompt" not in health_home_code
+
+
 

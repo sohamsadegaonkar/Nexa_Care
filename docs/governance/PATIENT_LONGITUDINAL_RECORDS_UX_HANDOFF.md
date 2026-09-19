@@ -3,8 +3,10 @@
 ## NEXT AGENT — START HERE
 
 - **Current branch:** `task2/slice-11f-patient-onboarding-import`
-- **Reconciled Main Baseline:** `789e2488ee5d3b35b071978d246d488b8a6c431d` (Post Slice 11E / D5 Source Safety)
+- **Reconciled Main Baseline:** `3d8706f75aa5383b785840d395744f449ef715d4` (Post Task 0 PR #66 + Task 1 D6 PR #64)
 - **Consolidated Merged PRs:**
+  - PR #66: Task 0 integrate provider WRITE_VITALS Treatment Session client (merged, `3d8706f`)
+  - PR #64: Task 1 add executable clamd patient-source scanning (merged, `5c4f309`)
   - PR #63: D5 external record source-safety policy enforcement (merged, `789e248`)
   - PR #62: Slice 11E patient external medical record import UX (merged, `df971b5`)
   - PR #59: Task 1 Patient External Record Actions & D4 Capabilities + Task 0 Encounter Vitals Write (merged, `0b9cb40`)
@@ -21,10 +23,10 @@
 - **Current Alembic head:** `20260918_treatment_vitals_encounter` (singular, inherited unchanged from main)
 - **New Migrations:** NONE (Zero Task-2 migrations)
 - **Current phase:** Slice 11F — Patient Onboarding External Record Import Integration
-- **Last completed step:** Complete implementation and qualification of Slice 11F (PatientOnboardingCard with non-coercive copy and "OPTIONAL" badge, PatientOnboardingScreen, Next.js Suspense route, Expo route and layout registration, closed returnTo allowlist contract, single import authority model via PatientImportScreen, non-blocking onboarding error and cancellation skip affordances, empty health home prompt in PatientHealthHome, 16 comprehensive Vitest tests, and Python AST route parity tests).
-- **Exact next task:** Open DRAFT PR targeting `main`, monitor remote CI and Vercel qualification. Keep PR in DRAFT until Task 1 D6 production scanner work qualifies.
-- **Current blockers:** None (D6 production scanner work proceeding in parallel in Task 1).
-- **Tests to run next:** `yarn --cwd nexa-client test:app`, `yarn --cwd nexa-client test:next`, `yarn verify:next-build`, `pytest tests/test_patient_screens.py tests/test_patient_onboarding.py`
+- **Last completed step:** Reconcile consolidated main (`3d8706f`), resolve `PatientHealthHome.tsx` and Expo `_layout.tsx` overlaps, remove record-emptiness onboarding inference from `PatientHealthHome.tsx`, add comprehensive tests, qualify on exact reconciled head.
+- **Exact next task:** Mark PR #65 ready for review, qualify on GitHub CI, merge into `main`.
+- **Current blockers:** None (D6 clamd production scanner and Task 0 #66 Treatment Session are both merged).
+- **Tests to run next:** Full qualification matrix (Vitest patient features, Vitest Next, Pytest suites, Next production build, Alembic heads).
 - **Protected files not to touch:**
   - `app/services/clinical_access_session.py`
   - `app/models/clinical_access_session.py`
@@ -50,7 +52,7 @@ This branch (`task2/slice-11f-patient-onboarding-import`) implements **Slice 11F
 2. **Dedicated Onboarding Screen (`PatientOnboardingScreen.tsx`):**
    - Cross-platform onboarding screen hosting `PatientOnboardingCard` and introductory privacy overview.
 3. **Route Parity:**
-   - Next.js: `/patient/onboarding` (`apps/next/app/patient/onboarding/page.tsx` wrapped in `<Suspense>`).
+   - Next.js: `/patient/onboarding` (`apps/next/app/patient/onboarding/page.tsx` with `'use client'` and `<Suspense>` boundary).
    - Expo: `/patient/onboarding` (`apps/expo/app/patient/onboarding.tsx` + registered in `apps/expo/app/patient/_layout.tsx`).
 4. **Closed `returnTo` Allowlist Contract:**
    - `resolveReturnDestination(param)` accepts only `'onboarding'` or `'records'` (defaulting to `'records'`).
@@ -64,8 +66,9 @@ This branch (`task2/slice-11f-patient-onboarding-import`) implements **Slice 11F
    - If extraction is paused (retryable failure), Step 2 provides "Skip for now & continue onboarding →".
    - If an import is cancelled, Step 2 provides a clean cancelled state with "Continue onboarding →".
    - Patients are never trapped in onboarding due to scanner failures or transient issues.
-7. **Empty Health Home Integration:**
-   - `PatientHealthHome` displays `PatientOnboardingCard` when records are empty, dismissible via `onSkip`.
+7. **Health Home Separation (Mandatory Product Invariant):**
+   - `PatientHealthHome` does NOT infer onboarding from clinical record emptiness. Returning patients with zero records are not shown onboarding UI.
+   - Onboarding flow is presented only on the actual onboarding route (`/patient/onboarding`).
 8. **Zero Backend / Regulatory Invariants:**
    - Zero database migrations (Alembic head `20260918_treatment_vitals_encounter` unchanged).
    - External records do NOT alter backend `OnboardingStatus.complete` (account creation succeeds independently).

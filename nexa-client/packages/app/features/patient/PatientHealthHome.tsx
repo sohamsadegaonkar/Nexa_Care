@@ -19,7 +19,6 @@ import {
 } from '../../utils/apiClient'
 import RiskBadge, { type RiskLevel } from './badges/RiskBadge'
 import SourceBadge from './badges/SourceBadge'
-import PatientOnboardingCard from './PatientOnboardingCard'
 
 export default function PatientHealthHome() {
   const router = useRouter()
@@ -28,7 +27,6 @@ export default function PatientHealthHome() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [showImportPrompt, setShowImportPrompt] = useState(true)
 
   const isMountedRef = React.useRef(true)
 
@@ -262,22 +260,6 @@ export default function PatientHealthHome() {
           </YStack>
         ) : (
           <YStack gap="$4">
-            {/* Optional Onboarding / Import Prompt for Empty Records */}
-            {showImportPrompt &&
-              summary &&
-              summary.counts &&
-              summary.counts.medications +
-                summary.counts.reports +
-                summary.counts.labs ===
-                0 && (
-                <PatientOnboardingCard
-                  onAddRecord={() =>
-                    router.push('/patient/records/import?returnTo=records')
-                  }
-                  onSkip={() => setShowImportPrompt(false)}
-                />
-              )}
-
             {/* Active Medications Summary Card */}
             <YStack
               backgroundColor="$backgroundHover"

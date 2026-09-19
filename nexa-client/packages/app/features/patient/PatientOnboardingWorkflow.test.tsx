@@ -12,6 +12,7 @@ import PatientOnboardingScreen from './PatientOnboardingScreen'
 import PatientImportScreen, {
   resolveReturnDestination,
 } from './PatientImportScreen'
+import PatientHealthHome from './PatientHealthHome'
 
 const { push } = vi.hoisted(() => ({ push: vi.fn() }))
 
@@ -152,6 +153,20 @@ describe('Slice 11F: Patient Onboarding External Record Import Integration', () 
       fireEvent.click(skipBtn)
 
       expect(push).toHaveBeenCalledWith('/patient/dashboard')
+    })
+
+    it('proceeds without upload API calls when Skip is pressed', () => {
+      const uploadSpy = vi.spyOn(NexaApiClient, 'uploadPatientExternalRecord')
+
+      renderWithTamagui(<PatientOnboardingCard />)
+
+      const skipBtn = screen.getByRole('button', {
+        name: /Skip adding records for now/i,
+      })
+      fireEvent.click(skipBtn)
+
+      expect(push).toHaveBeenCalledWith('/patient/dashboard')
+      expect(uploadSpy).not.toHaveBeenCalled()
     })
 
     it('invokes custom onAddRecord and onSkip callbacks when provided', () => {
@@ -337,6 +352,33 @@ describe('Slice 11F: Patient Onboarding External Record Import Integration', () 
       expect(
         screen.getByRole('button', { name: /Import Another Document/i })
       ).toBeDefined()
+    })
+  })
+
+  // ── 6. Health Home Separation (Mandatory Product Invariant) ─────────────
+  describe('PatientHealthHome Separation', () => {
+    it('does NOT show onboarding UI merely because clinical record counts are zero', async () => {
+      vi.spyOn(NexaApiClient, 'getMyHealthSummary').mockResolvedValue({
+        patient_id: 'pat-1',
+        counts: { allergies: 0, medications: 0, vitals: 0, labs: 0, reports: 0 },
+        allergy_highlights: [],
+        active_medications: [],
+        latest_vitals: [],
+        recent_labs: [],
+        recent_reports: [],
+        recent_timeline_events: [],
+        last_updated: null,
+      })
+
+      renderWithTamagui(<PatientHealthHome />)
+
+      expect(
+        await screen.findByText('No recorded allergies on file.')
+      ).toBeTruthy()
+      expect(
+        screen.queryByText('Do you have previous medical records?')
+      ).toBeNull()
+      expect(screen.queryByText('OPTIONAL')).toBeNull()
     })
   })
 })
