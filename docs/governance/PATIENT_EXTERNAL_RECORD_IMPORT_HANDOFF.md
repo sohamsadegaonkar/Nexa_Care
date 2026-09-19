@@ -1,6 +1,31 @@
 # Patient External Record Import — Living Handoff
 
 
+## D6 FINAL RELEASE CLOSURE — MERGED / CONTROLLED REAL-SCANNER QUALIFIED
+
+This section supersedes earlier D6 wording below that says final exact-head repository qualification is pending.
+
+- **Starting main:** `789e2488ee5d3b35b071978d246d488b8a6c431d`.
+- **D6 branch / PR:** `task1/external-record-d6-production-malware-scanner` / PR #64.
+- **Qualified frozen head:** `4793614e95c1476623a22bc12dc0312bb36451ab`.
+- **Merged main commit:** `5c4f309e81aef331c4de132e9f38943bfcafb4c0`.
+- **Selected topology:** API container → bounded task-local TCP client → essential same-task `clamd` sidecar.
+- **Scanner adapter:** `ClamdPatientSourceMalwareScanner`, using bounded clamd INSTREAM with exact application SHA-256 binding.
+- **Configuration contract:** closed `clamd|unavailable` selector plus bounded task-local host/port, connect timeout, scan timeout, maximum input bytes, and signature-age settings. Production-like startup forbids `unavailable`.
+- **ECS/Fargate contract:** digest-pinned API and scanner images, no scanner port mapping, explicit CPU/memory bounds, scanner health check, API dependency on scanner health, and task-local loopback communication.
+- **Signature readiness:** daemon PING, parseable/fresh signature timestamp, and a real clean scan probe are required; FreshClam refresh remains outside request handling and stale signatures fail closed.
+- **Health/readiness:** `/healthz` remains dependency-free liveness; production-like `/health` requires scanner readiness; protected `/ops/health` exposes only coarse scanner configuration/readiness state.
+- **Real clamd integration:** workflow run `35435203845` **PASS** with real daemon readiness and scanner-backed qualification.
+- **Clean-file result:** synthetic PDF, PNG, and JPEG returned CLEAN and the clean patient import path reached review/save and canonical `DocumentReference` + `TimelineEvent`.
+- **Malicious result:** the standard harmless antivirus test signature was detected as MALICIOUS; extraction was not called and no review or clinical output was produced.
+- **Outage/malformed/timeout result:** fail closed as scanner unavailable/retryable; retry re-enters the same scanner gate and cannot bypass it.
+- **Backend A/B/C:** workflow `35435203848` **PASS** — A 4233 passed / 436 deselected / 0 failed / 0 skipped; B 306 passed / 4363 deselected / 0 failed / 0 skipped; C 130 passed / 4539 deselected / 0 failed / 0 skipped.
+- **Frontend/native:** workflow `35435203853` **PASS** — Next tests 6/6, app tests 316/316, Next production build PASS, workspace build PASS, Android compile PASS, iOS compile PASS.
+- **Vercel:** exact-head deployment remained blocked by an external build-rate-limit/quota refusal. This is **EXTERNAL INFRASTRUCTURE BLOCKER / DEPLOYMENT NOT EXECUTED**, not an application/scanner failure and not Vercel PASS.
+- **Merge status:** D6 is **MERGED** via PR #64.
+- **Production deployment qualification:** **PRODUCTION SCANNER DEPLOYMENT NOT_RUN**. Repository/CI evidence qualifies software and controlled real-clamd integration only.
+- **Exact next Task-1 action:** execute the protected pilot Fargate deployment/qualification when authorized AWS OIDC/ECS/ECR/API/operations wiring and immutable API/scanner image digests are available; verify the deployed D6 topology, signature freshness, scanner-ready protected health, clean synthetic import, harmless antivirus-test blocking before extraction, and sanitized evidence. Do not claim production qualification before that execution succeeds.
+
 ## CURRENT D6 ARCHITECTURE DECISION — PRODUCTION EXECUTABLE MALWARE SCANNING
 
 - **Task-1 phase:** D6 — production executable patient-source malware scanning.
