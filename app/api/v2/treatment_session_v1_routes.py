@@ -574,13 +574,18 @@ async def approve_signed_treatment_session_v1(
             detail={"error_code": "TREATMENT_REPLAY_REJECTED"},
         )
 
-    try:
-        await assert_live_treatment_session_v1_provider(db=db, request_data=data)
-    except (
-        TreatmentSessionV1AuthorityUnavailable,
-        TreatmentSessionV1ProviderIneligible,
-    ) as exc:
-        raise _authority_http(exc) from exc
+    # A patient denial creates no provider authority and must remain possible
+    # even if provider trust changed after the challenge was issued.  Approval,
+    # however, can lead to a claim/mint and therefore requires a fresh provider
+    # authority check immediately before the signed approval is accepted.
+    if payload.decision == "approved":
+        try:
+            await assert_live_treatment_session_v1_provider(db=db, request_data=data)
+        except (
+            TreatmentSessionV1AuthorityUnavailable,
+            TreatmentSessionV1ProviderIneligible,
+        ) as exc:
+            raise _authority_http(exc) from exc
 
     result = await SignedTreatmentSessionV1Verifier().verify(
         db=db,
