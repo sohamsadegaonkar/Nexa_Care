@@ -148,7 +148,7 @@ jobs:
               'python', '-c',
               "import asyncio; from app.core.production_runtime import run_production_startup_preflight; "
               "r=asyncio.run(run_production_startup_preflight()); "
-              "assert r.production_like and set(r.checks)=={'configuration','postgres','schema','redis','kms','s3'}; "
+              "assert r.production_like and set(r.checks)=={'configuration','postgres','schema','redis','kms','s3','patient_source_scanner'}; "
               "print('ROLLBACK_CANDIDATE_PREFLIGHT=PASS')",
           ]
           print(json.dumps({'containerOverrides': [{'name': m['container_name'], 'command': command}]}))
