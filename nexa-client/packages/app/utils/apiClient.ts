@@ -376,6 +376,69 @@ export interface PatientDocumentDetailResponse {
   view_authorized: boolean
 }
 
+// ── Patient External Record Import Types (Slice 11E / D4) ──
+
+export interface PatientExternalRecordActions {
+  can_process: boolean
+  can_retry: boolean
+  can_cancel: boolean
+  can_review: boolean
+  can_save: boolean
+  can_view_source: boolean
+}
+
+export interface PatientExternalRecordResponse {
+  import_id: string
+  category:
+    | 'prescription'
+    | 'lab_report'
+    | 'imaging_report'
+    | 'discharge_summary'
+    | 'other_medical_record'
+  status:
+    | 'processing'
+    | 'needs_review'
+    | 'ready_to_save'
+    | 'imported'
+    | 'retry_available'
+    | 'could_not_process'
+    | 'cancelled'
+  actions: PatientExternalRecordActions
+  duplicate?: boolean
+  source_available?: boolean
+  created_at: string
+}
+
+export interface PatientExternalRecordUploadPolicy {
+  max_upload_bytes: number
+  accepted_extensions: string[]
+  accepted_mime_types: string[]
+}
+
+export interface PatientExternalRecordReviewItem {
+  review_item_id: string
+  label: string
+  extracted_value: string
+  corrected_value: string | null
+  decision: 'pending' | 'accepted' | 'corrected' | 'rejected'
+  source_page: number | null
+  source_text: string | null
+  source_available: boolean
+  confirmation_required: boolean
+}
+
+export interface PatientExternalRecordReviewResponse {
+  import_id: string
+  category:
+    | 'prescription'
+    | 'lab_report'
+    | 'imaging_report'
+    | 'discharge_summary'
+    | 'other_medical_record'
+  status: 'needs_review' | 'ready_to_save'
+  items: PatientExternalRecordReviewItem[]
+}
+
 export interface AppendVitalsRequest {
   encounter_id: string
   systolic_bp: number
@@ -1551,6 +1614,113 @@ export const NexaApiClient = {
     return request<PatientDocumentDetailResponse>(
       `/api/v2/patient/me/documents/${encodeURIComponent(documentId)}`,
       { method: 'GET' }
+    )
+  },
+
+  // ── Patient External Medical Record Import (Slice 11E / D4) ──
+
+  getPatientUploadPolicy(): Promise<PatientExternalRecordUploadPolicy> {
+    return request<PatientExternalRecordUploadPolicy>(
+      '/api/v2/patient/me/external-records/upload-policy',
+      { method: 'GET' }
+    )
+  },
+
+  uploadPatientExternalRecord(
+    category: string,
+    file: File | Blob,
+    filename?: string,
+    idempotencyKey?: string
+  ): Promise<PatientExternalRecordResponse> {
+    const formData = new FormData()
+    formData.append('category', category)
+    if (typeof File !== 'undefined' && file instanceof File) {
+      formData.append('file', file)
+    } else {
+      formData.append('file', file, filename || 'medical-record')
+    }
+    const headers: Record<string, string> = {}
+    if (idempotencyKey) {
+      headers['Idempotency-Key'] = idempotencyKey
+    }
+    return request<PatientExternalRecordResponse>(
+      '/api/v2/patient/me/external-records',
+      {
+        method: 'POST',
+        body: formData,
+      },
+      headers
+    )
+  },
+
+  getPatientExternalRecord(importId: string): Promise<PatientExternalRecordResponse> {
+    return request<PatientExternalRecordResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}`,
+      { method: 'GET' }
+    )
+  },
+
+  processPatientExternalRecord(importId: string): Promise<PatientExternalRecordResponse> {
+    return request<PatientExternalRecordResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/process`,
+      { method: 'POST' }
+    )
+  },
+
+  retryPatientExternalRecord(importId: string): Promise<PatientExternalRecordResponse> {
+    return request<PatientExternalRecordResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/retry`,
+      { method: 'POST' }
+    )
+  },
+
+  cancelPatientExternalRecord(importId: string): Promise<PatientExternalRecordResponse> {
+    return request<PatientExternalRecordResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/cancel`,
+      { method: 'POST' }
+    )
+  },
+
+  getPatientExternalRecordReview(importId: string): Promise<PatientExternalRecordReviewResponse> {
+    return request<PatientExternalRecordReviewResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/review`,
+      { method: 'GET' }
+    )
+  },
+
+  reviewPatientExternalRecordItem(
+    importId: string,
+    reviewItemId: string,
+    payload: {
+      decision: 'accept' | 'correct' | 'reject'
+      corrected_value?: string | null
+    }
+  ): Promise<PatientExternalRecordResponse> {
+    return request<PatientExternalRecordResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/review/${encodeURIComponent(reviewItemId)}`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    )
+  },
+
+  savePatientExternalRecord(importId: string): Promise<PatientExternalRecordResponse> {
+    return request<PatientExternalRecordResponse>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/save`,
+      { method: 'POST' }
+    )
+  },
+
+  getPatientExternalRecordSourceBlob(importId: string): Promise<Blob> {
+    return request<Blob>(
+      `/api/v2/patient/me/external-records/${encodeURIComponent(importId)}/source`,
+      { method: 'GET' },
+      {},
+      false,
+      DEFAULT_TIMEOUT_MS,
+      false,
+      'blob'
     )
   },
 }
