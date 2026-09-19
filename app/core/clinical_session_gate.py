@@ -30,6 +30,11 @@ from app.security.clinical_access_policy import (
     ClinicalAccessOperation,
 )
 from app.security.provider_capabilities import ClinicalCapability
+from app.services.prescribing_eligibility_reader import (
+    PrescribingEligibilityDenied,
+    PrescribingEligibilityUnavailable,
+    assert_current_prescribing_eligibility,
+)
 from app.services.signed_treatment_session_v1 import (
     SIGNED_TREATMENT_SESSION_V1_PROTOCOL_VERSION,
     TreatmentSessionV1ProtocolError,
@@ -530,6 +535,20 @@ async def lock_treatment_write_authority(
     ):
         raise TreatmentSessionV1GateDenied("TREATMENT_ENCOUNTER_NOT_AUTHORIZED")
 
+    if required_operation is ClinicalAccessOperation.WRITE_PRESCRIPTION:
+        try:
+            await assert_current_prescribing_eligibility(
+                db,
+                provider_id=authority.provider_id,
+                lock_professional=True,
+            )
+        except PrescribingEligibilityDenied as exc:
+            raise TreatmentSessionV1GateDenied(exc.code) from exc
+        except PrescribingEligibilityUnavailable as exc:
+            raise TreatmentSessionV1GateUnavailable(
+                "PRESCRIBING_ELIGIBILITY_STORE_UNAVAILABLE"
+            ) from exc
+
     return encounter
 
 
@@ -539,13 +558,19 @@ def require_clinical_session(operation: ClinicalAccessOperation):
     if not isinstance(operation, ClinicalAccessOperation):
         raise TypeError("operation must be ClinicalAccessOperation")
 
+    provider_capability = (
+        ClinicalCapability.PRESCRIBE_MEDICATION
+        if operation is ClinicalAccessOperation.WRITE_PRESCRIPTION
+        else ClinicalCapability.RECORD_READ
+    )
+
     async def dependency(
         x_treatment_token: str | None = Header(
             default=None,
             alias="X-Treatment-Token",
         ),
         provider: ProviderContext = Depends(
-            require_clinical_capability(ClinicalCapability.RECORD_READ)
+            require_clinical_capability(provider_capability)
         ),
         db: AsyncSession = Depends(get_db_session),
     ) -> TreatmentSessionV1Authority:
