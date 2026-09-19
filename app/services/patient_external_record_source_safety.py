@@ -17,8 +17,6 @@ import io
 import os
 import warnings
 from dataclasses import dataclass
-from enum import StrEnum
-from typing import Protocol
 
 from PIL import Image
 from pypdf import PdfReader
@@ -26,6 +24,13 @@ from pypdf import PdfReader
 from app.ai.extractor import TEXTRACT_MAX_SYNC_BYTES
 from app.core.config import ConfigError, get_document_extraction_config
 from app.core.production_runtime import MAX_UPLOAD_BYTES_HARD_LIMIT
+from app.security.patient_source_malware_scanner import (
+    MalwareScanOutcome,
+    MalwareScanResult,
+    PatientSourceMalwareScanner,
+    UnavailablePatientSourceMalwareScanner,
+    get_patient_source_malware_scanner,
+)
 
 _DEFAULT_MAX_PDF_PAGES = 500
 _DEFAULT_MAX_PDF_PAGE_POINTS = 14_400
@@ -40,45 +45,6 @@ class PatientSourceSafetyError(RuntimeError):
         super().__init__(code)
         self.code = code
         self.retryable = retryable
-
-
-class MalwareScanOutcome(StrEnum):
-    CLEAN = "CLEAN"
-    MALICIOUS = "MALICIOUS"
-    UNAVAILABLE = "UNAVAILABLE"
-
-
-@dataclass(frozen=True, slots=True)
-class MalwareScanResult:
-    outcome: MalwareScanOutcome
-    content_hash: str
-
-
-class PatientSourceMalwareScanner(Protocol):
-    async def scan(
-        self,
-        data: bytes,
-        *,
-        content_hash: str,
-        mime_type: str,
-    ) -> MalwareScanResult: ...
-
-
-class UnavailablePatientSourceMalwareScanner:
-    """Truthful production default until scanner infrastructure is deployed."""
-
-    async def scan(
-        self,
-        data: bytes,
-        *,
-        content_hash: str,
-        mime_type: str,
-    ) -> MalwareScanResult:
-        _ = (data, mime_type)
-        return MalwareScanResult(
-            outcome=MalwareScanOutcome.UNAVAILABLE,
-            content_hash=content_hash,
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -273,16 +239,6 @@ def validate_patient_source_decoder(
         "SOURCE_TYPE_UNSUPPORTED",
         retryable=False,
     )
-
-
-def get_patient_source_malware_scanner() -> PatientSourceMalwareScanner:
-    """Return the production scanner seam.
-
-    No executable scanner is currently deployed in the authoritative runtime,
-    so the only truthful built-in result is UNAVAILABLE. A future adapter must
-    replace this function and receive separate production qualification.
-    """
-    return UnavailablePatientSourceMalwareScanner()
 
 
 async def qualify_patient_source_for_extraction(
