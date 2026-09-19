@@ -567,10 +567,10 @@ def test_dto_evidence_and_system_actor_prohibition() -> None:
 
 
 def test_route_surface_frozen_and_isolated() -> None:
-    """Asserts exactly 26 POST provider-trust routes and AST isolation of automation service."""
-    # 24 lifecycle routes + 2 permission routes = 26 provider-trust routes
+    """Asserts exactly 27 POST provider-trust routes and AST isolation of automation service."""
+    # 25 lifecycle/authority routes + 2 permission routes = 27 provider-trust routes
     total_routes = len(ptr.router.routes) + len(ptpr.router.routes)
-    assert total_routes == 26
+    assert total_routes == 27
 
     for r in ptr.router.routes:
         assert r.methods == {"POST"}
