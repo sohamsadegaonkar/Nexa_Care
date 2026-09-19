@@ -23,6 +23,11 @@ def test_rollback_candidate_is_immutable_and_runs_as_one_off_fargate_task() -> N
     text = _workflow()
     assert "@sha256:" in text
     assert "aws ecr describe-images" in text
+    assert "patient-source-clamd" in text
+    assert "rollback scanner must not expose a task port" in text
+    assert "rollback scanner host is not task-local" in text
+    assert "rollback API must depend on healthy clamd" in text
+    assert "scanner_image_digest" in text
     assert "aws ecs run-task" in text
     assert "--launch-type FARGATE" in text
     assert "--count 1" in text

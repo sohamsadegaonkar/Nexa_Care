@@ -116,6 +116,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/consent/grant"),
     ("GET", "/api/v2/consent/history"),
     ("GET", "/api/v2/consent/history/self"),
+    ("DELETE", "/api/v2/consent/history/self/{public_ref}"),
     ("GET", "/api/v2/consent/validate"),
     ("POST", "/api/v2/consent/routine/issue"),
     ("POST", "/api/v2/consent/break-glass/issue"),

@@ -127,8 +127,8 @@ export default function TreatmentSessionRequestScreen({
           }
           tone={outcome === 'approved' ? 'success' : 'warning'}
         />
-        <ActionButton onPress={() => router.replace('/patient/access-history')}>
-          Go to Access History
+        <ActionButton onPress={() => router.replace('/patient/treatment-access')}>
+          View Treatment Access
         </ActionButton>
       </ScreenContainer>
     )

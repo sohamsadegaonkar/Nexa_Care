@@ -91,24 +91,48 @@ jobs:
               raise SystemExit('rollback candidate must be explicit and different from current task definition')
           if candidate.get('networkMode') != 'awsvpc' or 'FARGATE' not in set(candidate.get('requiresCompatibilities') or []):
               raise SystemExit('rollback candidate is not Fargate/awsvpc compatible')
-          containers = candidate.get('containerDefinitions') or []
-          essential = [c for c in containers if c.get('essential', True)]
-          if len(essential) != 1:
-              raise SystemExit('rollback candidate must have exactly one essential application container')
-          app = essential[0]
-          image = str(app.get('image') or '')
-          if '@sha256:' not in image:
-              raise SystemExit('rollback candidate image must be pinned by digest')
+          raw_containers = candidate.get('containerDefinitions') or []
+          containers = {
+              item.get('name'): item
+              for item in raw_containers
+              if isinstance(item, dict)
+          }
+          expected = {'nexa-care-pilot-api', 'patient-source-clamd'}
+          if set(containers) != expected:
+              raise SystemExit('rollback candidate must preserve exact API + clamd topology')
+          app = containers['nexa-care-pilot-api']
+          scanner = containers['patient-source-clamd']
+          if app.get('essential') is not True or scanner.get('essential') is not True:
+              raise SystemExit('rollback API and scanner must both be essential')
+          for label, container in (('API', app), ('SCANNER', scanner)):
+              image = str(container.get('image') or '')
+              if '@sha256:' not in image or ':latest' in image:
+                  raise SystemExit(f'{label} rollback image must be pinned by digest')
+          if scanner.get('portMappings'):
+              raise SystemExit('rollback scanner must not expose a task port')
+          environment = {
+              item.get('name'): item.get('value')
+              for item in app.get('environment', [])
+              if isinstance(item, dict)
+          }
+          if environment.get('PATIENT_SOURCE_MALWARE_SCANNER') != 'clamd':
+              raise SystemExit('rollback API is not configured for clamd')
+          if environment.get('PATIENT_SOURCE_CLAMD_HOST') not in {'127.0.0.1', 'localhost'}:
+              raise SystemExit('rollback scanner host is not task-local')
+          if {'containerName': 'patient-source-clamd', 'condition': 'HEALTHY'} not in (app.get('dependsOn') or []):
+              raise SystemExit('rollback API must depend on healthy clamd')
           forbidden = {'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN'}
-          names = {item.get('name') for item in app.get('environment', [])}
-          names |= {item.get('name') for item in app.get('secrets', [])}
-          if forbidden & names:
-              raise SystemExit('rollback candidate contains static AWS credential variables')
+          for container in (app, scanner):
+              names = {item.get('name') for item in container.get('environment', [])}
+              names |= {item.get('name') for item in container.get('secrets', [])}
+              if forbidden & names:
+                  raise SystemExit('rollback candidate contains static AWS credential variables')
           if not candidate.get('taskRoleArn'):
               raise SystemExit('rollback candidate application task role is missing')
-          log_cfg = app.get('logConfiguration') or {}
-          if log_cfg.get('logDriver') != 'awslogs':
-              raise SystemExit('rollback candidate must use awslogs')
+          for container in (app, scanner):
+              log_cfg = container.get('logConfiguration') or {}
+              if log_cfg.get('logDriver') != 'awslogs':
+                  raise SystemExit('rollback API and scanner must use awslogs')
           awsvpc = ((svc.get('networkConfiguration') or {}).get('awsvpcConfiguration') or {})
           subnets = awsvpc.get('subnets') or []
           security_groups = awsvpc.get('securityGroups') or []
@@ -117,14 +141,22 @@ jobs:
           print(json.dumps({
               'candidate_task_definition': candidate_arn,
               'container_name': app.get('name'),
-              'image_digest': image.split('@', 1)[1],
+              'api_image': app.get('image'),
+              'api_image_digest': str(app.get('image')).split('@', 1)[1],
+              'scanner_image': scanner.get('image'),
+              'scanner_image_digest': str(scanner.get('image')).split('@', 1)[1],
               'subnets': subnets,
               'security_groups': security_groups,
               'assign_public_ip': awsvpc.get('assignPublicIp', 'DISABLED'),
-          }))
+          })))
           PY
-          digest="$(python -c "import json; print(json.load(open('/tmp/nexa-rollback-metadata.json'))['image_digest'])")"
-          aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageDigest="$digest" >/dev/null
+          api_digest="$(python -c "import json; print(json.load(open('/tmp/nexa-rollback-metadata.json'))['api_image_digest'])")"
+          aws ecr describe-images --region "$AWS_REGION" --repository-name "$ECR_REPOSITORY" --image-ids imageDigest="$api_digest" >/dev/null
+          scanner_image="$(python -c "import json; print(json.load(open('/tmp/nexa-rollback-metadata.json'))['scanner_image'])")"
+          scanner_repo_with_digest="${scanner_image#*.amazonaws.com/}"
+          scanner_repo="${scanner_repo_with_digest%@*}"
+          scanner_digest="$(python -c "import json; print(json.load(open('/tmp/nexa-rollback-metadata.json'))['scanner_image_digest'])")"
+          aws ecr describe-images --region "$AWS_REGION" --repository-name "$scanner_repo" --image-ids imageDigest="$scanner_digest" >/dev/null
           rm -f "$service_json" "$candidate_json"
           echo 'ROLLBACK_CANDIDATE_STATIC_PREFLIGHT=PASS'
 
