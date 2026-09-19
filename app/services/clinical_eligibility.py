@@ -23,12 +23,17 @@ from app.models.provider import (
     AffiliationTrustStatus,
     FacilityVerificationStatus,
     HospitalRegistry,
+    PrescribingEligibilityDecision,
     ProfessionalVerification,
     ProfessionalVerificationStatus,
     ProviderIdentity,
     VerificationSourceFailureReason,
 )
 from app.security.provider_capabilities import ClinicalCapability, capability_is_granted
+from app.services.prescribing_eligibility_policy import (
+    PRESCRIBER_ELIGIBILITY_POLICY_VERSION,
+    current_prescribing_eligibility_denial,
+)
 
 MAX_DELEGATED_TRUST_STALENESS = timedelta(seconds=60)
 
@@ -67,6 +72,12 @@ class ClinicalEligibilityDenialCode(str, Enum):
     AFFILIATION_REVOKED = "AFFILIATION_REVOKED"
     AFFILIATION_LEFT = "AFFILIATION_LEFT"
     CLINICAL_CAPABILITY_NOT_GRANTED = "CLINICAL_CAPABILITY_NOT_GRANTED"
+    PRESCRIBING_ELIGIBILITY_REQUIRED = "PRESCRIBING_ELIGIBILITY_REQUIRED"
+    PRESCRIBING_ELIGIBILITY_NOT_CURRENT = "PRESCRIBING_ELIGIBILITY_NOT_CURRENT"
+    PRESCRIBING_ELIGIBILITY_RESTRICTED = "PRESCRIBING_ELIGIBILITY_RESTRICTED"
+    PRESCRIBING_ELIGIBILITY_INTEGRITY_FAILURE = (
+        "PRESCRIBING_ELIGIBILITY_INTEGRITY_FAILURE"
+    )
     CLINICAL_SESSION_REQUIRED = "CLINICAL_SESSION_REQUIRED"
     CLINICAL_MFA_ENROLLMENT_REQUIRED = "CLINICAL_MFA_ENROLLMENT_REQUIRED"
     CLINICAL_MFA_REQUIRED = "CLINICAL_MFA_REQUIRED"
@@ -151,9 +162,10 @@ class ClinicalEligibilityResult:
 
 @dataclass(frozen=True, slots=True)
 class _CurrentTrust:
-    provider: ProviderIdentity
+    provider: ProviderIdentity | None
     hospital: HospitalRegistry | None
     affiliation: object | None
+    prescribing_decision: PrescribingEligibilityDecision | None
 
 
 def _require_aware(value: datetime) -> datetime:
@@ -353,8 +365,15 @@ class ClinicalEligibilityService:
                 .where(HospitalRegistry.id == hospital_id)
                 .options(selectinload(HospitalRegistry.verification))
             )
+            prescribing_result = await db.execute(
+                select(PrescribingEligibilityDecision)
+                .where(PrescribingEligibilityDecision.provider_id == provider_id)
+                .order_by(PrescribingEligibilityDecision.version.desc())
+                .limit(1)
+            )
             provider = provider_result.scalar_one_or_none()
             hospital = hospital_result.scalar_one_or_none()
+            prescribing_decision = prescribing_result.scalar_one_or_none()
         except Exception as exc:
             raise ClinicalEligibilityUnavailable(
                 "authoritative trust store unavailable"
@@ -368,7 +387,10 @@ class ClinicalEligibilityService:
             None,
         )
         return _CurrentTrust(
-            provider=provider, hospital=hospital, affiliation=affiliation
+            provider=provider,
+            hospital=hospital,
+            affiliation=affiliation,
+            prescribing_decision=prescribing_decision,
         )
 
     def _evaluate_current_trust(
@@ -459,6 +481,40 @@ class ClinicalEligibilityService:
             )
             if affiliation_denial is not None:
                 return self._deny(current, affiliation_denial)
+            if capability is ClinicalCapability.PRESCRIBE_MEDICATION:
+                prescribing_denial = current_prescribing_eligibility_denial(
+                    professional,
+                    trust.prescribing_decision,
+                    now=checked_at,
+                )
+                if prescribing_denial is not None:
+                    try:
+                        denial_code = ClinicalEligibilityDenialCode(
+                            prescribing_denial
+                        )
+                    except ValueError:
+                        denial_code = (
+                            ClinicalEligibilityDenialCode
+                            .PRESCRIBING_ELIGIBILITY_INTEGRITY_FAILURE
+                        )
+                    return self._deny(current, denial_code)
+                decision = trust.prescribing_decision
+                if decision is None:
+                    return self._deny(
+                        current,
+                        ClinicalEligibilityDenialCode
+                        .PRESCRIBING_ELIGIBILITY_INTEGRITY_FAILURE,
+                    )
+                return self._replace(
+                    current,
+                    allowed=True,
+                    decision_valid_until=_require_aware(decision.valid_until),
+                    policy_version=(
+                        f"{self._contact_assurance_policy.version}+"
+                        f"{PRESCRIBER_ELIGIBILITY_POLICY_VERSION}"
+                    ),
+                )
+
             if not capability_is_granted(
                 getattr(trust.affiliation, "roles", None), capability
             ):
@@ -659,6 +715,20 @@ class ClinicalEligibilityService:
             boundary = _require_aware(valid_until)
             if boundary > now:
                 boundaries.append(boundary)
+        if (
+            result.capability is ClinicalCapability.PRESCRIBE_MEDICATION
+            and trust.prescribing_decision is not None
+        ):
+            prescribing_boundary = _require_aware(
+                trust.prescribing_decision.valid_until
+            )
+            if prescribing_boundary <= now:
+                return self._deny(
+                    result,
+                    ClinicalEligibilityDenialCode
+                    .PRESCRIBING_ELIGIBILITY_NOT_CURRENT,
+                )
+            boundaries.append(prescribing_boundary)
         return self._replace(result, decision_valid_until=min(boundaries))
 
     @staticmethod
