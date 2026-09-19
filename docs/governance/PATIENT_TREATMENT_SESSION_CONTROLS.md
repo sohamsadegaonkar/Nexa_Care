@@ -64,35 +64,51 @@ Previously:
 ### Server-Owned `public_ref` Solution (Zero DB Migrations)
 To solve this without schema migrations or exposing internal database UUIDs, the server derives a cryptographic, domain-separated grant reference:
 
-$$\text{public\_ref} = \text{"gref\_"} \mathbin{\Vert} \text{grant\_id.hex} \mathbin{\Vert} \text{"\_"} \mathbin{\Vert} \text{HMAC}_{\text{server\_secret}}(\text{"patient\_grant\_ref\_v1:"} \mathbin{\Vert} \text{patient\_id} \mathbin{\Vert} \text{":"} \mathbin{\Vert} \text{grant\_id})[0..32]$$
+$$\text{public\_ref} = \text{"gref\_v2\_"} \mathbin{\Vert} \text{HMAC}_{\text{PATIENT\_GRANT\_REFERENCE\_HMAC\_SECRET}}(\text{"patient\_grant\_ref\_v2:"} \mathbin{\Vert} \text{patient\_id} \mathbin{\Vert} \text{":"} \mathbin{\Vert} \text{grant\_id})[0..64]$$
 
 ### Invariants:
-1. **Zero Database Migrations:** Derived deterministically at serialization time without adding database columns.
-2. **Strict Cross-Patient Isolation:** When `DELETE /api/v2/consent/history/self/{public_ref}` is called, the server derives `patient_id` solely from the authenticated patient session (`get_scoped_session`). If Patient B attempts to present Patient A's `public_ref`, the HMAC validation fails closed with a `404 Not Found`.
-3. **Zero Internal UUID Exposure:** `ConsentHistoryItem.id` and `ConsentHistoryItem.public_ref` both carry `public_ref`. The internal database UUID is never projected to the client.
+1. **Zero Database Migrations:** Derived deterministically at serialization time without adding database columns. Alembic head remains unchanged.
+2. **Dedicated Secret Domain:** Keyed strictly by `PATIENT_GRANT_REFERENCE_HMAC_SECRET` (minimum 32 bytes). No fallback to `HANDSHAKE_PEPPER_SECRET` or `OTP_RATE_LIMIT_HMAC_SECRET`.
+3. **Genuine Opacity & No Internal UUID Exposure:** The token is `gref_v2_<64_hex_digest>`. Neither the raw database UUID nor its hex representation appears anywhere in the token.
+4. **Constant-Time Scoped Lookup:** Lookup iterates exclusively through grants owned by the authenticated patient (`get_scoped_session`) and compares candidate tokens using `secrets.compare_digest`. Only the matching grant row is locked `with_for_update()`.
+5. **Rejection of Legacy References:** Legacy v1 references (`gref_<hex>_<tag>`) and malformed tokens are rejected closed with `404 Not Found`.
+6. **Patient DTO Identifier Minimization:** The patient-facing DTO (`PatientConsentHistoryItem`) omits `patient_id`.
+7. **Strict Scope Verification:** Treatment session grants are identified strictly by `TREATMENT_SESSION_V1_SCOPE` (`"treatment"`), without speculative aliases.
 
 ---
 
-## 4. Multi-Layer Revocation Semantics
+## 4. Multi-Layer Revocation Semantics & Fail-Closed Invalidation
 
 When a patient invokes `DELETE /api/v2/consent/history/self/{public_ref}`:
 
-1. **Durable Consent Grant Invalidation:**
-   - PostgreSQL row lock: `select(ConsentGrantLog).with_for_update()`.
-   - Sets `revoked_at = now` and `revoked_reason = "patient_revoked"`.
-2. **Durable Clinical Access Session Invalidation:**
+1. **Format Validation & Scoped Lookup:**
+   - Validates `public_ref` format (`gref_v2_[0-9a-f]{64}`).
+   - Scopes search strictly to authenticated `patient_id`.
+   - Locates matching grant row and locks it: `select(ConsentGrantLog).with_for_update()`.
+   - If already revoked, returns idempotent success immediately.
+
+2. **Live Redis Capability Invalidation (Fail-Closed First):**
+   - Invalidation of live authority in Redis MUST succeed BEFORE any database mutation is committed.
+   - For treatment grants: calls `invalidate_treatment_session_v1_request(grant.request_id)`, deleting `treatment_session_v1:claim:{request_id}` and `treatment_session_v1:capability:{digest}`.
+   - If pending `treatment_session_request:{request_id}` exists, updates status to `"revoked"`.
+   - For all grants: calls `invalidate_request(grant.request_id)` to purge any standard approved access capability keys.
+   - **Consistency Asymmetry:** If Redis is unavailable or any invalidation call fails (`ApprovedAccessStoreUnavailable`, `TreatmentSessionV1MintStoreUnavailable`, or Redis exception), the transaction rolls back immediately and returns HTTP 503 (`CONSENT_ACCESS_STORE_UNAVAILABLE`). The database is never committed if Redis capability survives.
+
+3. **Durable Consent Grant Invalidation:**
+   - Sets `grant.revoked_at = now` and `grant.revoked_reason = "patient_revoked"`.
+
+4. **Durable Clinical Access Session Invalidation:**
    - Calls `revoke_clinical_access_session_by_request(db, consent_request_id=grant.request_id, reason="PATIENT_REVOKED", revoked_at=now)`.
    - Sets `ClinicalAccessSessionRecord.status = "REVOKED"` and `revoked_at = now`.
-3. **Live Redis Capability Invalidation:**
-   - Calls `invalidate_treatment_session_v1_request(grant.request_id)`, deleting `treatment_session_v1:claim:{request_id}` and `treatment_session_v1:capability:{digest}`.
-   - If unclaimed `treatment_session_request:{request_id}` exists, updates status to `"revoked"`.
-   - Calls `invalidate_request(grant.request_id)` to purge any standard consent access keys.
-4. **Clinical Write Gate Cut-off:**
+
+5. **Clinical Write Gate Cut-off:**
    - Subsequent calls to `POST /api/v2/treatment-session/v1/vitals` (`WRITE_VITALS`) and `POST /api/v2/treatment-session/v1/encounter` (`CREATE_ENCOUNTER`) pass through `require_clinical_session`.
    - `validate_treatment_session_v1` checks `_durable_grant_matches` (`grant.revoked_at is None`) and `_durable_session_matches` (`session.status == "ACTIVE" and session.revoked_at is None`).
    - Both fail closed with `403 Forbidden` (`TREATMENT_SESSION_NOT_AUTHORIZED`).
-5. **Immutable Audit Trail:**
+
+6. **Immutable Audit Trail:**
    - Enqueues `PATIENT_CONSENT_REVOKED` audit event with `actor_uid = patient_id` and `target_id = public_ref`.
+   - Commits PostgreSQL transaction.
 
 ---
 

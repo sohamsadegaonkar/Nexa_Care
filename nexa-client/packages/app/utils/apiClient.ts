@@ -158,7 +158,7 @@ export interface SignedApprovalResponse {
 export interface PatientConsentHistoryItem {
   id: string
   public_ref: string
-  patient_id: string
+  patient_id?: string
   purpose: string
   status: 'active' | 'expired' | 'revoked'
   scope: string[]

@@ -14,9 +14,8 @@ vi.mock('solito/navigation', () => ({
 
 const mockGrants: PatientConsentHistoryItem[] = [
   {
-    id: 'gref_11111111111141118111111111111111_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    public_ref: 'gref_11111111111141118111111111111111_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-    patient_id: 'patient-uuid',
+    id: 'gref_v2_1111111111111111111111111111111111111111111111111111111111111111',
+    public_ref: 'gref_v2_1111111111111111111111111111111111111111111111111111111111111111',
     purpose: 'Cardiology Treatment',
     status: 'active',
     scope: ['treatment'],
@@ -27,9 +26,8 @@ const mockGrants: PatientConsentHistoryItem[] = [
     is_treatment_session: true,
   },
   {
-    id: 'gref_22222222222242228222222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    public_ref: 'gref_22222222222242228222222222222222_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-    patient_id: 'patient-uuid',
+    id: 'gref_v2_2222222222222222222222222222222222222222222222222222222222222222',
+    public_ref: 'gref_v2_2222222222222222222222222222222222222222222222222222222222222222',
     purpose: 'Vitals Monitoring',
     status: 'expired',
     scope: ['treatment'],
@@ -40,9 +38,8 @@ const mockGrants: PatientConsentHistoryItem[] = [
     is_treatment_session: true,
   },
   {
-    id: 'gref_33333333333343338333333333333333_cccccccccccccccccccccccccccccccc',
-    public_ref: 'gref_33333333333343338333333333333333_cccccccccccccccccccccccccccccccc',
-    patient_id: 'patient-uuid',
+    id: 'gref_v2_3333333333333333333333333333333333333333333333333333333333333333',
+    public_ref: 'gref_v2_3333333333333333333333333333333333333333333333333333333333333333',
     purpose: 'Post-op Observation',
     status: 'revoked',
     scope: ['treatment'],
@@ -54,9 +51,8 @@ const mockGrants: PatientConsentHistoryItem[] = [
   },
   {
     // Non-treatment grant (should be filtered out of Treatment Access view)
-    id: 'gref_44444444444444448444444444444444_dddddddddddddddddddddddddddddddd',
-    public_ref: 'gref_44444444444444448444444444444444_dddddddddddddddddddddddddddddddd',
-    patient_id: 'patient-uuid',
+    id: 'gref_v2_4444444444444444444444444444444444444444444444444444444444444444',
+    public_ref: 'gref_v2_4444444444444444444444444444444444444444444444444444444444444444',
     purpose: 'General Record Read',
     status: 'active',
     scope: ['records.read'],

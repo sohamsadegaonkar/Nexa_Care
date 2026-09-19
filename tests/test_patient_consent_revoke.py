@@ -127,9 +127,15 @@ async def test_patient_revoke_invalidates_capability_and_next_validation_is_forb
         domain=AuditDomain.CONSENT,
     )
 
-    with patch(
-        "app.services.approved_access_capability.get_async_redis_client",
-        return_value=redis,
+    with (
+        patch(
+            "app.services.approved_access_capability.get_async_redis_client",
+            return_value=redis,
+        ),
+        patch(
+            "app.services.treatment_session_v1_mint.get_async_redis_client",
+            return_value=redis,
+        ),
     ):
         token, _capability = await issue_from_approved_request(
             request_data=request_data
@@ -243,6 +249,10 @@ async def test_patient_revoke_is_idempotent():
     with (
         patch(
             "app.services.approved_access_capability.get_async_redis_client",
+            return_value=redis,
+        ),
+        patch(
+            "app.services.treatment_session_v1_mint.get_async_redis_client",
             return_value=redis,
         ),
         patch(

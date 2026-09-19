@@ -70,6 +70,7 @@ def _valid_values() -> dict[str, str]:
         "OTP_RATE_LIMIT_HMAC",
         "PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC",
         "PROVIDER_CONTACT_ASSURANCE_HMAC",
+        "PATIENT_GRANT_REFERENCE_HMAC",
         "OPERATIONS_AUTH_TOKEN",
     )
     for name in secret_names:
