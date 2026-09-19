@@ -34,7 +34,12 @@ router = APIRouter(prefix="/api/v2/consent", tags=["consent-history"])
 
 
 def _get_grant_ref_secret() -> bytes:
-    return get_otp_rate_limit_config().hmac_secret.encode("utf-8")
+    try:
+        return get_otp_rate_limit_config().hmac_secret.encode("utf-8")
+    except Exception:
+        from app.core.config import get_handshake_config
+
+        return get_handshake_config().pepper_secret.encode("utf-8")
 
 
 def mint_public_grant_ref(patient_id: str, grant_id: UUID) -> str:
