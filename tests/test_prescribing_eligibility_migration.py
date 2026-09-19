@@ -49,3 +49,14 @@ def test_migration_starts_empty_and_does_not_touch_prescription_storage() -> Non
     assert "patient_medications" not in source
     assert "prescription_item" not in source.lower()
     assert "CREATE TABLE prescription" not in source.upper()
+
+def test_model_and_migration_share_strict_evidence_digest_constraint() -> None:
+    model_source = (
+        ROOT / "app" / "models" / "provider.py"
+    ).read_text(encoding="utf-8")
+    migration_source = MIGRATION.read_text(encoding="utf-8")
+    strict_digest = "evidence_sha256 ~ '^[0-9a-f]{64}$'"
+
+    assert strict_digest in model_source
+    assert strict_digest in migration_source
+
