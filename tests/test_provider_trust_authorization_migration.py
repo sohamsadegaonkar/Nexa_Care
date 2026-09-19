@@ -15,7 +15,8 @@ CLINICAL_ACCESS_REVISION = "20260916_clinical_access_sessions"
 TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 PATIENT_EXTERNAL_RECORD_REVISION = "20260916_patient_external_record_import"
 CANONICAL_ENCOUNTER_REVISION = "20260918_canonical_encounter"
-HEAD_REVISION = "20260918_treatment_vitals_encounter"
+TREATMENT_VITALS_REVISION = "20260918_treatment_vitals_encounter"
+HEAD_REVISION = "20260919_prescriber_eligibility"
 
 
 def test_trust_authorization_migration_is_single_head_and_forward_only() -> None:
@@ -70,7 +71,7 @@ def test_trust_authorization_migration_is_single_head_and_forward_only() -> None
     head_revision = scripts.get_revision(HEAD_REVISION)
     assert (
         head_revision is not None
-        and head_revision.down_revision == CANONICAL_ENCOUNTER_REVISION
+        and head_revision.down_revision == TREATMENT_VITALS_REVISION
     )
     source = (ROOT / "alembic" / "versions" / f"{REVISION}.py").read_text()
     for required in (

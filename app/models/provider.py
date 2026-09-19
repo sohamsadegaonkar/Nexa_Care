@@ -54,6 +54,155 @@ class ProfessionalVerificationStatus(str, enum.Enum):
     EXPIRED = "EXPIRED"
 
 
+class PrescribingEligibilityDecision(Base, UUIDPrimaryKeyMixin):
+    """Immutable, append-only prescribing-specific professional authority decision."""
+
+    __tablename__ = "prescribing_eligibility_decision"
+
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_identity.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    professional_verification_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professional_verification.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    professional_verification_version: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    practitioner_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_authority_code: Mapped[str] = mapped_column(
+        String(64), nullable=False
+    )
+    registration_number_normalized: Mapped[str] = mapped_column(
+        String(128), nullable=False
+    )
+    source_reference: Mapped[str] = mapped_column(String(255), nullable=False)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    valid_until: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    reviewer_provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_identity.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    decision_reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    restriction_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    policy_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="prescriber-eligibility/v1"
+    )
+    previous_decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("prescribing_eligibility_decision.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "version",
+            name="uq_prescribing_eligibility_provider_version",
+        ),
+        UniqueConstraint(
+            "previous_decision_id",
+            name="uq_prescribing_eligibility_previous_decision",
+        ),
+        CheckConstraint(
+            "version > 0",
+            name="ck_prescribing_eligibility_version_positive",
+        ),
+        CheckConstraint(
+            "professional_verification_version > 0",
+            name="ck_prescribing_eligibility_prof_version_positive",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'ELIGIBLE', 'RECHECK_DUE', 'RESTRICTED', "
+            "'SUSPENDED', 'REVOKED', 'EXPIRED', 'SOURCE_UNAVAILABLE')",
+            name="ck_prescribing_eligibility_status",
+        ),
+        CheckConstraint(
+            "practitioner_class IN ('FULL_RMP_MODERN_MEDICINE', "
+            "'COMMUNITY_HEALTH_PROVIDER', 'PROVISIONAL_INTERNSHIP', "
+            "'TEMPORARY_FOREIGN', 'LIMITED_OR_RESTRICTED', "
+            "'UNSUPPORTED_PROFESSION', 'UNKNOWN')",
+            name="ck_prescribing_eligibility_practitioner_class",
+        ),
+        CheckConstraint(
+            "source_type IN ('NMR', 'SMR', 'COMPETENT_MEDICAL_COUNCIL', 'HPR')",
+            name="ck_prescribing_eligibility_source_type",
+        ),
+        CheckConstraint(
+            "decision_reason_code IN ('PRIMARY_SOURCE_CURRENT_FULL_RMP', "
+            "'RECHECK_CONFIRMED_CURRENT', 'RESTRICTED_CLASS', "
+            "'PROVISIONAL_REGISTRATION', 'TEMPORARY_REGISTRATION', "
+            "'PROFESSIONAL_SUSPENDED', 'PROFESSIONAL_REVOKED', "
+            "'PROFESSIONAL_EXPIRED', 'REGISTRATION_INACTIVE', 'HPR_ONLY', "
+            "'UNSUPPORTED_PROFESSION', 'SOURCE_UNAVAILABLE', "
+            "'AUTHORITY_UNRESOLVED')",
+            name="ck_prescribing_eligibility_reason",
+        ),
+        CheckConstraint(
+            "restriction_code IS NULL OR restriction_code IN "
+            "('LIMITED_LICENCE', 'PROVISIONAL_ONLY', 'TEMPORARY_SCOPE', "
+            "'REGULATORY_RESTRICTION', 'UNSUPPORTED_SCOPE')",
+            name="ck_prescribing_eligibility_restriction",
+        ),
+        CheckConstraint(
+            "evidence_sha256 ~ '^[0-9a-f]{64}$'",
+            name="ck_prescribing_eligibility_evidence_sha256",
+        ),
+        CheckConstraint(
+            "length(trim(source_reference)) > 0",
+            name="ck_prescribing_eligibility_source_reference",
+        ),
+        CheckConstraint(
+            "length(trim(registration_authority_code)) > 0 AND "
+            "length(trim(registration_number_normalized)) > 0",
+            name="ck_prescribing_eligibility_registration_binding",
+        ),
+        CheckConstraint(
+            "valid_until > checked_at",
+            name="ck_prescribing_eligibility_validity",
+        ),
+        CheckConstraint(
+            "reviewer_provider_id <> provider_id",
+            name="ck_prescribing_eligibility_no_self_review",
+        ),
+        CheckConstraint(
+            "(status <> 'ELIGIBLE') OR "
+            "(practitioner_class = 'FULL_RMP_MODERN_MEDICINE' "
+            "AND source_type IN ('NMR', 'SMR', 'COMPETENT_MEDICAL_COUNCIL') "
+            "AND restriction_code IS NULL)",
+            name="ck_prescribing_eligibility_positive_shape",
+        ),
+        Index(
+            "ix_prescribing_eligibility_provider_version",
+            "provider_id",
+            "version",
+        ),
+        Index(
+            "ix_prescribing_eligibility_professional_verification_id",
+            "professional_verification_id",
+        ),
+        Index(
+            "ix_prescribing_eligibility_valid_until",
+            "valid_until",
+        ),
+    )
+
+
 class FacilityVerificationStatus(str, enum.Enum):
     """Facility trust is independent from provider professional trust."""
 
@@ -153,6 +302,68 @@ class VerificationWorkStatus(str, enum.Enum):
     FAILED_TERMINAL = "FAILED_TERMINAL"
 
 
+class PrescribingEligibilityStatus(str, enum.Enum):
+    """Closed lifecycle for Nexa prescribing-specific professional authority."""
+
+    PENDING = "PENDING"
+    ELIGIBLE = "ELIGIBLE"
+    RECHECK_DUE = "RECHECK_DUE"
+    RESTRICTED = "RESTRICTED"
+    SUSPENDED = "SUSPENDED"
+    REVOKED = "REVOKED"
+    EXPIRED = "EXPIRED"
+    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
+
+
+class PrescribingPractitionerClass(str, enum.Enum):
+    """Closed practitioner classes relevant to the initial prescribing policy."""
+
+    FULL_RMP_MODERN_MEDICINE = "FULL_RMP_MODERN_MEDICINE"
+    COMMUNITY_HEALTH_PROVIDER = "COMMUNITY_HEALTH_PROVIDER"
+    PROVISIONAL_INTERNSHIP = "PROVISIONAL_INTERNSHIP"
+    TEMPORARY_FOREIGN = "TEMPORARY_FOREIGN"
+    LIMITED_OR_RESTRICTED = "LIMITED_OR_RESTRICTED"
+    UNSUPPORTED_PROFESSION = "UNSUPPORTED_PROFESSION"
+    UNKNOWN = "UNKNOWN"
+
+
+class PrescribingEligibilitySourceType(str, enum.Enum):
+    """Primary-source classes accepted for a human prescribing decision."""
+
+    NMR = "NMR"
+    SMR = "SMR"
+    COMPETENT_MEDICAL_COUNCIL = "COMPETENT_MEDICAL_COUNCIL"
+    HPR = "HPR"
+
+
+class PrescribingEligibilityReasonCode(str, enum.Enum):
+    """Closed reason codes for prescribing-eligibility decisions."""
+
+    PRIMARY_SOURCE_CURRENT_FULL_RMP = "PRIMARY_SOURCE_CURRENT_FULL_RMP"
+    RECHECK_CONFIRMED_CURRENT = "RECHECK_CONFIRMED_CURRENT"
+    RESTRICTED_CLASS = "RESTRICTED_CLASS"
+    PROVISIONAL_REGISTRATION = "PROVISIONAL_REGISTRATION"
+    TEMPORARY_REGISTRATION = "TEMPORARY_REGISTRATION"
+    PROFESSIONAL_SUSPENDED = "PROFESSIONAL_SUSPENDED"
+    PROFESSIONAL_REVOKED = "PROFESSIONAL_REVOKED"
+    PROFESSIONAL_EXPIRED = "PROFESSIONAL_EXPIRED"
+    REGISTRATION_INACTIVE = "REGISTRATION_INACTIVE"
+    HPR_ONLY = "HPR_ONLY"
+    UNSUPPORTED_PROFESSION = "UNSUPPORTED_PROFESSION"
+    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
+    AUTHORITY_UNRESOLVED = "AUTHORITY_UNRESOLVED"
+
+
+class PrescribingRestrictionCode(str, enum.Enum):
+    """Closed restriction vocabulary for non-eligible prescribing decisions."""
+
+    LIMITED_LICENCE = "LIMITED_LICENCE"
+    PROVISIONAL_ONLY = "PROVISIONAL_ONLY"
+    TEMPORARY_SCOPE = "TEMPORARY_SCOPE"
+    REGULATORY_RESTRICTION = "REGULATORY_RESTRICTION"
+    UNSUPPORTED_SCOPE = "UNSUPPORTED_SCOPE"
+
+
 class HospitalRegistry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Base hospital / facility registry entry."""
 
@@ -239,6 +450,12 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     ] = relationship(back_populates="provider", cascade="all, delete-orphan")
     trust_permission_grants: Mapped[list["ProviderTrustPermissionGrant"]] = (
         relationship(back_populates="provider", cascade="all, delete-orphan")
+    )
+    prescribing_eligibility_decisions: Mapped[
+        list["PrescribingEligibilityDecision"]
+    ] = relationship(
+        foreign_keys="PrescribingEligibilityDecision.provider_id",
+        passive_deletes="all",
     )
 
     __table_args__ = (
@@ -350,7 +567,7 @@ class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "permission IN ('PROFESSIONAL_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
+            "permission IN ('PROFESSIONAL_REVIEW', 'PRESCRIBING_ELIGIBILITY_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
             name="ck_provider_trust_permission_grant_permission",
         ),
         CheckConstraint(
@@ -358,7 +575,7 @@ class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             name="ck_provider_trust_permission_grant_scope_type",
         ),
         CheckConstraint(
-            "(permission IN ('PROFESSIONAL_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
+            "(permission IN ('PROFESSIONAL_REVIEW', 'PRESCRIBING_ELIGIBILITY_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
             name="ck_provider_trust_permission_grant_scope_binding",
         ),
         CheckConstraint(

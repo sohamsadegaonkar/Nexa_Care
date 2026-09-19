@@ -16,7 +16,20 @@ from app.core.dependencies import (
     ProviderTrustRoutePrincipal,
     get_provider_trust_route_principal,
 )
-from app.models.provider import FacilityVerification, ProfessionalVerification
+from app.models.provider import (
+    FacilityVerification,
+    PrescribingEligibilityReasonCode,
+    PrescribingEligibilitySourceType,
+    PrescribingEligibilityStatus,
+    PrescribingPractitionerClass,
+    PrescribingRestrictionCode,
+    ProfessionalVerification,
+)
+from app.services.prescribing_eligibility_application import (
+    PrescribingEligibilityApplicationError,
+    PrescribingEligibilityApplicationResult,
+    PrescribingEligibilityApplicationService,
+)
 from app.services.provider_registration_service import (
     ProviderRegistrationError,
     normalize_professional_registration_authority_code,
@@ -70,6 +83,18 @@ class DecisionRequest(_VersionRequest):
     decision_reason_code: str
 
 
+class PrescribingEligibilityReviewRequest(_StrictModel):
+    expected_professional_verification_version: int = Field(ge=1)
+    expected_previous_decision_version: int = Field(ge=0)
+    status: PrescribingEligibilityStatus
+    practitioner_class: PrescribingPractitionerClass
+    source_type: PrescribingEligibilitySourceType
+    source_reference: str = Field(min_length=1, max_length=255)
+    evidence_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    decision_reason_code: PrescribingEligibilityReasonCode
+    restriction_code: PrescribingRestrictionCode | None = None
+
+
 class FacilityEvidenceRequest(_VersionRequest):
     verification_method: str
     verification_source: str
@@ -88,6 +113,18 @@ class ProviderTrustTransitionResponse(_StrictModel):
     old_state: str
     new_state: str
     version: int
+    idempotent_replay: bool
+
+
+class PrescribingEligibilityReviewResponse(_StrictModel):
+    decision_id: UUID
+    provider_id: UUID
+    professional_verification_id: UUID
+    version: int
+    status: str
+    practitioner_class: str
+    source_type: str
+    valid_until: datetime
     idempotent_replay: bool
 
 
@@ -132,6 +169,30 @@ def _error(exc: ProviderTrustLifecycleApplicationError) -> ProviderTrustRouteErr
     }
     return ProviderTrustRouteError(
         mapping.get(exc.code, status.HTTP_503_SERVICE_UNAVAILABLE), exc.code
+    )
+
+
+def _prescribing_error(
+    exc: PrescribingEligibilityApplicationError,
+) -> ProviderTrustRouteError:
+    mapping = {
+        "INVALID_REQUEST": status.HTTP_400_BAD_REQUEST,
+        "RESOURCE_NOT_FOUND": status.HTTP_404_NOT_FOUND,
+        "PROFESSIONAL_VERIFICATION_REQUIRED": status.HTTP_409_CONFLICT,
+        "AUTHORIZATION_DENIED": status.HTTP_403_FORBIDDEN,
+        "MFA_STEP_UP_REQUIRED": status.HTTP_428_PRECONDITION_REQUIRED,
+        "DECISION_POLICY_DENIED": status.HTTP_409_CONFLICT,
+        "PROFESSIONAL_VERIFICATION_NOT_CURRENT": status.HTTP_409_CONFLICT,
+        "PROFESSIONAL_IDENTITY_BINDING_REQUIRED": status.HTTP_409_CONFLICT,
+        "PROFESSIONAL_VERSION_CONFLICT": status.HTTP_409_CONFLICT,
+        "DECISION_VERSION_CONFLICT": status.HTTP_409_CONFLICT,
+        "IDEMPOTENCY_KEY_REUSED": status.HTTP_409_CONFLICT,
+        "IDEMPOTENCY_IN_PROGRESS": status.HTTP_409_CONFLICT,
+        "TRANSACTION_INTEGRITY_FAILURE": status.HTTP_503_SERVICE_UNAVAILABLE,
+    }
+    return ProviderTrustRouteError(
+        mapping.get(exc.code, status.HTTP_503_SERVICE_UNAVAILABLE),
+        exc.code,
     )
 
 
@@ -314,6 +375,59 @@ def _professional_evidence(
         )
     except ProviderRegistrationError:
         raise ProviderTrustRouteError(400, "INVALID_REQUEST") from None
+
+
+@router.post(
+    "/professional/{provider_id}/prescribing-eligibility",
+    response_model=PrescribingEligibilityReviewResponse,
+)
+async def review_prescribing_eligibility(
+    provider_id: UUID,
+    payload: PrescribingEligibilityReviewRequest,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    principal: ProviderTrustRoutePrincipal = Depends(
+        get_provider_trust_route_principal
+    ),
+    db: AsyncSession = Depends(get_db_session),
+) -> PrescribingEligibilityReviewResponse:
+    """Append one separately-authorized prescribing eligibility decision."""
+
+    try:
+        result: PrescribingEligibilityApplicationResult = (
+            await PrescribingEligibilityApplicationService(db).apply_decision(
+                actor_id=principal.actor_provider_id,
+                authentication=principal.authentication,
+                target_provider_id=provider_id,
+                expected_professional_verification_version=(
+                    payload.expected_professional_verification_version
+                ),
+                expected_previous_decision_version=(
+                    payload.expected_previous_decision_version
+                ),
+                status=payload.status,
+                practitioner_class=payload.practitioner_class,
+                source_type=payload.source_type,
+                source_reference=payload.source_reference,
+                evidence_sha256=payload.evidence_sha256,
+                decision_reason_code=payload.decision_reason_code,
+                restriction_code=payload.restriction_code,
+                idempotency_key=idempotency_key,
+            )
+        )
+    except PrescribingEligibilityApplicationError as exc:
+        raise _prescribing_error(exc) from None
+
+    return PrescribingEligibilityReviewResponse(
+        decision_id=result.decision_id,
+        provider_id=result.provider_id,
+        professional_verification_id=result.professional_verification_id,
+        version=result.version,
+        status=result.status,
+        practitioner_class=result.practitioner_class,
+        source_type=result.source_type,
+        valid_until=result.valid_until,
+        idempotent_replay=result.idempotent_replay,
+    )
 
 
 @router.post(

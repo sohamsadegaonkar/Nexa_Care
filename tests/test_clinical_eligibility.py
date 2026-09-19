@@ -9,6 +9,10 @@ from app.models.provider import (
     FacilityVerification,
     FacilityVerificationStatus,
     HospitalRegistry,
+    PrescribingEligibilityDecision,
+    PrescribingEligibilitySourceType,
+    PrescribingEligibilityStatus,
+    PrescribingPractitionerClass,
     ProfessionalVerification,
     ProfessionalVerificationStatus,
     ProviderCredential,
@@ -45,6 +49,19 @@ class _TrustDb:
         return _Result(self._values.pop(0))
 
 
+class _PrescribingTrustDb:
+    def __init__(
+        self,
+        provider: ProviderIdentity,
+        hospital: HospitalRegistry,
+        decision: PrescribingEligibilityDecision | None,
+    ) -> None:
+        self._values = [provider, hospital, decision]
+
+    async def execute(self, _statement: object) -> _Result:
+        return _Result(self._values.pop(0))
+
+
 class _UnavailableTrustDb:
     async def execute(self, _statement: object) -> _Result:
         raise OSError("synthetic trust-store outage")
@@ -70,11 +87,17 @@ def _trusted_rows(now: datetime):
         mfa_enabled=True,
     )
     provider.professional_verification = ProfessionalVerification(
+        id=uuid4(),
         provider_id=provider.id,
         status=ProfessionalVerificationStatus.VERIFIED.value,
+        registration_authority_code="NMC",
+        registration_number_normalized=f"NMC-{provider.id.hex[:12]}",
+        identity_binding_status="MATCHED",
         verified_at=now - timedelta(days=1),
+        registration_valid_from=now - timedelta(days=30),
         registration_valid_until=now + timedelta(days=10),
         next_review_at=now + timedelta(days=5),
+        version=3,
     )
     hospital = HospitalRegistry(id=uuid4(), is_active=True)
     hospital.verification = FacilityVerification(
@@ -349,4 +372,101 @@ def test_timezone_naive_trust_evidence_fails_closed() -> None:
     assert (
         result.denial_code
         is ClinicalEligibilityDenialCode.TRUST_STATE_INTEGRITY_FAILURE
+    )
+
+
+def _prescribing_decision(
+    provider: ProviderIdentity, now: datetime
+) -> PrescribingEligibilityDecision:
+    professional = provider.professional_verification
+    assert professional is not None
+    return PrescribingEligibilityDecision(
+        id=uuid4(),
+        provider_id=provider.id,
+        professional_verification_id=professional.id,
+        professional_verification_version=professional.version,
+        version=1,
+        status=PrescribingEligibilityStatus.ELIGIBLE.value,
+        practitioner_class=(
+            PrescribingPractitionerClass.FULL_RMP_MODERN_MEDICINE.value
+        ),
+        source_type=PrescribingEligibilitySourceType.NMR.value,
+        registration_authority_code=professional.registration_authority_code,
+        registration_number_normalized=professional.registration_number_normalized,
+        source_reference="NMR:clinical-eligibility-test",
+        evidence_sha256="b" * 64,
+        checked_at=now - timedelta(minutes=1),
+        valid_until=now + timedelta(minutes=30),
+        reviewer_provider_id=uuid4(),
+        decision_reason_code="PRIMARY_SOURCE_CURRENT_FULL_RMP",
+        restriction_code=None,
+        policy_version="prescriber-eligibility/v1",
+    )
+
+
+def test_clinician_role_alone_never_grants_prescribing() -> None:
+    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    provider, hospital, _ = _trusted_rows(now)
+    result = _run(
+        _service().evaluate_interactive(
+            _PrescribingTrustDb(provider, hospital, None),
+            provider,
+            _interactive(provider, hospital, now),
+            ClinicalCapability.PRESCRIBE_MEDICATION,
+            now=now,
+        )
+    )
+    assert result.allowed is False
+    assert (
+        result.denial_code
+        is ClinicalEligibilityDenialCode.PRESCRIBING_ELIGIBILITY_REQUIRED
+    )
+
+
+def test_current_prescribing_decision_grants_typed_capability() -> None:
+    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    provider, hospital, _ = _trusted_rows(now)
+    decision = _prescribing_decision(provider, now)
+    result = _run(
+        _service().evaluate_interactive(
+            _PrescribingTrustDb(provider, hospital, decision),
+            provider,
+            _interactive(provider, hospital, now),
+            ClinicalCapability.PRESCRIBE_MEDICATION,
+            now=now,
+        )
+    )
+    assert result.allowed is True
+    assert result.denial_code is None
+    assert result.decision_valid_until == decision.valid_until
+    assert "prescriber-eligibility/v1" in (result.policy_version or "")
+
+
+def test_general_professional_recheck_grace_does_not_extend_prescribing() -> None:
+    now = datetime(2026, 8, 30, tzinfo=timezone.utc)
+    provider, hospital, _ = _trusted_rows(now)
+    decision = _prescribing_decision(provider, now)
+    professional = provider.professional_verification
+    assert professional is not None
+    professional.status = ProfessionalVerificationStatus.RECHECK_DUE.value
+    professional.previous_verification_valid = True
+    professional.recheck_attempted_at = now - timedelta(minutes=1)
+    professional.recheck_failure_reason = (
+        VerificationSourceFailureReason.SOURCE_UNAVAILABLE.value
+    )
+    professional.grace_expires_at = now + timedelta(minutes=10)
+
+    result = _run(
+        _service().evaluate_interactive(
+            _PrescribingTrustDb(provider, hospital, decision),
+            provider,
+            _interactive(provider, hospital, now),
+            ClinicalCapability.PRESCRIBE_MEDICATION,
+            now=now,
+        )
+    )
+    assert result.allowed is False
+    assert (
+        result.denial_code
+        is ClinicalEligibilityDenialCode.PRESCRIBING_ELIGIBILITY_NOT_CURRENT
     )

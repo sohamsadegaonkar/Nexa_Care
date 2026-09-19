@@ -24,6 +24,7 @@ _MAX_GOVERNANCE_REFERENCE_LENGTH = 128
 _ORDINARY_PERMISSIONS = frozenset(
     {
         TrustManagementPermission.PROFESSIONAL_REVIEW,
+        TrustManagementPermission.PRESCRIBING_ELIGIBILITY_REVIEW,
         TrustManagementPermission.FACILITY_REVIEW,
         TrustManagementPermission.AFFILIATION_MANAGE,
     }

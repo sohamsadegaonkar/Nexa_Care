@@ -17,7 +17,7 @@ from typing import Any
 LEGACY_SCHEMA = "nexa-slice-7b-pilot-runtime-evidence-v1"
 LEGACY_MIGRATION_HEAD = "20260917_treatment_session_operations"
 CURRENT_SCHEMA = "nexa-aws-pilot-runtime-evidence-v2"
-CURRENT_MIGRATION_HEAD = "20260918_treatment_vitals_encounter"
+CURRENT_MIGRATION_HEAD = "20260919_prescriber_eligibility"
 EXPECTED_REGION = "ap-south-1"
 SHA256_IMAGE = re.compile(r"^sha256:[0-9a-f]{64}$")
 SAFE_IDENTIFIER = re.compile(r"^[A-Za-z0-9._:/@+=-]{3,256}$")

@@ -34,7 +34,7 @@ Google Cloud is not part of this plan.
 | `scripts/check_pilot_environment.py` | READY | Reuse for final runtime configuration and optional read-only in-task AWS checks. |
 | `scripts/generate_pilot_deployment_values.py` | READY | Reuse once authorized AWS identity exists; it resolves metadata only and never reads secret values or mutates AWS. |
 | `scripts/check_aws_pilot_activation.py` | MISSING | Added as an offline account-input/task renderer and security preflight; it makes no AWS calls. |
-| `scripts/run_pilot_migrations.py` | STALE | Reconciled to current single head `20260918_treatment_vitals_encounter`. No migration is introduced. |
+| `scripts/run_pilot_migrations.py` | STALE | Reconciled to current single head `20260919_prescriber_eligibility`. No migration is introduced. |
 | `.github/workflows/clamd-integration.yml` | READY | Reuse as controlled real-clamd repository qualification; it is not a deployed-pilot claim. |
 | `.github/workflows/live-cloud-qualification.yml` | PARTIAL | Reuse for OIDC/ECS/ECR/health verification. It is verification-only and does not deploy or perform the clean/EICAR/outage functional sequence. |
 | `.github/workflows/rollback-runtime-qualification.yml` | STALE | Reconciled to require the post-D6 essential API + clamd rollback pair, both digest-pinned and scanner task-local. |
@@ -385,7 +385,7 @@ Supply only the protected `MIGRATION_DATABASE_URL` to that release task. It
 must exit zero and prove repository/database head:
 
 ```text
-20260918_treatment_vitals_encounter
+20260919_prescriber_eligibility
 ```
 
 The API container never performs schema migration on startup.

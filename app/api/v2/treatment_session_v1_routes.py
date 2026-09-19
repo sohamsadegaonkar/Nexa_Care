@@ -24,6 +24,7 @@ from app.core.database import get_db_session
 from app.core.dependencies import (
     AuthenticatedPatientSession,
     capture_clinical_initiation_assurance,
+    enforce_current_clinical_capability,
     get_current_patient_session,
     require_clinical_capability,
 )
@@ -32,6 +33,7 @@ from app.models.patient_device_keys import PatientDeviceKey
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import AuditDomain, bind_trusted_audit_hospital, current_audit_context
+from app.security.clinical_access_policy import ClinicalAccessOperation
 from app.security.provider_capabilities import ClinicalCapability
 from app.services.patient_discovery_service import (
     DiscoveryHandleInvalid,
@@ -268,6 +270,14 @@ async def create_treatment_session_v1_request(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"error_code": "TREATMENT_OPERATION_SET_INVALID"},
         ) from exc
+
+    if ClinicalAccessOperation.WRITE_PRESCRIPTION.value in operations:
+        provider = await enforce_current_clinical_capability(
+            request=request,
+            provider=provider,
+            db=db,
+            capability=ClinicalCapability.PRESCRIBE_MEDICATION,
+        )
 
     try:
         patient = await PatientDiscoveryService(
@@ -564,13 +574,18 @@ async def approve_signed_treatment_session_v1(
             detail={"error_code": "TREATMENT_REPLAY_REJECTED"},
         )
 
-    try:
-        await assert_live_treatment_session_v1_provider(db=db, request_data=data)
-    except (
-        TreatmentSessionV1AuthorityUnavailable,
-        TreatmentSessionV1ProviderIneligible,
-    ) as exc:
-        raise _authority_http(exc) from exc
+    # A patient denial creates no provider authority and must remain possible
+    # even if provider trust changed after the challenge was issued.  Approval,
+    # however, can lead to a claim/mint and therefore requires a fresh provider
+    # authority check immediately before the signed approval is accepted.
+    if payload.decision == "approved":
+        try:
+            await assert_live_treatment_session_v1_provider(db=db, request_data=data)
+        except (
+            TreatmentSessionV1AuthorityUnavailable,
+            TreatmentSessionV1ProviderIneligible,
+        ) as exc:
+            raise _authority_http(exc) from exc
 
     result = await SignedTreatmentSessionV1Verifier().verify(
         db=db,

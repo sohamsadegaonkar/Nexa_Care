@@ -389,13 +389,13 @@ async def test_execute_lookup_and_create_envelope_helper() -> None:
     mock_adapter.lookup_professional.assert_awaited_once_with(req)
 
 
-def test_route_freeze_exactly_26_provider_trust_post_routes() -> None:
-    """Verify route freeze: zero HTTP routes added, exactly 26 POST routes under /api/v2/provider-trust."""
+def test_route_freeze_exactly_27_provider_trust_post_routes() -> None:
+    """Verify route freeze: zero HTTP routes added, exactly 27 POST routes under /api/v2/provider-trust."""
     routes = [route for route in app.routes if hasattr(route, "path")]
     trust_routes = [r for r in routes if "/provider-trust" in r.path]
     assert (
-        len(trust_routes) == 26
-    ), f"Expected exactly 26 provider-trust routes, found {len(trust_routes)}"
+        len(trust_routes) == 27
+    ), f"Expected exactly 27 provider-trust routes, found {len(trust_routes)}"
 
     for r in trust_routes:
         assert (

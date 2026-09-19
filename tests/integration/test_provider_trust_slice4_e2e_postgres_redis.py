@@ -26,7 +26,7 @@ Proves the complete Slice-4 Organizational Trust Permission Administration archi
 16. Audit chain and partitions (PLATFORM global, PLATFORM hospital/{id}, AUTH platform, zero root event types).
 17. Atomicity qualification (transactional rollback on audit/idempotency failures, denial rollback).
 18. Clinical separation matrix (no escalation to clinical roles, capabilities, verifications, or patient access).
-19. Route surface freeze (exactly 26 POST routes under /api/v2/provider-trust, 0 non-POST routes).
+19. Route surface freeze (exactly 27 POST routes under /api/v2/provider-trust, 0 non-POST routes).
 20. Architecture static guards (zero bypass flags in app/, strict import boundaries).
 """
 
@@ -98,7 +98,7 @@ pytestmark = [
     pytest.mark.asyncio,
 ]
 
-HEAD = "20260918_treatment_vitals_encounter"
+HEAD = "20260919_prescriber_eligibility"
 _USER_AGENT = "Nexa-Slice4-Qual-Agent/1.0"
 _CLIENT_IP = "127.0.0.1"
 _DB_NAME = "nexa_qual_slice4_e2e"
@@ -3085,18 +3085,18 @@ async def test_clinical_separation_matrix():
 
 
 async def test_route_surface_freeze():
-    """Assert /api/v2/provider-trust contains exactly 26 POST routes and zero non-POST routes."""
+    """Assert /api/v2/provider-trust contains exactly 27 POST routes and zero non-POST routes."""
     routes = [
         r
         for r in main_app.routes
         if getattr(r, "path", "").startswith("/api/v2/provider-trust")
     ]
     assert (
-        len(routes) == 26
-    ), f"Expected exactly 26 routes, found {len(routes)}: {[r.path for r in routes]}"
+        len(routes) == 27
+    ), f"Expected exactly 27 routes, found {len(routes)}: {[r.path for r in routes]}"
 
     post_routes = [r for r in routes if "POST" in getattr(r, "methods", set())]
-    assert len(post_routes) == 26
+    assert len(post_routes) == 27
 
     # Verify zero GET, PATCH, DELETE, PUT
     non_post = [r for r in routes if "POST" not in getattr(r, "methods", set())]

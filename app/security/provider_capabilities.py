@@ -15,16 +15,25 @@ class ClinicalCapability(str, Enum):
     DOCUMENTS_REVIEW = "documents.review"
     DOCUMENTS_COMMIT = "documents.commit"
     EMERGENCY_ATTEMPT = "emergency.attempt"
+    PRESCRIBE_MEDICATION = "prescribe.medication"
 
 
 ALL_CLINICAL_CAPABILITIES: Final[frozenset[ClinicalCapability]] = frozenset(
     ClinicalCapability
 )
 
+# Prescribing is never role-derived.  This set contains only capabilities that
+# legacy affiliation roles may contribute after the independent trust checks.
+ROLE_DERIVED_CLINICAL_CAPABILITIES: Final[frozenset[ClinicalCapability]] = frozenset(
+    capability
+    for capability in ClinicalCapability
+    if capability is not ClinicalCapability.PRESCRIBE_MEDICATION
+)
+
 # This compatibility mapping is intentionally narrow and server owned.  A role
 # can contribute capabilities only after every independent trust check passes.
 LEGACY_ROLE_CAPABILITIES: Final[dict[str, frozenset[ClinicalCapability]]] = {
-    "clinician": ALL_CLINICAL_CAPABILITIES,
+    "clinician": ROLE_DERIVED_CLINICAL_CAPABILITIES,
     "clinical_reviewer": frozenset(
         {
             ClinicalCapability.DOCUMENTS_REVIEW,

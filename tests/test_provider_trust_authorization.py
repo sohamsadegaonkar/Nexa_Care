@@ -110,6 +110,7 @@ def _run(awaitable):
 def test_permission_vocabulary_is_closed_and_nonclinical():
     assert {item.value for item in TrustManagementPermission} == {
         "PROFESSIONAL_REVIEW",
+        "PRESCRIBING_ELIGIBILITY_REVIEW",
         "FACILITY_REVIEW",
         "AFFILIATION_MANAGE",
         "TRUST_PERMISSION_MANAGE",

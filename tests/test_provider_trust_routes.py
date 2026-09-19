@@ -185,6 +185,7 @@ def test_route_inventory_is_command_specific_and_complete() -> None:
     paths = {route.path for route in router.routes}
     expected = {
         "/api/v2/provider-trust/professional/me/submit",
+        "/api/v2/provider-trust/professional/{provider_id}/prescribing-eligibility",
         *{
             f"/api/v2/provider-trust/professional/{{provider_id}}/{command}"
             for command in (
