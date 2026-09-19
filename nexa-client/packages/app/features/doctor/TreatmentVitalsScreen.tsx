@@ -513,7 +513,7 @@ export function TreatmentVitalsScreen() {
             </ActionButton>
           </XStack>
           {linkCopied ? (
-            <Paragraph accessibilityRole="status">Approval link copied.</Paragraph>
+            <Paragraph aria-live="polite">Approval link copied.</Paragraph>
           ) : null}
         </Surface>
         <InlineNotice title="Operation-bound request">
