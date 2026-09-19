@@ -288,6 +288,7 @@ async def test_real_scanner_clean_patient_flow_reaches_review_save_and_canonical
     engine = create_async_engine(_database_url(), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     patient_id = uuid.uuid4()
+    audit_token = bind_trusted_audit_tenant(str(patient_id))
     extractor = _SyntheticReviewableExtractor()
     try:
         async with factory() as db:
@@ -357,6 +358,7 @@ async def test_real_scanner_clean_patient_flow_reaches_review_save_and_canonical
             assert timeline.patient_id == patient_id
             assert timeline.event_type == "DOCUMENT"
     finally:
+        reset_trusted_audit_scope(audit_token)
         await engine.dispose()
 
 
@@ -366,6 +368,7 @@ async def test_real_clamd_malicious_patient_source_never_reaches_extractor_or_cl
     engine = create_async_engine(_database_url(), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     patient_id = uuid.uuid4()
+    audit_token = bind_trusted_audit_tenant(str(patient_id))
     extractor = _SyntheticReviewableExtractor()
     try:
         async with factory() as db:
@@ -437,6 +440,7 @@ async def test_real_clamd_malicious_patient_source_never_reaches_extractor_or_cl
                 "retryable": False,
             }
     finally:
+        reset_trusted_audit_scope(audit_token)
         await engine.dispose()
 
 
@@ -446,6 +450,7 @@ async def test_scanner_outage_is_retryable_and_retry_must_rescan_before_extracto
     engine = create_async_engine(_database_url(), pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False, autoflush=False)
     patient_id = uuid.uuid4()
+    audit_token = bind_trusted_audit_tenant(str(patient_id))
     extractor = _SyntheticReviewableExtractor()
     live_port = os.environ["PATIENT_SOURCE_CLAMD_PORT"]
     try:
@@ -495,4 +500,5 @@ async def test_scanner_outage_is_retryable_and_retry_must_rescan_before_extracto
                 assert retried.status == "REVIEW_REQUIRED"
         assert extractor.calls == 1
     finally:
+        reset_trusted_audit_scope(audit_token)
         await engine.dispose()
