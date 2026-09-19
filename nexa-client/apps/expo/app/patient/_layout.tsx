@@ -68,6 +68,10 @@ export default function PatientLayout() {
         options={{ headerTitle: 'Health Timeline' }}
       />
       <Stack.Screen
+        name="onboarding"
+        options={{ headerTitle: 'Welcome' }}
+      />
+      <Stack.Screen
         name="records"
         options={{ headerTitle: 'Medical Records' }}
       />

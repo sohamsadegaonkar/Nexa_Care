@@ -842,3 +842,57 @@ class TestRoutesAndDeepLinks:
         assert "/patient/records/import" in records_code
         assert "/patient/records/import" in reports_code
 
+    def test_slice_11f_patient_onboarding_route_parity(self) -> None:
+        """Slice 11F: /patient/onboarding exists on both Next.js and Expo with PatientOnboardingScreen."""
+        next_route = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "next"
+            / "app"
+            / "patient"
+            / "onboarding"
+            / "page.tsx"
+        )
+        assert next_route.exists(), f"Next.js onboarding route missing: {next_route}"
+        next_content = next_route.read_text(encoding="utf-8")
+        assert "PatientOnboardingScreen" in next_content
+
+        expo_route = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "expo"
+            / "app"
+            / "patient"
+            / "onboarding.tsx"
+        )
+        assert expo_route.exists(), f"Expo onboarding route missing: {expo_route}"
+        expo_content = expo_route.read_text(encoding="utf-8")
+        assert "PatientOnboardingScreen" in expo_content
+
+        expo_layout = (
+            ROOT / "nexa-client" / "apps" / "expo" / "app" / "patient" / "_layout.tsx"
+        )
+        assert expo_layout.exists()
+        layout_content = expo_layout.read_text(encoding="utf-8")
+        assert 'name="onboarding"' in layout_content
+
+    def test_slice_11f_onboarding_card_invariants(self) -> None:
+        """Slice 11F: PatientOnboardingCard must be non-coercive, optional, and use closed returnTo."""
+        card_code = _read_screen("PatientOnboardingCard")
+        assert "OPTIONAL" in card_code
+        assert "entirely optional" in card_code
+        assert "/patient/records/import?returnTo=onboarding" in card_code
+        assert "/patient/dashboard" in card_code
+        assert 'role="region"' in card_code or 'accessibilityRole="region"' in card_code
+
+    def test_slice_11f_import_screen_return_to_contract(self) -> None:
+        """Slice 11F: PatientImportScreen must export resolveReturnDestination and handle returnTo."""
+        import_code = _read_screen("PatientImportScreen")
+        assert "resolveReturnDestination" in import_code
+        assert "PatientImportReturnDestination" in import_code
+        assert "effectiveReturnTo" in import_code
+        assert "/patient/onboarding" in import_code
+
+
