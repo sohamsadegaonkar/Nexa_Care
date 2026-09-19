@@ -42,6 +42,10 @@ export default function PatientLayout() {
         options={{ headerTitle: 'Treatment Session Request' }}
       />
       <Stack.Screen
+        name="treatment-access"
+        options={{ headerTitle: 'Treatment Access' }}
+      />
+      <Stack.Screen
         name="biometric-approval"
         options={{ headerTitle: 'Verify Approval' }}
       />

@@ -78,6 +78,9 @@ describe('patient Treatment Session review', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Approve with Biometrics' }))
     await waitFor(() => expect(approve).toHaveBeenCalledWith(challenge))
     expect(await screen.findByText('Treatment Session approved')).toBeTruthy()
+    const button = await screen.findByRole('button', { name: 'View Treatment Access' })
+    fireEvent.click(button)
+    expect(replace).toHaveBeenCalledWith('/patient/treatment-access')
   })
 
   it('denies through the treatment-specific signed denial path', async () => {
@@ -85,5 +88,8 @@ describe('patient Treatment Session review', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Deny' }))
     await waitFor(() => expect(deny).toHaveBeenCalledWith(challenge))
     expect(await screen.findByText('Treatment Session denied')).toBeTruthy()
+    const button = await screen.findByRole('button', { name: 'View Treatment Access' })
+    fireEvent.click(button)
+    expect(replace).toHaveBeenCalledWith('/patient/treatment-access')
   })
 })
