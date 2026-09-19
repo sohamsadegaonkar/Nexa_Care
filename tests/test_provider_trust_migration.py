@@ -22,7 +22,7 @@ TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 PATIENT_EXTERNAL_RECORD_REVISION = "20260916_patient_external_record_import"
 CANONICAL_ENCOUNTER_REVISION = "20260918_canonical_encounter"
 TREATMENT_VITALS_REVISION = "20260918_treatment_vitals_encounter"
-HEAD_REVISION = "20260919_prescriber_eligibility"
+HEAD_REVISION = "20260919_medication_catalog"
 
 
 def _source() -> str:
@@ -89,9 +89,11 @@ def test_provider_trust_migration_is_current_single_head() -> None:
         scripts.get_revision(TREATMENT_VITALS_REVISION).down_revision
         == CANONICAL_ENCOUNTER_REVISION
     )
+    prescriber = scripts.get_revision("20260919_prescriber_eligibility")
+    assert prescriber.down_revision == TREATMENT_VITALS_REVISION
     assert (
         scripts.get_revision(HEAD_REVISION).down_revision
-        == TREATMENT_VITALS_REVISION
+        == "20260919_prescriber_eligibility"
     )
 
 
