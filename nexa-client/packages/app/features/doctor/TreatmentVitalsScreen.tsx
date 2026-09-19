@@ -70,7 +70,11 @@ function terminalKind(error: unknown): 'operation' | 'trust' | 'authority' | nul
     error.status === 401 ||
     error.code === 'REAUTH_REQUIRED' ||
     error.code === 'TREATMENT_PROVIDER_NO_LONGER_ELIGIBLE' ||
-    error.code === 'TREATMENT_PROVIDER_SESSION_MISMATCH'
+    error.code === 'TREATMENT_PROVIDER_SESSION_MISMATCH' ||
+    error.code === 'CLINICAL_ELIGIBILITY_DENIED' ||
+    error.code === 'CLINICAL_MFA_ENROLLMENT_REQUIRED' ||
+    error.code === 'CLINICAL_MFA_REQUIRED' ||
+    error.code === 'RECENT_MFA_REQUIRED'
   ) {
     return 'trust'
   }
