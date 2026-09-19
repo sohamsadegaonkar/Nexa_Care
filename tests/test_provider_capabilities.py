@@ -9,6 +9,10 @@ def test_clinician_role_maps_only_to_fixed_server_owned_capabilities() -> None:
     capabilities = capabilities_for_affiliation_roles(["clinician"])
     assert ClinicalCapability.RECORD_READ in capabilities
     assert ClinicalCapability.EMERGENCY_ATTEMPT in capabilities
+    assert ClinicalCapability.PRESCRIBE_MEDICATION not in capabilities
+    assert not capability_is_granted(
+        ["clinician"], ClinicalCapability.PRESCRIBE_MEDICATION
+    )
     assert all(isinstance(item, ClinicalCapability) for item in capabilities)
 
 
