@@ -1,0 +1,70 @@
+{
+  "schema": "nexa-aws-pilot-runtime-evidence-v2",
+  "status": "BLOCKED",
+  "repository_commit": "<EXACT_40_CHAR_GIT_SHA>",
+  "backend_image_digest": "<sha256:API_IMAGE_DIGEST>",
+  "scanner_image_digest": "<sha256:CLAMD_IMAGE_DIGEST>",
+  "frontend_deployment_identity": "<SANITIZED_FRONTEND_DEPLOYMENT_ID>",
+  "migration_head": "20260918_treatment_vitals_encounter",
+  "aws_region": "ap-south-1",
+  "data_classification": "synthetic-only",
+  "aws_identity": {
+    "credential_source": "ecs-task-role",
+    "static_credentials_present": false,
+    "caller_arn": "<SANITIZED_STS_ASSUMED_ROLE_ARN>"
+  },
+  "encryption": {
+    "backend": "kms",
+    "kms_key_arn": "<SANITIZED_APPLICATION_KMS_ARN>",
+    "s3_kms_key_arn": "<SANITIZED_STORAGE_KMS_ARN>",
+    "context_bound": true
+  },
+  "storage": {
+    "provider": "s3",
+    "sse_algorithm": "aws:kms",
+    "public_access_blocked": true
+  },
+  "database": {
+    "engine": "postgresql",
+    "dedicated": true,
+    "migration_head": "20260918_treatment_vitals_encounter"
+  },
+  "redis": {
+    "tls": true,
+    "dedicated": true
+  },
+  "scanner": {
+    "provider": "clamd",
+    "topology": "same-task-clamd-sidecar",
+    "task_local_transport": true,
+    "public_port_exposed": false,
+    "signature_max_age_hours": 48
+  },
+  "checks": {
+    "task_role_credentials": "NOT_RUN",
+    "kms_envelope_encryption": "NOT_RUN",
+    "s3_encrypted_storage": "NOT_RUN",
+    "s3_public_access_block": "NOT_RUN",
+    "postgresql_connectivity": "NOT_RUN",
+    "redis_tls_connectivity": "NOT_RUN",
+    "healthz": "NOT_RUN",
+    "health": "NOT_RUN",
+    "audit_outbox_health": "NOT_RUN",
+    "trusted_hosts": "NOT_RUN",
+    "cors": "NOT_RUN",
+    "trusted_proxy_boundary": "NOT_RUN",
+    "rollback_rehearsal": "NOT_RUN",
+    "session_consent_invalidation": "NOT_RUN",
+    "redis_unavailability_fail_closed": "NOT_RUN",
+    "kms_unavailability_fail_closed": "NOT_RUN",
+    "s3_unavailability_fail_closed": "NOT_RUN",
+    "database_unavailability_fail_closed": "NOT_RUN",
+    "scanner_same_task_topology": "NOT_RUN",
+    "scanner_not_public": "NOT_RUN",
+    "scanner_signature_fresh": "NOT_RUN",
+    "protected_scanner_ready_health": "NOT_RUN",
+    "clean_synthetic_import": "NOT_RUN",
+    "eicar_blocked_before_extraction": "NOT_RUN",
+    "scanner_outage_fail_closed": "NOT_RUN"
+  }
+}
