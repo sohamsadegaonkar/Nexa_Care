@@ -122,7 +122,7 @@ export default function PatientReportsScreen() {
           <Button
             size="$3"
             theme="blue"
-            onPress={() => router.push('/patient/records')}
+            onPress={() => router.push('/patient/records/import')}
             accessibilityRole="button"
             accessibilityLabel="Add Document or Record"
           >

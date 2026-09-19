@@ -807,3 +807,38 @@ class TestRoutesAndDeepLinks:
             / "page.tsx"
         )
         assert review_path.exists(), "Next.js review queue route missing at nexa-client/apps/next/app/doctor/pipeline/review-queue/page.tsx"
+
+    def test_patient_records_import_route_exists_on_next_and_expo(self) -> None:
+        """Slice 11E: /patient/records/import route exists on both Next.js and Expo."""
+        next_import_route = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "next"
+            / "app"
+            / "patient"
+            / "records"
+            / "import"
+            / "page.tsx"
+        )
+        assert next_import_route.exists(), f"Next.js route missing: {next_import_route}"
+
+        expo_import_route = (
+            ROOT
+            / "nexa-client"
+            / "apps"
+            / "expo"
+            / "app"
+            / "patient"
+            / "records"
+            / "import.tsx"
+        )
+        assert expo_import_route.exists(), f"Expo route missing: {expo_import_route}"
+
+    def test_patient_records_and_reports_screens_navigate_to_import(self) -> None:
+        """PatientRecordsScreen and PatientReportsScreen navigate to /patient/records/import."""
+        records_code = _read_screen("PatientRecordsScreen")
+        reports_code = _read_screen("PatientReportsScreen")
+        assert "/patient/records/import" in records_code
+        assert "/patient/records/import" in reports_code
+

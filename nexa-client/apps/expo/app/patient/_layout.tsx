@@ -72,6 +72,10 @@ export default function PatientLayout() {
         options={{ headerTitle: 'Medical Records' }}
       />
       <Stack.Screen
+        name="records/import"
+        options={{ headerTitle: 'Import Record' }}
+      />
+      <Stack.Screen
         name="prescriptions"
         options={{ headerTitle: 'Prescriptions' }}
       />

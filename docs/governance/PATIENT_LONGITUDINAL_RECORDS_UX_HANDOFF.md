@@ -2,9 +2,12 @@
 
 ## NEXT AGENT — START HERE
 
-- **Current branch:** `task2/patient-records-ux-next`
-- **Reconciled Main Baseline:** `0afc5d24e7383fb91cb20ba5dd67c739bb9de40f`
+- **Current branch:** `task2/slice-11e-patient-import-ux`
+- **Reconciled Main Baseline:** `0b9cb40d4125d7a02f2a08513b67cc7b40639bde`
 - **Consolidated Merged PRs:**
+  - PR #59: Task 1 Patient External Record Actions & D4 Capabilities + Task 0 Encounter Vitals Write (merged, `0b9cb40`)
+  - PR #57: Merge Task 2 Slice 11D onto main (merged, `06c9a3d`)
+  - PR #55: Slice 11D Patient Records Discovery & UX Reliability (Task 2 merged, `cb7df25`)
   - PR #53: Patient External-Record D3 Retry/Cancel Lifecycle (Task 1 merged, `0afc5d2`)
   - PR #54: Canonical Treatment Session Encounter Boundary (Task 0 merged, `a9b2210`)
   - PR #52: Checkpoint freeze (`337c822`)
@@ -13,14 +16,13 @@
   - PR #51: Slice 11C External-Record Longitudinal Integration (Task 2 merged, `6a4f21f`)
   - PR #48: Slice 11B Longitudinal Records UX (Task 2 merged, `34510ec`)
   - PR #49: Qualification Fixture Repair (merged, `20c75f9`)
-- **Source Slice 11B Frozen Head:** `dd4aba0ea5996e1af01575ee7f0dd7c1eaa2060c`
-- **Current Alembic head:** `20260918_canonical_encounter` (singular, inherited unchanged from main)
+- **Current Alembic head:** `20260918_treatment_vitals_encounter` (singular, inherited unchanged from main)
 - **New Migrations:** NONE (Zero Task-2 migrations)
-- **Current phase:** Slice 11D — Patient Records Discovery & UX Reliability (Reconciled)
-- **Last completed step:** Successfully reconciled post-D3 main (0afc5d2), verified zero conflicts and inherited canonical Encounter + D3 retry/cancel routes.
-- **Exact next task:** Run exact-head qualification matrix and merge PR #55 to release Task 0 for PR #56 consolidation.
+- **Current phase:** Slice 11E — Patient External Medical Record Import UX
+- **Last completed step:** Complete implementation and qualification of Slice 11E (dynamic upload policy, actions-driven workflow, candidate review, save semantics, cancel retention warning, advisory source viewer, Next.js Suspense route, Expo route, 20 comprehensive Vitest tests, Next production build verified).
+- **Exact next task:** Open PR targeting `main`, monitor remote CI and Vercel qualification.
 - **Current blockers:** None
-- **Tests to run next:** `yarn --cwd nexa-client test:app`, `yarn --cwd nexa-client test:next`, `yarn verify:next-build`, `pytest tests/test_patient_screens.py`
+- **Tests to run next:** `yarn --cwd nexa-client test:app`, `yarn --cwd nexa-client test:next`, `yarn verify:next-build`, `pytest tests/test_patient_screens.py tests/test_patient_external_record_d4_capabilities.py`
 - **Protected files not to touch:**
   - `app/services/clinical_access_session.py`
   - `app/models/clinical_access_session.py`
@@ -432,3 +434,64 @@ Clinical Safety Rules:
    - `accessibilityState={{ selected: isActive }}` on all filter pills.
    - Web keyboard `Escape` key dismissal for `PatientRecordDetailModal`.
    - Descriptive accessibility labels on interactive controls.
+
+---
+
+## Slice 11E — Patient External Medical Record Import UX Qualification
+
+- **Branch:** `task2/slice-11e-patient-import-ux`
+- **Reconciled Main Baseline:** `origin/main` @ `0b9cb40d4125d7a02f2a08513b67cc7b40639bde` (Post-PR #59)
+- **Alembic Head:** `20260918_treatment_vitals_encounter` (singular, zero migrations introduced)
+- **Routes Delivered:**
+  - Next.js: `/patient/records/import` (wrapped in `<Suspense>` boundary)
+  - Expo: `/patient/records/import` and `/patient/import`
+  - Deep-link from `PatientRecordsScreen` and `PatientReportsScreen` `+ Add Record` buttons
+- **Cross-Platform File Abstraction:**
+  - `SelectedSourceFile` contract supporting Web `File/Blob` and Expo / React Native `expo-document-picker` assets (`{ uri, name, type }`).
+- **TypeScript DTOs & API Methods:**
+  - `PatientExternalRecordActions`, `PatientExternalRecordResponse`, `PatientExternalRecordUploadPolicy`, `PatientExternalRecordReviewItem`, `PatientExternalRecordReviewResponse`
+  - `getPatientUploadPolicy`, `uploadPatientExternalRecord`, `getPatientExternalRecord`, `processPatientExternalRecord`, `retryPatientExternalRecord`, `cancelPatientExternalRecord`, `getPatientExternalRecordReview`, `reviewPatientExternalRecordItem`, `savePatientExternalRecord`, `getPatientExternalRecordSourceBlob`
+
+### Strict Invariants Enforced
+1. **Strict `actions`-Driven Authority:**
+   - UI capability checks rely strictly on server-returned `response.actions` (`can_process`, `can_retry`, `can_cancel`, `can_review`, `can_save`, `can_view_source`).
+   - Never infer capability from public status strings or local boolean heuristics.
+   - Adversarially verified: `status === 'needs_review'` with `can_review === false` halts advancement; `status === 'ready_to_save'` with `can_save === false` keeps save disabled.
+2. **Dynamic Upload Policy & Mismatch Validation:**
+   - Limits (`max_upload_bytes`), file extensions, and MIME types fetched dynamically via `GET /upload-policy`.
+   - File validation checks both file extension and explicit non-generic MIME types, rejecting invalid types or spoofed extensions.
+3. **Upload Idempotency Preservation:**
+   - Client generates a unique upload idempotency key upon first submission attempt.
+   - Key is preserved across transient network errors to allow safe retries, and is reset only when the selected file, category, or workflow intent changes.
+4. **Truthful Copy & Non-Deceptive Clinical Claims:**
+   - Progress copy: *"Processing document"*, *"Nexa is extracting information for review"*.
+   - Strictly prohibits claiming *"clinically verified"*, *"doctor reviewed"*, *"malware free"*, or *"virus scanned"*.
+   - In-app native document preview truthfully informs patients that document preview is available via the web portal while native preview is in development.
+5. **Save Semantics:**
+   - Server creates `DocumentReference` and `TimelineEvent` only; does NOT fabricate typed clinical facts (medications, conditions, observations).
+   - Save CTA reads: *"Save document to medical records"*.
+6. **Cancel Semantics:**
+   - Cancel != erasure. Prominent retention warning: *"Cancel this import? No information will be added to your medical records. The uploaded source remains in your import history unless it is separately erased."*
+   - Cancel action is unavailable while extraction is actively running (`can_cancel: false`).
+7. **Provenance & Evidence Integrity:**
+   - Provenance labels: *"Document extracted"*, *"Patient corrected"*, *"Patient uploaded"*.
+   - Original extracted value is preserved and displayed alongside patient correction.
+8. **Security & Privacy:**
+   - Server-derived self-patient authority only (`/api/v2/patient/me/*`).
+   - Zero patient identifiers, tokens, or internal S3 storage keys in URLs, error messages, or logs.
+   - Advisory source viewing uses short-lived blob URLs revoked on modal close, active import change, and component unmount.
+   - Zero hardcoded `localhost` references across client packages (verified by architecture guardrails).
+
+### Verification Evidence
+| Test Target | Scope | Result | Execution Detail |
+|---|---|---|---|
+| Architecture Guardrails | `pytest tests/test_architecture.py` | PASS | 8 passed, 0 localhost violations |
+| Vitest App Suite | `yarn --cwd nexa-client test:app` | PASS | 45 test files, 316 tests (including 26/26 in `PatientImportWorkflow.test.tsx`) |
+| Vitest Next Suite | `yarn --cwd nexa-client test:next` | PASS | 2 test files, 6 tests passed |
+| Python AST & Screen Guards | `pytest tests/test_patient_screens.py` | PASS | 166 passed, AST invariant constraints verified |
+| Route Registration Invariants | `pytest tests/test_route_registration.py` | PASS | 3/3 route invariant suites passed |
+| D4 Contract Tests | `pytest tests/test_patient_external_record_d4_capabilities.py` | PASS | 18/18 capability and actions tests passed |
+| Alembic Migration Head | `python -m alembic heads` | PASS | Singular head `20260918_treatment_vitals_encounter`, 0 migrations |
+| Package Builds | `yarn --cwd nexa-client build` | PASS | `@my/config` and `@my/ui` built cleanly |
+| Next Production Build | `yarn --cwd nexa-client verify:next-build` | PASS | All 30 routes (including `/patient/records/import`) compiled & prerendered cleanly |
+
