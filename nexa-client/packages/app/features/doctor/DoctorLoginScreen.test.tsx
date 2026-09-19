@@ -223,6 +223,31 @@ describe('provider login state machine', () => {
   })
 })
 
+
+function TreatmentSessionStateProbe() {
+  const { treatmentSession, setTreatmentSession, logout } = useProviderAuth()
+  return (
+    <div>
+      <span data-testid="treatment-state">{treatmentSession ? 'active' : 'empty'}</span>
+      <button
+        onClick={() =>
+          setTreatmentSession({
+            requestId: 'request-synthetic',
+            treatmentToken: 'synthetic-treatment-capability',
+            allowedOperations: ['CREATE_ENCOUNTER', 'WRITE_VITALS'],
+            expiresAt: '2099-01-01T00:00:00Z',
+            patientDisplayIdentifier: 'NC-SYNTHETIC',
+            encounterId: 'encounter-synthetic',
+          })
+        }
+      >
+        Seed treatment state
+      </button>
+      <button onClick={logout}>Log out probe</button>
+    </div>
+  )
+}
+
 function AuthenticatedValue() {
   const { hydrated, isAuthenticated } = useProviderAuth()
   return <span>{hydrated ? String(isAuthenticated) : 'hydrating'}</span>
@@ -235,6 +260,31 @@ describe('provider session hydration', () => {
     vi.spyOn(NexaApiClient, 'providerWebSession').mockRejectedValue(
       new ApiError('No provider session.', 401, 'HTTP_ERROR')
     )
+  })
+
+
+  it('keeps the Treatment Session bearer in React memory only and clears it on logout', async () => {
+    vi.mocked(NexaApiClient.providerWebSession).mockResolvedValue(authenticatedSession)
+    vi.spyOn(NexaApiClient, 'providerWebLogout').mockResolvedValue(undefined)
+    window.localStorage.clear()
+    window.sessionStorage.clear()
+
+    renderWithTamagui(
+      <ProviderAuthProvider>
+        <TreatmentSessionStateProbe />
+      </ProviderAuthProvider>
+    )
+
+    await waitFor(() => expect(screen.getByTestId('treatment-state')).toHaveTextContent('empty'))
+    fireEvent.click(screen.getByRole('button', { name: 'Seed treatment state' }))
+    expect(screen.getByTestId('treatment-state')).toHaveTextContent('active')
+    expect(window.localStorage.length).toBe(0)
+    expect(window.sessionStorage.length).toBe(0)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Log out probe' }))
+    await waitFor(() => expect(screen.getByTestId('treatment-state')).toHaveTextContent('empty'))
+    expect(window.localStorage.length).toBe(0)
+    expect(window.sessionStorage.length).toBe(0)
   })
 
   it('leaves an unauthenticated refresh at login state', async () => {
