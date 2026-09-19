@@ -45,6 +45,14 @@ export interface ProviderAccessGrant {
   scope: 'clinical' | 'full'
   expiresAt: string
 }
+export interface ProviderTreatmentSessionGrant {
+  requestId: string
+  treatmentToken: string
+  allowedOperations: Array<'CREATE_ENCOUNTER' | 'WRITE_VITALS'>
+  expiresAt: string
+  patientDisplayIdentifier: string
+  encounterId: string | null
+}
 export interface PatientDiscoverySelection {
   discoveryHandle: string
   expiresAt: string
@@ -68,6 +76,7 @@ export interface ProviderAuthState {
   loggingIn: boolean
   accessGrant: ProviderAccessGrant | null
   discoverySelection: PatientDiscoverySelection | null
+  treatmentSession: ProviderTreatmentSessionGrant | null
 }
 export interface ProviderAuthActions {
   login: (email: string, password: string) => Promise<LoginResult>
@@ -78,6 +87,9 @@ export interface ProviderAuthActions {
   clearAccessGrant: () => void
   setDiscoverySelection: (selection: PatientDiscoverySelection) => void
   clearDiscoverySelection: () => void
+  setTreatmentSession: (grant: ProviderTreatmentSessionGrant) => void
+  setTreatmentEncounter: (encounterId: string) => void
+  clearTreatmentSession: () => void
 }
 export type ProviderAuthContextType = ProviderAuthState & ProviderAuthActions
 
@@ -101,6 +113,8 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   const [loggingIn, setLoggingIn] = useState(false)
   const [accessGrant, setAccessGrantState] = useState<ProviderAccessGrant | null>(null)
   const [discoverySelection, setDiscoverySelectionState] = useState<PatientDiscoverySelection | null>(null)
+  const [treatmentSession, setTreatmentSessionState] =
+    useState<ProviderTreatmentSessionGrant | null>(null)
   const operationRef = useRef<Promise<unknown> | null>(null)
 
   const hydrate = useCallback(async (): Promise<boolean> => {
@@ -124,11 +138,13 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
         },
       }
       setSession(next)
+      setTreatmentSessionState(null)
       setStatus('authenticated')
       setLoginError(null)
       return true
     } catch {
       setSession(null)
+      setTreatmentSessionState(null)
       setStatus('unauthenticated')
       return false
     }
@@ -215,6 +231,7 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
       setSession(null)
       setAccessGrantState(null)
       setDiscoverySelectionState(null)
+      setTreatmentSessionState(null)
       setMfaDetail(null)
       setLoginError(null)
       setStatus('unauthenticated')
@@ -224,6 +241,16 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
   const clearAccessGrant = useCallback(() => setAccessGrantState(null), [])
   const setDiscoverySelection = useCallback((selection: PatientDiscoverySelection) => setDiscoverySelectionState(selection), [])
   const clearDiscoverySelection = useCallback(() => setDiscoverySelectionState(null), [])
+  const setTreatmentSession = useCallback(
+    (grant: ProviderTreatmentSessionGrant) => setTreatmentSessionState(grant),
+    []
+  )
+  const setTreatmentEncounter = useCallback((encounterId: string) => {
+    setTreatmentSessionState((current) =>
+      current ? { ...current, encounterId } : current
+    )
+  }, [])
+  const clearTreatmentSession = useCallback(() => setTreatmentSessionState(null), [])
   const state: ProviderAuthState = {
     status,
     hydrated: status !== 'hydrating',
@@ -239,10 +266,24 @@ export function ProviderAuthProvider({ children }: { children: ReactNode }) {
     loggingIn,
     accessGrant,
     discoverySelection,
+    treatmentSession,
   }
   return (
     <ProviderAuthContext.Provider
-      value={{ ...state, login, verifyMfa, cancelMfa, logout, setAccessGrant, clearAccessGrant, setDiscoverySelection, clearDiscoverySelection }}
+      value={{
+        ...state,
+        login,
+        verifyMfa,
+        cancelMfa,
+        logout,
+        setAccessGrant,
+        clearAccessGrant,
+        setDiscoverySelection,
+        clearDiscoverySelection,
+        setTreatmentSession,
+        setTreatmentEncounter,
+        clearTreatmentSession,
+      }}
     >
       {children}
     </ProviderAuthContext.Provider>
