@@ -153,6 +153,68 @@ class VerificationWorkStatus(str, enum.Enum):
     FAILED_TERMINAL = "FAILED_TERMINAL"
 
 
+class PrescribingEligibilityStatus(str, enum.Enum):
+    """Closed lifecycle for Nexa prescribing-specific professional authority."""
+
+    PENDING = "PENDING"
+    ELIGIBLE = "ELIGIBLE"
+    RECHECK_DUE = "RECHECK_DUE"
+    RESTRICTED = "RESTRICTED"
+    SUSPENDED = "SUSPENDED"
+    REVOKED = "REVOKED"
+    EXPIRED = "EXPIRED"
+    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
+
+
+class PrescribingPractitionerClass(str, enum.Enum):
+    """Closed practitioner classes relevant to the initial prescribing policy."""
+
+    FULL_RMP_MODERN_MEDICINE = "FULL_RMP_MODERN_MEDICINE"
+    COMMUNITY_HEALTH_PROVIDER = "COMMUNITY_HEALTH_PROVIDER"
+    PROVISIONAL_INTERNSHIP = "PROVISIONAL_INTERNSHIP"
+    TEMPORARY_FOREIGN = "TEMPORARY_FOREIGN"
+    LIMITED_OR_RESTRICTED = "LIMITED_OR_RESTRICTED"
+    UNSUPPORTED_PROFESSION = "UNSUPPORTED_PROFESSION"
+    UNKNOWN = "UNKNOWN"
+
+
+class PrescribingEligibilitySourceType(str, enum.Enum):
+    """Primary-source classes accepted for a human prescribing decision."""
+
+    NMR = "NMR"
+    SMR = "SMR"
+    COMPETENT_MEDICAL_COUNCIL = "COMPETENT_MEDICAL_COUNCIL"
+    HPR = "HPR"
+
+
+class PrescribingEligibilityReasonCode(str, enum.Enum):
+    """Closed reason codes for prescribing-eligibility decisions."""
+
+    PRIMARY_SOURCE_CURRENT_FULL_RMP = "PRIMARY_SOURCE_CURRENT_FULL_RMP"
+    RECHECK_CONFIRMED_CURRENT = "RECHECK_CONFIRMED_CURRENT"
+    RESTRICTED_CLASS = "RESTRICTED_CLASS"
+    PROVISIONAL_REGISTRATION = "PROVISIONAL_REGISTRATION"
+    TEMPORARY_REGISTRATION = "TEMPORARY_REGISTRATION"
+    PROFESSIONAL_SUSPENDED = "PROFESSIONAL_SUSPENDED"
+    PROFESSIONAL_REVOKED = "PROFESSIONAL_REVOKED"
+    PROFESSIONAL_EXPIRED = "PROFESSIONAL_EXPIRED"
+    REGISTRATION_INACTIVE = "REGISTRATION_INACTIVE"
+    HPR_ONLY = "HPR_ONLY"
+    UNSUPPORTED_PROFESSION = "UNSUPPORTED_PROFESSION"
+    SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
+    AUTHORITY_UNRESOLVED = "AUTHORITY_UNRESOLVED"
+
+
+class PrescribingRestrictionCode(str, enum.Enum):
+    """Closed restriction vocabulary for non-eligible prescribing decisions."""
+
+    LIMITED_LICENCE = "LIMITED_LICENCE"
+    PROVISIONAL_ONLY = "PROVISIONAL_ONLY"
+    TEMPORARY_SCOPE = "TEMPORARY_SCOPE"
+    REGULATORY_RESTRICTION = "REGULATORY_RESTRICTION"
+    UNSUPPORTED_SCOPE = "UNSUPPORTED_SCOPE"
+
+
 class HospitalRegistry(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     """Base hospital / facility registry entry."""
 
@@ -239,6 +301,12 @@ class ProviderIdentity(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     ] = relationship(back_populates="provider", cascade="all, delete-orphan")
     trust_permission_grants: Mapped[list["ProviderTrustPermissionGrant"]] = (
         relationship(back_populates="provider", cascade="all, delete-orphan")
+    )
+    prescribing_eligibility_decisions: Mapped[
+        list["PrescribingEligibilityDecision"]
+    ] = relationship(
+        foreign_keys="PrescribingEligibilityDecision.provider_id",
+        passive_deletes="all",
     )
 
     __table_args__ = (
@@ -350,7 +418,7 @@ class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
 
     __table_args__ = (
         CheckConstraint(
-            "permission IN ('PROFESSIONAL_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
+            "permission IN ('PROFESSIONAL_REVIEW', 'PRESCRIBING_ELIGIBILITY_REVIEW', 'FACILITY_REVIEW', 'AFFILIATION_MANAGE', 'TRUST_PERMISSION_MANAGE')",
             name="ck_provider_trust_permission_grant_permission",
         ),
         CheckConstraint(
@@ -358,7 +426,7 @@ class ProviderTrustPermissionGrant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
             name="ck_provider_trust_permission_grant_scope_type",
         ),
         CheckConstraint(
-            "(permission IN ('PROFESSIONAL_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
+            "(permission IN ('PROFESSIONAL_REVIEW', 'PRESCRIBING_ELIGIBILITY_REVIEW', 'TRUST_PERMISSION_MANAGE') AND scope_type = 'GLOBAL' AND facility_id IS NULL) OR (permission IN ('FACILITY_REVIEW', 'AFFILIATION_MANAGE') AND scope_type = 'FACILITY' AND facility_id IS NOT NULL)",
             name="ck_provider_trust_permission_grant_scope_binding",
         ),
         CheckConstraint(
@@ -619,6 +687,603 @@ class ProfessionalVerification(Base, UUIDPrimaryKeyMixin, TimestampMixin):
         ),
         CheckConstraint(
             "version > 0", name="ck_professional_verification_version_positive"
+        ),
+    )
+
+
+class PrescribingEligibilityDecision(Base, UUIDPrimaryKeyMixin):
+    """Immutable, append-only prescribing-specific professional authority decision.
+
+    This record is deliberately separate from ProfessionalVerification.  It
+    never grants authority by itself: current ProfessionalVerification and all
+    ordinary clinical trust still have to pass at the use boundary.
+    """
+
+    __tablename__ = "prescribing_eligibility_decision"
+
+    provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_identity.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    professional_verification_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professional_verification.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    professional_verification_version: Mapped[int] = mapped_column(
+        Integer, nullable=False
+    )
+    version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False)
+    practitioner_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_authority_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_number_normalized: Mapped[str] = mapped_column(
+        String(128), nullable=False
+    )
+    source_reference: Mapped[str] = mapped_column(String(255), nullable=False)
+    evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    checked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    valid_until: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reviewer_provider_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_identity.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+    decision_reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    restriction_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    policy_version: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="prescriber-eligibility/v1"
+    )
+    previous_decision_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("prescribing_eligibility_decision.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_id",
+            "version",
+            name="uq_prescribing_eligibility_provider_version",
+        ),
+        UniqueConstraint(
+            "previous_decision_id",
+            name="uq_prescribing_eligibility_previous_decision",
+        ),
+        CheckConstraint(
+            "version > 0",
+            name="ck_prescribing_eligibility_version_positive",
+        ),
+        CheckConstraint(
+            "professional_verification_version > 0",
+            name="ck_prescribing_eligibility_prof_version_positive",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'ELIGIBLE', 'RECHECK_DUE', 'RESTRICTED', "
+            "'SUSPENDED', 'REVOKED', 'EXPIRED', 'SOURCE_UNAVAILABLE')",
+            name="ck_prescribing_eligibility_status",
+        ),
+        CheckConstraint(
+            "practitioner_class IN ('FULL_RMP_MODERN_MEDICINE', "
+            "'COMMUNITY_HEALTH_PROVIDER', 'PROVISIONAL_INTERNSHIP', "
+            "'TEMPORARY_FOREIGN', 'LIMITED_OR_RESTRICTED', "
+            "'UNSUPPORTED_PROFESSION', 'UNKNOWN')",
+            name="ck_prescribing_eligibility_practitioner_class",
+        ),
+        CheckConstraint(
+            "source_type IN ('NMR', 'SMR', 'COMPETENT_MEDICAL_COUNCIL', 'HPR')",
+            name="ck_prescribing_eligibility_source_type",
+        ),
+        CheckConstraint(
+            "decision_reason_code IN ('PRIMARY_SOURCE_CURRENT_FULL_RMP', "
+            "'RECHECK_CONFIRMED_CURRENT', 'RESTRICTED_CLASS', "
+            "'PROVISIONAL_REGISTRATION', 'TEMPORARY_REGISTRATION', "
+            "'PROFESSIONAL_SUSPENDED', 'PROFESSIONAL_REVOKED', "
+            "'PROFESSIONAL_EXPIRED', 'REGISTRATION_INACTIVE', 'HPR_ONLY', "
+            "'UNSUPPORTED_PROFESSION', 'SOURCE_UNAVAILABLE', 'AUTHORITY_UNRESOLVED')",
+            name="ck_prescribing_eligibility_reason",
+        ),
+        CheckConstraint(
+            "restriction_code IS NULL OR restriction_code IN ('LIMITED_LICENCE', "
+            "'PROVISIONAL_ONLY', 'TEMPORARY_SCOPE', 'REGULATORY_RESTRICTION', "
+            "'UNSUPPORTED_SCOPE')",
+            name="ck_prescribing_eligibility_restriction",
+        ),
+        CheckConstraint(
+            "evidence_sha256 ~ '^[0-9a-f]{64}    """Independent, reviewable trust evidence for a hospital facility."""
+
+    __tablename__ = "facility_verification"
+
+    facility_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("hospital_registry.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=FacilityVerificationStatus.DRAFT.value
+    )
+    verification_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    verification_source: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    verification_reference: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    registration_authority_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    registration_number_normalized: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    registration_valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    registration_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    grace_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recheck_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    recheck_failure_reason: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    previous_verification_valid: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    authoritative_adverse_signal_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_checked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    next_review_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    reviewer_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    decision_reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    server_provenance_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+    # Stored generation only; transactional compare-and-swap is Phase 3E.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+    facility: Mapped[HospitalRegistry] = relationship(back_populates="verification")
+    evidence: Mapped[list["ProviderTrustVerificationEvidence"]] = relationship(
+        back_populates="facility_verification",
+        foreign_keys="ProviderTrustVerificationEvidence.facility_verification_id",
+        passive_deletes="all",
+    )
+    server_provenance_evidence: Mapped["ProviderTrustVerificationEvidence | None"] = (
+        relationship(
+            foreign_keys="[FacilityVerification.server_provenance_evidence_id, FacilityVerification.id]",
+            primaryjoin="and_(FacilityVerification.server_provenance_evidence_id == ProviderTrustVerificationEvidence.id, FacilityVerification.id == ProviderTrustVerificationEvidence.facility_verification_id)",
+        )
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["server_provenance_evidence_id", "id"],
+            [
+                "provider_trust_verification_evidence.id",
+                "provider_trust_verification_evidence.facility_verification_id",
+            ],
+            name="fk_facility_verification_server_provenance",
+            ondelete="RESTRICT",
+        ),
+        Index("ix_facility_verification_status", "status"),
+        Index("ix_facility_verification_facility_id", "facility_id"),
+        Index(
+            "ix_facility_verification_server_provenance_evidence_id",
+            "server_provenance_evidence_id",
+        ),
+        Index(
+            "ix_facility_verification_registration",
+            "registration_authority_code",
+            "registration_number_normalized",
+        ),
+        CheckConstraint(
+            "status IN ('DRAFT', 'PENDING_VERIFICATION', 'VERIFIED', "
+            "'RECHECK_REQUIRED', 'SUSPENDED', 'REJECTED', 'CLOSED')",
+            name="ck_facility_verification_status",
+        ),
+        CheckConstraint(
+            "version > 0", name="ck_facility_verification_version_positive"
+        ),
+        CheckConstraint(
+            "registration_valid_until IS NULL OR registration_valid_from IS NULL "
+            "OR registration_valid_until >= registration_valid_from",
+            name="ck_facility_verification_validity",
+        ),
+        CheckConstraint(
+            "recheck_failure_reason IS NULL OR recheck_failure_reason IN "
+            "('SOURCE_UNAVAILABLE', 'SOURCE_RESPONSE_INVALID', 'SOURCE_NOT_FOUND', 'REVIEW_REQUIRED')",
+            name="ck_facility_verification_recheck_failure_reason",
+        ),
+    )
+
+
+class ProviderTrustVerificationEvidence(Base, UUIDPrimaryKeyMixin):
+    """Immutable, append-only verification evidence observation.
+
+    Relates to exactly one authoritative lifecycle resource:
+    ProfessionalVerification OR FacilityVerification.
+    It does not grant authority by itself; it records observation facts.
+    """
+
+    __tablename__ = "provider_trust_verification_evidence"
+
+    professional_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professional_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    facility_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("facility_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    origin: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    adapter_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    lookup_purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_record_reference: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    observed_valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    observed_valid_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    identity_binding_result: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationIdentityBindingResult.NOT_EVALUATED.value,
+    )
+    binding_method: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    response_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    external_transaction_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True
+    )
+    observed_resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+
+    professional_verification: Mapped[ProfessionalVerification | None] = relationship(
+        back_populates="evidence",
+        foreign_keys=[professional_verification_id],
+    )
+    facility_verification: Mapped[FacilityVerification | None] = relationship(
+        back_populates="evidence",
+        foreign_keys=[facility_verification_id],
+    )
+    review_work: Mapped["ProviderTrustVerificationReviewWork | None"] = relationship(
+        back_populates="evidence",
+        uselist=False,
+        passive_deletes="all",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(professional_verification_id IS NOT NULL AND facility_verification_id IS NULL) "
+            "OR (professional_verification_id IS NULL AND facility_verification_id IS NOT NULL)",
+            name="ck_provider_trust_verification_evidence_resource_target",
+        ),
+        CheckConstraint(
+            "origin IN ('MANUAL_REVIEWER_ATTESTATION', 'SERVER_REGISTRY_OBSERVATION')",
+            name="ck_provider_trust_verification_evidence_origin",
+        ),
+        CheckConstraint(
+            "lookup_purpose IN ('INITIAL_VERIFICATION', 'RECHECK', 'ADVERSE_SIGNAL_CHECK', 'MANUAL_REVIEW')",
+            name="ck_provider_trust_verification_evidence_lookup_purpose",
+        ),
+        CheckConstraint(
+            "outcome IN ('CONFIRMED_ACTIVE', 'CONFIRMED_INACTIVE', 'NOT_FOUND', "
+            "'IDENTITY_MISMATCH', 'AMBIGUOUS', 'SOURCE_UNAVAILABLE', "
+            "'SOURCE_RESPONSE_INVALID', 'SOURCE_AUTHENTICATION_FAILURE', "
+            "'SOURCE_INTEGRITY_FAILURE', 'REVIEW_REQUIRED')",
+            name="ck_provider_trust_verification_evidence_outcome",
+        ),
+        CheckConstraint(
+            "identity_binding_result IN ('NOT_EVALUATED', 'MATCHED', 'MISMATCHED', 'AMBIGUOUS')",
+            name="ck_provider_trust_verification_evidence_identity_binding_result",
+        ),
+        CheckConstraint(
+            "observed_resource_version >= 1",
+            name="ck_ptve_observed_resource_version",
+        ),
+        CheckConstraint(
+            "(origin = 'SERVER_REGISTRY_OBSERVATION' AND adapter_version IS NOT NULL AND length(trim(adapter_version)) > 0) "
+            "OR (origin = 'MANUAL_REVIEWER_ATTESTATION')",
+            name="ck_provider_trust_verification_evidence_adapter_version_origin",
+        ),
+        CheckConstraint(
+            "observed_valid_until IS NULL OR observed_valid_from IS NULL OR observed_valid_until >= observed_valid_from",
+            name="ck_provider_trust_verification_evidence_validity_interval",
+        ),
+        CheckConstraint(
+            "response_digest IS NULL OR response_digest ~ '^[0-9a-f]{64}$'",
+            name="ck_provider_trust_verification_evidence_response_digest",
+        ),
+        CheckConstraint(
+            "length(trim(source_id)) > 0",
+            name="ck_provider_trust_verification_evidence_source_id_non_empty",
+        ),
+        UniqueConstraint(
+            "id",
+            "professional_verification_id",
+            name="uq_evidence_professional_binding",
+        ),
+        UniqueConstraint(
+            "id",
+            "facility_verification_id",
+            name="uq_evidence_facility_binding",
+        ),
+        Index(
+            "ix_provider_trust_verification_evidence_prof_id",
+            "professional_verification_id",
+        ),
+        Index(
+            "ix_provider_trust_verification_evidence_fac_id",
+            "facility_verification_id",
+        ),
+        Index("ix_provider_trust_verification_evidence_source_id", "source_id"),
+        Index("ix_provider_trust_verification_evidence_observed_at", "observed_at"),
+        Index("ix_provider_trust_verification_evidence_outcome", "outcome"),
+    )
+
+
+class ProviderTrustVerificationReviewWork(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Governed manual-review work queue item created when automated verification
+
+    fails closed, requires human review, or encounters ambiguous/adverse registry findings.
+    One review work item is bound to exactly one verification evidence row.
+    """
+
+    __tablename__ = "provider_trust_verification_review_work"
+
+    evidence_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_trust_verification_evidence.id", ondelete="RESTRICT"),
+        nullable=False,
+        unique=True,
+    )
+    disposition: Mapped[str] = mapped_column(String(64), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationReviewWorkStatus.OPEN.value,
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    resolved_by_actor_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+    evidence: Mapped[ProviderTrustVerificationEvidence] = relationship(
+        back_populates="review_work"
+    )
+
+    __table_args__ = (
+        Index("ix_provider_trust_verification_review_work_status", "status"),
+        Index("ix_provider_trust_verification_review_work_evidence_id", "evidence_id"),
+        CheckConstraint(
+            "status IN ('OPEN', 'RESOLVED')",
+            name="chk_review_work_status",
+        ),
+        CheckConstraint(
+            "disposition IN ('HUMAN_REVIEW_REQUIRED', 'SYSTEM_FAIL_CLOSED_AND_REVIEW', 'LIFECYCLE_SEMANTIC_GAP')",
+            name="chk_review_work_disposition",
+        ),
+        CheckConstraint(
+            "length(trim(reason_code)) > 0",
+            name="chk_review_work_reason_code_non_empty",
+        ),
+        CheckConstraint(
+            "(status = 'OPEN' AND resolved_at IS NULL AND resolved_by_actor_id IS NULL) "
+            "OR (status = 'RESOLVED' AND resolved_at IS NOT NULL AND resolved_by_actor_id IS NOT NULL)",
+            name="chk_review_work_resolution_integrity",
+        ),
+    )
+
+
+class ProviderVerificationWork(Base, UUIDPrimaryKeyMixin, TimestampMixin):
+    """Durable work item for automated external registry verification.
+
+    Maintains execution state, leases, retries, and result linkage for
+    asynchronous background verification tasks.
+    """
+
+    __tablename__ = "provider_verification_work"
+
+    professional_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("professional_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    facility_verification_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("facility_verification.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    lookup_purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    adapter_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_authority_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    registration_number_normalized: Mapped[str] = mapped_column(
+        String(128), nullable=False
+    )
+    expected_resource_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    scheduler_reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default=VerificationWorkStatus.PENDING.value,
+    )
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    next_attempt_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_attempted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_evidence_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("provider_trust_verification_evidence.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    professional_verification: Mapped[ProfessionalVerification | None] = relationship(
+        foreign_keys=[professional_verification_id],
+    )
+    facility_verification: Mapped[FacilityVerification | None] = relationship(
+        foreign_keys=[facility_verification_id],
+    )
+    result_evidence: Mapped[ProviderTrustVerificationEvidence | None] = relationship(
+        foreign_keys=[result_evidence_id],
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "(professional_verification_id IS NOT NULL AND facility_verification_id IS NULL) "
+            "OR (professional_verification_id IS NULL AND facility_verification_id IS NOT NULL)",
+            name="ck_pvw_resource_target_xor",
+        ),
+        CheckConstraint(
+            "status IN ('PENDING', 'CLAIMED', 'COMPLETED', 'EXHAUSTED', "
+            "'CANCELLED_STALE', 'CANCELLED_POLICY', 'FAILED_TERMINAL')",
+            name="ck_pvw_status",
+        ),
+        CheckConstraint(
+            "attempt_count >= 0 AND max_attempts >= 1",
+            name="ck_pvw_attempts",
+        ),
+        CheckConstraint(
+            "length(trim(source_id)) > 0",
+            name="ck_pvw_source_id_non_empty",
+        ),
+        CheckConstraint(
+            "length(trim(adapter_version)) > 0",
+            name="ck_pvw_adapter_version_non_empty",
+        ),
+        CheckConstraint(
+            "expected_resource_version >= 1",
+            name="ck_pvw_expected_version_positive",
+        ),
+        Index(
+            "uq_prof_active_verification_work",
+            "professional_verification_id",
+            "lookup_purpose",
+            "source_id",
+            "expected_resource_version",
+            unique=True,
+            postgresql_where=text(
+                "professional_verification_id IS NOT NULL AND status IN ('PENDING', 'CLAIMED')"
+            ),
+        ),
+        Index(
+            "uq_fac_active_verification_work",
+            "facility_verification_id",
+            "lookup_purpose",
+            "source_id",
+            "expected_resource_version",
+            unique=True,
+            postgresql_where=text(
+                "facility_verification_id IS NOT NULL AND status IN ('PENDING', 'CLAIMED')"
+            ),
+        ),
+        Index(
+            "ix_provider_verification_work_status_next_attempt",
+            "status",
+            "next_attempt_at",
+            "priority",
+        ),
+        Index(
+            "ix_provider_verification_work_prof_id",
+            "professional_verification_id",
+        ),
+        Index(
+            "ix_provider_verification_work_fac_id",
+            "facility_verification_id",
+        ),
+        Index(
+            "ix_provider_verification_work_lease_expires",
+            "lease_expires_at",
+        ),
+        Index(
+            "ix_provider_verification_work_result_evidence",
+            "result_evidence_id",
+        ),
+    )
+",
+            name="ck_prescribing_eligibility_evidence_sha256",
+        ),
+        CheckConstraint(
+            "length(trim(source_reference)) > 0",
+            name="ck_prescribing_eligibility_source_reference",
+        ),
+        CheckConstraint(
+            "length(trim(registration_authority_code)) > 0 "
+            "AND length(trim(registration_number_normalized)) > 0",
+            name="ck_prescribing_eligibility_registration_binding",
+        ),
+        CheckConstraint(
+            "valid_until > checked_at",
+            name="ck_prescribing_eligibility_validity",
+        ),
+        CheckConstraint(
+            "reviewer_provider_id <> provider_id",
+            name="ck_prescribing_eligibility_no_self_review",
+        ),
+        CheckConstraint(
+            "(status <> 'ELIGIBLE') OR "
+            "(practitioner_class = 'FULL_RMP_MODERN_MEDICINE' "
+            "AND source_type IN ('NMR', 'SMR', 'COMPETENT_MEDICAL_COUNCIL') "
+            "AND restriction_code IS NULL)",
+            name="ck_prescribing_eligibility_positive_shape",
+        ),
+        Index(
+            "ix_prescribing_eligibility_provider_version",
+            "provider_id",
+            "version",
+        ),
+        Index(
+            "ix_prescribing_eligibility_professional_verification_id",
+            "professional_verification_id",
+        ),
+        Index(
+            "ix_prescribing_eligibility_valid_until",
+            "valid_until",
         ),
     )
 
