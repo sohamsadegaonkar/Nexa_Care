@@ -7,7 +7,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from PIL import Image
@@ -113,15 +113,11 @@ def _database_url() -> str:
 def _pdf(*, malicious: bool = False) -> bytes:
     writer = PdfWriter()
     writer.add_blank_page(width=612, height=792)
+    if malicious:
+        writer.add_attachment("synthetic-test.txt", _EICAR)
     buffer = io.BytesIO()
     writer.write(buffer)
-    data = buffer.getvalue()
-    if not malicious:
-        return data
-    marker = b"%%EOF"
-    index = data.rfind(marker)
-    assert index >= 0
-    return data[:index] + b"% " + _EICAR + b"\n" + data[index:]
+    return buffer.getvalue()
 
 
 def _png() -> bytes:
@@ -241,6 +237,15 @@ async def test_real_clamd_clean_and_eicar_verdicts_and_exact_hash_binding() -> N
             scanner=scanner,
         )
         assert decision.content_hash == digest
+
+    raw_test_hash = hashlib.sha256(_EICAR).hexdigest()
+    raw_verdict = await scanner.scan(
+        _EICAR,
+        content_hash=raw_test_hash,
+        mime_type="application/octet-stream",
+    )
+    assert raw_verdict.outcome is MalwareScanOutcome.MALICIOUS
+    assert raw_verdict.content_hash == raw_test_hash
 
     malicious = _pdf(malicious=True)
     malicious_hash = hashlib.sha256(malicious).hexdigest()
