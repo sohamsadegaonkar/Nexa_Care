@@ -112,11 +112,11 @@ export function PatientSearchScreen() {
         expiresAt: result.expires_at,
         ...display,
       })
-      router.push(
-        treatmentVitalsIntent
-          ? '/doctor/treatment-vitals'
-          : `/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`
-      )
+      if (treatmentVitalsIntent) {
+        router.push('/doctor/treatment-vitals')
+      } else {
+        router.push(`/doctor/request-consent${documentUploadIntent ? '?intent=document_upload' : ''}`)
+      }
     } catch (caught) {
       setError(discoveryError(caught))
     } finally {
