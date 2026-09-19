@@ -1,0 +1,125 @@
+name: Clamd Integration
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/security/patient_source_malware_scanner.py"
+      - "app/services/patient_external_record_source_safety.py"
+      - "app/services/patient_external_record_extraction.py"
+      - "app/services/patient_external_record_import.py"
+      - "scanner_integration/**"
+      - ".github/workflows/clamd-integration.yml"
+      - "requirements.txt"
+      - "alembic/**"
+  push:
+    branches: [main]
+    paths:
+      - "app/security/patient_source_malware_scanner.py"
+      - "app/services/patient_external_record_source_safety.py"
+      - "app/services/patient_external_record_extraction.py"
+      - "app/services/patient_external_record_import.py"
+      - "scanner_integration/**"
+      - ".github/workflows/clamd-integration.yml"
+      - "requirements.txt"
+      - "alembic/**"
+
+permissions:
+  contents: read
+
+jobs:
+  clamd:
+    name: Real Clamd Patient Source Qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexa
+          POSTGRES_PASSWORD: nexa_test
+          POSTGRES_DB: nexa_d6
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 10
+
+      clamd:
+        image: clamav/clamav:1.4.6-debian@sha256:2463487b937071421c0ddadac6616111bedba45b9bd9312bbb4591b57450f8f4
+        env:
+          CLAMAV_NO_CLAMD: "false"
+          CLAMAV_NO_FRESHCLAMD: "true"
+          CLAMAV_NO_MILTERD: "true"
+          CLAMD_STARTUP_TIMEOUT: "300"
+        ports:
+          - 3310:3310
+        options: >-
+          --health-cmd clamdcheck.sh
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 30
+          --health-start-period 30s
+
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_d6
+      TEST_DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_d6
+      NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+      DOCUMENT_EXTRACTION_PROVIDER: demo
+      DOCUMENT_STORAGE_PROVIDER: local
+      DOCUMENT_STORAGE_LOCAL_ROOT: /tmp/nexa-d6-documents
+      DOCUMENT_STORAGE_ENCRYPTION_KEY: vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw=
+      ENCRYPTION_BACKEND: local
+      KEK_ROOT_SECRET: d6-integration-kek-root-secret-32-bytes-minimum
+      MAX_UPLOAD_BYTES: "20971520"
+      PATIENT_SOURCE_MALWARE_SCANNER: clamd
+      PATIENT_SOURCE_CLAMD_HOST: 127.0.0.1
+      PATIENT_SOURCE_CLAMD_PORT: "3310"
+      PATIENT_SOURCE_CLAMD_CONNECT_TIMEOUT_SECONDS: "2"
+      PATIENT_SOURCE_CLAMD_SCAN_TIMEOUT_SECONDS: "30"
+      PATIENT_SOURCE_CLAMD_MAX_BYTES: "20971520"
+      PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS: "168"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements_dev.txt
+
+      - name: Prepare disposable schema
+        run: alembic upgrade head
+
+      - name: Verify real clamd readiness contract
+        run: |
+          python - <<'PY'
+          import asyncio
+          from app.security.patient_source_malware_scanner import (
+              ClamdPatientSourceMalwareScanner,
+              get_patient_source_malware_scanner_config,
+          )
+          async def main():
+              config = get_patient_source_malware_scanner_config()
+              scanner = ClamdPatientSourceMalwareScanner(config)
+              if not await scanner.ready():
+                  raise SystemExit("real clamd readiness failed")
+              print("REAL_CLAMD_READINESS=PASS")
+          asyncio.run(main())
+          PY
+
+      - name: Run real scanner-backed patient qualification
+        run: python -m pytest scanner_integration/ -q --tb=short
+
+      - name: Qualification complete
+        run: echo "REAL_CLAMD_PATIENT_SOURCE_QUALIFICATION=PASS"
