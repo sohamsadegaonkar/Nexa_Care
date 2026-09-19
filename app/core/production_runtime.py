@@ -480,7 +480,7 @@ async def run_production_startup_preflight(
     migration_head = await verify_database_runtime(database)
     await verify_redis_runtime(redis)
     await verify_aws_runtime(values)
-    _scanner_mode, scanner_state = await patient_source_scanner_health()
+    _scanner_mode, scanner_state = await patient_source_scanner_health(values)
     if scanner_state != "ready":
         raise RuntimePreflightError("PATIENT_SOURCE_SCANNER_NOT_READY")
     return RuntimePreflightReport(
