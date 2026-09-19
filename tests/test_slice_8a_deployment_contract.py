@@ -90,6 +90,37 @@ def test_ecs_task_supplies_complete_runtime_secret_set() -> None:
     } <= secret_names
 
 
+def test_ecs_task_uses_private_digest_pinned_clamd_sidecar() -> None:
+    task = json.loads(
+        (ROOT / "deploy" / "ecs" / "nexa-care-pilot-task-definition.template.json")
+        .read_text(encoding="utf-8")
+    )
+    assert task["networkMode"] == "awsvpc"
+    assert task["cpu"] == "<TASK_CPU>"
+    assert task["memory"] == "<TASK_MEMORY>"
+    containers = {item["name"]: item for item in task["containerDefinitions"]}
+    assert set(containers) == {"nexa-care-pilot-api", "patient-source-clamd"}
+
+    api = containers["nexa-care-pilot-api"]
+    scanner = containers["patient-source-clamd"]
+    assert api["dependsOn"] == [
+        {"containerName": "patient-source-clamd", "condition": "HEALTHY"}
+    ]
+    env = {item["name"]: item["value"] for item in api["environment"]}
+    assert env["PATIENT_SOURCE_MALWARE_SCANNER"] == "clamd"
+    assert env["PATIENT_SOURCE_CLAMD_HOST"] == "127.0.0.1"
+    assert env["PATIENT_SOURCE_CLAMD_PORT"] == "3310"
+    assert env["PATIENT_SOURCE_CLAMD_MAX_BYTES"] == "10485760"
+
+    assert scanner["image"] == "<QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST>"
+    assert scanner["essential"] is True
+    assert scanner["cpu"] == 512
+    assert scanner["memory"] == 2048
+    assert "portMappings" not in scanner
+    assert scanner["healthCheck"]["command"][1].startswith("clamdscan -p ")
+    assert ":latest" not in scanner["image"]
+
+
 def test_runtime_contract_pins_preflight_and_protected_operations_surfaces() -> None:
     contract = json.loads(
         (ROOT / "deploy" / "ecs" / "pilot-runtime-contract.template.json").read_text(
@@ -113,6 +144,7 @@ def test_runtime_contract_pins_preflight_and_protected_operations_surfaces() -> 
         "requiresS3Versioning": True,
         "mutatesAwsResources": False,
         "runsDatabaseMigrations": False,
+        "requiresPatientSourceScanner": True,
     }
     operations = contract["operationsSurface"]
     assert operations["publicLivenessPath"] == "/healthz"
