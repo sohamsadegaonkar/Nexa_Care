@@ -5,7 +5,7 @@
   "backend_image_digest": "<sha256:API_IMAGE_DIGEST>",
   "scanner_image_digest": "<sha256:CLAMD_IMAGE_DIGEST>",
   "frontend_deployment_identity": "<SANITIZED_FRONTEND_DEPLOYMENT_ID>",
-  "migration_head": "20260919_prescriber_eligibility",
+  "migration_head": "20260919_medication_catalog",
   "aws_region": "ap-south-1",
   "data_classification": "synthetic-only",
   "aws_identity": {
@@ -27,7 +27,7 @@
   "database": {
     "engine": "postgresql",
     "dedicated": true,
-    "migration_head": "20260919_prescriber_eligibility"
+    "migration_head": "20260919_medication_catalog"
   },
   "redis": {
     "tls": true,
