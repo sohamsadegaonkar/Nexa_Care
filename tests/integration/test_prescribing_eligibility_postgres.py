@@ -234,7 +234,7 @@ async def test_prescribing_eligibility_authority_is_append_only_atomic_and_bound
             text(
                 "SELECT payload::text FROM public.audit_outbox "
                 "WHERE event_type = 'PRESCRIBING_ELIGIBILITY_DECISION_RECORDED' "
-                "AND target_id = :target_id"
+                "AND payload->>'target_id' = :target_id"
             ),
             {"target_id": str(result.decision_id)},
         )
