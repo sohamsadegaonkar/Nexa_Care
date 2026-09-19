@@ -276,6 +276,32 @@ class ProviderTrustAuthorizationService:
             now or datetime.now(timezone.utc),
         )
 
+    async def authorize_prescribing_eligibility_review(
+        self,
+        db: AsyncSession,
+        *,
+        actor_id: UUID,
+        target_provider_id: UUID,
+        authentication: TrustManagementAuthentication,
+        now: datetime | None = None,
+    ) -> TrustAuthorizationDecision:
+        """Authorize one independent prescribing-eligibility human review."""
+
+        if actor_id == target_provider_id:
+            return self._deny(
+                TrustAuthorizationDenialCode.SELF_REVIEW_PROHIBITED,
+                TrustManagementPermission.PRESCRIBING_ELIGIBILITY_REVIEW,
+                TrustPermissionScope.GLOBAL,
+            )
+        return await self._authorize(
+            db,
+            actor_id,
+            authentication,
+            TrustManagementPermission.PRESCRIBING_ELIGIBILITY_REVIEW,
+            None,
+            now or datetime.now(timezone.utc),
+        )
+
     async def authorize_professional_self_submission(
         self,
         db: AsyncSession,
