@@ -22,8 +22,13 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.config import ConfigError
 from app.core.database import get_async_engine
 from app.core.redis import get_async_redis_client
+from app.security.patient_source_malware_scanner import (
+    get_patient_source_malware_scanner_config,
+    patient_source_scanner_health,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PRODUCTION_LIKE_ENVIRONMENTS = frozenset(
@@ -306,6 +311,27 @@ def validate_production_configuration(
     if not 1 <= upload_limit <= MAX_UPLOAD_BYTES_HARD_LIMIT:
         errors.append("MAX_UPLOAD_BYTES: must be between 1 and 20971520")
 
+    try:
+        scanner_config = get_patient_source_malware_scanner_config(dict(environment))
+    except ConfigError:
+        scanner_config = None
+        errors.append("PATIENT_SOURCE_MALWARE_SCANNER: invalid configuration")
+    if scanner_config is not None:
+        if scanner_config.provider != "clamd":
+            errors.append(
+                "PATIENT_SOURCE_MALWARE_SCANNER: clamd required in production-like runtime"
+            )
+        else:
+            effective_upload_limit = (
+                min(upload_limit, 10 * 1024 * 1024)
+                if extraction_provider == "aws_textract"
+                else upload_limit
+            )
+            if scanner_config.max_bytes < effective_upload_limit:
+                errors.append(
+                    "PATIENT_SOURCE_CLAMD_MAX_BYTES: must cover effective upload limit"
+                )
+
     for name in STATIC_AWS_CREDENTIALS:
         if name in environment:
             errors.append(f"{name}: static AWS credentials forbidden")
@@ -454,9 +480,20 @@ async def run_production_startup_preflight(
     migration_head = await verify_database_runtime(database)
     await verify_redis_runtime(redis)
     await verify_aws_runtime(values)
+    _scanner_mode, scanner_state = await patient_source_scanner_health(values)
+    if scanner_state != "ready":
+        raise RuntimePreflightError("PATIENT_SOURCE_SCANNER_NOT_READY")
     return RuntimePreflightReport(
         environment=runtime,
         production_like=True,
         migration_head=migration_head,
-        checks=("configuration", "postgres", "schema", "redis", "kms", "s3"),
+        checks=(
+            "configuration",
+            "postgres",
+            "schema",
+            "redis",
+            "kms",
+            "s3",
+            "patient_source_scanner",
+        ),
     )

@@ -59,6 +59,70 @@ def test_public_readiness_is_coarse_when_dependencies_fail(monkeypatch) -> None:
     assert "pending_count" not in serialized
 
 
+def test_production_readiness_exposes_only_coarse_scanner_state(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main, "get_async_redis_client", lambda: _FailingRedis())
+    monkeypatch.setattr(main, "get_async_engine", lambda: _FailingEngine())
+    monkeypatch.setattr(
+        main,
+        "get_runtime_environment",
+        lambda: SimpleNamespace(is_production_like=True),
+    )
+    monkeypatch.setattr(
+        main,
+        "patient_source_scanner_health",
+        AsyncMock(return_value=("configured", "unavailable")),
+    )
+    monkeypatch.setattr(main.app.state, "audit_outbox_task", _RunningTask(), raising=False)
+    monkeypatch.setattr(main.app.state, "failure_quarantine_task", _RunningTask(), raising=False)
+    monkeypatch.setattr(
+        main.app.state, "provider_reconciliation_required", False, raising=False
+    )
+    monkeypatch.setattr(
+        main.app.state, "provider_reconciliation_task", None, raising=False
+    )
+
+    payload = asyncio.run(main._readiness_snapshot(detailed=True, include_aws=False))
+    assert payload["status"] == "degraded"
+    assert payload["checks"]["patient_source_scanner"] == "unavailable"
+    assert payload["details"]["patient_source_scanner"] == {
+        "configuration": "configured",
+        "status": "unavailable",
+    }
+    serialized = json.dumps(payload)
+    assert "ClamAV" not in serialized
+    assert "signature" not in serialized.lower()
+
+
+def test_nonproduction_readiness_does_not_require_scanner(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(main, "get_async_redis_client", lambda: _FailingRedis())
+    monkeypatch.setattr(main, "get_async_engine", lambda: _FailingEngine())
+    monkeypatch.setattr(
+        main,
+        "get_runtime_environment",
+        lambda: SimpleNamespace(is_production_like=False),
+    )
+    monkeypatch.setattr(
+        main,
+        "patient_source_scanner_health",
+        AsyncMock(return_value=("unavailable", "unavailable")),
+    )
+    monkeypatch.setattr(main.app.state, "audit_outbox_task", _RunningTask(), raising=False)
+    monkeypatch.setattr(main.app.state, "failure_quarantine_task", None, raising=False)
+    monkeypatch.setattr(
+        main.app.state, "provider_reconciliation_required", False, raising=False
+    )
+    monkeypatch.setattr(
+        main.app.state, "provider_reconciliation_task", None, raising=False
+    )
+
+    payload = asyncio.run(main._readiness_snapshot(detailed=False, include_aws=False))
+    assert payload["checks"]["patient_source_scanner"] == "not_required"
+
+
 def test_operations_endpoints_require_independent_token_in_production(
     monkeypatch,
 ) -> None:
