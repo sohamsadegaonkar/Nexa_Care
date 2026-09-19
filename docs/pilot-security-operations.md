@@ -86,7 +86,7 @@ python scripts/run_pilot_migrations.py
 ```
 
 The current exact repository migration head is
-`20260919_prescriber_eligibility`. The migration task upgrades and verifies
+`20260919_medication_catalog`. The migration task upgrades and verifies
 that exact single repository head. API containers never run migrations. In a
 production-like runtime, API startup then independently refuses to start unless:
 
@@ -160,3 +160,13 @@ tenant/patient ownership is enforced on every adapter read/delete. **Do not
 configure or change S3 lifecycle/retention rules until the repository's pending
 security/privacy/legal retention decision is approved.** Evidence preservation
 and legal-hold requirements take precedence over cleanup convenience.
+
+
+### Medication catalog signing key boundary
+
+Production-like runtime configuration requires `MEDICATION_CATALOG_SIGNING_KEY_ID`
+for the dedicated asymmetric medication-catalog signing key. The future task role
+must be limited to `kms:Sign`, `kms:Verify`, and, if required for verification
+tooling, `kms:GetPublicKey` on that exact key. Do not grant `kms:*` and do not
+reuse patient envelope-encryption keys. The private signing key remains inside AWS
+KMS; this repository does not create or deploy the key in Slice 10B.5k.
