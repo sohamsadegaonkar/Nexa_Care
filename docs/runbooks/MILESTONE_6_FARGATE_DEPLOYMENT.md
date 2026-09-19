@@ -8,8 +8,11 @@ ARNs, database/Redis URLs, credentials, secret ARNs, or secret values.
 
 1. Start from a reviewed clean Git commit and record the full SHA.
 2. Build the repository Dockerfile from that SHA.
-3. Push the image to ECR and record its immutable digest. Never deploy `latest`.
-4. Record matching frontend/mobile build identities when they are in scope.
+3. Push the API image to ECR and record its immutable digest. Never deploy `latest`.
+4. Mirror/qualify the approved non-base ClamAV image into the deployment ECR
+   repository and record its immutable digest. Never deploy a scanner tag or
+   `latest` directly.
+5. Record matching frontend/mobile build identities when they are in scope.
 
 ## Infrastructure preparation
 
@@ -23,6 +26,13 @@ ARNs, database/Redis URLs, credentials, secret ARNs, or secret values.
   definition. Do not put plaintext secrets in image/environment/logs.
 - Terminate TLS only at the approved HTTPS ingress and restrict the task security
   group to that ingress.
+- Run `patient-source-clamd` as an essential container in the same Fargate
+  task as the API. The API connects only to `127.0.0.1:3310`.
+- Do **not** add a clamd port mapping or security-group ingress for port 3310.
+  Scanner TCP is task-local only.
+- The qualification template starts at 1 vCPU / 3 GiB total: API 0.5 vCPU /
+  1 GiB and scanner 0.5 vCPU / 2 GiB. Treat this as a qualification baseline,
+  not final production sizing.
 
 ## ECS roles and minimum runtime permissions
 
@@ -54,8 +64,9 @@ role.
 
 ## Configuration materialization
 
-1. Resolve the immutable image, role, log-group, secret metadata, KMS metadata,
-   and S3 security metadata with `scripts/generate_pilot_deployment_values.py`.
+1. Resolve the immutable API **and scanner** images, role, log-group, secret
+   metadata, KMS metadata, and S3 security metadata with
+   `scripts/generate_pilot_deployment_values.py`.
    The generator is read-only and writes its rendered output outside the repo.
 2. Populate `deploy/ecs/nexa-care-pilot-task-definition.template.json` using the
    approved values.
@@ -91,6 +102,12 @@ startup must finish these read-only checks **before any background worker starts
 5. application and storage KMS keys enabled for `ENCRYPT_DECRYPT`;
 6. S3 bucket reachable with default SSE-KMS, complete public-access block and
    versioning enabled.
+7. patient-source scanner configured as `clamd`, daemon reachable over the
+   task-local boundary, signature database timestamp within the configured
+   freshness budget, and an actual scan probe returns CLEAN.
+
+`PATIENT_SOURCE_MALWARE_SCANNER=unavailable` is forbidden in production-like
+startup. A TCP listener alone is not readiness.
 
 A failure is a failed deployment, not a degraded-but-acceptable startup.
 
@@ -105,6 +122,12 @@ A failure is a failed deployment, not a degraded-but-acceptable startup.
 - Prometheus scraping uses protected `GET /metrics` with the same token.
 - Public readiness exposes only coarse dependency classes. Exception class
   names, outbox counts, AWS identifiers and configuration values are not public.
+- In production-like environments, public `/health` is degraded when the
+  patient-source scanner is not ready. `/healthz` remains process liveness and
+  does not depend on scanner availability.
+- Protected `/ops/health` may report only coarse scanner configuration/status
+  such as configured/ready, unavailable, or misconfigured; do not expose
+  signature names, document metadata, or daemon response text.
 - Request logs use structured JSON and server-owned route templates, never raw
   URL path parameter values.
 
@@ -119,12 +142,36 @@ and `FORWARDED_ALLOW_IPS` must match the actual HTTPS ingress topology. Mobile
 and web builds must use the exact deployed API identity. Only approved synthetic
 identities/documents may be used for pilot/physical qualification.
 
+## Patient-source scanner signatures and lifecycle
+
+- Use the approved **non-base** ClamAV image so a signature database exists
+  before the sidecar starts. The deployment value must be an immutable image
+  digest.
+- The sidecar owns FreshClam refresh; request handlers never download signatures
+  and never shell out to update them.
+- Production/pilot API readiness rejects a signature database older than
+  `PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS` (template: 48 hours), rejects
+  future/unparseable signature timestamps, and requires a successful scan probe.
+- A FreshClam refresh failure does not make a request silently bypass scanning:
+  the last database may continue only while it remains inside the freshness
+  budget. Once stale, API readiness/startup fails closed.
+- Rollback selects a previously qualified **pair** of immutable API and scanner
+  images. A pre-D6 task definition that cannot satisfy the scanner startup gate
+  is not a qualified rollback target for patient-import processing.
+- No scanner labels/logs may contain patient IDs, filenames, clinical values,
+  source text, or malware signature names from a patient upload.
+- Actual pilot/production Fargate deployment and signature-refresh observation
+  are **PRODUCTION SCANNER DEPLOYMENT NOT_RUN** until executed in the protected
+  environment.
+
 ## Focused qualification
 
 1. Confirm exactly the intended healthy task set and no deployment/scaling event.
 2. Confirm `/healthz`, `/health`, protected `/ops/health`, safe CloudWatch logs,
    exact migration head, TLS Redis and KMS/S3 readiness.
-3. Exercise the approved synthetic extraction/consent workflow.
+3. Exercise the approved synthetic extraction/consent workflow, including a
+   clean patient source and a harmless antivirus-test source that must be
+   blocked before extraction.
 4. Preserve sanitized evidence tied to exact Git/image/frontend/mobile identities.
 5. Do not claim live production qualification from repository/CI evidence alone.
 
