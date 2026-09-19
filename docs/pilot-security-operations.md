@@ -86,7 +86,7 @@ python scripts/run_pilot_migrations.py
 ```
 
 The current exact repository migration head is
-`20260917_treatment_session_operations`. The migration task upgrades and verifies
+`20260918_treatment_vitals_encounter`. The migration task upgrades and verifies
 that exact single repository head. API containers never run migrations. In a
 production-like runtime, API startup then independently refuses to start unless:
 
