@@ -155,6 +155,113 @@ export interface SignedApprovalResponse {
   responded_at: string
 }
 
+
+export type TreatmentSessionV1Operation = 'CREATE_ENCOUNTER' | 'WRITE_VITALS'
+
+export interface TreatmentSessionV1Request {
+  protocol_version: 'nexa-treatment-session-v1'
+  discovery_handle: string
+  purpose: string
+  allowed_operations: TreatmentSessionV1Operation[]
+  access_duration_seconds: number
+}
+
+export interface TreatmentSessionV1RequestResponse {
+  protocol_version: 'nexa-treatment-session-v1'
+  request_id: string
+  status: 'pending'
+  expires_in_seconds: number
+  challenge_nonce: string
+  treatment_context_hash: string
+}
+
+export interface TreatmentSessionV1Challenge {
+  protocol_version: 'nexa-treatment-session-v1'
+  request_id: string
+  patient_id: string
+  provider_id: string
+  hospital_id: string
+  provider_name: string
+  hospital_name: string
+  provider_session_binding_hash: string
+  purpose: string
+  allowed_operations: TreatmentSessionV1Operation[]
+  access_duration: number
+  challenge_nonce: string
+  issued_at: string
+  expires_at: string
+  treatment_context_hash: string
+  status: 'pending'
+}
+
+export interface SignedTreatmentSessionV1Request {
+  protocol_version: 'nexa-treatment-session-v1'
+  request_id: string
+  patient_id: string
+  decision: 'approved' | 'denied'
+  challenge_nonce: string
+  treatment_context_hash: string
+  signature: string
+  device_id: string
+  key_id: string
+  key_version: number
+  public_key_fingerprint: string
+}
+
+export interface SignedTreatmentSessionV1Response {
+  protocol_version: 'nexa-treatment-session-v1'
+  request_id: string
+  status: 'approved' | 'denied'
+  responded_at: string
+}
+
+export interface TreatmentSessionV1ClaimResponse {
+  protocol_version: 'nexa-treatment-session-v1'
+  patient_id: string
+  clinical_session_id: string
+  treatment_token: string
+  purpose: string
+  allowed_operations: TreatmentSessionV1Operation[]
+  expires_at: string
+}
+
+export interface TreatmentEncounterResponse {
+  encounter_id: string
+  clinical_session_id: string
+}
+
+export type TreatmentVitalRequest =
+  | {
+      kind: 'blood_pressure'
+      systolic_bp: number
+      diastolic_bp: number
+      recorded_at: string
+    }
+  | {
+      kind: 'heart_rate'
+      beats_per_minute: number
+      recorded_at: string
+    }
+  | {
+      kind: 'temperature'
+      celsius: number
+      recorded_at: string
+    }
+  | {
+      kind: 'spo2'
+      percentage: number
+      recorded_at: string
+    }
+
+export interface TreatmentVitalWriteResponse {
+  status: 'committed'
+  record_id: string
+  encounter_id: string
+  vital_type: 'BP' | 'HR' | 'temp' | 'SpO2'
+  recorded_at: string
+  idempotent_replay: boolean
+}
+
 export interface ConsentStatusResponse {
   request_id: string
   patient_id?: string
@@ -1181,6 +1288,62 @@ export const NexaApiClient = {
       `/api/v2/consent/v3/${encodeURIComponent(requestId)}/claim-access`,
       { method: 'POST' },
       { 'X-Hospital-Id': hospitalId }
+    )
+  },
+
+  // Treatment Session V1 — operation-bound provider authority.
+  createTreatmentSessionV1Request(
+    payload: TreatmentSessionV1Request
+  ): Promise<TreatmentSessionV1RequestResponse> {
+    return request<TreatmentSessionV1RequestResponse>(
+      '/api/v2/treatment-session/v1/request',
+      { method: 'POST', body: JSON.stringify(payload) }
+    )
+  },
+
+  fetchTreatmentSessionV1Challenge(requestId: string): Promise<TreatmentSessionV1Challenge> {
+    return request<TreatmentSessionV1Challenge>(
+      `/api/v2/treatment-session/v1/challenge/${encodeURIComponent(requestId)}`,
+      { method: 'GET' }
+    )
+  },
+
+  submitSignedTreatmentSessionV1(
+    payload: SignedTreatmentSessionV1Request
+  ): Promise<SignedTreatmentSessionV1Response> {
+    return request<SignedTreatmentSessionV1Response>(
+      '/api/v2/treatment-session/v1/approve-signed',
+      { method: 'POST', body: JSON.stringify(payload) }
+    )
+  },
+
+  claimTreatmentSessionV1(requestId: string): Promise<TreatmentSessionV1ClaimResponse> {
+    return request<TreatmentSessionV1ClaimResponse>(
+      `/api/v2/treatment-session/v1/${encodeURIComponent(requestId)}/claim`,
+      { method: 'POST' }
+    )
+  },
+
+  createTreatmentSessionEncounter(treatmentToken: string): Promise<TreatmentEncounterResponse> {
+    return request<TreatmentEncounterResponse>(
+      '/api/v2/treatment-session/v1/encounter',
+      { method: 'POST' },
+      { 'X-Treatment-Token': treatmentToken }
+    )
+  },
+
+  writeTreatmentSessionVital(
+    treatmentToken: string,
+    idempotencyKey: string,
+    payload: TreatmentVitalRequest
+  ): Promise<TreatmentVitalWriteResponse> {
+    return request<TreatmentVitalWriteResponse>(
+      '/api/v2/treatment-session/v1/vitals',
+      { method: 'POST', body: JSON.stringify(payload) },
+      {
+        'X-Treatment-Token': treatmentToken,
+        'Idempotency-Key': idempotencyKey,
+      }
     )
   },
 

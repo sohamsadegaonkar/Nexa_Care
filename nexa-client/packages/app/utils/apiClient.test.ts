@@ -587,3 +587,90 @@ describe('adjudication API contract', () => {
     expect(JSON.parse(init.body)).toEqual({ review_session_id: 'review-session-new' })
   })
 })
+
+
+describe('Treatment Session V1 client contract', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+    vi.resetModules()
+  })
+
+  it('writes one typed vital with treatment authority only', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          status: 'committed',
+          record_id: 'record-synthetic',
+          encounter_id: 'encounter-server-owned',
+          vital_type: 'HR',
+          recorded_at: '2026-09-19T09:00:00Z',
+          idempotent_replay: false,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'synthetic-provider-auth')
+
+    const payload = {
+      kind: 'heart_rate' as const,
+      beats_per_minute: 72,
+      recorded_at: '2026-09-19T09:00:00Z',
+    }
+    await NexaApiClient.writeTreatmentSessionVital(
+      'synthetic-treatment-capability',
+      'tv_intent_0001',
+      payload
+    )
+
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
+    expect(url).toBe('https://native.example.test/api/v2/treatment-session/v1/vitals')
+    expect(init.method).toBe('POST')
+    expect(init.headers.Authorization).toBe('Bearer synthetic-provider-auth')
+    expect(init.headers['X-Treatment-Token']).toBe('synthetic-treatment-capability')
+    expect(init.headers['Idempotency-Key']).toBe('tv_intent_0001')
+    expect(init.headers['X-Consent-Token']).toBeUndefined()
+    expect(JSON.parse(init.body)).toEqual(payload)
+
+    const body = JSON.parse(init.body)
+    for (const forbidden of [
+      'patient_id',
+      'provider_id',
+      'hospital_id',
+      'clinical_session_id',
+      'encounter_id',
+      'operation',
+      'source',
+      'confidence',
+    ]) {
+      expect(body).not.toHaveProperty(forbidden)
+    }
+  })
+
+  it('establishes an encounter with the treatment capability and no client encounter body', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          encounter_id: 'encounter-server-owned',
+          clinical_session_id: 'session-server-owned',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      )
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'synthetic-provider-auth')
+
+    await NexaApiClient.createTreatmentSessionEncounter('synthetic-treatment-capability')
+
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
+    expect(url).toBe('https://native.example.test/api/v2/treatment-session/v1/encounter')
+    expect(init.method).toBe('POST')
+    expect(init.body).toBeUndefined()
+    expect(init.headers['X-Treatment-Token']).toBe('synthetic-treatment-capability')
+    expect(init.headers['X-Consent-Token']).toBeUndefined()
+  })
+})

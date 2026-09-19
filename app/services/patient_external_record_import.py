@@ -344,9 +344,13 @@ async def stage_patient_external_record(
         created_at=now,
     )
     db.add(source)
-    db.add(import_row)
 
     try:
+        # The import has a composite ownership FK to document_storage. Flush the
+        # retained source first so PostgreSQL never observes the child import
+        # before its exact patient-owned source row inside this transaction.
+        await db.flush()
+        db.add(import_row)
         await db.flush()
         await enqueue_audit_event(
             db,

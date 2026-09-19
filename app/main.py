@@ -89,6 +89,9 @@ from app.core.redis import get_async_redis_client
 from app.middleware.logging_middleware import GlobalLoggingMiddleware
 from app.observability.safe_exceptions import log_safe_exception
 from app.security.erasure_registry import ErasureRegistryUnavailable
+from app.security.patient_source_malware_scanner import (
+    patient_source_scanner_health,
+)
 from app.services.audit_outbox_processor import (
     get_outbox_health,
     run_outbox_processor_forever,
@@ -586,6 +589,18 @@ async def _readiness_snapshot(*, detailed: bool, include_aws: bool) -> dict:
             }
 
     production_like = get_runtime_environment().is_production_like
+    scanner_mode, scanner_state = await patient_source_scanner_health()
+    checks["patient_source_scanner"] = (
+        "ok"
+        if scanner_state == "ready"
+        else (scanner_state if production_like else "not_required")
+    )
+    if detailed:
+        details["patient_source_scanner"] = {
+            "configuration": scanner_mode,
+            "status": scanner_state,
+        }
+
     worker_details = {
         "audit_outbox": _worker_status(getattr(app.state, "audit_outbox_task", None)),
         "failure_quarantine": _worker_status(
@@ -618,6 +633,8 @@ async def _readiness_snapshot(*, detailed: bool, include_aws: bool) -> dict:
             checks["aws"] = "unavailable"
 
     required = ["redis", "postgres", "audit_outbox", "workers"]
+    if production_like:
+        required.append("patient_source_scanner")
     if include_aws:
         required.append("aws")
     overall = "ok" if all(checks.get(name) == "ok" for name in required) else "degraded"
