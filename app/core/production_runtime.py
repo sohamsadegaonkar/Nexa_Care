@@ -265,7 +265,11 @@ def validate_production_configuration(
 
     if _value(environment, "ENCRYPTION_BACKEND").lower() != "kms":
         errors.append("ENCRYPTION_BACKEND: kms required")
-    for name in ("AWS_REGION", "KMS_KEY_ID"):
+    for name in (
+        "AWS_REGION",
+        "KMS_KEY_ID",
+        "MEDICATION_CATALOG_SIGNING_KEY_ID",
+    ):
         if not _value(environment, name):
             errors.append(f"{name}: required")
     if _value(environment, "AWS_PATIENT_SPECIFIC_KMS_KEYS").lower() != "false":
@@ -418,6 +422,25 @@ def _verify_aws_runtime_sync(
                 or metadata.get("KeyUsage") != "ENCRYPT_DECRYPT"
             ):
                 raise RuntimePreflightError("KMS_KEY_NOT_READY")
+
+        catalog_key_id = _value(
+            environment,
+            "MEDICATION_CATALOG_SIGNING_KEY_ID",
+        )
+        catalog_metadata = kms.describe_key(KeyId=catalog_key_id).get(
+            "KeyMetadata",
+            {},
+        )
+        if (
+            catalog_metadata.get("KeyState") != "Enabled"
+            or catalog_metadata.get("KeyUsage") != "SIGN_VERIFY"
+            or catalog_metadata.get("KeySpec") != "ECC_NIST_P256"
+            or "ECDSA_SHA_256"
+            not in set(catalog_metadata.get("SigningAlgorithms") or ())
+        ):
+            raise RuntimePreflightError(
+                "MEDICATION_CATALOG_SIGNING_KEY_NOT_READY"
+            )
 
         s3 = session.client("s3", config=client_config)
         bucket = _value(environment, "DOCUMENT_STORAGE_S3_BUCKET")
