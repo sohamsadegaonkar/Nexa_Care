@@ -243,6 +243,7 @@ EXPECTED_ROUTES = {
     ("POST", "/api/v2/pipeline/identity-review-cases/{case_id}/dispositions"),
     # Slice 3F: Provider trust lifecycle routes (24 POST routes)
     ("POST", "/api/v2/provider-trust/professional/me/submit"),
+    ("POST", "/api/v2/provider-trust/professional/{provider_id}/prescribing-eligibility"),
     ("POST", "/api/v2/provider-trust/professional/{provider_id}/verify"),
     ("POST", "/api/v2/provider-trust/professional/{provider_id}/reject"),
     ("POST", "/api/v2/provider-trust/professional/{provider_id}/suspend"),
