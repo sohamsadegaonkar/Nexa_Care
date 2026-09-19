@@ -22,9 +22,9 @@ from alembic.script import ScriptDirectory
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from app.core.config import ConfigError
 from app.core.database import get_async_engine
 from app.core.redis import get_async_redis_client
-from app.core.config import ConfigError
 from app.security.patient_source_malware_scanner import (
     get_patient_source_malware_scanner_config,
     patient_source_scanner_health,
