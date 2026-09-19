@@ -177,12 +177,12 @@ This table answers what the **current server** can classify from the proposed fr
 
 | Category | Current server classification | Why |
 | --- | --- | --- |
-| Ordinary non-controlled prescription medicines | **UNCLASSIFIABLE** | No authoritative medication catalog/code; free text cannot prove that a medicine is outside H/H1/X/NDPS or determine telemedicine List A/B/O semantics. |
+| Ordinary non-controlled prescription medicines | **UNCLASSIFIABLE** | No authoritative medication catalog/code; free text cannot prove that a medicine is outside G/H/H1/X/NDPS or determine telemedicine List A/B/O semantics. |\n| Schedule G | **UNCLASSIFIABLE** | Rule 97 requires a medical-supervision warning, but Nexa has no server-owned mapping from submitted free text to Schedule G. |
 | Schedule H | **UNCLASSIFIABLE** | No server-owned mapping from submitted name to current Schedule H. |
 | Schedule H1 | **UNCLASSIFIABLE** | No server-owned mapping; H1 has recent changes, including Pregabalin in 2026. |
 | Schedule X | **UNCLASSIFIABLE** | No authoritative name/code classifier. Product policy can declare it excluded, but current arbitrary strings cannot enforce the exclusion. |
 | NDPS narcotic/psychotropic substances | **UNCLASSIFIABLE** | No authoritative NDPS classifier; substance/formulation/salt semantics cannot safely be inferred from free text. |
-| Anti-cancer / specialist-controlled therapies | **UNCLASSIFIABLE** | No specialist/high-risk therapeutic-class authority; telemedicine material treats anti-cancer medicines as a prohibited example, but the repository has no comprehensive classifier. |
+| Anti-cancer / specialist-controlled therapies | **UNCLASSIFIABLE** | No specialist/high-risk therapeutic-class authority; the operative telemedicine material gives anti-cancer medicines as a prohibited-list example, but Indian law does not provide Nexa with one universal machine-ready 'specialist-controlled' schedule and the repository has no comprehensive classifier. |
 | Drugs requiring special prescription/recordkeeping | **UNCLASSIFIABLE** | No machine-readable regulatory obligations attached to medication identity. |
 | OTC / Telemedicine List O candidates | **UNCLASSIFIABLE** | Potentially supportable after cataloging, but current string input cannot establish List O/non-prescription status. |
 | Emergency medication scenarios | **EXCLUDED** | Routine canonical prescription persistence must not become an emergency-policy bypass; Nexa already has separate emergency authority concepts. |
@@ -920,7 +920,7 @@ canonical_display
 generic_or_brand_semantics
 effective_from
 effective_until
-regulatory_schedule = NONE | H | H1 | X | UNKNOWN
+regulatory_schedule = NONE | G | H | H1 | X | UNKNOWN
 ndps_controlled
 telemedicine_class = O | A | B | PROHIBITED | UNKNOWN
 telemedicine_exception_or_amendment_reference
@@ -984,7 +984,7 @@ This matrix is the binding Nexa v1 product decision. **DENY** can be stricter th
 | Arbitrary free-text medication | **BLOCKED** | No authoritative classifier; free text cannot enforce current H/H1/X/NDPS or telemedicine list changes. |
 | Catalog-selected medication | **ALLOW** | Allowed only when exact entry is in an approved active catalog version and marked `V1_UNIVERSAL_ALLOWED`; server code, not display text, is authority. |
 | Ordinary prescription medicines | **BLOCKED** | They may depend on Schedule H/H1 and telemedicine mode/type. Current Encounter care mode is UNKNOWN and no catalog exists. |
-| Schedule H | **DENY** | Nexa v1 intentionally excludes prescription-schedule medicines from the universal/unknown-mode first scope. Rule 65/97 establishes prescription controls; later expansion requires catalog + care-mode policy. |
+| Schedule G | **DENY** | Nexa v1 excludes medicines carrying the Rule 97 medical-supervision warning from the universal first scope. |\n| Schedule H | **DENY** | Nexa v1 intentionally excludes prescription-schedule medicines from the universal/unknown-mode first scope. Rule 65/97 establishes prescription controls; later expansion requires catalog + care-mode policy. |
 | Schedule H1 | **DENY** | Nexa v1 excludes H1; Rule 65 imposes additional downstream retail-supply recordkeeping and H1 membership changes over time. G.S.R. 588(E), G.S.R. 95(E), G.S.R. 377(E). |
 | Schedule X | **DENY** | Stricter Nexa policy; Schedule X has special controls and is prohibited by the operative telemedicine base matrix. |
 | NDPS narcotic/psychotropic substances | **DENY** | Separate NDPS Act/Rules controls and telemedicine prohibition; v1 aggregate intentionally does not model those special prescription semantics. |
