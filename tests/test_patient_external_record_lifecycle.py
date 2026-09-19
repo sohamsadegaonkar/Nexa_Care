@@ -261,6 +261,11 @@ async def test_upload_erasure_race_deletes_just_written_source(
     )
     monkeypatch.setattr(
         import_module,
+        "validate_patient_source_decoder",
+        lambda data, mime_type: SimpleNamespace(content_hash="synthetic"),
+    )
+    monkeypatch.setattr(
+        import_module,
         "_find_import_by_request",
         AsyncMock(return_value=None),
     )
