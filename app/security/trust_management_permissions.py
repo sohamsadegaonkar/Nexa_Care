@@ -5,6 +5,7 @@ from enum import Enum
 
 class TrustManagementPermission(str, Enum):
     PROFESSIONAL_REVIEW = "PROFESSIONAL_REVIEW"
+    PRESCRIBING_ELIGIBILITY_REVIEW = "PRESCRIBING_ELIGIBILITY_REVIEW"
     FACILITY_REVIEW = "FACILITY_REVIEW"
     AFFILIATION_MANAGE = "AFFILIATION_MANAGE"
     TRUST_PERMISSION_MANAGE = "TRUST_PERMISSION_MANAGE"
@@ -17,6 +18,7 @@ class TrustPermissionScope(str, Enum):
 
 PERMISSION_SCOPES: dict[TrustManagementPermission, TrustPermissionScope] = {
     TrustManagementPermission.PROFESSIONAL_REVIEW: TrustPermissionScope.GLOBAL,
+    TrustManagementPermission.PRESCRIBING_ELIGIBILITY_REVIEW: TrustPermissionScope.GLOBAL,
     TrustManagementPermission.FACILITY_REVIEW: TrustPermissionScope.FACILITY,
     TrustManagementPermission.AFFILIATION_MANAGE: TrustPermissionScope.FACILITY,
     TrustManagementPermission.TRUST_PERMISSION_MANAGE: TrustPermissionScope.GLOBAL,
