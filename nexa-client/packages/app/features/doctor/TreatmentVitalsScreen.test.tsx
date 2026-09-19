@@ -119,20 +119,18 @@ describe('provider Treatment Session vitals workflow', () => {
     const legacy = vi.spyOn(NexaApiClient, 'appendVitals')
 
     renderWithTamagui(<TreatmentVitalsScreen />)
-    fireEvent.click(screen.getByRole('button', { name: 'Select Heart rate observation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Heart rate' }))
     fireEvent.change(screen.getByLabelText('Heart rate (bpm)'), {
       target: { value: '72' },
     })
     fireEvent.change(screen.getByLabelText('Observed at (ISO 8601 with timezone)'), {
       target: { value: '2026-09-19T09:00:00Z' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Submit one vital observation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Commit Observation' }))
 
     expect(await screen.findByText(/outcome is uncertain/i)).toBeTruthy()
     fireEvent.click(
-      screen.getByRole('button', {
-        name: 'Retry unchanged vital observation with the same idempotency key',
-      })
+      screen.getByRole('button', { name: 'Retry Same Observation' })
     )
 
     await waitFor(() => expect(write).toHaveBeenCalledTimes(2))
@@ -154,14 +152,14 @@ describe('provider Treatment Session vitals workflow', () => {
       })
     )
     renderWithTamagui(<TreatmentVitalsScreen />)
-    fireEvent.click(screen.getByRole('button', { name: 'Select Heart rate observation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Heart rate' }))
     fireEvent.change(screen.getByLabelText('Heart rate (bpm)'), {
       target: { value: '72' },
     })
     fireEvent.change(screen.getByLabelText('Observed at (ISO 8601 with timezone)'), {
       target: { value: '2026-09-19T09:00:00Z' },
     })
-    const submit = screen.getByRole('button', { name: 'Submit one vital observation' })
+    const submit = screen.getByRole('button', { name: 'Commit Observation' })
     fireEvent.click(submit)
     fireEvent.click(submit)
     expect(write).toHaveBeenCalledTimes(1)
@@ -182,14 +180,14 @@ describe('provider Treatment Session vitals workflow', () => {
       new ApiError('Wrong operation', 403, 'TREATMENT_OPERATION_NOT_AUTHORIZED', false)
     )
     renderWithTamagui(<TreatmentVitalsScreen />)
-    fireEvent.click(screen.getByRole('button', { name: 'Select Heart rate observation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Heart rate' }))
     fireEvent.change(screen.getByLabelText('Heart rate (bpm)'), {
       target: { value: '72' },
     })
     fireEvent.change(screen.getByLabelText('Observed at (ISO 8601 with timezone)'), {
       target: { value: '2026-09-19T09:00:00Z' },
     })
-    fireEvent.click(screen.getByRole('button', { name: 'Submit one vital observation' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Commit Observation' }))
 
     expect(await screen.findByText(/does not authorize WRITE_VITALS/i)).toBeTruthy()
     expect(clearTreatmentSession).toHaveBeenCalled()
