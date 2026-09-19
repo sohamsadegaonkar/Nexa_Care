@@ -228,6 +228,10 @@
           "valueFrom": "<PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET_REFERENCE>"
         },
         {
+          "name": "PATIENT_GRANT_REFERENCE_HMAC_SECRET",
+          "valueFrom": "<PATIENT_GRANT_REFERENCE_HMAC_SECRET_REFERENCE>"
+        },
+        {
           "name": "OPERATIONS_AUTH_TOKEN",
           "valueFrom": "<OPERATIONS_AUTH_TOKEN_SECRET_REFERENCE>"
         }

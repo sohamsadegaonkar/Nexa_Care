@@ -1381,14 +1381,24 @@ async def revoke_patient_approved_access(
     revoked_at = str(prior_revoked_at or datetime.now(timezone.utc).isoformat())
 
     try:
+        from app.services.treatment_session_v1_mint import (
+            TreatmentSessionV1MintStoreUnavailable,
+            invalidate_treatment_session_v1_request,
+        )
+
         await invalidate_request(request_id)
-        try:
-            from app.services.treatment_session_v1_mint import (
-                invalidate_treatment_session_v1_request,
+        await invalidate_treatment_session_v1_request(request_id)
+
+        if request_data is not None:
+            request_data["status"] = "revoked"
+            request_data["revoked_at"] = revoked_at
+            await _redis_call(
+                redis.set,
+                f"consent_request:{request_id}",
+                json.dumps(request_data),
+                ex=300,
             )
-            await invalidate_treatment_session_v1_request(request_id)
-        except Exception:
-            pass
+
         revoked_when = datetime.fromisoformat(revoked_at)
         for grant in grant_rows:
             if grant.revoked_at is None:
@@ -1400,18 +1410,11 @@ async def revoke_patient_approved_access(
             reason="PATIENT_REVOKED",
             revoked_at=revoked_when,
         )
-
-        if request_data is not None:
-            request_data["status"] = "revoked"
-            request_data["revoked_at"] = revoked_at
-            await _redis_call(
-                redis.set,
-                f"consent_request:{request_id}",
-                json.dumps(request_data),
-                ex=300,
-            )
         await db.commit()
-    except ApprovedAccessStoreUnavailable as exc:
+    except (
+        ApprovedAccessStoreUnavailable,
+        TreatmentSessionV1MintStoreUnavailable,
+    ) as exc:
         await db.rollback()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

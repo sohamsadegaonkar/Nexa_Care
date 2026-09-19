@@ -13,7 +13,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_otp_rate_limit_config
+from app.core.config import get_patient_grant_reference_config
 from app.core.database import get_db_session
 from app.core.dependencies import get_provider_context, get_scoped_session
 from app.core.redis import get_async_redis_client
@@ -21,12 +21,16 @@ from app.models.consent_grant import ConsentGrantLog
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log_or_503
 from app.security.audit_context import AuditDomain, current_audit_context
-from app.services.approved_access_capability import invalidate_request
+from app.services.approved_access_capability import (
+    ApprovedAccessStoreUnavailable,
+    invalidate_request,
+)
 from app.services.clinical_access_session_store import (
     revoke_by_request as revoke_clinical_access_session_by_request,
 )
 from app.services.treatment_session_v1_mint import (
     TREATMENT_SESSION_V1_SCOPE,
+    TreatmentSessionV1MintStoreUnavailable,
     invalidate_treatment_session_v1_request,
 )
 
@@ -34,57 +38,99 @@ router = APIRouter(prefix="/api/v2/consent", tags=["consent-history"])
 
 
 def _get_grant_ref_secret() -> bytes:
-    try:
-        return get_otp_rate_limit_config().hmac_secret.encode("utf-8")
-    except Exception:
-        from app.core.config import get_handshake_config
-
-        return get_handshake_config().pepper_secret.encode("utf-8")
+    return get_patient_grant_reference_config().hmac_secret.encode("utf-8")
 
 
 def mint_public_grant_ref(patient_id: str, grant_id: UUID) -> str:
-    """Generate a server-owned, HMAC-signed public reference for a patient's grant.
+    """Generate a server-owned, HMAC-derived opaque public reference for a patient's grant.
 
-    This binds the grant ID to the patient ID cryptographically, concealing the internal
-    database UUID and preventing cross-patient grant selection.
+    The token is entirely opaque (gref_v2_<64-hex-digest>) and contains NO internal UUID or database
+    primary key information. It is deterministically derived from (patient_id, grant_id)
+    using the dedicated PATIENT_GRANT_REFERENCE_HMAC_SECRET.
     """
     secret = _get_grant_ref_secret()
     tag = hmac.new(
         secret,
-        f"patient_grant_ref_v1:{patient_id}:{grant_id}".encode("utf-8"),
+        f"patient_grant_ref_v2:{patient_id}:{grant_id}".encode("utf-8"),
         hashlib.sha256,
-    ).hexdigest()[:32]
-    return f"gref_{grant_id.hex}_{tag}"
+    ).hexdigest()
+    return f"gref_v2_{tag}"
 
 
-def parse_and_verify_public_grant_ref(public_ref: str, expected_patient_id: str) -> UUID:
-    """Validate public grant reference and extract grant ID, failing closed on mismatch."""
-    parts = public_ref.split("_")
-    if len(parts) != 3 or parts[0] != "gref" or len(parts[1]) != 32 or len(parts[2]) != 32:
+def verify_public_grant_ref_format(public_ref: str) -> bool:
+    """Check that public_ref is well-formed gref_v2_<64_hex>."""
+    if not (
+        isinstance(public_ref, str)
+        and public_ref.startswith("gref_v2_")
+        and len(public_ref) == 72
+    ):
+        return False
+    hex_part = public_ref[8:]
+    return len(hex_part) == 64 and all(c in "0123456789abcdef" for c in hex_part)
+
+
+async def find_grant_by_public_ref(
+    db: AsyncSession,
+    public_ref: str,
+    canonical_id: str,
+    *,
+    for_update: bool = False,
+) -> ConsentGrantLog:
+    """Find a grant by its opaque public reference within the authenticated patient's grants.
+
+    Rejects v1 references and malformed references with 404.
+    Performs constant-time comparison across all grants owned by canonical_id.
+    """
+    if not verify_public_grant_ref_format(public_ref):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error_code": "GRANT_NOT_FOUND"},
         )
-    try:
-        grant_id = UUID(hex=parts[1])
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error_code": "GRANT_NOT_FOUND"},
-        ) from exc
 
-    secret = _get_grant_ref_secret()
-    expected_tag = hmac.new(
-        secret,
-        f"patient_grant_ref_v1:{expected_patient_id}:{grant_id}".encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()[:32]
-    if not secrets.compare_digest(parts[2], expected_tag):
+    # Scoped strictly to authenticated patient
+    grants = (
+        (
+            await db.execute(
+                select(ConsentGrantLog).where(
+                    ConsentGrantLog.patient_id == canonical_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    matched_id: UUID | None = None
+    for grant in grants:
+        candidate_ref = mint_public_grant_ref(canonical_id, grant.id)
+        if secrets.compare_digest(public_ref, candidate_ref):
+            matched_id = grant.id
+
+    if matched_id is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail={"error_code": "GRANT_NOT_FOUND"},
         )
-    return grant_id
+
+    if for_update:
+        grant = (
+            await db.execute(
+                select(ConsentGrantLog)
+                .where(
+                    ConsentGrantLog.id == matched_id,
+                    ConsentGrantLog.patient_id == canonical_id,
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if grant is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"error_code": "GRANT_NOT_FOUND"},
+            )
+        return grant
+
+    return next(g for g in grants if g.id == matched_id)
 
 
 class ConsentHistoryItem(BaseModel):
@@ -103,6 +149,21 @@ class ConsentHistoryItem(BaseModel):
     is_treatment_session: bool = False
 
 
+class PatientConsentHistoryItem(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: str
+    public_ref: str
+    purpose: str
+    status: str
+    scope: list[str]
+    issued_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None
+    type: str
+    is_treatment_session: bool = False
+
+
 class ConsentSelfRevokeResponsePayload(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -111,8 +172,8 @@ class ConsentSelfRevokeResponsePayload(BaseModel):
     revoked_at: str
 
 
-def _serialize_history(
-    rows: list[ConsentGrantLog], patient_id: str | None = None
+def _serialize_provider_history(
+    rows: list[ConsentGrantLog],
 ) -> list[ConsentHistoryItem]:
     now = datetime.now(timezone.utc)
     result: list[ConsentHistoryItem] = []
@@ -122,21 +183,11 @@ def _serialize_history(
             if row.revoked_at
             else ("expired" if row.expires_at <= now else "active")
         )
-        is_treatment = any(
-            s in (TREATMENT_SESSION_V1_SCOPE, "treatment", "treatment.session.v1")
-            for s in row.scope
-        )
-        if patient_id:
-            ref = mint_public_grant_ref(patient_id=patient_id, grant_id=row.id)
-            item_id = ref
-        else:
-            ref = ""
-            item_id = str(row.id)
-
+        is_treatment = TREATMENT_SESSION_V1_SCOPE in row.scope
         result.append(
             ConsentHistoryItem(
-                id=item_id,
-                public_ref=ref,
+                id=str(row.id),
+                public_ref="",
                 patient_id=row.patient_id,
                 purpose=row.purpose,
                 status=status_value,
@@ -151,7 +202,38 @@ def _serialize_history(
     return result
 
 
-@router.get("/history/self", response_model=list[ConsentHistoryItem])
+def _serialize_patient_history(
+    rows: list[ConsentGrantLog],
+    patient_id: str,
+) -> list[PatientConsentHistoryItem]:
+    now = datetime.now(timezone.utc)
+    result: list[PatientConsentHistoryItem] = []
+    for row in rows:
+        status_value = (
+            "revoked"
+            if row.revoked_at
+            else ("expired" if row.expires_at <= now else "active")
+        )
+        is_treatment = TREATMENT_SESSION_V1_SCOPE in row.scope
+        ref = mint_public_grant_ref(patient_id=patient_id, grant_id=row.id)
+        result.append(
+            PatientConsentHistoryItem(
+                id=ref,
+                public_ref=ref,
+                purpose=row.purpose,
+                status=status_value,
+                scope=list(row.scope),
+                issued_at=row.issued_at,
+                expires_at=row.expires_at,
+                revoked_at=row.revoked_at,
+                type="break-glass" if row.is_break_glass else "routine",
+                is_treatment_session=is_treatment,
+            )
+        )
+    return result
+
+
+@router.get("/history/self", response_model=list[PatientConsentHistoryItem])
 async def get_self_consent_history(
     patient_id: str = Depends(get_scoped_session),
     db: AsyncSession = Depends(get_db_session),
@@ -173,7 +255,7 @@ async def get_self_consent_history(
         .scalars()
         .all()
     )
-    return _serialize_history(rows, patient_id=canonical_id)
+    return _serialize_patient_history(rows, patient_id=canonical_id)
 
 
 @router.delete(
@@ -190,9 +272,9 @@ async def revoke_self_consent_grant(
 
     The public_ref is cryptographically bound to the authenticated patient session.
     Revocation immediately invalidates:
+    - Live Redis capability (treatment and/or standard consent) - must succeed first
     - Durable ConsentGrantLog (marked revoked)
     - Durable ClinicalAccessSessionRecord (marked REVOKED)
-    - Live Redis capability (treatment and/or standard consent)
     - Subsequent clinical writes fail at the gate
     """
     try:
@@ -202,24 +284,9 @@ async def revoke_self_consent_grant(
             status_code=422, detail={"error_code": "INVALID_PATIENT_ID"}
         ) from exc
 
-    grant_id = parse_and_verify_public_grant_ref(public_ref, canonical_id)
-
-    grant = (
-        await db.execute(
-            select(ConsentGrantLog)
-            .where(
-                ConsentGrantLog.id == grant_id,
-                ConsentGrantLog.patient_id == canonical_id,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-
-    if grant is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"error_code": "GRANT_NOT_FOUND"},
-        )
+    grant = await find_grant_by_public_ref(
+        db, public_ref, canonical_id, for_update=True
+    )
 
     if grant.revoked_at is not None:
         return ConsentSelfRevokeResponsePayload(
@@ -229,29 +296,15 @@ async def revoke_self_consent_grant(
         )
 
     now = datetime.now(timezone.utc)
-    grant.revoked_at = now
-    grant.revoked_reason = "patient_revoked"
 
+    # 1. Redis capability invalidation must succeed first.
+    # If Redis fails, return deterministic HTTP 503 and do not commit PostgreSQL.
     if grant.request_id:
         req_id = grant.request_id
-        # Revoke durable clinical access session
-        await revoke_clinical_access_session_by_request(
-            db,
-            consent_request_id=req_id,
-            reason="PATIENT_REVOKED",
-            revoked_at=now,
-        )
-
-        is_treatment = any(
-            s in (TREATMENT_SESSION_V1_SCOPE, "treatment", "treatment.session.v1")
-            for s in grant.scope
-        )
-        if is_treatment:
-            try:
+        is_treatment = TREATMENT_SESSION_V1_SCOPE in grant.scope
+        try:
+            if is_treatment:
                 await invalidate_treatment_session_v1_request(req_id)
-            except Exception:
-                pass
-            try:
                 redis = get_async_redis_client()
                 raw = await redis.get(f"treatment_session_request:{req_id}")
                 if raw:
@@ -263,13 +316,29 @@ async def revoke_self_consent_grant(
                         json.dumps(data, sort_keys=True),
                         ex=300,
                     )
-            except Exception:
-                pass
-
-        try:
             await invalidate_request(req_id)
-        except Exception:
-            pass
+        except (
+            ApprovedAccessStoreUnavailable,
+            TreatmentSessionV1MintStoreUnavailable,
+            Exception,
+        ) as exc:
+            await db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error_code": "CONSENT_ACCESS_STORE_UNAVAILABLE"},
+            ) from exc
+
+    # 2. Redis invalidation succeeded; now update durable PostgreSQL records.
+    grant.revoked_at = now
+    grant.revoked_reason = "patient_revoked"
+
+    if grant.request_id:
+        await revoke_clinical_access_session_by_request(
+            db,
+            consent_request_id=grant.request_id,
+            reason="PATIENT_REVOKED",
+            revoked_at=now,
+        )
 
     await append_audit_log_or_503(
         audit_context=current_audit_context(AuditDomain.CONSENT),
@@ -280,10 +349,7 @@ async def revoke_self_consent_grant(
         metadata={
             "patient_id": canonical_id,
             "request_id": grant.request_id,
-            "is_treatment_session": any(
-                s in (TREATMENT_SESSION_V1_SCOPE, "treatment", "treatment.session.v1")
-                for s in grant.scope
-            ),
+            "is_treatment_session": TREATMENT_SESSION_V1_SCOPE in grant.scope,
             "provider_id": grant.clinician_id,
             "hospital_id": str(grant.hospital_id) if grant.hospital_id else None,
         },
@@ -314,4 +380,4 @@ async def get_consent_history(
         .scalars()
         .all()
     )
-    return _serialize_history(rows)
+    return _serialize_provider_history(rows)
