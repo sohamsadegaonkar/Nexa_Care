@@ -102,3 +102,25 @@ def test_request_and_mutation_boundaries_are_operation_sensitive() -> None:
     assert "ClinicalCapability.PRESCRIBE_MEDICATION" in gate_source
     assert "assert_current_prescribing_eligibility" in gate_source
     assert "lock_professional=True" in gate_source
+
+def test_patient_denial_does_not_require_current_prescriber_authority() -> None:
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    source = (
+        root / "app" / "api" / "v2" / "treatment_session_v1_routes.py"
+    ).read_text(encoding="utf-8")
+
+    approval_guard = 'if payload.decision == "approved":'
+    authority_call = (
+        "await assert_live_treatment_session_v1_provider(db=db, request_data=data)"
+    )
+    guard_index = source.index(approval_guard)
+    call_index = source.index(authority_call, guard_index)
+    verifier_index = source.index(
+        "result = await SignedTreatmentSessionV1Verifier().verify(", call_index
+    )
+
+    assert guard_index < call_index < verifier_index
+    assert "patient denial creates no provider authority" in source
+
