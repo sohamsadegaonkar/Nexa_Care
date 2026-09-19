@@ -1,5 +1,10 @@
 # Milestone 6 / Slice 8A Fargate deployment and qualification runbook
 
+> Current account-owner activation entry point:
+> `docs/runbooks/AWS_PILOT_ACTIVATION_READINESS.md`. This historical runbook
+> remains the underlying runtime/security contract; use the activation runbook
+> for the current external-input, IAM, cost-control, render and live-evidence sequence.
+
 This operator plan creates no infrastructure by itself. Use only approved
 synthetic environments and never commit domains, account identifiers, role
 ARNs, database/Redis URLs, credentials, secret ARNs, or secret values.
