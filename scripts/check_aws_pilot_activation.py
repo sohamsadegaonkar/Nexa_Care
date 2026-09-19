@@ -98,7 +98,7 @@ def _require(values: dict[str, Any], name: str, errors: list[str]) -> str:
     value = _string(values, name)
     if not value:
         errors.append(f"{name}: required")
-    elif PLACEHOLDER_RE.fullmatch(value):
+    elif PLACEHOLDER_FRAGMENT_RE.search(value):
         errors.append(f"{name}: placeholder value must be replaced")
     return value
 
@@ -159,29 +159,29 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
 
     role_account = None
     role_arn = _string(values, "ROLE_ARN")
-    if role_arn and not PLACEHOLDER_RE.fullmatch(role_arn):
+    if role_arn and not PLACEHOLDER_FRAGMENT_RE.search(role_arn):
         role_account = _validate_role_arn(role_arn, "ROLE_ARN", errors)
 
     for name in ("ECS_EXECUTION_ROLE_ARN", "ECS_TASK_ROLE_ARN"):
         value = _require(values, name, errors)
-        if value and not PLACEHOLDER_RE.fullmatch(value):
+        if value and not PLACEHOLDER_FRAGMENT_RE.search(value):
             account = _validate_role_arn(value, name, errors)
             if role_account is not None and account is not None and account != role_account:
                 errors.append(f"{name}: account must match ROLE_ARN")
 
     for name in ("ECS_CLUSTER", "ECS_SERVICE"):
         value = _string(values, name)
-        if value and not PLACEHOLDER_RE.fullmatch(value) and not ECS_NAME_RE.fullmatch(value):
+        if value and not PLACEHOLDER_FRAGMENT_RE.search(value) and not ECS_NAME_RE.fullmatch(value):
             errors.append(f"{name}: invalid ECS name")
 
     for name in ("ECR_REPOSITORY", "CLAMD_ECR_REPOSITORY"):
         value = _string(values, name)
-        if value and not PLACEHOLDER_RE.fullmatch(value) and not ECR_REPOSITORY_RE.fullmatch(value):
+        if value and not PLACEHOLDER_FRAGMENT_RE.search(value) and not ECR_REPOSITORY_RE.fullmatch(value):
             errors.append(f"{name}: invalid ECR repository name")
 
     for name in ("API_IMAGE_DIGEST", "CLAMD_IMAGE_DIGEST"):
         value = _string(values, name)
-        if value and not PLACEHOLDER_RE.fullmatch(value) and not DIGEST_RE.fullmatch(value):
+        if value and not PLACEHOLDER_FRAGMENT_RE.search(value) and not DIGEST_RE.fullmatch(value):
             errors.append(f"{name}: immutable sha256 digest required")
 
     api_digest = _string(values, "API_IMAGE_DIGEST")
@@ -191,7 +191,7 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
 
     api_image = _require(values, "QUALIFIED_ECR_IMAGE_URI_BY_DIGEST", errors)
     if all((api_image, api_digest, api_repo)) and not any(
-        PLACEHOLDER_RE.fullmatch(v) for v in (api_image, api_digest, api_repo)
+        PLACEHOLDER_FRAGMENT_RE.search(v) for v in (api_image, api_digest, api_repo)
     ):
         _validate_image(
             image=api_image,
@@ -204,7 +204,7 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
 
     clamd_image = _require(values, "QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST", errors)
     if all((clamd_image, clamd_digest, clamd_repo)) and not any(
-        PLACEHOLDER_RE.fullmatch(v) for v in (clamd_image, clamd_digest, clamd_repo)
+        PLACEHOLDER_FRAGMENT_RE.search(v) for v in (clamd_image, clamd_digest, clamd_repo)
     ):
         _validate_image(
             image=clamd_image,
@@ -217,7 +217,7 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
 
     for name in SECRET_REFERENCE_KEYS:
         value = _require(values, name, errors)
-        if value and not PLACEHOLDER_RE.fullmatch(value):
+        if value and not PLACEHOLDER_FRAGMENT_RE.search(value):
             _validate_secret_reference(value, name, role_account, errors)
 
     for name in ("TASK_CPU", "TASK_MEMORY"):
@@ -228,7 +228,7 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
         errors.append("TASK_MEMORY: qualification value must be 3072")
 
     base_url = _string(values, "API_BASE_URL")
-    if base_url and not PLACEHOLDER_RE.fullmatch(base_url):
+    if base_url and not PLACEHOLDER_FRAGMENT_RE.search(base_url):
         parsed = urlparse(base_url)
         if (
             parsed.scheme != "https"
@@ -241,19 +241,19 @@ def validate_activation_values(values: dict[str, Any]) -> list[str]:
             errors.append("API_BASE_URL: clean https origin required")
 
     api_host = _require(values, "FINAL_API_HOST", errors)
-    if api_host and not PLACEHOLDER_RE.fullmatch(api_host):
+    if api_host and not PLACEHOLDER_FRAGMENT_RE.search(api_host):
         if not HOST_RE.fullmatch(api_host) or "/" in api_host:
             errors.append("FINAL_API_HOST: hostname only")
 
     doctor_origin = _require(values, "FINAL_DOCTOR_HTTPS_ORIGIN", errors)
-    if doctor_origin and not PLACEHOLDER_RE.fullmatch(doctor_origin):
+    if doctor_origin and not PLACEHOLDER_FRAGMENT_RE.search(doctor_origin):
         parsed = urlparse(doctor_origin)
         if parsed.scheme != "https" or not parsed.hostname or parsed.path not in {"", "/"}:
             errors.append("FINAL_DOCTOR_HTTPS_ORIGIN: https origin required")
 
     for name in ("FINAL_TRUSTED_PROXY_CIDRS", "FINAL_FORWARDED_PROXY_CIDRS"):
         value = _require(values, name, errors)
-        if value and not PLACEHOLDER_RE.fullmatch(value):
+        if value and not PLACEHOLDER_FRAGMENT_RE.search(value):
             lowered = {item.strip() for item in value.split(",")}
             if not lowered or {"0.0.0.0/0", "::/0", "*"} & lowered:
                 errors.append(f"{name}: wildcard/public CIDRs are forbidden")
@@ -379,7 +379,7 @@ def render_task_definition(
     rendered = template_text
     for name in placeholders:
         value = _string(values, name)
-        if not value or PLACEHOLDER_RE.fullmatch(value):
+        if not value or PLACEHOLDER_FRAGMENT_RE.search(value):
             errors.append(f"{name}: required to render task definition")
             continue
         rendered = rendered.replace(f'"<{name}>"', json.dumps(value))
