@@ -199,13 +199,11 @@ class MedicationCatalogRelease(Base):
             name="ck_medication_catalog_release_integrity_digest",
         ),
         CheckConstraint(
-            "prepared_by <> COALESCE(qualified_by, "
-            "'00000000-0000-0000-0000-000000000000'::uuid)",
+            "qualified_by IS NULL OR prepared_by <> qualified_by",
             name="ck_medication_catalog_release_preparer_not_qualifier",
         ),
         CheckConstraint(
-            "prepared_by <> COALESCE(activated_by, "
-            "'00000000-0000-0000-0000-000000000000'::uuid)",
+            "activated_by IS NULL OR prepared_by <> activated_by",
             name="ck_medication_catalog_release_preparer_not_activator",
         ),
         CheckConstraint(
