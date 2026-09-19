@@ -61,13 +61,13 @@ def test_route_inventory_and_surface_audit():
     for r in routes:
         assert r.methods == {"POST"}
 
-    # Overall application provider-trust surface must be exactly 26 routes (all POST)
+    # Overall application provider-trust surface must be exactly 27 routes (all POST)
     all_pt_routes = [
         r
         for r in app.routes
         if getattr(r, "path", "").startswith("/api/v2/provider-trust")
     ]
-    assert len(all_pt_routes) == 26
+    assert len(all_pt_routes) == 27
     for r in all_pt_routes:
         assert r.methods == {"POST"}
 
