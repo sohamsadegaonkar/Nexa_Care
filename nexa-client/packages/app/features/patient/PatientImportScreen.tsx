@@ -427,6 +427,11 @@ export default function PatientImportScreen({
           return
         }
 
+        if (detail.status === 'could_not_process' && !detail.actions.can_retry) {
+          setPollingActive(false)
+          return
+        }
+
         if (pollingActive) {
           pollTimerRef.current = setTimeout(() => {
             void pollImportStatus(targetImportId)
@@ -719,7 +724,10 @@ export default function PatientImportScreen({
         id={statusLiveId}
         style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden' }}
       >
-        {step === 'processing' && 'Processing document. Information is being extracted.'}
+        {step === 'processing' &&
+          (currentImport?.status === 'could_not_process' && !currentImport?.actions.can_retry
+            ? 'Document could not be processed. No information was added to your medical records.'
+            : 'Processing document. Information is being extracted.')}
         {step === 'review' &&
           (currentImport?.actions.can_save
             ? 'All items reviewed. Ready to save.'
@@ -1099,6 +1107,86 @@ export default function PatientImportScreen({
                   )}
                 </YStack>
               </YStack>
+            ) : currentImport?.status === 'could_not_process' && !currentImport?.actions.can_retry ? (
+              <YStack
+                backgroundColor="$backgroundHover"
+                borderWidth={1}
+                borderColor="$borderColor"
+                padding="$6"
+                borderRadius="$6"
+                width="100%"
+                alignItems="center"
+                gap="$4"
+                accessibilityRole="alert"
+              >
+                <Text fontSize={48}>⚠️</Text>
+                <YStack alignItems="center" gap="$1.5">
+                  <H3 color="$color" fontSize="$5" fontWeight="800">
+                    Document Could Not Be Processed
+                  </H3>
+                  <Paragraph
+                    color="$color10"
+                    size="$3"
+                    textAlign="center"
+                    maxWidth={380}
+                  >
+                    This document could not be safely extracted. No information was added to your
+                    medical records.
+                  </Paragraph>
+                </YStack>
+
+                <Separator borderColor="$borderColor" width="100%" />
+
+                <YStack width="100%" gap="$2.5">
+                  {effectiveReturnTo === 'onboarding' ? (
+                    <>
+                      <Button
+                        size="$4"
+                        theme="blue"
+                        onPress={() => router.push('/patient/onboarding')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Continue onboarding"
+                        minHeight={48}
+                      >
+                        Continue onboarding →
+                      </Button>
+                      <Button
+                        size="$3.5"
+                        chromeless
+                        onPress={handleResetFlow}
+                        accessibilityRole="button"
+                        accessibilityLabel="Try Another Document"
+                        minHeight={44}
+                      >
+                        Try Another Document
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <Button
+                        size="$4"
+                        theme="blue"
+                        onPress={() => router.push('/patient/records')}
+                        accessibilityRole="button"
+                        accessibilityLabel="Back to Medical Records"
+                        minHeight={48}
+                      >
+                        Back to Medical Records
+                      </Button>
+                      <Button
+                        size="$3.5"
+                        chromeless
+                        onPress={handleResetFlow}
+                        accessibilityRole="button"
+                        accessibilityLabel="Try Another Document"
+                        minHeight={44}
+                      >
+                        Try Another Document
+                      </Button>
+                    </>
+                  )}
+                </YStack>
+              </YStack>
             ) : (
               <YStack
                 backgroundColor="$backgroundHover"
@@ -1150,6 +1238,7 @@ export default function PatientImportScreen({
                       onPress={handleRetry}
                       accessibilityRole="button"
                       accessibilityLabel="Retry document extraction"
+                      aria-label="Retry document extraction"
                     >
                       {actionLoading ? 'Retrying...' : '🔄 Retry Extraction'}
                     </Button>

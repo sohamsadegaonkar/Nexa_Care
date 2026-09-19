@@ -95,3 +95,51 @@ def test_invalid_dates_are_not_replaced_with_current_time():
 def test_explicit_server_ids_replace_response_only_uuid_fallbacks():
     assert "id=uuid.uuid4()" in CODE
     assert ".id or uuid.uuid4()" not in CODE
+
+
+def test_enrich_timeline_provenance_clinician_recorded():
+    event = _enrich_timeline_provenance(
+        "1",
+        "VITALS",
+        "Vitals Recorded (BP)",
+        "BP: 120/80 mmHg",
+        "2026-07-17T00:00:00+00:00",
+        "clinician_recorded",
+        hospital_name="Apollo Hospital",
+    )
+    assert event["source"] == "clinician_recorded"
+    assert event["source_display"] == "Clinician recorded at Apollo Hospital"
+    assert event["hospital_name"] == "Apollo Hospital"
+    assert "Clinician recorded" in event["badges"]
+    assert "Apollo Hospital" in event["badges"]
+
+
+def test_enrich_timeline_provenance_clinician_recorded_without_hospital():
+    event = _enrich_timeline_provenance(
+        "1",
+        "VITALS",
+        "Vitals Recorded (BP)",
+        "BP: 120/80 mmHg",
+        "2026-07-17T00:00:00+00:00",
+        "clinician_recorded",
+        hospital_name=None,
+    )
+    assert event["source"] == "clinician_recorded"
+    assert event["source_display"] == "Clinician recorded"
+    assert event["hospital_name"] is None
+    assert event["badges"] == ["Clinician recorded"]
+
+
+def test_enrich_timeline_provenance_manual_fail_closed():
+    event = _enrich_timeline_provenance(
+        "1",
+        "VITALS",
+        "Vitals Recorded (BP)",
+        "BP: 120/80 mmHg",
+        "2026-07-17T00:00:00+00:00",
+        "manual",
+    )
+    assert event["source"] == "manual"
+    assert event["source_display"] == "Manual entry"
+    assert event["hospital_name"] is None
+    assert event["badges"] == ["Manual Entry"]

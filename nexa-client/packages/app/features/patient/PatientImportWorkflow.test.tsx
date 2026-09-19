@@ -922,4 +922,132 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
       expect(liveRegion).toBeDefined()
     })
   })
+
+  // ── 10. Terminal Processing Failure Recovery ─────────────────────────
+  describe('Phase 17: Terminal Extraction Failure Recovery', () => {
+    const mockTerminalCouldNotProcessResponse: PatientExternalRecordResponse = {
+      import_id: 'imp-term-001',
+      category: 'prescription',
+      status: 'could_not_process',
+      actions: {
+        can_process: false,
+        can_retry: false,
+        can_cancel: false,
+        can_review: false,
+        can_save: false,
+        can_view_source: false,
+      },
+      duplicate: false,
+      source_available: true,
+      created_at: '2026-09-19T03:00:00Z',
+    }
+
+    it('renders terminal failure card without infinite spinner and provides records exit', async () => {
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        mockTerminalCouldNotProcessResponse
+      )
+
+      renderWithTamagui(
+        <PatientImportScreen initialImportId="imp-term-001" returnTo="records" />
+      )
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Document Could Not Be Processed')
+        ).toBeDefined()
+      })
+
+      expect(
+        screen.getByText(
+          'This document could not be safely extracted. No information was added to your medical records.'
+        )
+      ).toBeDefined()
+
+      // Infinite spinner is stopped
+      expect(screen.queryByText('Processing document')).toBeNull()
+
+      // Safe exit CTAs — disambiguated from header back button
+      const backBtn = screen.getByText('Back to Medical Records')
+      expect(backBtn).toBeDefined()
+      fireEvent.click(backBtn)
+      expect(push).toHaveBeenCalledWith('/patient/records')
+    })
+
+    it('provides onboarding exit when returnTo is onboarding', async () => {
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        mockTerminalCouldNotProcessResponse
+      )
+
+      renderWithTamagui(
+        <PatientImportScreen initialImportId="imp-term-001" returnTo="onboarding" />
+      )
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Document Could Not Be Processed')
+        ).toBeDefined()
+      })
+
+      const continueBtn = screen.getByRole('button', {
+        name: /continue onboarding/i,
+      })
+      expect(continueBtn).toBeDefined()
+      fireEvent.click(continueBtn)
+      expect(push).toHaveBeenCalledWith('/patient/onboarding')
+    })
+
+    it('allows resetting flow to try another document', async () => {
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        mockTerminalCouldNotProcessResponse
+      )
+      vi.spyOn(NexaApiClient, 'getPatientUploadPolicy').mockResolvedValue(
+        mockPolicy
+      )
+
+      renderWithTamagui(
+        <PatientImportScreen initialImportId="imp-term-001" returnTo="records" />
+      )
+
+      await waitFor(() => {
+        expect(
+          screen.getByText('Document Could Not Be Processed')
+        ).toBeDefined()
+      })
+
+      const tryAnotherBtn = screen.getByRole('button', {
+        name: /try another document/i,
+      })
+      fireEvent.click(tryAnotherBtn)
+
+      await waitFor(() => {
+        expect(screen.getByText('1. Select Document Category')).toBeDefined()
+      })
+    })
+
+    it('preserves retry card when can_retry is true', async () => {
+      const mockRetryableResponse: PatientExternalRecordResponse = {
+        ...mockTerminalCouldNotProcessResponse,
+        actions: {
+          ...mockTerminalCouldNotProcessResponse.actions,
+          can_retry: true,
+        },
+      }
+
+      vi.spyOn(NexaApiClient, 'getPatientExternalRecord').mockResolvedValue(
+        mockRetryableResponse
+      )
+
+      renderWithTamagui(
+        <PatientImportScreen initialImportId="imp-term-001" returnTo="records" />
+      )
+
+      await waitFor(() => {
+        expect(screen.getByText('Extraction Paused')).toBeDefined()
+      })
+
+      expect(
+        screen.getByRole('button', { name: /retry document extraction/i })
+      ).toBeDefined()
+    })
+  })
 })

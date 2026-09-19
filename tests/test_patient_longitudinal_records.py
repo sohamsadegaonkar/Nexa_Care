@@ -23,6 +23,7 @@ from app.api.v2.patient_record_routes import (
 from app.core.database import get_db_session
 from app.core.dependencies import get_scoped_session
 from app.main import app
+from app.models.clinical_encounter import ClinicalEncounter
 from app.models.patient_records import DocumentReference, Medication, Vitals
 
 
@@ -271,7 +272,7 @@ def test_patient_me_record_detail_vitals(client, override_patient_auth, patient_
     app.dependency_overrides[get_db_session] = lambda: mock_db
     try:
         with patch("app.core.consent_gate.append_audit_log_or_503", AsyncMock()):
-            # Valid item
+            # Valid item without encounter link fails closed to "Manual entry"
             response = client.get(f"/api/v2/patient/me/records/vitals/{vital_id}")
             assert response.status_code == 200
             data = response.json()
@@ -280,7 +281,9 @@ def test_patient_me_record_detail_vitals(client, override_patient_auth, patient_
             assert data["fields"]["type"] == "BP"
             assert data["fields"]["value"] == "120/80"
             assert data["provenance"]["source"] == "manual"
-            assert data["provenance"]["source_display"] == "Clinician Recorded"
+            assert data["provenance"]["source_display"] == "Manual entry"
+            assert data["provenance"]["hospital_name"] is None
+            assert data["provenance"]["encounter_recorded_at"] is None
 
             # Non-existent item (404)
             mock_result.scalar_one_or_none.return_value = None
@@ -290,6 +293,61 @@ def test_patient_me_record_detail_vitals(client, override_patient_auth, patient_
             # Non-UUID record_id (422)
             bad_id_resp = client.get("/api/v2/patient/me/records/vitals/not-a-uuid")
             assert bad_id_resp.status_code == 422
+    finally:
+        app.dependency_overrides.pop(get_db_session, None)
+
+
+def test_patient_me_record_detail_vitals_encounter_linked(client, override_patient_auth, patient_uuid):
+    mock_db = AsyncMock()
+    vital_id = uuid.uuid4()
+    encounter_id = uuid.uuid4()
+    enc_dt = datetime(2026, 7, 17, 9, 30, 0, tzinfo=timezone.utc)
+    mock_vital = Vitals(
+        id=vital_id,
+        patient_id=patient_uuid,
+        encounter_id=encounter_id,
+        type="BP",
+        value="120/80",
+        unit="mmHg",
+        recorded_at=datetime(2026, 7, 17, 10, 0, 0, tzinfo=timezone.utc),
+        source="manual",
+        source_document_id=None,
+    )
+    mock_enc = ClinicalEncounter(
+        encounter_id=encounter_id,
+        clinical_session_id=uuid.uuid4(),
+        patient_id=patient_uuid,
+        provider_id=uuid.uuid4(),
+        hospital_id=uuid.uuid4(),
+        created_at=enc_dt,
+    )
+
+    # First call: select Vitals -> returns mock_vital
+    # Second call: select ClinicalEncounter + HospitalRegistry -> returns (mock_enc, "Apollo Hospital")
+    result_vital = MagicMock()
+    result_vital.scalar_one_or_none.return_value = mock_vital
+
+    result_enc = MagicMock()
+    result_enc.first.return_value = (mock_enc, "Apollo Hospital")
+
+    mock_db.execute.side_effect = [result_vital, result_enc]
+
+    app.dependency_overrides[get_db_session] = lambda: mock_db
+    try:
+        with patch("app.core.consent_gate.append_audit_log_or_503", AsyncMock()):
+            response = client.get(f"/api/v2/patient/me/records/vitals/{vital_id}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["record_id"] == str(vital_id)
+            assert data["category"] == "vitals"
+            assert data["provenance"]["source"] == "clinician_recorded"
+            assert data["provenance"]["source_display"] == "Clinician recorded at Apollo Hospital"
+            assert data["provenance"]["hospital_name"] == "Apollo Hospital"
+            assert data["provenance"]["encounter_recorded_at"] == enc_dt.isoformat()
+            # Invariant: internal IDs must not leak in patient projection
+            assert "encounter_id" not in data["provenance"]
+            assert "hospital_id" not in data["provenance"]
+            assert "provider_id" not in data["provenance"]
     finally:
         app.dependency_overrides.pop(get_db_session, None)
 
