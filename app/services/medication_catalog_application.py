@@ -359,10 +359,16 @@ class MedicationCatalogApplicationService:
         suffix: str,
         metadata: dict[str, object],
     ) -> None:
+        audit_key_material = (
+            f"{event.value}|{suffix}|{target_id}"
+        ).encode("utf-8")
         await enqueue_audit_event(
             self.db,
             audit_context=AuditContext.platform(domain=AuditDomain.PLATFORM),
-            idempotency_key=f"medication-catalog:{suffix}:{target_id}",
+            idempotency_key=(
+                "medication-catalog-audit:"
+                + sha256_hex(audit_key_material)
+            ),
             actor_id=str(actor_id),
             event_type=event.value,
             target_id=str(target_id),
