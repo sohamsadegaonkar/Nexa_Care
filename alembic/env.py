@@ -8,7 +8,8 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.core.config import get_database_config
+from app.core.config import DatabaseConfig, get_database_config
+from app.core.database import build_database_connect_args
 from app.models.base import Base
 
 # this is the Alembic Config object, which provides
@@ -71,12 +72,19 @@ async def run_migrations_online() -> None:
     In this scenario we need to create an Engine
     and associate a connection with the context.
     """
+    url = get_url()
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = get_url()
+    configuration["sqlalchemy.url"] = url
+    db_config = DatabaseConfig(
+        url=url,
+        echo_sql=False,
+        ssl_ca_path=get_database_config().ssl_ca_path,
+    )
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        connect_args=build_database_connect_args(db_config),
     )
 
     async with connectable.connect() as connection:

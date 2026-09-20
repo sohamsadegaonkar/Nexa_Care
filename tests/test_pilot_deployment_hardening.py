@@ -40,6 +40,7 @@ def valid_pilot_environment() -> dict[str, str]:
         "DATABASE_URL": (
             "postgresql+asyncpg://synthetic:synthetic@db.example.test:5432/nexa"
         ),
+        "DATABASE_SSL_CA_PATH": str(ROOT / "deploy" / "ssl" / "aws-rds-ca-bundle.pem"),
         "UPSTASH_REDIS_URL": "rediss://synthetic@redis.example.test:6379/0",
         "CORS_ALLOWED_ORIGINS": "https://doctor.example.test",
         "TRUSTED_HOSTS": "api.example.test",

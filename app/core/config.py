@@ -87,6 +87,7 @@ class ClinicConfig:
 class DatabaseConfig:
     url: str
     echo_sql: bool = False
+    ssl_ca_path: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -529,12 +530,16 @@ def get_database_config() -> DatabaseConfig:
     - DATABASE_URL — async SQLAlchemy URL, e.g.
       ``postgresql+asyncpg://user:pass@host:5432/nexa_care``
     - DATABASE_ECHO_SQL — optional ``true`` to log SQL statements
+    - DATABASE_SSL_CA_PATH — optional path to Amazon RDS CA bundle PEM
     """
 
     echo_raw = os.getenv("DATABASE_ECHO_SQL", "false").strip().lower()
+    ca_raw = os.getenv("DATABASE_SSL_CA_PATH", "").strip()
+    ca_path = Path(ca_raw).expanduser().resolve() if ca_raw else None
     return DatabaseConfig(
         url=_require_env("DATABASE_URL"),
         echo_sql=echo_raw in {"1", "true", "yes", "on"},
+        ssl_ca_path=ca_path,
     )
 
 
