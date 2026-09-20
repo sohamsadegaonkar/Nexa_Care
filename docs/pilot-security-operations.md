@@ -165,8 +165,9 @@ and legal-hold requirements take precedence over cleanup convenience.
 ### Medication catalog signing key boundary
 
 Production-like runtime configuration requires `MEDICATION_CATALOG_SIGNING_KEY_ID`
-for the dedicated asymmetric medication-catalog signing key. The future task role
-must be limited to `kms:Sign`, `kms:Verify`, and, if required for verification
-tooling, `kms:GetPublicKey` on that exact key. Do not grant `kms:*` and do not
-reuse patient envelope-encryption keys. The private signing key remains inside AWS
-KMS; this repository does not create or deploy the key in Slice 10B.5k.
+for the dedicated asymmetric medication-catalog signing key. The task role must be
+limited to `kms:DescribeKey`, `kms:Sign`, and `kms:Verify` on that exact key. Do
+not grant `kms:GetPublicKey` unless actual application or runtime requirements
+justify it. Do not grant `kms:*` and do not reuse patient envelope-encryption keys.
+The private signing key remains inside AWS KMS; this repository does not create or
+deploy the key in Slice 10B.5k.

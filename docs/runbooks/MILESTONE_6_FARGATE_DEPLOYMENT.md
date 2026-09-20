@@ -209,7 +209,8 @@ The API/task runtime receives only the identifier
 `MEDICATION_CATALOG_SIGNING_KEY_ID`; it never receives private key bytes. The
 catalog signing key is a separate asymmetric KMS SIGN_VERIFY key, qualified as
 `ECC_NIST_P256` with `ECDSA_SHA_256`. Runtime IAM is narrowly limited to the
-catalog key operations required by the signing provider (`kms:Sign`,
-`kms:Verify`, and optional `kms:GetPublicKey`), and must not grant `kms:*` or
-access to unrelated patient encryption keys. Slice 10B.5k does not provision this
-key or change LIVE AWS PILOT / scanner deployment status.
+catalog key operations required by the signing provider (`kms:DescribeKey`,
+`kms:Sign`, and `kms:Verify`), and must not grant `kms:*` or access to unrelated
+patient encryption keys. Do not add `kms:GetPublicKey` unless actual application
+or runtime requirements justify it. Slice 10B.5k does not provision this key or
+change LIVE AWS PILOT / scanner deployment status.
