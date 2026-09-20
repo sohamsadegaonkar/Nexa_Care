@@ -15,6 +15,7 @@ from enum import Enum
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import ssl
 from typing import Any, Protocol
@@ -23,7 +24,6 @@ from urllib.parse import quote
 AWS_REGION = "ap-south-1"
 AWS_ACCOUNT_ID = "654654144224"
 DATABASE_NAME = "nexacare_pilot"
-MASTER_ROLE_NAME = "nexacare_admin"
 MIGRATOR_ROLE_NAME = "nexa_migrator"
 RUNTIME_ROLE_NAME = "nexa_api_runtime"
 FIXED_LOGIN_ROLES = frozenset({MIGRATOR_ROLE_NAME, RUNTIME_ROLE_NAME})
@@ -31,6 +31,7 @@ RUNTIME_SECRET_ID = "nexa-care/pilot/db/runtime"
 MIGRATOR_SECRET_ID = "nexa-care/pilot/db/migrator"
 DATABASE_SSL_CA_PATH = Path("/app/deploy/ssl/aws-rds-ca-bundle.pem")
 EXPECTED_MIGRATION_HEAD = "20260919_medication_catalog"
+MASTER_USERNAME_REGEX = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,62}$")
 
 SECRET_KEYS = frozenset(
     {"username", "password", "engine", "host", "port", "dbname", "DATABASE_URL"}
@@ -190,6 +191,10 @@ def _safe_environment() -> None:
     master_secret_id = os.getenv("NEXA_DB_MASTER_SECRET_ID", "").strip()
     if not master_secret_id:
         raise BootstrapError(FailureCode.CONFIG_INVALID)
+    master_username = os.getenv("NEXA_DB_MASTER_USERNAME", "").strip()
+    if not master_username:
+        raise BootstrapError(FailureCode.CONFIG_INVALID)
+    _validate_master_username(master_username, code=FailureCode.CONFIG_INVALID)
 
 
 def build_database_url(credential: DatabaseCredential) -> str:
@@ -208,6 +213,16 @@ def generate_password() -> str:
     """Generate a high-entropy password without using predictable PRNG state."""
 
     return secrets.token_urlsafe(48)
+
+
+def _validate_master_username(
+    value: Any, *, code: FailureCode = FailureCode.MASTER_SECRET_INVALID
+) -> str:
+    if not isinstance(value, str) or not value:
+        raise BootstrapError(code)
+    if not MASTER_USERNAME_REGEX.fullmatch(value):
+        raise BootstrapError(code)
+    return value
 
 
 def _validate_host(value: Any) -> str:
@@ -277,15 +292,29 @@ def _parse_json_secret(value: str, *, code: FailureCode) -> dict[str, Any]:
     return parsed
 
 
-def parse_master_secret(value: str) -> DatabaseCredential:
+def parse_master_secret(
+    value: str, expected_username: str | None = None
+) -> DatabaseCredential:
     payload = _parse_json_secret(value, code=FailureCode.MASTER_SECRET_INVALID)
-    if payload.get("username") != MASTER_ROLE_NAME:
+    if expected_username is None:
+        expected_username = os.getenv("NEXA_DB_MASTER_USERNAME")
+    if not isinstance(expected_username, str) or not expected_username.strip():
+        raise BootstrapError(FailureCode.MASTER_SECRET_INVALID)
+    expected = _validate_master_username(
+        expected_username.strip(), code=FailureCode.MASTER_SECRET_INVALID
+    )
+    secret_username = _validate_master_username(
+        payload.get("username"), code=FailureCode.MASTER_SECRET_INVALID
+    )
+    if secret_username != expected:
         raise BootstrapError(FailureCode.MASTER_SECRET_INVALID)
     password = payload.get("password")
     if not isinstance(password, str) or not password:
         raise BootstrapError(FailureCode.MASTER_SECRET_INVALID)
     host = _validate_host(payload.get("host"))
-    port = _validate_port(payload.get("port", 5432), code=FailureCode.MASTER_SECRET_INVALID)
+    port = _validate_port(
+        payload.get("port", 5432), code=FailureCode.MASTER_SECRET_INVALID
+    )
     dbname = payload.get("dbname", DATABASE_NAME)
     if dbname != DATABASE_NAME:
         raise BootstrapError(FailureCode.MASTER_SECRET_INVALID)
@@ -293,7 +322,7 @@ def parse_master_secret(value: str) -> DatabaseCredential:
     if engine is not None and engine not in {"postgres", "postgresql"}:
         raise BootstrapError(FailureCode.MASTER_SECRET_INVALID)
     return DatabaseCredential(
-        username=MASTER_ROLE_NAME,
+        username=secret_username,
         password=password,
         host=host,
         port=port,
@@ -458,10 +487,14 @@ async def inspect_existing_fixed_role(connection: Any, role_name: str) -> bool:
     return True
 
 
-async def ensure_fixed_login_role(connection: Any, role_name: str, password: str) -> None:
+async def ensure_fixed_login_role(
+    connection: Any, role_name: str, password: str
+) -> None:
     exists = await inspect_existing_fixed_role(connection, role_name)
     try:
-        ddl = await connection.fetchval(ROLE_PASSWORD_DDL_SQL[role_name][exists], password)
+        ddl = await connection.fetchval(
+            ROLE_PASSWORD_DDL_SQL[role_name][exists], password
+        )
         if not isinstance(ddl, str) or not ddl:
             raise BootstrapError(FailureCode.DB_MUTATION_FAILED)
         await connection.execute(ddl)
@@ -569,7 +602,10 @@ async def post_migration(client: SecretsClient) -> None:
     _safe_environment()
     runtime_state = _secret_state(client, RUNTIME_SECRET_ID)
     migrator_state = _secret_state(client, MIGRATOR_SECRET_ID)
-    if runtime_state is not SecretState.CURRENT or migrator_state is not SecretState.CURRENT:
+    if (
+        runtime_state is not SecretState.CURRENT
+        or migrator_state is not SecretState.CURRENT
+    ):
         if runtime_state is not migrator_state:
             raise BootstrapError(FailureCode.PARTIAL_SECRET_STATE)
         raise BootstrapError(FailureCode.SECRET_STATE_INVALID)

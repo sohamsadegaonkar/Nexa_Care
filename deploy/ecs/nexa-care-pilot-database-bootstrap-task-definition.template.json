@@ -17,7 +17,8 @@
         {"name": "AWS_REGION", "value": "ap-south-1"},
         {"name": "DATABASE_ECHO_SQL", "value": "false"},
         {"name": "DATABASE_SSL_CA_PATH", "value": "/app/deploy/ssl/aws-rds-ca-bundle.pem"},
-        {"name": "NEXA_DB_MASTER_SECRET_ID", "value": "<RDS_MANAGED_MASTER_SECRET_ARN>"}
+        {"name": "NEXA_DB_MASTER_SECRET_ID", "value": "<RDS_MANAGED_MASTER_SECRET_ARN>"},
+        {"name": "NEXA_DB_MASTER_USERNAME", "value": "<RDS_MASTER_USERNAME>"}
       ],
       "logConfiguration": {
         "logDriver": "awslogs",

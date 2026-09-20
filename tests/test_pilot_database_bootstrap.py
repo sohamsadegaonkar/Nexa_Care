@@ -28,7 +28,9 @@ class FakeSecrets:
             raise RuntimeError("no current value")
         return {"SecretString": value}
 
-    def put_secret_value(self, *, SecretId: str, SecretString: str, VersionStages: list[str]):
+    def put_secret_value(
+        self, *, SecretId: str, SecretString: str, VersionStages: list[str]
+    ):
         assert VersionStages == ["AWSCURRENT"]
         self.values[SecretId] = SecretString
         self.put_calls.append((SecretId, SecretString))
@@ -93,9 +95,7 @@ class FakeConnection:
             return [
                 {"version_num": head}
                 for head in (
-                    self.migration_heads
-                    if self.migration_heads is not None
-                    else []
+                    self.migration_heads if self.migration_heads is not None else []
                 )
             ]
         raise AssertionError(query)
@@ -149,7 +149,9 @@ def credential_pair() -> bootstrap.CredentialPair:
 
 
 def test_empty_empty_generates_persists_then_rereads(monkeypatch):
-    client = FakeSecrets({bootstrap.RUNTIME_SECRET_ID: None, bootstrap.MIGRATOR_SECRET_ID: None})
+    client = FakeSecrets(
+        {bootstrap.RUNTIME_SECRET_ID: None, bootstrap.MIGRATOR_SECRET_ID: None}
+    )
     passwords = iter(["migrator-new", "runtime-new"])
     monkeypatch.setattr(bootstrap, "generate_password", lambda: next(passwords))
     pair = bootstrap.resolve_role_credentials(client, host="db.example.test", port=5432)
@@ -165,11 +167,17 @@ def test_empty_empty_generates_persists_then_rereads(monkeypatch):
 def test_populated_populated_reuses_without_rotation(monkeypatch):
     client = FakeSecrets(
         {
-            bootstrap.MIGRATOR_SECRET_ID: role_payload(bootstrap.MIGRATOR_ROLE_NAME, "keep-m"),
-            bootstrap.RUNTIME_SECRET_ID: role_payload(bootstrap.RUNTIME_ROLE_NAME, "keep-r"),
+            bootstrap.MIGRATOR_SECRET_ID: role_payload(
+                bootstrap.MIGRATOR_ROLE_NAME, "keep-m"
+            ),
+            bootstrap.RUNTIME_SECRET_ID: role_payload(
+                bootstrap.RUNTIME_ROLE_NAME, "keep-r"
+            ),
         }
     )
-    monkeypatch.setattr(bootstrap, "generate_password", lambda: pytest.fail("must not rotate"))
+    monkeypatch.setattr(
+        bootstrap, "generate_password", lambda: pytest.fail("must not rotate")
+    )
     pair = bootstrap.resolve_role_credentials(client, host="db.example.test", port=5432)
     assert pair.source == "reused"
     assert pair.migrator.password == "keep-m"
@@ -215,7 +223,9 @@ def test_database_url_percent_encodes_credentials():
 )
 def test_new_roles_receive_explicit_security_attributes(role_name):
     connection = FakeConnection()
-    asyncio.run(bootstrap.ensure_fixed_login_role(connection, role_name, "safe-password"))
+    asyncio.run(
+        bootstrap.ensure_fixed_login_role(connection, role_name, "safe-password")
+    )
     format_query, args = connection.fetchval_calls[0]
     assert "CREATE ROLE" in format_query
     for attribute in (
@@ -273,7 +283,9 @@ def test_unexpected_membership_fails_closed_before_alter():
         memberships={role_name: ["unexpected_admin_role"]},
     )
     with pytest.raises(bootstrap.BootstrapError) as exc:
-        asyncio.run(bootstrap.ensure_fixed_login_role(connection, role_name, "password"))
+        asyncio.run(
+            bootstrap.ensure_fixed_login_role(connection, role_name, "password")
+        )
     assert exc.value.code is bootstrap.FailureCode.ROLE_MEMBERSHIP_INVALID
     assert connection.fetchval_calls == []
     assert connection.executed == []
@@ -283,9 +295,7 @@ def test_role_names_are_fixed():
     connection = FakeConnection()
     with pytest.raises(bootstrap.BootstrapError):
         asyncio.run(
-            bootstrap.ensure_fixed_login_role(
-                connection, "attacker_role", "password"
-            )
+            bootstrap.ensure_fixed_login_role(connection, "attacker_role", "password")
         )
 
 
@@ -303,7 +313,9 @@ def test_privilege_matrix_has_required_separation():
 def test_default_privileges_are_exact_and_no_sequence_update():
     joined = "\n".join(bootstrap.MIGRATOR_DEFAULT_PRIVILEGE_STATEMENTS)
     assert "REVOKE ALL ON TABLES FROM nexa_api_runtime" in joined
-    assert "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexa_api_runtime" in joined
+    assert (
+        "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexa_api_runtime" in joined
+    )
     assert "REVOKE ALL ON SEQUENCES FROM nexa_api_runtime" in joined
     assert "GRANT USAGE ON SEQUENCES TO nexa_api_runtime" in joined
     assert "GRANT UPDATE ON SEQUENCES" not in joined
@@ -353,9 +365,7 @@ def test_migrator_default_privilege_phase_is_transactional():
 
 
 def test_exact_migration_head_allows_atomic_post_migration_grants():
-    connection = FakeConnection(
-        migration_heads=[bootstrap.EXPECTED_MIGRATION_HEAD]
-    )
+    connection = FakeConnection(migration_heads=[bootstrap.EXPECTED_MIGRATION_HEAD])
     asyncio.run(bootstrap.run_post_migration_phase(connection))
     assert connection.fetch_calls[0] == (bootstrap.MIGRATION_HEAD_SQL, ())
     assert connection.executed == list(bootstrap.POST_MIGRATION_STATEMENTS)
@@ -427,7 +437,7 @@ def test_post_migration_privilege_contract_is_narrow():
 def test_bootstrap_uses_transactions_and_second_connection_as_migrator(monkeypatch):
     master_payload = json.dumps(
         {
-            "username": bootstrap.MASTER_ROLE_NAME,
+            "username": "postgres",
             "password": "master-secret",
             "engine": "postgres",
             "host": "db.example.test",
@@ -450,6 +460,7 @@ def test_bootstrap_uses_transactions_and_second_connection_as_migrator(monkeypat
     monkeypatch.setenv("AWS_REGION", "ap-south-1")
     monkeypatch.setenv("DATABASE_ECHO_SQL", "false")
     monkeypatch.setenv("NEXA_DB_MASTER_SECRET_ID", "master")
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", "postgres")
     connections: list[tuple[str, FakeConnection]] = []
 
     async def fake_connect(credential):
@@ -461,7 +472,7 @@ def test_bootstrap_uses_transactions_and_second_connection_as_migrator(monkeypat
     pair = asyncio.run(bootstrap.bootstrap(client))
     assert pair.source == "reused"
     assert [name for name, _ in connections] == [
-        bootstrap.MASTER_ROLE_NAME,
+        "postgres",
         bootstrap.MIGRATOR_ROLE_NAME,
     ]
     assert connections[0][1].transaction_commits == 1
@@ -521,6 +532,8 @@ def test_task_template_has_no_plaintext_secret_or_ports():
     env = {item["name"]: item["value"] for item in container["environment"]}
     assert env["AWS_REGION"] == "ap-south-1"
     assert env["DATABASE_SSL_CA_PATH"] == "/app/deploy/ssl/aws-rds-ca-bundle.pem"
+    assert env["NEXA_DB_MASTER_SECRET_ID"] == "<RDS_MANAGED_MASTER_SECRET_ARN>"
+    assert env["NEXA_DB_MASTER_USERNAME"] == "<RDS_MASTER_USERNAME>"
     assert container["image"] == "<QUALIFIED_ECR_IMAGE_URI_BY_DIGEST>"
     serialized = json.dumps(task)
     assert "password" not in serialized.lower()
@@ -531,8 +544,7 @@ def test_ecs_task_trust_uses_supported_source_arn_and_retains_source_account():
     root = Path(__file__).resolve().parents[1]
     trust = json.loads(
         (
-            root
-            / "deploy/iam/pilot-database-bootstrap-role-trust.template.json"
+            root / "deploy/iam/pilot-database-bootstrap-role-trust.template.json"
         ).read_text()
     )
     statement = trust["Statement"][0]
@@ -548,8 +560,7 @@ def test_future_run_task_caller_is_exact_cluster_and_task_revision_scoped():
     root = Path(__file__).resolve().parents[1]
     policy = json.loads(
         (
-            root
-            / "deploy/iam/pilot-database-bootstrap-run-task-policy.template.json"
+            root / "deploy/iam/pilot-database-bootstrap-run-task-policy.template.json"
         ).read_text()
     )
     statement = policy["Statement"][0]
@@ -577,14 +588,12 @@ def test_iam_templates_are_narrowly_scoped():
     root = Path(__file__).resolve().parents[1]
     execution = json.loads(
         (
-            root
-            / "deploy/iam/pilot-database-bootstrap-execution-policy.template.json"
+            root / "deploy/iam/pilot-database-bootstrap-execution-policy.template.json"
         ).read_text()
     )
     task = json.loads(
         (
-            root
-            / "deploy/iam/pilot-database-bootstrap-task-policy.template.json"
+            root / "deploy/iam/pilot-database-bootstrap-task-policy.template.json"
         ).read_text()
     )
     exec_text = json.dumps(execution)
@@ -598,6 +607,165 @@ def test_iam_templates_are_narrowly_scoped():
     assert task["Statement"][0]["Resource"] == "<RDS_MANAGED_MASTER_SECRET_ARN>"
     resources = task["Statement"][1]["Resource"]
     assert resources == [
-        "arn:aws:secretsmanager:ap-south-1:654654144224:secret:nexa-care/pilot/db/runtime-*",
-        "arn:aws:secretsmanager:ap-south-1:654654144224:secret:nexa-care/pilot/db/migrator-*",
+        "<RUNTIME_DATABASE_SECRET_ARN>",
+        "<MIGRATOR_DATABASE_SECRET_ARN>",
     ]
+    assert not any("*" in r for r in resources)
+
+
+def test_master_secret_accepts_postgres(monkeypatch):
+    secret_payload = json.dumps(
+        {
+            "username": "postgres",
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", "postgres")
+    cred = bootstrap.parse_master_secret(secret_payload)
+    assert cred.username == "postgres"
+    assert cred.password == "strong-password-1234"
+    assert cred.host == "db.example.test"
+    assert cred.port == 5432
+    assert cred.dbname == bootstrap.DATABASE_NAME
+
+
+@pytest.mark.parametrize(
+    "custom_master_user",
+    ["nexacare_admin", "db_master", "pilot_admin_99", "super_user"],
+)
+def test_master_secret_accepts_other_valid_usernames(monkeypatch, custom_master_user):
+    secret_payload = json.dumps(
+        {
+            "username": custom_master_user,
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", custom_master_user)
+    cred = bootstrap.parse_master_secret(secret_payload)
+    assert cred.username == custom_master_user
+
+
+def test_master_secret_username_mismatch_fails_closed(monkeypatch):
+    secret_payload = json.dumps(
+        {
+            "username": "postgres",
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", "nexacare_admin")
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+
+def test_master_secret_missing_expected_username_fails_closed(monkeypatch):
+    secret_payload = json.dumps(
+        {
+            "username": "postgres",
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    monkeypatch.delenv("NEXA_DB_MASTER_USERNAME", raising=False)
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", "   ")
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+
+@pytest.mark.parametrize(
+    "invalid_username",
+    [
+        "",
+        "1starts_with_digit",
+        "has space",
+        "has-hyphen",
+        "user;DROP TABLE users;--",
+        "user'quote",
+        'user"quote',
+        "a" * 64,
+        "user\nnewline",
+        "user\x00null",
+    ],
+)
+def test_master_secret_invalid_username_syntax_fails_closed(
+    monkeypatch, invalid_username
+):
+    secret_payload = json.dumps(
+        {
+            "username": invalid_username,
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", invalid_username)
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+    valid_secret_payload = json.dumps(
+        {
+            "username": "postgres",
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", invalid_username)
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(valid_secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+
+def test_master_username_is_never_used_as_sql_identifier():
+    sql_constants = [
+        bootstrap.ROLE_STATE_SQL,
+        bootstrap.ROLE_MEMBERSHIP_SQL,
+        bootstrap.MIGRATION_HEAD_SQL,
+        *bootstrap.MASTER_GRANT_STATEMENTS,
+        *bootstrap.MIGRATOR_DEFAULT_PRIVILEGE_STATEMENTS,
+        *bootstrap.POST_MIGRATION_STATEMENTS,
+    ]
+    for sql in sql_constants:
+        assert "nexacare_admin" not in sql
+        assert "<RDS_MASTER_USERNAME>" not in sql
+        assert "{username}" not in sql
+        assert "%s" not in sql
+
+    assert bootstrap.FIXED_LOGIN_ROLES == {"nexa_migrator", "nexa_api_runtime"}
+
+
+def test_nexacare_admin_not_required_assumption():
+    assert not hasattr(bootstrap, "MASTER_ROLE_NAME")
+
+
+def test_fixed_role_names_remain_unchanged():
+    assert bootstrap.MIGRATOR_ROLE_NAME == "nexa_migrator"
+    assert bootstrap.RUNTIME_ROLE_NAME == "nexa_api_runtime"
+    assert bootstrap.FIXED_LOGIN_ROLES == frozenset(
+        {"nexa_migrator", "nexa_api_runtime"}
+    )

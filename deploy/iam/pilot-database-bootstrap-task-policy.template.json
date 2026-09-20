@@ -16,8 +16,8 @@
         "secretsmanager:PutSecretValue"
       ],
       "Resource": [
-        "arn:aws:secretsmanager:ap-south-1:654654144224:secret:nexa-care/pilot/db/runtime-*",
-        "arn:aws:secretsmanager:ap-south-1:654654144224:secret:nexa-care/pilot/db/migrator-*"
+        "<RUNTIME_DATABASE_SECRET_ARN>",
+        "<MIGRATOR_DATABASE_SECRET_ARN>"
       ]
     }
   ]
