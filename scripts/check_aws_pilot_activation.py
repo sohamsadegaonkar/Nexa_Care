@@ -80,6 +80,7 @@ EXPECTED_API_ENVIRONMENT = {
     "PATIENT_SOURCE_MALWARE_SCANNER": "clamd",
     "PATIENT_SOURCE_CLAMD_HOST": "127.0.0.1",
     "PATIENT_SOURCE_CLAMD_PORT": "3310",
+    "DATABASE_SSL_CA_PATH": "/app/deploy/ssl/aws-rds-ca-bundle.pem",
 }
 
 

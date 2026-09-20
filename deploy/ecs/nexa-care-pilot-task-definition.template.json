@@ -142,6 +142,10 @@
           "value": "false"
         },
         {
+          "name": "DATABASE_SSL_CA_PATH",
+          "value": "/app/deploy/ssl/aws-rds-ca-bundle.pem"
+        },
+        {
           "name": "AUDIT_OUTBOX_MAX_DEAD_LETTERS",
           "value": "0"
         },

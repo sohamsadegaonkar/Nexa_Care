@@ -113,6 +113,7 @@ def test_ecs_task_uses_private_digest_pinned_clamd_sidecar() -> None:
     assert env["PATIENT_SOURCE_CLAMD_PORT"] == "3310"
     assert env["PATIENT_SOURCE_CLAMD_MAX_BYTES"] == "10485760"
     assert env["PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS"] == "48"
+    assert env["DATABASE_SSL_CA_PATH"] == "/app/deploy/ssl/aws-rds-ca-bundle.pem"
 
     assert scanner["image"] == "<QUALIFIED_CLAMD_IMAGE_URI_BY_DIGEST>"
     assert scanner["essential"] is True
@@ -136,6 +137,10 @@ def test_runtime_contract_pins_preflight_and_protected_operations_surfaces() -> 
         "PATIENT_GRANT_REFERENCE_HMAC_SECRET",
         "OPERATIONS_AUTH_TOKEN",
     } <= runtime_keys
+    assert (
+        contract["fixedQualificationSettings"]["DATABASE_SSL_CA_PATH"]
+        == "/app/deploy/ssl/aws-rds-ca-bundle.pem"
+    )
     assert contract["startupPreflight"] == {
         "runsBeforeBackgroundWorkers": True,
         "requiresExactAlembicHead": True,

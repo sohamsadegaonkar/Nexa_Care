@@ -10,6 +10,7 @@ Invariants:
 
 from __future__ import annotations
 
+import json
 import ssl
 from pathlib import Path
 
@@ -151,3 +152,23 @@ def test_production_preflight_fails_closed_with_conflicting_tls_in_url() -> None
     env["DATABASE_URL"] = "postgresql+asyncpg://user:pass@db.example.test:5432/nexa?ssl=require"
     errors = validate_production_configuration(env)
     assert any("DATABASE_URL: conflicting TLS query parameters forbidden: ssl" in e for e in errors)
+
+
+def test_pilot_task_definition_template_contains_server_owned_ca_path() -> None:
+    task_template = PROJECT_ROOT / "deploy" / "ecs" / "nexa-care-pilot-task-definition.template.json"
+    task = json.loads(task_template.read_text(encoding="utf-8"))
+    api = next(c for c in task["containerDefinitions"] if c["name"] == "nexa-care-pilot-api")
+    env = {item["name"]: item["value"] for item in api["environment"]}
+    assert env.get("DATABASE_SSL_CA_PATH") == "/app/deploy/ssl/aws-rds-ca-bundle.pem"
+
+
+def test_pilot_runtime_contract_template_agrees_on_ca_path() -> None:
+    contract_template = PROJECT_ROOT / "deploy" / "ecs" / "pilot-runtime-contract.template.json"
+    contract = json.loads(contract_template.read_text(encoding="utf-8"))
+    settings = contract.get("fixedQualificationSettings", {})
+    assert settings.get("DATABASE_SSL_CA_PATH") == "/app/deploy/ssl/aws-rds-ca-bundle.pem"
+
+
+def test_activation_script_enforces_ca_path_in_api_environment() -> None:
+    from scripts.check_aws_pilot_activation import EXPECTED_API_ENVIRONMENT
+    assert EXPECTED_API_ENVIRONMENT.get("DATABASE_SSL_CA_PATH") == "/app/deploy/ssl/aws-rds-ca-bundle.pem"
