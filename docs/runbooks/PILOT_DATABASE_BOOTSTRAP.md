@@ -11,6 +11,12 @@ Status: repository preparation only. No AWS IAM, Secrets Manager, ECS, RDS, or P
 | `nexa_api_runtime` | API runtime identity | CONNECT + USAGE + application DML only; no schema CREATE |
 
 The bootstrap script never creates the database and never grants `rds_superuser`.
+Both fixed application roles are always created or normalized with `LOGIN`,
+`NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`, `NOINHERIT`, `NOREPLICATION`, and
+`NOBYPASSRLS`. Existing role state is inspected before alteration. If either
+fixed role is a member of any other PostgreSQL role, bootstrap fails closed with
+`BOOTSTRAP_ROLE_MEMBERSHIP_INVALID`; arbitrary memberships are never silently
+preserved or automatically revoked.
 
 ## Idempotency state machine
 
@@ -27,6 +33,14 @@ The script treats only an entirely version-empty container as EMPTY. Historical/
 
 If PostgreSQL mutation fails after both values are persisted, a retry enters state 2 and `ALTER ROLE` reconciles the DB roles to the already-persisted values.
 
+### Partial-secret recovery is a separate approval gate
+
+A partial state is intentionally not repaired by this program. If one DB role
+secret has `AWSCURRENT` and the other does not, operators must stop and obtain a
+separately authorized recovery procedure. This repository slice does not delete,
+overwrite, rotate, or otherwise destructively repair partial Secrets Manager
+state.
+
 ## TLS and logging
 
 The one-off task uses the same committed CA bundle and shared database TLS function as API/Alembic:
@@ -41,24 +55,47 @@ The shared context must have `ssl.CERT_REQUIRED` and `check_hostname=True`. Conn
 2. Resolve the runtime/migrator Secret Manager state.
 3. Persist/reuse the two role credentials.
 4. Connect as `nexacare_admin` using verify-full TLS.
-5. Create or ALTER exactly `nexa_migrator` and `nexa_api_runtime`.
-6. Revoke PUBLIC database/schema rights and establish the explicit grant matrix.
-7. Connect a second time as `nexa_migrator` using the persisted migrator credential.
-8. As `nexa_migrator`, set default table DML and sequence USAGE for `nexa_api_runtime`.
+5. In one explicit asyncpg transaction, inspect membership/state, create or normalize exactly `nexa_migrator` and `nexa_api_runtime`, revoke PUBLIC database/schema rights, and establish the exact master grant matrix. Any failure rolls back that whole master phase.
+6. Connect a second time as `nexa_migrator` using the persisted migrator credential.
+7. In one explicit asyncpg transaction, reset the migrator-owned defaults for the runtime role and grant only table `SELECT, INSERT, UPDATE, DELETE` plus sequence `USAGE`. Any failure rolls back that whole default-privilege phase.
 
-Role creation uses fixed identifiers plus parameterized `SELECT format(... %L ..., $1)` to quote passwords safely. Returned DDL is executed but never emitted to logs.
+Role creation/alteration uses fixed identifiers plus parameterized `SELECT format(... %L ..., $1)` to quote passwords safely. Returned DDL is executed but never emitted to logs.
 
 ## Future release sequence — not executed by this slice
 
 1. Run the bootstrap task.
 2. Run `scripts/run_pilot_migrations.py` as `nexa_migrator` and require exact head `20260919_medication_catalog`.
 3. Run `python scripts/bootstrap_pilot_database.py post-migration` using the same immutable image/task role.
-4. Post-migration reconciliation grants DML on existing public tables, USAGE on existing sequences, explicitly removes sequence UPDATE, and hardens `public.alembic_version` to runtime SELECT-only.
-5. Later live verification must prove runtime SELECT on `alembic_version` succeeds; INSERT/UPDATE/DELETE/TRUNCATE and runtime DDL fail.
+4. `post-migration` connects as `nexa_migrator` over verify-full TLS and begins one explicit transaction. Before any privilege mutation it requires exactly one row from `public.alembic_version`, equal to `20260919_medication_catalog`. Missing table/query failure, zero rows, multiple rows, or a different revision fails closed as `BOOTSTRAP_MIGRATION_HEAD_MISMATCH`.
+5. Only after the exact-head gate passes, the same transaction resets existing runtime table/sequence privileges to table `SELECT, INSERT, UPDATE, DELETE` and sequence `USAGE`, then hardens `public.alembic_version` to runtime SELECT-only and preserves `REVOKE CREATE ON SCHEMA public`. Any failure rolls back the entire post-migration privilege phase.
+6. Later live verification must prove runtime SELECT on `alembic_version` succeeds; INSERT/UPDATE/DELETE/TRUNCATE and runtime DDL fail.
+
+The API runtime role is never granted `TRUNCATE`, `REFERENCES`, `TRIGGER`,
+`CREATE`, `ALTER`, or `DROP`; sequence `UPDATE` is never granted.
 
 ## IAM templates
 
-The trust template is restricted to `ecs-tasks.amazonaws.com`, account `654654144224`, region `ap-south-1`, and tasks in cluster `nexa-care-pilot`.
+### ECS task-role trust boundary
+
+The task-role trust principal remains `ecs-tasks.amazonaws.com` and retains
+`aws:SourceAccount=654654144224`. The supported ECS confused-deputy SourceArn
+form is deliberately:
+
+`arn:aws:ecs:ap-south-1:654654144224:*`
+
+AWS ECS task-role trust does not currently support using `aws:SourceArn` to
+constrain assumption to one ECS cluster, so the previous cluster-shaped task
+ARN is not used. The required cluster boundary is instead applied to the
+identity that is authorized to call `ecs:RunTask`.
+
+`deploy/iam/pilot-database-bootstrap-run-task-policy.template.json` permits
+`ecs:RunTask` only for the exact cluster ARN
+`arn:aws:ecs:ap-south-1:654654144224:cluster/nexa-care-pilot` and an exact rendered revision of task-definition family `nexa-care-pilot-database-bootstrap`.
+The revision placeholder must be replaced with one approved numeric revision;
+it must not be widened to `*`. Any separately required `iam:PassRole` authority
+must remain restricted to the exact bootstrap execution/task roles.
+
+### Execution and task roles
 
 The execution policy permits only ECR authorization, pull from the exact API repository placeholder to be resolved by the account owner, and writes to the dedicated bootstrap log group. It has no Secrets Manager permissions.
 
