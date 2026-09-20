@@ -30,19 +30,57 @@ FIXED_LOGIN_ROLES = frozenset({MIGRATOR_ROLE_NAME, RUNTIME_ROLE_NAME})
 RUNTIME_SECRET_ID = "nexa-care/pilot/db/runtime"
 MIGRATOR_SECRET_ID = "nexa-care/pilot/db/migrator"
 DATABASE_SSL_CA_PATH = Path("/app/deploy/ssl/aws-rds-ca-bundle.pem")
+EXPECTED_MIGRATION_HEAD = "20260919_medication_catalog"
 
 SECRET_KEYS = frozenset(
     {"username", "password", "engine", "host", "port", "dbname", "DATABASE_URL"}
 )
-ROLE_EXISTS_SQL = "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)"
+ROLE_STATE_SQL = """
+SELECT
+    rolname,
+    rolcanlogin,
+    rolsuper,
+    rolcreatedb,
+    rolcreaterole,
+    rolinherit,
+    rolreplication,
+    rolbypassrls
+FROM pg_roles
+WHERE rolname = $1
+""".strip()
+ROLE_MEMBERSHIP_SQL = """
+SELECT parent.rolname
+FROM pg_auth_members AS membership
+JOIN pg_roles AS parent ON parent.oid = membership.roleid
+JOIN pg_roles AS member ON member.oid = membership.member
+WHERE member.rolname = $1
+ORDER BY parent.rolname
+""".strip()
+MIGRATION_HEAD_SQL = "SELECT version_num FROM public.alembic_version"
 ROLE_PASSWORD_DDL_SQL: dict[str, dict[bool, str]] = {
     MIGRATOR_ROLE_NAME: {
-        False: "SELECT format('CREATE ROLE nexa_migrator LOGIN PASSWORD %L', $1)",
-        True: "SELECT format('ALTER ROLE nexa_migrator WITH LOGIN PASSWORD %L', $1)",
+        False: (
+            "SELECT format('CREATE ROLE nexa_migrator WITH LOGIN NOSUPERUSER "
+            "NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS "
+            "PASSWORD %L', $1)"
+        ),
+        True: (
+            "SELECT format('ALTER ROLE nexa_migrator WITH LOGIN NOSUPERUSER "
+            "NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS "
+            "PASSWORD %L', $1)"
+        ),
     },
     RUNTIME_ROLE_NAME: {
-        False: "SELECT format('CREATE ROLE nexa_api_runtime LOGIN PASSWORD %L', $1)",
-        True: "SELECT format('ALTER ROLE nexa_api_runtime WITH LOGIN PASSWORD %L', $1)",
+        False: (
+            "SELECT format('CREATE ROLE nexa_api_runtime WITH LOGIN NOSUPERUSER "
+            "NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS "
+            "PASSWORD %L', $1)"
+        ),
+        True: (
+            "SELECT format('ALTER ROLE nexa_api_runtime WITH LOGIN NOSUPERUSER "
+            "NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS "
+            "PASSWORD %L', $1)"
+        ),
     },
 }
 
@@ -58,16 +96,23 @@ MASTER_GRANT_STATEMENTS = (
 
 MIGRATOR_DEFAULT_PRIVILEGE_STATEMENTS = (
     "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+    "REVOKE ALL ON TABLES FROM nexa_api_runtime",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
     "GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO nexa_api_runtime",
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
+    "REVOKE ALL ON SEQUENCES FROM nexa_api_runtime",
     "ALTER DEFAULT PRIVILEGES IN SCHEMA public "
     "GRANT USAGE ON SEQUENCES TO nexa_api_runtime",
 )
 
 POST_MIGRATION_STATEMENTS = (
-    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO nexa_api_runtime",
+    "REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public FROM nexa_api_runtime",
+    "GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public "
+    "TO nexa_api_runtime",
+    "REVOKE ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public FROM nexa_api_runtime",
     "GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO nexa_api_runtime",
-    "REVOKE UPDATE ON ALL SEQUENCES IN SCHEMA public FROM nexa_api_runtime",
-    "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.alembic_version FROM nexa_api_runtime",
+    "REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON TABLE public.alembic_version "
+    "FROM nexa_api_runtime",
     "GRANT SELECT ON TABLE public.alembic_version TO nexa_api_runtime",
     "REVOKE CREATE ON SCHEMA public FROM nexa_api_runtime",
 )
@@ -84,7 +129,9 @@ class FailureCode(str, Enum):
     TLS_CONTEXT_FAILED = "BOOTSTRAP_TLS_CONTEXT_FAILED"
     DB_CONNECT_FAILED = "BOOTSTRAP_DB_CONNECT_FAILED"
     DB_MUTATION_FAILED = "BOOTSTRAP_DB_MUTATION_FAILED"
+    ROLE_MEMBERSHIP_INVALID = "BOOTSTRAP_ROLE_MEMBERSHIP_INVALID"
     DEFAULT_PRIVILEGES_FAILED = "BOOTSTRAP_DEFAULT_PRIVILEGES_FAILED"
+    MIGRATION_HEAD_MISMATCH = "BOOTSTRAP_MIGRATION_HEAD_MISMATCH"
     POST_MIGRATION_FAILED = "BOOTSTRAP_POST_MIGRATION_FAILED"
 
 
@@ -392,15 +439,31 @@ async def connect_database(credential: DatabaseCredential) -> Any:
         raise BootstrapError(FailureCode.DB_CONNECT_FAILED) from exc
 
 
-async def ensure_fixed_login_role(connection: Any, role_name: str, password: str) -> None:
+async def inspect_existing_fixed_role(connection: Any, role_name: str) -> bool:
     if role_name not in FIXED_LOGIN_ROLES:
         raise BootstrapError(FailureCode.DB_MUTATION_FAILED)
     try:
-        exists = bool(await connection.fetchval(ROLE_EXISTS_SQL, role_name))
+        state = await connection.fetchrow(ROLE_STATE_SQL, role_name)
+        if state is None:
+            return False
+        if state["rolname"] != role_name:
+            raise BootstrapError(FailureCode.DB_MUTATION_FAILED)
+        memberships = await connection.fetch(ROLE_MEMBERSHIP_SQL, role_name)
+    except BootstrapError:
+        raise
+    except Exception as exc:
+        raise BootstrapError(FailureCode.DB_MUTATION_FAILED) from exc
+    if memberships:
+        raise BootstrapError(FailureCode.ROLE_MEMBERSHIP_INVALID)
+    return True
+
+
+async def ensure_fixed_login_role(connection: Any, role_name: str, password: str) -> None:
+    exists = await inspect_existing_fixed_role(connection, role_name)
+    try:
         ddl = await connection.fetchval(ROLE_PASSWORD_DDL_SQL[role_name][exists], password)
         if not isinstance(ddl, str) or not ddl:
             raise BootstrapError(FailureCode.DB_MUTATION_FAILED)
-        # Never log or return this statement: it contains the safely quoted password literal.
         await connection.execute(ddl)
     except BootstrapError:
         raise
@@ -409,25 +472,66 @@ async def ensure_fixed_login_role(connection: Any, role_name: str, password: str
 
 
 async def apply_master_grants(connection: Any) -> None:
+    for statement in MASTER_GRANT_STATEMENTS:
+        await connection.execute(statement)
+
+
+async def apply_migrator_default_privileges(connection: Any) -> None:
+    for statement in MIGRATOR_DEFAULT_PRIVILEGE_STATEMENTS:
+        await connection.execute(statement)
+
+
+async def verify_exact_migration_head(connection: Any) -> None:
     try:
-        for statement in MASTER_GRANT_STATEMENTS:
-            await connection.execute(statement)
+        rows = await connection.fetch(MIGRATION_HEAD_SQL)
+    except Exception as exc:
+        raise BootstrapError(FailureCode.MIGRATION_HEAD_MISMATCH) from exc
+    try:
+        revisions = [row["version_num"] for row in rows]
+    except (KeyError, TypeError) as exc:
+        raise BootstrapError(FailureCode.MIGRATION_HEAD_MISMATCH) from exc
+    if revisions != [EXPECTED_MIGRATION_HEAD]:
+        raise BootstrapError(FailureCode.MIGRATION_HEAD_MISMATCH)
+
+
+async def apply_post_migration_grants(connection: Any) -> None:
+    for statement in POST_MIGRATION_STATEMENTS:
+        await connection.execute(statement)
+
+
+async def run_master_phase(connection: Any, pair: CredentialPair) -> None:
+    try:
+        async with connection.transaction():
+            await ensure_fixed_login_role(
+                connection, MIGRATOR_ROLE_NAME, pair.migrator.password
+            )
+            await ensure_fixed_login_role(
+                connection, RUNTIME_ROLE_NAME, pair.runtime.password
+            )
+            await apply_master_grants(connection)
+    except BootstrapError:
+        raise
     except Exception as exc:
         raise BootstrapError(FailureCode.DB_MUTATION_FAILED) from exc
 
 
-async def apply_migrator_default_privileges(connection: Any) -> None:
+async def run_migrator_default_privilege_phase(connection: Any) -> None:
     try:
-        for statement in MIGRATOR_DEFAULT_PRIVILEGE_STATEMENTS:
-            await connection.execute(statement)
+        async with connection.transaction():
+            await apply_migrator_default_privileges(connection)
+    except BootstrapError:
+        raise
     except Exception as exc:
         raise BootstrapError(FailureCode.DEFAULT_PRIVILEGES_FAILED) from exc
 
 
-async def apply_post_migration_grants(connection: Any) -> None:
+async def run_post_migration_phase(connection: Any) -> None:
     try:
-        for statement in POST_MIGRATION_STATEMENTS:
-            await connection.execute(statement)
+        async with connection.transaction():
+            await verify_exact_migration_head(connection)
+            await run_post_migration_phase(connection)
+    except BootstrapError:
+        raise
     except Exception as exc:
         raise BootstrapError(FailureCode.POST_MIGRATION_FAILED) from exc
 
@@ -449,19 +553,13 @@ async def bootstrap(client: SecretsClient) -> CredentialPair:
 
     master_connection = await connect_database(master)
     try:
-        await ensure_fixed_login_role(
-            master_connection, MIGRATOR_ROLE_NAME, pair.migrator.password
-        )
-        await ensure_fixed_login_role(
-            master_connection, RUNTIME_ROLE_NAME, pair.runtime.password
-        )
-        await apply_master_grants(master_connection)
+        await run_master_phase(master_connection, pair)
     finally:
         await master_connection.close()
 
     migrator_connection = await connect_database(pair.migrator)
     try:
-        await apply_migrator_default_privileges(migrator_connection)
+        await run_migrator_default_privilege_phase(migrator_connection)
     finally:
         await migrator_connection.close()
     return pair
