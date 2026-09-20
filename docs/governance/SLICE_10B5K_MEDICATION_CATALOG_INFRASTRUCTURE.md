@@ -104,7 +104,7 @@ No KMS key is created by this slice.
 
 Production-like runtime requires `MEDICATION_CATALOG_SIGNING_KEY_ID`. Startup preflight fails closed unless the configured KMS key is enabled, SIGN_VERIFY, ECC_NIST_P256 and supports ECDSA_SHA_256.
 
-Future runtime IAM is limited to the exact catalog key and only required operations such as `kms:Sign`, `kms:Verify`, and if needed `kms:GetPublicKey`. Never `kms:*`, never unrelated patient keys.
+Future runtime IAM is limited to the exact catalog key and only required operations such as `kms:DescribeKey`, `kms:Sign`, and `kms:Verify`. Never `kms:*`, never unrelated patient keys. Do not add `kms:GetPublicKey` unless actual application or runtime requirements justify it.
 
 This slice performs no live AWS mutation. `PRODUCTION SCANNER DEPLOYMENT NOT_RUN` and `LIVE AWS PILOT NOT_RUN` remain unchanged.
 
