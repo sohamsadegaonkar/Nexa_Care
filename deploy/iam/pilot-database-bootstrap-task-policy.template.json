@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadRdsManagedMasterSecret",
+      "Effect": "Allow",
+      "Action": "secretsmanager:GetSecretValue",
+      "Resource": "<RDS_MANAGED_MASTER_SECRET_ARN>"
+    },
+    {
+      "Sid": "ManagePilotDatabaseRoleSecrets",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:PutSecretValue"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:ap-south-1:654654144224:secret:nexa-care/pilot/db/runtime-*",
+        "arn:aws:secretsmanager:ap-south-1:654654144224:secret:nexa-care/pilot/db/migrator-*"
+      ]
+    }
+  ]
+}

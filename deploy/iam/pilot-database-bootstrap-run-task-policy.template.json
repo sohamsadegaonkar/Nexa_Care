@@ -1,0 +1,16 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RunExactPilotDatabaseBootstrapTask",
+      "Effect": "Allow",
+      "Action": "ecs:RunTask",
+      "Resource": "arn:aws:ecs:ap-south-1:654654144224:task-definition/nexa-care-pilot-database-bootstrap:<BOOTSTRAP_TASK_DEFINITION_REVISION>",
+      "Condition": {
+        "ArnEquals": {
+          "ecs:cluster": "arn:aws:ecs:ap-south-1:654654144224:cluster/nexa-care-pilot"
+        }
+      }
+    }
+  ]
+}
