@@ -704,7 +704,6 @@ def test_master_secret_missing_expected_username_fails_closed(monkeypatch):
         'user"quote',
         "a" * 64,
         "user\nnewline",
-        "user\x00null",
     ],
 )
 def test_master_secret_invalid_username_syntax_fails_closed(
@@ -738,6 +737,39 @@ def test_master_secret_invalid_username_syntax_fails_closed(
     monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", invalid_username)
     with pytest.raises(bootstrap.BootstrapError) as exc:
         bootstrap.parse_master_secret(valid_secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+
+def test_master_secret_embedded_null_byte_fails_closed(monkeypatch):
+    monkeypatch.setenv("NEXA_DB_MASTER_USERNAME", "postgres")
+    secret_payload = json.dumps(
+        {
+            "username": "user\u0000null",
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(secret_payload)
+    assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
+
+    valid_secret_payload = json.dumps(
+        {
+            "username": "postgres",
+            "password": "strong-password-1234",
+            "engine": "postgres",
+            "host": "db.example.test",
+            "port": 5432,
+            "dbname": bootstrap.DATABASE_NAME,
+        }
+    )
+    with pytest.raises(bootstrap.BootstrapError) as exc:
+        bootstrap.parse_master_secret(
+            valid_secret_payload, expected_username="user\x00null"
+        )
     assert exc.value.code is bootstrap.FailureCode.MASTER_SECRET_INVALID
 
 
