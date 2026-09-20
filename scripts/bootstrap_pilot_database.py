@@ -529,7 +529,7 @@ async def run_post_migration_phase(connection: Any) -> None:
     try:
         async with connection.transaction():
             await verify_exact_migration_head(connection)
-            await run_post_migration_phase(connection)
+            await apply_post_migration_grants(connection)
     except BootstrapError:
         raise
     except Exception as exc:
@@ -578,7 +578,7 @@ async def post_migration(client: SecretsClient) -> None:
     )
     connection = await connect_database(migrator)
     try:
-        await apply_post_migration_grants(connection)
+        await run_post_migration_phase(connection)
     finally:
         await connection.close()
 
