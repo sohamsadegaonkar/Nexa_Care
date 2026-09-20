@@ -70,22 +70,6 @@ jobs:
           --health-timeout 2s
           --health-retries 10
 
-      clamd:
-        image: clamav/clamav:1.4.6-debian@sha256:2463487b937071421c0ddadac6616111bedba45b9bd9312bbb4591b57450f8f4
-        env:
-          CLAMAV_NO_CLAMD: "false"
-          CLAMAV_NO_FRESHCLAMD: "true"
-          CLAMAV_NO_MILTERD: "true"
-          CLAMD_STARTUP_TIMEOUT: "300"
-        ports:
-          - 3310:3310
-        options: >-
-          --health-cmd clamdcheck.sh
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 30
-          --health-start-period 30s
-
     env:
       ENVIRONMENT: test
       DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_d6
@@ -109,6 +93,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Build qualified non-base scanner image
+        run: |
+          docker build \
+            --tag local/patient-source-clamd:qualified \
+            --file scanner_integration/Dockerfile .
+
+      - name: Record scanner build evidence
+        run: |
+          echo "=== Base Image Digest ==="
+          echo "clamav/clamav:1.4.6-debian@sha256:2463487b937071421c0ddadac6616111bedba45b9bd9312bbb4591b57450f8f4"
+          echo "=== Derived Image Digest ==="
+          docker inspect --format='{{index .Id}}' local/patient-source-clamd:qualified
+          echo "=== Baked ClamAV Version and Signatures ==="
+          docker run --rm local/patient-source-clamd:qualified clamdscan --version
+
+      - name: Start qualified clamd scanner container
+        run: |
+          docker run -d \
+            --name patient-source-clamd \
+            -p 3310:3310 \
+            -e CLAMAV_NO_CLAMD=false \
+            -e CLAMAV_NO_FRESHCLAMD=true \
+            -e CLAMAV_NO_MILTERD=true \
+            -e CLAMD_STARTUP_TIMEOUT=300 \
+            local/patient-source-clamd:qualified
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -127,21 +137,42 @@ jobs:
         run: |
           python - <<'PY'
           import asyncio
+          import time
           from app.security.patient_source_malware_scanner import (
               ClamdPatientSourceMalwareScanner,
               get_patient_source_malware_scanner_config,
           )
-          async def main():
+
+          MAX_WAIT_SECONDS = 120
+          POLL_INTERVAL_SECONDS = 5
+
+          async def wait_for_readiness() -> None:
               config = get_patient_source_malware_scanner_config()
               scanner = ClamdPatientSourceMalwareScanner(config)
-              if not await scanner.ready():
-                  raise SystemExit("real clamd readiness failed")
-              print("REAL_CLAMD_READINESS=PASS")
-          asyncio.run(main())
+              start_time = time.monotonic()
+
+              while time.monotonic() - start_time < MAX_WAIT_SECONDS:
+                  try:
+                      if await scanner.ready():
+                          print("REAL_CLAMD_READINESS=PASS")
+                          return
+                  except Exception as exc:
+                      print(f"Waiting for clamd readiness ({type(exc).__name__})...")
+                  await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+              raise SystemExit("real clamd readiness failed: timeout waiting for fresh signatures")
+
+          asyncio.run(wait_for_readiness())
           PY
 
       - name: Run real scanner-backed patient qualification
         run: python -m pytest scanner_integration/ -q --tb=short
+
+      - name: Stop scanner container
+        if: always()
+        run: |
+          docker stop patient-source-clamd || true
+          docker rm patient-source-clamd || true
 
       - name: Qualification complete
         run: echo "REAL_CLAMD_PATIENT_SOURCE_QUALIFICATION=PASS"
