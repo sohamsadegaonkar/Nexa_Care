@@ -1,0 +1,32 @@
+{
+  "family": "nexa-care-pilot-database-bootstrap",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "512",
+  "memory": "1024",
+  "executionRoleArn": "<PILOT_DB_BOOTSTRAP_EXECUTION_ROLE_ARN>",
+  "taskRoleArn": "<PILOT_DB_BOOTSTRAP_TASK_ROLE_ARN>",
+  "containerDefinitions": [
+    {
+      "name": "pilot-database-bootstrap",
+      "image": "<QUALIFIED_ECR_IMAGE_URI_BY_DIGEST>",
+      "essential": true,
+      "command": ["python", "scripts/bootstrap_pilot_database.py", "bootstrap"],
+      "environment": [
+        {"name": "ENVIRONMENT", "value": "pilot"},
+        {"name": "AWS_REGION", "value": "ap-south-1"},
+        {"name": "DATABASE_ECHO_SQL", "value": "false"},
+        {"name": "DATABASE_SSL_CA_PATH", "value": "/app/deploy/ssl/aws-rds-ca-bundle.pem"},
+        {"name": "NEXA_DB_MASTER_SECRET_ID", "value": "<RDS_MANAGED_MASTER_SECRET_ARN>"}
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "<PILOT_DB_BOOTSTRAP_LOG_GROUP>",
+          "awslogs-region": "ap-south-1",
+          "awslogs-stream-prefix": "db-bootstrap"
+        }
+      }
+    }
+  ]
+}
