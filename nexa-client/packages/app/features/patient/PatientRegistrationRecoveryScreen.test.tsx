@@ -300,7 +300,13 @@ describe('patient registration account recovery', () => {
     )
 
     expect(await screen.findByText('RRC-TEST123456789012345678')).toBeVisible()
+    await waitFor(() =>
+      expect(getPatientRegistrationRecoveryReviewStatus).toHaveBeenCalledWith(
+        'RRC-TEST123456789012345678'
+      )
+    )
 
+    vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockClear()
     vi.mocked(getPatientRegistrationRecoveryReviewStatus).mockRejectedValueOnce(
       new Error('Temporary timeout')
     )
@@ -310,6 +316,9 @@ describe('patient registration account recovery', () => {
 
     expect(await screen.findByText('Temporary timeout')).toBeVisible()
     expect(screen.getByText('RRC-TEST123456789012345678')).toBeVisible()
+    expect(getPatientRegistrationRecoveryReviewStatus).toHaveBeenCalledWith(
+      'RRC-TEST123456789012345678'
+    )
   })
 
   it('routes an account with historical device authority into the separate device recovery flow', async () => {
