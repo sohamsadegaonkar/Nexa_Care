@@ -8,7 +8,7 @@
       "Condition": {
         "StringEquals": {"aws:SourceAccount": "654654144224"},
         "ArnLike": {
-          "aws:SourceArn": "arn:aws:ecs:ap-south-1:654654144224:task/nexa-care-pilot/*"
+          "aws:SourceArn": "arn:aws:ecs:ap-south-1:654654144224:*"
         }
       }
     }
