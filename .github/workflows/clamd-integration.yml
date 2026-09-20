@@ -74,9 +74,10 @@ jobs:
         image: clamav/clamav:1.4.6-debian@sha256:2463487b937071421c0ddadac6616111bedba45b9bd9312bbb4591b57450f8f4
         env:
           CLAMAV_NO_CLAMD: "false"
-          CLAMAV_NO_FRESHCLAMD: "true"
+          CLAMAV_NO_FRESHCLAMD: "false"
           CLAMAV_NO_MILTERD: "true"
           CLAMD_STARTUP_TIMEOUT: "300"
+          FRESHCLAM_CHECKS: "24"
         ports:
           - 3310:3310
         options: >-
@@ -127,17 +128,32 @@ jobs:
         run: |
           python - <<'PY'
           import asyncio
+          import time
           from app.security.patient_source_malware_scanner import (
               ClamdPatientSourceMalwareScanner,
               get_patient_source_malware_scanner_config,
           )
-          async def main():
+
+          MAX_WAIT_SECONDS = 180
+          POLL_INTERVAL_SECONDS = 5
+
+          async def wait_for_readiness() -> None:
               config = get_patient_source_malware_scanner_config()
               scanner = ClamdPatientSourceMalwareScanner(config)
-              if not await scanner.ready():
-                  raise SystemExit("real clamd readiness failed")
-              print("REAL_CLAMD_READINESS=PASS")
-          asyncio.run(main())
+              start_time = time.monotonic()
+
+              while time.monotonic() - start_time < MAX_WAIT_SECONDS:
+                  try:
+                      if await scanner.ready():
+                          print("REAL_CLAMD_READINESS=PASS")
+                          return
+                  except Exception as exc:
+                      print(f"Waiting for clamd readiness ({type(exc).__name__})...")
+                  await asyncio.sleep(POLL_INTERVAL_SECONDS)
+
+              raise SystemExit("real clamd readiness failed: timeout waiting for fresh signatures")
+
+          asyncio.run(wait_for_readiness())
           PY
 
       - name: Run real scanner-backed patient qualification
