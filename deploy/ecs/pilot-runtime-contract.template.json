@@ -61,6 +61,7 @@
     "PUSH_STATUS_TRANSPORT": "poll",
     "AUTO_COMMIT": "false",
     "DATABASE_ECHO_SQL": "false",
+    "DATABASE_SSL_CA_PATH": "/app/deploy/ssl/aws-rds-ca-bundle.pem",
     "AUDIT_OUTBOX_MAX_DEAD_LETTERS": "0",
     "AUDIT_OUTBOX_MAX_EXPIRED_LEASES": "0",
     "AUDIT_OUTBOX_MAX_PENDING_AGE_SECONDS": "300",

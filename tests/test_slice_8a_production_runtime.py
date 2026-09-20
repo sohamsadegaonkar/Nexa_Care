@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+from pathlib import Path
 
 import pytest
 from unittest.mock import AsyncMock
@@ -17,6 +18,9 @@ from app.core.production_runtime import (
     verify_redis_runtime,
 )
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CA_BUNDLE_PATH = str(PROJECT_ROOT / "deploy" / "ssl" / "aws-rds-ca-bundle.pem")
+
 
 def _key(byte: bytes = b"k") -> str:
     return base64.urlsafe_b64encode(byte * 32).decode("ascii")
@@ -28,6 +32,7 @@ def valid_production_environment() -> dict[str, str]:
         "SUPABASE_URL": "https://synthetic.supabase.example.test",
         "SUPABASE_KEY": "synthetic-supabase-service-key",
         "DATABASE_URL": "postgresql+asyncpg://user:pass@db.example.test:5432/nexa",
+        "DATABASE_SSL_CA_PATH": CA_BUNDLE_PATH,
         "UPSTASH_REDIS_URL": "rediss://user:pass@redis.example.test:6379/0",
         "HANDSHAKE_PEPPER_SECRET": "h" * 48,
         "MFA_ENCRYPTION_KEY": _key(b"m"),
@@ -92,6 +97,13 @@ def test_valid_production_configuration_is_accepted() -> None:
             "PATIENT_SOURCE_CLAMD_HOST",
             "scanner.example.test",
             "PATIENT_SOURCE_MALWARE_SCANNER",
+        ),
+        ("DATABASE_SSL_CA_PATH", "", "DATABASE_SSL_CA_PATH"),
+        ("DATABASE_SSL_CA_PATH", "nonexistent/ca.pem", "DATABASE_SSL_CA_PATH"),
+        (
+            "DATABASE_URL",
+            "postgresql+asyncpg://user:pass@db.example.test:5432/nexa?ssl=require",
+            "DATABASE_URL",
         ),
     ],
 )

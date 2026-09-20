@@ -12,10 +12,11 @@ import base64
 import ipaddress
 import os
 import re
+import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
@@ -222,6 +223,26 @@ def validate_production_configuration(
             errors.append("DATABASE_URL: postgresql+asyncpg URL required")
         if _is_loopback_host(database_host):
             errors.append("DATABASE_URL: loopback host forbidden")
+        if valid_database and parsed.query:
+            query_params = parse_qs(parsed.query)
+            conflicting_keys = {"ssl", "sslmode", "sslrootcert", "sslcert", "sslkey"} & set(query_params.keys())
+            if conflicting_keys:
+                errors.append(
+                    f"DATABASE_URL: conflicting TLS query parameters forbidden: {', '.join(sorted(conflicting_keys))}"
+                )
+
+    ca_raw = _value(environment, "DATABASE_SSL_CA_PATH")
+    if not ca_raw:
+        errors.append("DATABASE_SSL_CA_PATH: required")
+    else:
+        ca_path = Path(ca_raw).expanduser().resolve()
+        if not ca_path.is_file():
+            errors.append("DATABASE_SSL_CA_PATH: file not found")
+        else:
+            try:
+                ssl.create_default_context(cafile=str(ca_path))
+            except (ssl.SSLError, OSError):
+                errors.append("DATABASE_SSL_CA_PATH: invalid certificates")
 
     redis_url = _value(environment, "UPSTASH_REDIS_URL")
     if not redis_url:
