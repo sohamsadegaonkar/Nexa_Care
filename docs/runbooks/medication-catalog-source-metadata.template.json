@@ -1,0 +1,11 @@
+{
+  "schema": "nexa-medication-catalog-source-metadata/v1",
+  "terminology_authority": "NRCES",
+  "package_name": "<OFFICIAL_PACKAGE_NAME>",
+  "package_version": "<EXACT_TERMINOLOGY_RELEASE_VERSION>",
+  "package_release_date": "<YYYY-MM-DD>",
+  "package_sha256": "<64_LOWERCASE_HEX_SHA256_OF_LOCAL_LICENSED_PACKAGE>",
+  "official_source_reference": "<OFFICIAL_NRCES_OR_MLDS_RELEASE_REFERENCE>",
+  "licence_governance_reference": "<OPAQUE_INTERNAL_LICENCE_APPROVAL_REFERENCE>",
+  "checked_at": "<OFFSET_AWARE_ISO8601_TIMESTAMP>"
+}
