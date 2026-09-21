@@ -6,7 +6,7 @@ Status: repository preparation only. No AWS IAM, Secrets Manager, ECS, RDS, or P
 
 | Principal | Purpose | Authority |
 | --- | --- | --- |
-| `nexacare_admin` | RDS-managed master/bootstrap identity | create/alter the two fixed login roles and establish database/schema grants |
+| RDS-managed master/bootstrap identity | Privileged bootstrap connection identity (`NEXA_DB_MASTER_USERNAME`, e.g. `postgres`) | create/alter the two fixed login roles and establish database/schema grants |
 | `nexa_migrator` | schema migration identity | CONNECT + CREATE on `nexacare_pilot`, USAGE + CREATE on `public`; owns default runtime DML privileges |
 | `nexa_api_runtime` | API runtime identity | CONNECT + USAGE + application DML only; no schema CREATE |
 
@@ -51,10 +51,10 @@ The shared context must have `ssl.CERT_REQUIRED` and `check_hostname=True`. Conn
 
 ## Bootstrap transaction sequence
 
-1. Read the RDS-managed `nexacare_admin` secret through the task role.
+1. Read the RDS-managed master secret through the task role and validate that its username matches the deployment expectation in `NEXA_DB_MASTER_USERNAME`.
 2. Resolve the runtime/migrator Secret Manager state.
 3. Persist/reuse the two role credentials.
-4. Connect as `nexacare_admin` using verify-full TLS.
+4. Connect as the validated RDS-managed master/bootstrap identity using verify-full TLS.
 5. In one explicit asyncpg transaction, inspect membership/state, create or normalize exactly `nexa_migrator` and `nexa_api_runtime`, revoke PUBLIC database/schema rights, and establish the exact master grant matrix. Any failure rolls back that whole master phase.
 6. Connect a second time as `nexa_migrator` using the persisted migrator credential.
 7. In one explicit asyncpg transaction, reset the migrator-owned defaults for the runtime role and grant only table `SELECT, INSERT, UPDATE, DELETE` plus sequence `USAGE`. Any failure rolls back that whole default-privilege phase.
@@ -99,10 +99,10 @@ must remain restricted to the exact bootstrap execution/task roles.
 
 The execution policy permits only ECR authorization, pull from the exact API repository placeholder to be resolved by the account owner, and writes to the dedicated bootstrap log group. It has no Secrets Manager permissions.
 
-The task policy can read the exact RDS-managed master secret placeholder and can Describe/Get/Put only the two fixed pilot DB role secrets. It contains no KMS, S3, Textract, medication-signing, IAM-management, or broad Secrets Manager permissions. The selected secrets use AWS-managed `aws/secretsmanager`, so KMS permissions are deliberately absent unless a future measured denial proves they are required.
+The task policy can read the exact RDS-managed master secret placeholder (`<RDS_MANAGED_MASTER_SECRET_ARN>`) and can Describe/Get/Put only the two fixed pilot DB role secrets using exact rendered ARN placeholders (`<RUNTIME_DATABASE_SECRET_ARN>`, `<MIGRATOR_DATABASE_SECRET_ARN>`) without wildcard resource patterns. It contains no KMS, S3, Textract, medication-signing, IAM-management, or broad Secrets Manager permissions. The selected secrets use AWS-managed `aws/secretsmanager`, so KMS permissions are deliberately absent unless a future measured denial proves they are required.
 
 ## One-off Fargate task
 
-`deploy/ecs/nexa-care-pilot-database-bootstrap-task-definition.template.json` is `awsvpc` + Fargate in `ap-south-1`, has no port mappings, is not a service, and uses the same digest-pinned API image that contains this script and the committed RDS CA bundle.
+`deploy/ecs/nexa-care-pilot-database-bootstrap-task-definition.template.json` is `awsvpc` + Fargate in `ap-south-1`, has no port mappings, is not a service, and uses the same digest-pinned API image that contains this script and the committed RDS CA bundle. It defines required environment variables including `NEXA_DB_MASTER_USERNAME` set to `<RDS_MASTER_USERNAME>`, resolving at deployment time to the verified master username (e.g. `postgres`).
 
 Future network execution uses the existing ECS task security group `sg-0920ce63d7ff6f3fe`, which is already approved for PostgreSQL SG egress/connectivity on 5432. This repository slice does not register or run the task.
