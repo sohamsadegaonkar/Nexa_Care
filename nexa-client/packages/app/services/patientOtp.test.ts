@@ -8,6 +8,7 @@ vi.mock('../utils/apiClient', async (importOriginal) => {
 })
 
 import {
+  loginLocalDemoPatient,
   normalizePatientPhone,
   patientAuthError,
   requestPatientOtp,
@@ -36,6 +37,17 @@ describe('patient OTP service', () => {
     expect(post).toHaveBeenCalledWith(
       '/api/v2/auth/otp/verify',
       { phone: '+919876543210', otp: '654321' },
+      { noAuth: true }
+    )
+  })
+
+  it('uses only a closed synthetic-demo identity at the development endpoint', async () => {
+    const response = { access_token: 'access', device_enrollment_token: 'enroll' }
+    post.mockResolvedValue({ data: response })
+    await expect(loginLocalDemoPatient('aarav')).resolves.toBe(response)
+    expect(post).toHaveBeenCalledWith(
+      '/api/v2/auth/demo/patient-login',
+      { demo_patient: 'aarav' },
       { noAuth: true }
     )
   })

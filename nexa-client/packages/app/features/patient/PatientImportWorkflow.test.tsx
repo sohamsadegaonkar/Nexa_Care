@@ -1,7 +1,6 @@
 import React from 'react'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import * as DocumentPicker from 'expo-document-picker'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import {
   ApiError,
@@ -32,9 +31,9 @@ vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 8, left: 0 }),
 }))
 
-vi.mock('expo-document-picker', () => ({
-  getDocumentAsync: vi.fn(),
-}))
+vi.mock('expo-document-picker', () => {
+  throw new Error('Web imports must not resolve expo-document-picker.')
+})
 
 // Mock URL object URL methods
 if (typeof window !== 'undefined') {
@@ -156,6 +155,14 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
       expect(screen.getByText(/Max size: 10 MB/)).toBeDefined()
     })
 
+    it('loads on web without resolving Expo DocumentPicker', async () => {
+      renderWithTamagui(<PatientImportScreen />)
+
+      await waitFor(() => {
+        expect(screen.getByText('ACCEPTED FORMATS')).toBeDefined()
+      })
+    })
+
     it('rejects file that exceeds server policy max size', async () => {
       renderWithTamagui(<PatientImportScreen />)
 
@@ -227,38 +234,6 @@ describe('PatientImportWorkflow Suite (Slice 11E)', () => {
           screen.getAllByText(/unsupported file format/i).length
         ).toBeGreaterThanOrEqual(1)
       })
-    })
-
-    it('supports native DocumentPicker selection', async () => {
-      vi.mocked(DocumentPicker.getDocumentAsync).mockResolvedValue({
-        canceled: false,
-        assets: [
-          {
-            name: 'native_report.pdf',
-            mimeType: 'application/pdf',
-            size: 2048,
-            uri: 'file:///cache/native_report.pdf',
-          } as any,
-        ],
-      })
-
-      renderWithTamagui(<PatientImportScreen />)
-
-      await waitFor(() => {
-        expect(screen.getByText('ACCEPTED FORMATS')).toBeDefined()
-      })
-
-      fireEvent.click(screen.getByText('Prescription / Rx'))
-
-      // Simulate native picker result via DocumentPicker
-      const res = await DocumentPicker.getDocumentAsync({
-        type: mockPolicy.accepted_mime_types,
-        copyToCacheDirectory: true,
-      })
-      expect(res.canceled).toBe(false)
-      if (!res.canceled && res.assets) {
-        expect(res.assets[0].name).toBe('native_report.pdf')
-      }
     })
 
     it('handles backend 413 DOCUMENT_TOO_LARGE error gracefully', async () => {

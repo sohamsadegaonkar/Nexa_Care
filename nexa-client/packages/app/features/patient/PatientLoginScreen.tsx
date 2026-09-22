@@ -19,6 +19,9 @@ import {
 import { storePatientAuthSession } from '../../services/patientAuthSession'
 import { getRegisteredPushTokenForCurrentSession } from '../../services/pushNotifications'
 import {
+  loginLocalDemoPatient,
+  type LocalDemoPatient,
+  type PatientOtpVerifyResponse,
   patientAuthError,
   requestPatientOtp,
   tryBeginPatientOtpSubmission,
@@ -34,9 +37,14 @@ import {
 interface PatientLoginScreenProps {
   /** Pre-filled phone number from deep-link or previous session */
   initialPhone?: string
+  /** Expo route only: reveal the closed synthetic local-development options. */
+  localDemoPatientLoginEnabled?: boolean
 }
 
-export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginScreenProps) {
+export default function PatientLoginScreen({
+  initialPhone = '',
+  localDemoPatientLoginEnabled = false,
+}: PatientLoginScreenProps) {
   const router = useRouter()
   const insets = useSafeAreaInsets()
   const [phone, setPhone] = useState(initialPhone)
@@ -45,6 +53,18 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submissionInFlight = useRef(false)
+
+  const completePatientAuthentication = async (data: PatientOtpVerifyResponse) => {
+    await storePatientAuthSession(data.access_token, data.device_enrollment_token)
+
+    // Enrollment is installation-specific: another active patient device
+    // must never stand in for this installation's local key + device_id.
+    await ensureCurrentDeviceEnrollment({
+      expoPushToken: getRegisteredPushTokenForCurrentSession(),
+    })
+    Keyboard.dismiss()
+    router.replace('/patient/access-history')
+  }
 
   const handleSendOtp = async () => {
     if (!tryBeginPatientOtpSubmission(submissionInFlight)) return
@@ -68,20 +88,34 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
     setError(null)
     try {
       const data = await verifyPatientOtp(phone, otp)
-      await storePatientAuthSession(data.access_token, data.device_enrollment_token)
-
-      // Enrollment is installation-specific: another active patient device
-      // must never stand in for this installation's local key + device_id.
-      await ensureCurrentDeviceEnrollment({
-        expoPushToken: getRegisteredPushTokenForCurrentSession(),
-      })
-      Keyboard.dismiss()
-      router.replace('/patient/access-history')
+      await completePatientAuthentication(data)
     } catch (requestError) {
       setError(
         requestError instanceof CurrentDeviceError
           ? requestError.message
           : patientAuthError(requestError, 'Unable to verify OTP. Please try again.')
+      )
+    } finally {
+      submissionInFlight.current = false
+      setLoading(false)
+    }
+  }
+
+  const handleLocalDemoPatientLogin = async (demoPatient: LocalDemoPatient) => {
+    if (!tryBeginPatientOtpSubmission(submissionInFlight)) return
+    setLoading(true)
+    setError(null)
+    try {
+      const data = await loginLocalDemoPatient(demoPatient)
+      await completePatientAuthentication(data)
+    } catch (requestError) {
+      setError(
+        requestError instanceof CurrentDeviceError
+          ? requestError.message
+          : patientAuthError(
+              requestError,
+              'Unable to start the local synthetic patient session. Please try again.'
+            )
       )
     } finally {
       submissionInFlight.current = false
@@ -201,6 +235,34 @@ export default function PatientLoginScreen({ initialPhone = '' }: PatientLoginSc
               >
                 Repair an existing account
               </ActionButton>
+            )}
+            {step === 'phone' && localDemoPatientLoginEnabled && (
+              <YStack
+                borderColor="$borderColor"
+                borderRadius="$4"
+                borderWidth={1}
+                gap="$3"
+                padding="$3"
+              >
+                <Paragraph
+                  color="$nexaSecondary"
+                  fontSize={13}
+                >
+                  Local development only: synthetic patient accounts
+                </Paragraph>
+                <ActionButton
+                  disabled={loading}
+                  onPress={() => void handleLocalDemoPatientLogin('aarav')}
+                >
+                  Open synthetic patient: Aarav
+                </ActionButton>
+                <ActionButton
+                  disabled={loading}
+                  onPress={() => void handleLocalDemoPatientLogin('priya')}
+                >
+                  Open synthetic patient: Priya
+                </ActionButton>
+              </YStack>
             )}
           </YStack>
           <Paragraph

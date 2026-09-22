@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.redis import get_async_redis_client as get_redis_client
+from app.services.local_demo_patient_auth import is_supported_patient_auth_identity
 
 _SESSION_PREFIX = "nexa:patient_session:"
 _EPOCH_PREFIX = "nexa:patient_session_epoch:"
@@ -87,6 +88,8 @@ async def create_patient_session(
     session_epoch: int,
     issued_at: datetime,
     expires_at: datetime,
+    identity_provider: str = "supabase",
+    auth_method: str = "phone_otp",
 ) -> None:
     """Persist one active patient session with TTL bounded by the JWT expiry."""
     if (
@@ -99,10 +102,16 @@ async def create_patient_session(
     ttl_seconds = math.ceil((expires_at - datetime.now(timezone.utc)).total_seconds())
     if ttl_seconds <= 0:
         raise ValueError("patient session expiry must be in the future")
+    if not is_supported_patient_auth_identity(
+        provider=identity_provider, auth_method=auth_method
+    ):
+        raise ValueError("Unsupported patient authentication identity")
     payload = json.dumps(
         {
             "patient_id": patient_id,
             "supabase_user_id": supabase_user_id,
+            "identity_provider": identity_provider,
+            "auth_method": auth_method,
             "session_epoch": session_epoch,
             "status": "active",
             "issued_at": issued_at.isoformat(),
@@ -129,6 +138,11 @@ async def resolve_patient_session_authority(
     supabase_user_id = claims.get("supabase_user_id")
     session_id = claims.get("sid")
     session_epoch = claims.get("session_epoch")
+    identity_provider = claims.get("identity_provider", "supabase")
+    # Existing short-lived Supabase sessions predate explicit provider/method
+    # persistence.  Preserve only that historical pair while the token lives;
+    # local-demo sessions always carry both fields.
+    auth_method = claims.get("auth_method", "phone_otp")
     if (
         not isinstance(patient_id, str)
         or not patient_id
@@ -139,6 +153,11 @@ async def resolve_patient_session_authority(
         or not isinstance(session_epoch, int)
         or isinstance(session_epoch, bool)
         or session_epoch < 0
+        or not isinstance(identity_provider, str)
+        or not isinstance(auth_method, str)
+        or not is_supported_patient_auth_identity(
+            provider=identity_provider, auth_method=auth_method
+        )
     ):
         return None
 
@@ -159,6 +178,8 @@ async def resolve_patient_session_authority(
         session.get("status") != "active"
         or session.get("patient_id") != patient_id
         or session.get("supabase_user_id") != supabase_user_id
+        or session.get("identity_provider", "supabase") != identity_provider
+        or session.get("auth_method", "phone_otp") != auth_method
         or session.get("session_epoch") != session_epoch
     ):
         return None
@@ -198,7 +219,9 @@ async def revoke_patient_session(*, patient_id: str, session_id: str) -> bool:
     if session is None:
         return False
     try:
-        deleted = await _maybe_await(get_redis_client().delete(_session_key(session_id)))
+        deleted = await _maybe_await(
+            get_redis_client().delete(_session_key(session_id))
+        )
     except Exception as exc:
         raise PatientSessionAuthorityUnavailable(
             "Patient session authority store is unavailable"

@@ -44,6 +44,9 @@ function resolveApiProxyTarget(rawValue) {
 
 /** @type {import('next').NextConfig} */
 module.exports = {
+  // A separate development process can opt into its own build directory
+  // without changing the default production/normal-development output.
+  distDir: process.env.NEXA_NEXT_DIST_DIR || '.next',
   async headers() {
     const values = [
       { key: 'X-Content-Type-Options', value: 'nosniff' },
@@ -108,6 +111,16 @@ module.exports = {
     ],
   },
   webpack: (config) => {
+    // Keep webpack aligned with Turbopack and TypeScript's web-safe picker
+    // fallback. Without this, an extensionless platform module can resolve its
+    // native Expo bridge when a webpack build path is used.
+    config.resolve.extensions = [
+      '.web.tsx',
+      '.web.ts',
+      '.web.js',
+      '.web.jsx',
+      ...(config.resolve.extensions || []),
+    ]
     config.resolve.alias = {
       ...(config.resolve.alias || {}),
       'react-native$': 'react-native-web',

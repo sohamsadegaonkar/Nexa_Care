@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+import os
 import uuid
 import unittest
 from unittest.mock import AsyncMock, patch
@@ -54,9 +55,16 @@ def set_cookie_headers(response: Response) -> list[str]:
 class MockRequest:
     """Minimal request stand-in for route tests."""
 
-    def __init__(self, user_agent: str = "TestAgent/1.0", client_ip: str = "10.0.0.1"):
+    def __init__(
+        self,
+        user_agent: str = "TestAgent/1.0",
+        client_ip: str = "10.0.0.1",
+        scheme: str = "https",
+        hostname: str = "api.example.test",
+    ):
         self.headers = {"user-agent": user_agent}
         self.client = SimpleNamespace(host=client_ip)
+        self.url = SimpleNamespace(scheme=scheme, hostname=hostname)
         self.cookies = {}
 
 
@@ -216,6 +224,79 @@ class TestProviderWebCookies(unittest.TestCase):
         cookies = set_cookie_headers(response)
         self.assertEqual(len(cookies), 3)
         for cookie in cookies:
+            self.assertIn("Secure", cookie)
+            self.assertIn("SameSite=none", cookie)
+
+    @patch.dict(
+        os.environ,
+        {
+            "ENVIRONMENT": "development",
+            "ENV": "development",
+            "NEXA_DEMO_ALLOW_INSECURE_LOOPBACK_WEB_COOKIES": "true",
+        },
+        clear=False,
+    )
+    def test_explicit_development_loopback_cookie_mode_uses_http_safe_attributes(
+        self,
+    ) -> None:
+        response = Response()
+
+        _set_web_auth_cookies(
+            response,
+            "session-token",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            MockRequest(client_ip="127.0.0.1", scheme="http", hostname="127.0.0.1"),
+        )
+
+        cookies = set_cookie_headers(response)
+        self.assertEqual(len(cookies), 2)
+        for cookie in cookies:
+            self.assertNotIn("Secure", cookie)
+            self.assertIn("SameSite=lax", cookie)
+
+    @patch.dict(
+        os.environ,
+        {
+            "ENVIRONMENT": "production",
+            "ENV": "production",
+            "NEXA_DEMO_ALLOW_INSECURE_LOOPBACK_WEB_COOKIES": "true",
+        },
+        clear=False,
+    )
+    def test_demo_cookie_flag_fails_closed_outside_development(self) -> None:
+        response = Response()
+
+        _set_web_auth_cookies(
+            response,
+            "session-token",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            MockRequest(client_ip="127.0.0.1", scheme="http", hostname="127.0.0.1"),
+        )
+
+        for cookie in set_cookie_headers(response):
+            self.assertIn("Secure", cookie)
+            self.assertIn("SameSite=none", cookie)
+
+    @patch.dict(
+        os.environ,
+        {
+            "ENVIRONMENT": "development",
+            "ENV": "development",
+            "NEXA_DEMO_ALLOW_INSECURE_LOOPBACK_WEB_COOKIES": "true",
+        },
+        clear=False,
+    )
+    def test_demo_cookie_flag_fails_closed_for_non_loopback_client(self) -> None:
+        response = Response()
+
+        _set_web_auth_cookies(
+            response,
+            "session-token",
+            datetime.now(timezone.utc) + timedelta(hours=1),
+            MockRequest(client_ip="192.0.2.44", scheme="http", hostname="127.0.0.1"),
+        )
+
+        for cookie in set_cookie_headers(response):
             self.assertIn("Secure", cookie)
             self.assertIn("SameSite=none", cookie)
 

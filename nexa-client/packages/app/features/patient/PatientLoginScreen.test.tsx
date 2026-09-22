@@ -2,7 +2,11 @@ import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import PatientLoginScreen from './PatientLoginScreen'
-import { requestPatientOtp, verifyPatientOtp } from '../../services/patientOtp'
+import {
+  loginLocalDemoPatient,
+  requestPatientOtp,
+  verifyPatientOtp,
+} from '../../services/patientOtp'
 import { ensureCurrentDeviceEnrollment } from '../../services/currentDeviceEnrollment'
 import { storePatientAuthSession } from '../../services/patientAuthSession'
 
@@ -20,6 +24,7 @@ vi.mock('../../services/pushNotifications', () => ({
   getRegisteredPushTokenForCurrentSession: () => null,
 }))
 vi.mock('../../services/patientOtp', () => ({
+  loginLocalDemoPatient: vi.fn(),
   requestPatientOtp: vi.fn(),
   verifyPatientOtp: vi.fn(),
   patientAuthError: (_error: unknown, message: string) => message,
@@ -49,6 +54,31 @@ describe('patient sign-in presentation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Repair an existing account' }))
     expect(push).toHaveBeenCalledWith('/patient/account-recovery')
     expect(requestPatientOtp).not.toHaveBeenCalled()
+  })
+
+  it('hides synthetic local patient options unless the Expo route explicitly enables them', () => {
+    renderWithTamagui(<PatientLoginScreen />)
+    expect(
+      screen.queryByRole('button', { name: 'Open synthetic patient: Aarav' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('uses the ordinary session and device-enrollment path for a closed local demo patient', async () => {
+    vi.mocked(loginLocalDemoPatient).mockResolvedValue({
+      access_token: 'synthetic-local-access',
+      device_enrollment_token: 'synthetic-local-enrollment',
+    } as never)
+    renderWithTamagui(<PatientLoginScreen localDemoPatientLoginEnabled />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open synthetic patient: Aarav' }))
+
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/patient/access-history'))
+    expect(loginLocalDemoPatient).toHaveBeenCalledWith('aarav')
+    expect(storePatientAuthSession).toHaveBeenCalledWith(
+      'synthetic-local-access',
+      'synthetic-local-enrollment'
+    )
+    expect(ensureCurrentDeviceEnrollment).toHaveBeenCalledWith({ expoPushToken: null })
   })
 
   it('clears the code when changing phone and preserves the two-step journey', async () => {

@@ -50,6 +50,7 @@ from app.core.security import hash_client_ip, hash_user_agent
 from app.core.client_ip import resolve_client_ip
 from app.models.patient import Patient
 from app.models.patient_auth_identity import PatientAuthIdentity
+from app.services.local_demo_patient_auth import is_supported_patient_auth_identity
 from app.models.provider_context import ProviderContext
 from app.observability.audit_ledger import append_audit_log
 from app.models.provider import ProviderIdentity
@@ -120,25 +121,36 @@ async def _resolve_current_patient_session_claims(
             },
         ) from exc
     if session is None:
-        raise HTTPException(status_code=401, detail="Patient session is no longer active")
+        raise HTTPException(
+            status_code=401, detail="Patient session is no longer active"
+        )
 
     patient_id = claims.get("patient_id")
     supabase_user_id = claims.get("supabase_user_id")
     session_id = claims.get("sid")
     session_epoch = claims.get("session_epoch")
+    identity_provider = claims.get("identity_provider", "supabase")
+    auth_method = claims.get("auth_method", "phone_otp")
     if (
         not isinstance(supabase_user_id, str)
         or not supabase_user_id
         or not isinstance(session_id, str)
         or not isinstance(session_epoch, int)
         or isinstance(session_epoch, bool)
+        or not isinstance(identity_provider, str)
+        or not isinstance(auth_method, str)
+        or not is_supported_patient_auth_identity(
+            provider=identity_provider, auth_method=auth_method
+        )
     ):
         raise HTTPException(status_code=401, detail="Invalid patient session identity")
 
     try:
         pid = UUID(str(patient_id))
     except (ValueError, TypeError):
-        raise HTTPException(status_code=401, detail="Invalid patient identity") from None
+        raise HTTPException(
+            status_code=401, detail="Invalid patient identity"
+        ) from None
 
     patient_row = (
         await db.execute(select(Patient).where(Patient.patient_uuid == pid))
@@ -151,7 +163,7 @@ async def _resolve_current_patient_session_claims(
             select(PatientAuthIdentity).where(
                 and_(
                     PatientAuthIdentity.patient_id == pid,
-                    PatientAuthIdentity.provider == "supabase",
+                    PatientAuthIdentity.provider == identity_provider,
                     PatientAuthIdentity.provider_subject == supabase_user_id,
                     PatientAuthIdentity.revoked_at.is_(None),
                 )

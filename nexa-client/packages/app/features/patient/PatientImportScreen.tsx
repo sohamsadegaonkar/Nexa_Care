@@ -16,7 +16,6 @@ import {
 import React, { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { Platform, RefreshControl, ScrollView } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import * as DocumentPicker from 'expo-document-picker'
 import {
   ApiError,
   NexaApiClient,
@@ -27,6 +26,7 @@ import {
   type PatientExternalRecordUploadPolicy,
   type SelectedSourceFile,
 } from '../../utils/apiClient'
+import { pickNativePatientImportDocument } from './PatientImportDocumentPicker'
 
 // ── Category Definitions ──────────────────────────────────────────────
 
@@ -265,21 +265,8 @@ export default function PatientImportScreen({
         policy?.accepted_mime_types && policy.accepted_mime_types.length > 0
           ? policy.accepted_mime_types
           : ['application/pdf', 'image/*']
-
-      const result = await DocumentPicker.getDocumentAsync({
-        type: types,
-        copyToCacheDirectory: true,
-      })
-
-      if (!result.canceled && result.assets && result.assets.length > 0) {
-        const asset = result.assets[0]
-        const sourceFile: SelectedSourceFile = {
-          name: asset.name,
-          type: asset.mimeType || 'application/octet-stream',
-          size: asset.size || 0,
-          uri: asset.uri,
-          file: asset.file,
-        }
+      const sourceFile = await pickNativePatientImportDocument(types)
+      if (sourceFile) {
         handleFileSelect(sourceFile)
       }
     } catch (err) {
