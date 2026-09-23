@@ -1,3 +1,3 @@
-import PatientRegistrationRecoveryScreen from '@my/app/features/patient/PatientRegistrationRecoveryScreen'
+import PatientRegistrationRecoveryScreen from 'app/features/patient/PatientRegistrationRecoveryScreen'
 
 export default PatientRegistrationRecoveryScreen

@@ -366,6 +366,18 @@ class TestPatientNativeViewportConfiguration:
         assert "goBack(" not in code
         assert "setTimeout" not in code
 
+    def test_expo_patient_routes_do_not_use_stale_my_app_alias(self) -> None:
+        expo_app_dir = ROOT / "nexa-client" / "apps" / "expo" / "app"
+        expo_route_files = list(expo_app_dir.rglob("*.tsx")) + list(expo_app_dir.rglob("*.ts"))
+        assert len(expo_route_files) > 0
+
+        for route_file in expo_route_files:
+            content = route_file.read_text(encoding="utf-8")
+            assert "@my/app" not in content, f"Stale @my/app alias found in {route_file.relative_to(ROOT)}"
+
+        account_recovery = (expo_app_dir / "patient" / "account-recovery.tsx").read_text(encoding="utf-8")
+        assert "app/features/patient/PatientRegistrationRecoveryScreen" in account_recovery
+
 
 class TestSecureDeviceScreen:
     def test_uses_device_enrollment_service(self) -> None:
