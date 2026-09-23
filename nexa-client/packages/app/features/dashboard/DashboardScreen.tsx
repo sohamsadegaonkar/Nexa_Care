@@ -1,9 +1,11 @@
 'use client'
 
-import { Card, Text, YStack, XStack, Button, Spinner } from '@my/ui'
+import { Card, Text, YStack, XStack, Button, Spinner, Separator } from '@my/ui'
 import { TrendingUp, Users, Clock } from '@tamagui/lucide-icons'
 import { useState, useEffect } from 'react'
+import { useRouter } from 'solito/navigation'
 import { NexaApiClient, ApiError } from '../../utils/apiClient'
+import { clearProviderAuthSession } from '../../services/providerAuthSession'
 
 interface DashboardMetrics {
   total_patients: number
@@ -13,6 +15,7 @@ interface DashboardMetrics {
 }
 
 export function DashboardScreen() {
+  const router = useRouter()
   const [metrics, setMetrics] = useState<DashboardMetrics | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -164,6 +167,47 @@ export function DashboardScreen() {
             label="Productivity"
             value={`${metrics.productivity_score}%`}
           />
+        </XStack>
+      </YStack>
+
+      <Separator borderColor="$borderColor" />
+
+      <YStack gap="$3">
+        <Text
+          fontSize={16}
+          fontWeight="700"
+          color="$color12"
+        >
+          Clinical Workflows
+        </Text>
+        <XStack
+          gap="$3"
+          flexWrap="wrap"
+        >
+          <Button
+            theme="blue"
+            onPress={() => router.push('/scanner')}
+          >
+            NFC Scanner
+          </Button>
+          <Button
+            theme="red"
+            onPress={() => router.push('/emergency')}
+          >
+            Emergency Break-Glass
+          </Button>
+          <Button
+            onPress={async () => {
+              try {
+                await clearProviderAuthSession()
+              } catch {
+                // Ignore cleanup error
+              }
+              router.replace('/')
+            }}
+          >
+            Sign Out
+          </Button>
         </XStack>
       </YStack>
     </YStack>

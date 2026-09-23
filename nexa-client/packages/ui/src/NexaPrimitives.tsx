@@ -36,59 +36,102 @@ export const Surface = styled(YStack, {
   gap: '$3',
 })
 
-const ActionFrame = styled(Button, {
-  name: 'NexaAction',
-  minHeight: 48,
-  height: 'auto',
-  paddingVertical: '$3',
-  borderRadius: 10,
-  borderWidth: 1,
-  backgroundColor: '$nexaSurface',
-  borderColor: '$nexaBorder',
-  hoverStyle: { backgroundColor: '$nexaMuted', borderColor: '$nexaAccent' },
-  focusVisibleStyle: {
-    outlineColor: '$nexaAccent',
-    outlineWidth: 3,
-    outlineStyle: 'solid',
-    outlineOffset: 3,
-  },
-  disabledStyle: { opacity: 0.55 },
-  variants: {
-    intent: {
-      primary: {
-        backgroundColor: '$nexaAccent',
-        borderColor: '$nexaAccent',
-        hoverStyle: { backgroundColor: '$nexaAccentHover', borderColor: '$nexaAccentHover' },
-        pressStyle: { backgroundColor: '$nexaAccentHover' },
-      },
-      danger: {
-        backgroundColor: '$nexaDangerSoft',
-        borderColor: '$nexaDanger',
-        hoverStyle: { backgroundColor: '$nexaDangerSoft', borderColor: '$nexaDanger' },
-      },
-    },
-  } as const,
-})
+export type ActionButtonIntent = 'primary' | 'danger'
 
-export function ActionButton({ children, intent, ...props }: GetProps<typeof ActionFrame>) {
+export type ActionButtonProps = GetProps<typeof Button> & {
+  intent?: ActionButtonIntent
+  children?: ReactNode
+}
+
+export function ActionButton({
+  children,
+  intent,
+  disabled,
+  chromeless,
+  ...props
+}: ActionButtonProps) {
+  const isPrimary = intent === 'primary'
+  const isDanger = intent === 'danger'
+
+  const bg = chromeless
+    ? undefined
+    : isPrimary
+      ? '$nexaAccent'
+      : isDanger
+        ? '$nexaDangerSoft'
+        : '$nexaSurface'
+  const border = chromeless
+    ? undefined
+    : isPrimary
+      ? '$nexaAccent'
+      : isDanger
+        ? '$nexaDanger'
+        : '$nexaBorder'
+  const textColor = isPrimary ? '$nexaOnAccent' : isDanger ? '$nexaDanger' : '$nexaText'
+
+  const hoverBg = chromeless
+    ? undefined
+    : isPrimary
+      ? '$nexaAccentHover'
+      : isDanger
+        ? '$nexaDangerSoft'
+        : '$nexaMuted'
+  const hoverBorder = chromeless
+    ? undefined
+    : isPrimary
+      ? '$nexaAccentHover'
+      : isDanger
+        ? '$nexaDanger'
+        : '$nexaAccent'
+  const pressBg = chromeless
+    ? undefined
+    : isPrimary
+      ? '$nexaAccentHover'
+      : isDanger
+        ? '$nexaDangerSoft'
+        : '$nexaMuted'
+
+  const isTextChild = typeof children === 'string' || typeof children === 'number'
+
   return (
-    <ActionFrame
-      intent={intent}
+    <Button
+      minHeight={chromeless ? undefined : 48}
+      height="auto"
+      paddingVertical={chromeless ? undefined : '$3'}
+      borderRadius={10}
+      borderWidth={chromeless ? 0 : 1}
+      backgroundColor={bg}
+      borderColor={border}
+      hoverStyle={hoverBg ? { backgroundColor: hoverBg, borderColor: hoverBorder } : undefined}
+      pressStyle={pressBg ? { backgroundColor: pressBg } : undefined}
+      focusVisibleStyle={{
+        outlineColor: '$nexaAccent',
+        outlineWidth: 3,
+        outlineStyle: 'solid',
+        outlineOffset: 3,
+      }}
+      disabled={disabled}
+      disabledStyle={{ opacity: 0.55 }}
+      opacity={disabled ? 0.55 : 1}
+      aria-disabled={disabled}
+      chromeless={chromeless}
       {...props}
     >
-      <Button.Text
-        color={
-          intent === 'primary' ? '$nexaOnAccent' : intent === 'danger' ? '$nexaDanger' : '$nexaText'
-        }
-        fontWeight="700"
-        fontSize={15}
-        lineHeight={22}
-        whiteSpace="normal"
-        textAlign="center"
-      >
-        {children}
-      </Button.Text>
-    </ActionFrame>
+      {isTextChild ? (
+        <Button.Text
+          color={textColor}
+          fontWeight="700"
+          fontSize={15}
+          lineHeight={22}
+          whiteSpace="normal"
+          textAlign="center"
+        >
+          {children}
+        </Button.Text>
+      ) : (
+        children
+      )}
+    </Button>
   )
 }
 

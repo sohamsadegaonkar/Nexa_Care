@@ -1641,16 +1641,21 @@ export const NexaApiClient = {
   },
 
   login(payload: any): Promise<any> {
-    return request<any>('/api/v2/auth/login', {
-      method: 'POST',
-      body: JSON.stringify(payload),
+    const login_identifier = payload.login_identifier || payload.email || ''
+    return this.providerLogin({
+      login_identifier,
+      password: payload.password,
+      hospital_id: payload.hospital_id,
     })
   },
 
   verifyMfa(payload: any): Promise<any> {
-    return request<any>('/api/v2/auth/mfa/verify', {
-      method: 'POST',
-      body: JSON.stringify(payload),
+    const totp_code = payload.totp_code || payload.code || ''
+    return this.providerMfaVerify({
+      mfa_token: payload.mfa_token,
+      totp_code,
+      provider_id: payload.provider_id,
+      hospital_id: payload.hospital_id,
     })
   },
 

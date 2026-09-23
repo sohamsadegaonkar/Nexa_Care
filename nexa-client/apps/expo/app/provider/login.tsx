@@ -1,4 +1,4 @@
-import { HomeScreen } from 'app/features/home/screen'
+import { ProviderLoginScreen } from 'app/features/provider/ProviderLoginScreen'
 import { Stack } from 'expo-router'
 
 export default function Screen() {
@@ -6,11 +6,11 @@ export default function Screen() {
     <>
       <Stack.Screen
         options={{
-          title: 'Nexa Care',
+          title: 'Provider Login',
           headerShown: false,
         }}
       />
-      <HomeScreen />
+      <ProviderLoginScreen />
     </>
   )
 }

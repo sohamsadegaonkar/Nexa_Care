@@ -27,13 +27,13 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
     setError(null)
 
     try {
-      const data = await NexaApiClient.login({ email, password })
+      const data = await NexaApiClient.login({ login_identifier: email.trim(), password })
 
       if (data.mfa_token) {
         setMfaToken(data.mfa_token)
         setShowMfa(true)
       } else {
-        onLoginSuccess?.(data.provider_id, data.access_token)
+        onLoginSuccess?.(data.provider_uid ?? data.provider_id, data.access_token)
       }
     } catch (err: any) {
       setError(err.message)
@@ -49,8 +49,8 @@ export function LoginScreen({ onLoginSuccess }: LoginScreenProps) {
     setError(null)
 
     try {
-      const data = await NexaApiClient.verifyMfa({ mfa_token: mfaToken, code: mfaCode })
-      onLoginSuccess?.(data.provider_id, data.access_token)
+      const data = await NexaApiClient.verifyMfa({ mfa_token: mfaToken, totp_code: mfaCode.trim() })
+      onLoginSuccess?.(data.provider_uid ?? data.provider_id, data.access_token)
     } catch (err: any) {
       setError(err.message)
     } finally {
