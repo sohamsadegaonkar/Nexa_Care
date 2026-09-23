@@ -335,13 +335,23 @@ class TestPatientNativeViewportConfiguration:
         patient_screen = code.split('name="patient"', 1)[1]
         assert "headerShown: false" in patient_screen
 
-    def test_home_screen_is_keyboard_safe_and_removes_template_sheet(self) -> None:
+    def test_home_screen_is_safe_role_selection_surface(self) -> None:
         code = HOME_SCREEN_PATH.read_text(encoding="utf-8")
-        assert "KeyboardAvoidingView" in code
         assert "useSafeAreaInsets" in code
+        assert "<ScrollView" in code
         assert 'keyboardShouldPersistTaps="handled"' in code
-        assert "paddingBottom: insets.bottom + 32" in code
         assert "SheetDemo" not in code
+
+        assert "Continue as Patient" in code
+        assert "Continue as Healthcare Provider" in code
+
+        assert "Provider ID" not in code
+        assert "MFA Token" not in code
+        assert "TOTP" not in code
+        assert "NFC Scanner" not in code
+        assert "Emergency Break-Glass" not in code
+        assert "Consent History" not in code
+        assert "/dashboard" not in code
 
     def test_patient_history_reset_uses_navigation_reset(self) -> None:
         code = PATIENT_RESET_HOOK_PATH.read_text(encoding="utf-8")
@@ -355,6 +365,18 @@ class TestPatientNativeViewportConfiguration:
         assert "dismissAll" not in code
         assert "goBack(" not in code
         assert "setTimeout" not in code
+
+    def test_expo_patient_routes_do_not_use_stale_my_app_alias(self) -> None:
+        expo_app_dir = ROOT / "nexa-client" / "apps" / "expo" / "app"
+        expo_route_files = list(expo_app_dir.rglob("*.tsx")) + list(expo_app_dir.rglob("*.ts"))
+        assert len(expo_route_files) > 0
+
+        for route_file in expo_route_files:
+            content = route_file.read_text(encoding="utf-8")
+            assert "@my/app" not in content, f"Stale @my/app alias found in {route_file.relative_to(ROOT)}"
+
+        account_recovery = (expo_app_dir / "patient" / "account-recovery.tsx").read_text(encoding="utf-8")
+        assert "app/features/patient/PatientRegistrationRecoveryScreen" in account_recovery
 
 
 class TestSecureDeviceScreen:

@@ -1,4 +1,5 @@
 import { DashboardScreen } from 'app/features/dashboard/DashboardScreen'
+import { NativeProviderRouteGuard } from 'app/features/provider/NativeProviderRouteGuard'
 import { Stack } from 'expo-router'
 
 export default function Screen() {
@@ -13,7 +14,9 @@ export default function Screen() {
           gestureDirection: 'horizontal',
         }}
       />
-      <DashboardScreen />
+      <NativeProviderRouteGuard>
+        <DashboardScreen />
+      </NativeProviderRouteGuard>
     </>
   )
 }

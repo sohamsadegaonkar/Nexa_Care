@@ -9,6 +9,7 @@ import {
   registerForPushNotifications,
 } from 'app/services/pushNotifications'
 import { hydratePatientAuthSession, usePatientAuthSession } from 'app/services/patientAuthSession'
+import { hydrateProviderAuthSession } from 'app/services/providerAuthSession'
 import {
   CurrentDeviceError,
   ensureCurrentDeviceEnrollment,
@@ -60,6 +61,7 @@ function RootLayoutNav() {
 
   useEffect(() => {
     void hydratePatientAuthSession()
+    void hydrateProviderAuthSession()
   }, [])
 
   useEffect(() => installConsentNotificationListeners(navigateToConsent), [navigateToConsent])
