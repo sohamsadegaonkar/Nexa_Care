@@ -1,18 +1,11 @@
 'use client'
 
 import { Card, Text, YStack, XStack, Button, Spinner, Separator } from '@my/ui'
-import { TrendingUp, Users, Clock } from '@tamagui/lucide-icons'
+import { Users, ShieldCheck, ShieldAlert, Clock } from '@tamagui/lucide-icons'
 import { useState, useEffect } from 'react'
 import { useRouter } from 'solito/navigation'
-import { NexaApiClient, ApiError } from '../../utils/apiClient'
+import { NexaApiClient, ApiError, type DashboardMetrics } from '../../utils/apiClient'
 import { clearProviderAuthSession } from '../../services/providerAuthSession'
-
-interface DashboardMetrics {
-  total_patients: number
-  avg_appointment_duration: string
-  revisit_rate: string
-  productivity_score: number
-}
 
 export function DashboardScreen() {
   const router = useRouter()
@@ -153,19 +146,19 @@ export function DashboardScreen() {
             value={metrics.total_patients.toLocaleString()}
           />
           <KpiCard
+            icon={ShieldCheck}
+            label="Active Consents"
+            value={metrics.active_consents.toLocaleString()}
+          />
+          <KpiCard
+            icon={ShieldAlert}
+            label="Break-Glass Grants"
+            value={metrics.break_glass_grants.toLocaleString()}
+          />
+          <KpiCard
             icon={Clock}
-            label="Avg Duration"
-            value={metrics.avg_appointment_duration}
-          />
-          <KpiCard
-            icon={TrendingUp}
-            label="Revisit Rate"
-            value={metrics.revisit_rate}
-          />
-          <KpiCard
-            icon={TrendingUp}
-            label="Productivity"
-            value={`${metrics.productivity_score}%`}
+            label="Review Backlog"
+            value={metrics.review_backlog.toLocaleString()}
           />
         </XStack>
       </YStack>
