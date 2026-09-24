@@ -56,10 +56,14 @@ from app.main import app
 #      device, consent, or provider record-access authority.
 #   7. Task 1 adds strict patient-self external-record import/review/save and
 #      client-capability routes under /api/v2/patient/me; none accepts a caller-selected patient identifier.
+#   8. Slice 11A adds the authenticated provider clinical workspace metadata
+#      projection at /api/v2/provider/workspace; provider and hospital authority
+#      are derived server-side and no bearer clinical capability is returned.
 #
 # If this file goes red again, confirm the owning route was intentionally
 # added or removed before updating this set.
 EXPECTED_ROUTES = {
+    ("GET", "/api/v2/provider/workspace"),
     ("POST", "/api/v2/auth/otp/send"),
     ("POST", "/api/v2/auth/otp/verify"),
     ("POST", "/api/v2/auth/patient/logout"),

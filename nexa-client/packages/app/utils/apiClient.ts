@@ -275,6 +275,50 @@ export interface TreatmentVitalWriteResponse {
   idempotent_replay: boolean
 }
 
+export interface DashboardMetrics {
+  total_patients: number
+  active_consents: number
+  break_glass_grants: number
+  review_backlog: number
+  definitions_version?: string
+}
+
+export interface ActiveTreatmentSessionItem {
+  session_id: string
+  encounter_id: string | null
+  patient_id: string
+  patient_display_identifier: string
+  patient_name: string | null
+  status: string
+  purpose: string
+  scope: string
+  allowed_operations: string[]
+  issued_at: string
+  expires_at: string
+}
+
+export interface RecentEncounterItem {
+  encounter_id: string
+  clinical_session_id: string
+  patient_id: string
+  patient_display_identifier: string
+  patient_name: string | null
+  created_at: string
+}
+
+export interface WorkspaceSummaryCounts {
+  active_sessions_count: number
+  recent_encounters_count: number
+  total_patients: number
+}
+
+export interface ProviderWorkspaceResponse {
+  active_sessions: ActiveTreatmentSessionItem[]
+  recent_encounters: RecentEncounterItem[]
+  pending_access: any[]
+  summary_counts: WorkspaceSummaryCounts
+}
+
 export interface ConsentStatusResponse {
   request_id: string
   patient_id?: string
@@ -1659,8 +1703,12 @@ export const NexaApiClient = {
     })
   },
 
-  getDashboardMetrics(): Promise<any> {
-    return request<any>('/api/v2/dashboard/metrics', { method: 'GET' })
+  getDashboardMetrics(): Promise<DashboardMetrics> {
+    return request<DashboardMetrics>('/api/v2/dashboard/metrics', { method: 'GET' })
+  },
+
+  getProviderWorkspace(): Promise<ProviderWorkspaceResponse> {
+    return request<ProviderWorkspaceResponse>('/api/v2/provider/workspace', { method: 'GET' })
   },
 
   resolveNfcCard(payload: { card_uid: string }): Promise<any> {
