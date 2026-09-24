@@ -7,6 +7,28 @@ Nexa Care is a privacy-first health-record platform that helps track doctor prod
 
 ## Quick Start
 
+### Disposable visible development demo (Windows)
+
+For a synthetic, local-only product walkthrough, do not use the historical
+database configured by `.env`. The development launcher creates an ignored
+`.env.demo.local` plus loopback disposable PostgreSQL and Redis resources.
+
+```powershell
+.\scripts\start_demo_dev.ps1 -InitializeInfrastructure  # first time only
+.\scripts\start_demo_dev.ps1 -Migrate
+.\scripts\start_demo_dev.ps1 -Seed
+.\scripts\start_demo_dev.ps1 -BackendPort 8010 -WebPort 3010 -MetroPort 8081 -StartExpo
+```
+
+Open the doctor experience at `http://127.0.0.1:3010/doctor/login` and Metro
+at `http://127.0.0.1:8081`. The generated local provider password and TOTP
+secret remain in the ignored `.env.demo.local`; never print or commit them.
+The synthetic patient path is development-only, closed to its two seeded
+identities, and still requires normal device enrollment. The default backend
+bind is loopback-only. A physical Android device is an explicit local-network
+exception and requires both a literal RFC1918 `-MobileApiUrl` host and a
+contained RFC1918 `-MobileClientCidr`.
+
 ### 1. Clone and configure
 
 ```bash

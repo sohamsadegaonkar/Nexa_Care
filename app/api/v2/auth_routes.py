@@ -6,10 +6,13 @@ import inspect
 import hashlib
 import hmac
 import asyncio
+import ipaddress
 import json
 import logging
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Literal
 import uuid
 from uuid import UUID
 
@@ -17,6 +20,7 @@ from fastapi import (
     APIRouter,
     Cookie,
     Depends,
+    FastAPI,
     Header,
     HTTPException,
     Request,
@@ -68,9 +72,11 @@ from app.core.redis import get_async_redis_client
 from app.core.session_binding import provider_session_binding
 from app.core.config import (
     ConfigError,
+    RuntimeEnvironment,
     get_provider_contact_assurance_config,
     get_otp_rate_limit_config,
     get_provider_registration_config,
+    get_runtime_environment,
 )
 from app.core.rate_limiter import atomic_fixed_window
 from app.core.client_ip import resolve_client_ip
@@ -79,6 +85,14 @@ from app.services.patient_auth_service import (
     issue_device_enrollment_token,
     issue_patient_access_session,
     normalize_indian_phone,
+)
+from app.services.local_demo_patient_auth import (
+    LOCAL_DEMO_PATIENT_AUTH_METHOD,
+    LOCAL_DEMO_PATIENT_AUTH_PROVIDER,
+    LOCAL_DEMO_PATIENT_LOGIN_ALLOWED_CLIENT_CIDRS_FLAG,
+    LOCAL_DEMO_PATIENT_LOGIN_ALLOWED_HOSTS_FLAG,
+    is_local_demo_patient_auth_enabled,
+    local_demo_patient_subject,
 )
 from app.services.patient_session_authority import (
     PatientSessionAuthorityUnavailable,
@@ -115,10 +129,16 @@ from app.services.provider_contact_assurance_service import (
 logger = logging.getLogger("nexa_logger")
 
 router = APIRouter(prefix="/api/v2/auth", tags=["auth"])
+# This router is deliberately not included by default.  The application entry
+# point includes it only when the closed local-development demo gate is true.
+# Keeping the handler separate preserves the normal authentication route
+# inventory in every other runtime, including OpenAPI.
+local_demo_patient_auth_router = APIRouter(prefix="/api/v2/auth", tags=["auth"])
 
 _PROVIDER_SESSION_TTL_SECONDS = 60 * 60 * 8
 _MERGE_CHALLENGE_PREFIX = "merge_challenge:"
 _MERGE_CHALLENGE_TTL_SECONDS = 120
+_DEMO_LOOPBACK_WEB_COOKIE_FLAG = "NEXA_DEMO_ALLOW_INSECURE_LOOPBACK_WEB_COOKIES"
 
 
 async def _maybe_await(value):
@@ -204,6 +224,13 @@ class PatientOtpVerifyResponse(BaseModel):
     device_authority_state: str
 
 
+class LocalDemoPatientLoginRequest(BaseModel):
+    """Closed input for the explicitly seeded local-development identities."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    demo_patient: Literal["aarav", "priya"]
+
+
 class PatientRegistrationOtpSendResponse(BaseModel):
     message: str
     registration_attempt_token: str
@@ -242,12 +269,196 @@ async def _patient_device_login_authority(
     db: AsyncSession, *, patient_id: str, session_id: str
 ) -> tuple[str | None, str]:
     """Keep account authentication separate from bootstrap device authority."""
-    from app.services.patient_device_recovery_transactions import patient_has_device_history
+    from app.services.patient_device_recovery_transactions import (
+        patient_has_device_history,
+    )
 
     if await patient_has_device_history(db, patient_id=UUID(patient_id)):
         return None, "existing_device_required"
     token = await issue_device_enrollment_token(patient_id, session_id)
     return token, "bootstrap_enrollment"
+
+
+_ANDROID_EMULATOR_GATEWAY = "10.0.2.2"
+_ANDROID_EMULATOR_CLIENT_NETWORK = ipaddress.ip_network("10.0.2.0/24")
+
+
+def _is_android_emulator_client(host: object) -> bool:
+    """Return whether ``host`` is the Android emulator NAT-side client."""
+
+    if not isinstance(host, str):
+        return False
+    try:
+        return ipaddress.ip_address(host) in _ANDROID_EMULATOR_CLIENT_NETWORK
+    except ValueError:
+        return False
+
+
+def _is_explicit_demo_lan_transport(hostname: object, client_host: object) -> bool:
+    """Allow a physical phone only through an explicit private-network allowlist.
+
+    The launcher supplies both values only for a deliberate physical-device
+    run. Missing, malformed, public, or partial configuration is a denial.
+    This remains beneath the separate development-environment gate at the
+    route, so it cannot turn the local-demo surface on elsewhere.
+    """
+
+    if not isinstance(hostname, str) or not isinstance(client_host, str):
+        return False
+    configured_hosts = {
+        host.strip().strip("[]").lower()
+        for host in os.getenv(LOCAL_DEMO_PATIENT_LOGIN_ALLOWED_HOSTS_FLAG, "").split(
+            ","
+        )
+        if host.strip()
+    }
+    configured_cidrs = [
+        cidr.strip()
+        for cidr in os.getenv(
+            LOCAL_DEMO_PATIENT_LOGIN_ALLOWED_CLIENT_CIDRS_FLAG, ""
+        ).split(",")
+        if cidr.strip()
+    ]
+    if not configured_hosts or not configured_cidrs:
+        return False
+    normalized_hostname = hostname.strip().strip("[]").lower()
+    if normalized_hostname not in configured_hosts:
+        return False
+    try:
+        requested_host = ipaddress.ip_address(normalized_hostname)
+        requested_client = ipaddress.ip_address(client_host.strip().strip("[]"))
+        allowed_networks = tuple(
+            ipaddress.ip_network(cidr, strict=False) for cidr in configured_cidrs
+        )
+    except ValueError:
+        return False
+    return (
+        requested_host.is_private
+        and requested_client.is_private
+        and all(network.is_private for network in allowed_networks)
+        and any(requested_client in network for network in allowed_networks)
+    )
+
+
+def _is_local_demo_patient_transport(request: Request) -> bool:
+    """Restrict synthetic sign-in to local, emulator, or explicitly allowed LAN."""
+
+    request_url = getattr(request, "url", None)
+    request_client = getattr(request, "client", None)
+    scheme = getattr(request_url, "scheme", None)
+    hostname = getattr(request_url, "hostname", None)
+    client_host = getattr(request_client, "host", None)
+    loopback_transport = _is_loopback_host(hostname) and _is_loopback_host(client_host)
+    android_emulator_transport = (
+        hostname == _ANDROID_EMULATOR_GATEWAY
+        and _is_android_emulator_client(client_host)
+    )
+    return scheme == "http" and (
+        loopback_transport
+        or android_emulator_transport
+        or _is_explicit_demo_lan_transport(hostname, client_host)
+    )
+
+
+@local_demo_patient_auth_router.post(
+    "/demo/patient-login", response_model=PatientOtpVerifyResponse
+)
+async def local_demo_patient_login(
+    payload: LocalDemoPatientLoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+) -> PatientOtpVerifyResponse:
+    """Issue normal patient authority for one explicitly seeded synthetic identity.
+
+    This is deliberately unavailable outside an explicit disposable
+    development stack.  It does not accept a patient identifier and it does
+    not bypass Redis session authority, patient identity linkage, or device
+    enrollment.
+    """
+
+    if not (
+        is_local_demo_patient_auth_enabled()
+        and _is_local_demo_patient_transport(request)
+    ):
+        # Do not expose a development-only authentication surface to a caller
+        # that is not on the local demo transport.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    subject = local_demo_patient_subject(payload.demo_patient)
+    if subject is None:  # Defensive closed allowlist despite Pydantic validation.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    identity = await db.scalar(
+        select(PatientAuthIdentity).where(
+            PatientAuthIdentity.provider == LOCAL_DEMO_PATIENT_AUTH_PROVIDER,
+            PatientAuthIdentity.provider_subject == subject,
+            PatientAuthIdentity.revoked_at.is_(None),
+        )
+    )
+    if identity is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    patient = await db.scalar(
+        select(Patient).where(
+            Patient.patient_uuid == identity.patient_id,
+            Patient.is_deleted.is_(False),
+        )
+    )
+    if patient is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+    patient_id = str(patient.patient_uuid)
+    session_id: str | None = None
+    try:
+        access_token, expires_at, session_id = await issue_patient_access_session(
+            patient_id,
+            subject,
+            identity_provider=LOCAL_DEMO_PATIENT_AUTH_PROVIDER,
+            auth_method=LOCAL_DEMO_PATIENT_AUTH_METHOD,
+        )
+        (
+            enrollment_token,
+            device_authority_state,
+        ) = await _patient_device_login_authority(
+            db, patient_id=patient_id, session_id=session_id
+        )
+    except PatientSessionAuthorityUnavailable as exc:
+        if session_id is not None:
+            try:
+                await revoke_patient_session(
+                    patient_id=patient_id, session_id=session_id
+                )
+            except PatientSessionAuthorityUnavailable:
+                pass
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "error_code": "PATIENT_SESSION_AUTHORITY_UNAVAILABLE",
+                "retryable": True,
+            },
+        ) from exc
+
+    return PatientOtpVerifyResponse(
+        access_token=access_token,
+        expires_at=expires_at,
+        patient_id=patient_id,
+        device_enrollment_token=enrollment_token,
+        device_authority_state=device_authority_state,
+    )
+
+
+def include_local_demo_patient_auth_router(application: FastAPI) -> None:
+    """Register the synthetic-login surface only in explicit local demo mode.
+
+    The handler retains its transport and seed-identity checks because router
+    registration is a startup boundary, whereas those are request and
+    token-resolution boundaries.  Keeping this helper independent of module
+    import state lets tests construct fresh applications under both sides of
+    the gate.
+    """
+
+    if is_local_demo_patient_auth_enabled():
+        application.include_router(local_demo_patient_auth_router)
 
 
 @router.post("/otp/send", response_model=PatientOtpSendResponse)
@@ -348,13 +559,18 @@ async def patient_otp_verify(
         access_token, expires_at, session_id = await issue_patient_access_session(
             patient_id, str(supabase_user_id)
         )
-        enrollment_token, device_authority_state = await _patient_device_login_authority(
+        (
+            enrollment_token,
+            device_authority_state,
+        ) = await _patient_device_login_authority(
             db, patient_id=patient_id, session_id=session_id
         )
     except PatientSessionAuthorityUnavailable as exc:
         if session_id is not None:
             try:
-                await revoke_patient_session(patient_id=patient_id, session_id=session_id)
+                await revoke_patient_session(
+                    patient_id=patient_id, session_id=session_id
+                )
             except PatientSessionAuthorityUnavailable:
                 pass
         raise HTTPException(
@@ -374,7 +590,9 @@ async def patient_otp_verify(
     )
 
 
-@router.post("/patient/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None)
+@router.post(
+    "/patient/logout", status_code=status.HTTP_204_NO_CONTENT, response_model=None
+)
 async def patient_logout(
     patient: AuthenticatedPatientSession = Depends(get_current_patient_session),
 ) -> None:
@@ -393,7 +611,9 @@ async def patient_logout(
             },
         ) from exc
     if not revoked:
-        raise HTTPException(status_code=401, detail="Patient session is no longer active")
+        raise HTTPException(
+            status_code=401, detail="Patient session is no longer active"
+        )
     await append_audit_log(
         audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=patient.patient_id,
@@ -452,7 +672,10 @@ async def patient_registration_otp_send(
         if code not in {400, 401, 403, 422}:
             raise HTTPException(
                 status_code=503,
-                detail={"error_code": "REGISTRATION_SMS_UNAVAILABLE", "retryable": True},
+                detail={
+                    "error_code": "REGISTRATION_SMS_UNAVAILABLE",
+                    "retryable": True,
+                },
             ) from None
     try:
         attempt_token = await issue_registration_attempt(phone)
@@ -649,7 +872,10 @@ async def patient_registration_otp_verify(
         access_token, expires_at, session_id = await issue_patient_access_session(
             account.patient_id, account.provider_subject
         )
-        enrollment_token, device_authority_state = await _patient_device_login_authority(
+        (
+            enrollment_token,
+            device_authority_state,
+        ) = await _patient_device_login_authority(
             db, patient_id=account.patient_id, session_id=session_id
         )
     except Exception:
@@ -853,49 +1079,99 @@ class ProviderWebMfaRequest(BaseModel):
     totp_code: str = Field(..., min_length=6, max_length=8)
 
 
-def _set_web_auth_cookies(response: Response, token: str, expires_at: datetime) -> None:
+def _is_loopback_host(value: object) -> bool:
+    if not isinstance(value, str):
+        return False
+    host = value.strip().strip("[]")
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _web_cookie_attributes(request: Request | None) -> tuple[bool, str]:
+    """Return cookie transport attributes, failing closed to production settings.
+
+    Plain HTTP browser cookies are accepted only for the explicit disposable
+    development demo when both sides of the request are loopback.  This keeps
+    the normal cross-site ``Secure; SameSite=None`` posture for every other
+    environment, host, source address, or configuration error.
+    """
+    if os.getenv(_DEMO_LOOPBACK_WEB_COOKIE_FLAG, "").strip().lower() != "true":
+        return True, "none"
+    try:
+        environment = get_runtime_environment()
+    except ConfigError:
+        return True, "none"
+    if environment is not RuntimeEnvironment.DEVELOPMENT or request is None:
+        return True, "none"
+
+    request_url = getattr(request, "url", None)
+    request_client = getattr(request, "client", None)
+    scheme = getattr(request_url, "scheme", None)
+    hostname = getattr(request_url, "hostname", None)
+    client_host = getattr(request_client, "host", None)
+    if (
+        scheme == "http"
+        and _is_loopback_host(hostname)
+        and _is_loopback_host(client_host)
+    ):
+        return False, "lax"
+    return True, "none"
+
+
+def _set_web_auth_cookies(
+    response: Response,
+    token: str,
+    expires_at: datetime,
+    request: Request | None = None,
+) -> None:
     max_age = max(1, int((expires_at - datetime.now(timezone.utc)).total_seconds()))
+    secure, same_site = _web_cookie_attributes(request)
     response.set_cookie(
         "nexa_provider_session",
         token,
         max_age=max_age,
-        secure=True,
+        secure=secure,
         httponly=True,
-        samesite="none",
+        samesite=same_site,
         path="/api/v2",
     )
     response.set_cookie(
         "nexa_csrf",
         secrets.token_urlsafe(24),
         max_age=max_age,
-        secure=True,
+        secure=secure,
         httponly=False,
-        samesite="none",
+        samesite=same_site,
         path="/",
     )
 
 
-def _clear_web_auth_cookies(response: Response) -> None:
+def _clear_web_auth_cookies(response: Response, request: Request | None = None) -> None:
+    secure, same_site = _web_cookie_attributes(request)
     response.delete_cookie(
         "nexa_provider_session",
         path="/api/v2",
-        secure=True,
+        secure=secure,
         httponly=True,
-        samesite="none",
+        samesite=same_site,
     )
     response.delete_cookie(
         "nexa_mfa_pending",
         path="/api/v2/auth/web",
-        secure=True,
+        secure=secure,
         httponly=True,
-        samesite="none",
+        samesite=same_site,
     )
     response.delete_cookie(
         "nexa_csrf",
         path="/",
-        secure=True,
+        secure=secure,
         httponly=False,
-        samesite="none",
+        samesite=same_site,
     )
 
 
@@ -1176,26 +1452,32 @@ async def provider_web_login(
     """Browser login: bearer material is written only to HttpOnly cookies."""
     login_result = await provider_login(payload, request, db, None)
     if isinstance(login_result, ProviderLoginMfaRequiredResponse):
+        secure, same_site = _web_cookie_attributes(request)
         response.set_cookie(
             "nexa_mfa_pending",
             login_result.mfa_token,
             max_age=300,
-            secure=True,
+            secure=secure,
             httponly=True,
-            samesite="none",
+            samesite=same_site,
             path="/api/v2/auth/web",
         )
         response.set_cookie(
             "nexa_csrf",
             secrets.token_urlsafe(24),
             max_age=300,
-            secure=True,
+            secure=secure,
             httponly=False,
-            samesite="none",
+            samesite=same_site,
             path="/",
         )
         return ProviderWebLoginState(status="mfa_required")
-    _set_web_auth_cookies(response, login_result.access_token, login_result.expires_at)
+    _set_web_auth_cookies(
+        response,
+        login_result.access_token,
+        login_result.expires_at,
+        request,
+    )
     return ProviderWebLoginState(
         status="authenticated", expires_at=login_result.expires_at
     )
@@ -1217,14 +1499,15 @@ async def provider_web_mfa_verify(
         db,
         None,
     )
+    secure, same_site = _web_cookie_attributes(request)
     response.delete_cookie(
         "nexa_mfa_pending",
         path="/api/v2/auth/web",
-        secure=True,
+        secure=secure,
         httponly=True,
-        samesite="none",
+        samesite=same_site,
     )
-    _set_web_auth_cookies(response, result.access_token, result.expires_at)
+    _set_web_auth_cookies(response, result.access_token, result.expires_at, request)
     return ProviderWebLoginState(status="authenticated", expires_at=result.expires_at)
 
 
@@ -1257,12 +1540,13 @@ async def provider_web_session(
 @router.post("/web/logout", status_code=204, response_model=None)
 async def provider_web_logout(
     response: Response,
+    request: Request,
     provider: ProviderContext = Depends(get_current_provider),
     session_token: str | None = Cookie(default=None, alias="nexa_provider_session"),
 ) -> None:
     if session_token:
         await delete_provider_session_token(session_token)
-    _clear_web_auth_cookies(response)
+    _clear_web_auth_cookies(response, request)
     await append_audit_log(
         audit_context=current_audit_context(AuditDomain.AUTH),
         actor_uid=provider.actor_uid,

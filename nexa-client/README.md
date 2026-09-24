@@ -1,4 +1,21 @@
-# Tamagui + Solito + Next + Expo Monorepo
+# Nexa Care frontend workspace
+
+## Disposable local demo
+
+From the repository root, use the development-only launcher to run the shared
+FastAPI, Next doctor app, and Expo patient bundle against one disposable local
+database and Redis instance:
+
+```powershell
+.\scripts\start_demo_dev.ps1 -BackendPort 8010 -WebPort 3010 -MetroPort 8081 -StartExpo
+```
+
+Open `http://127.0.0.1:3010/doctor/login` for the doctor app and
+`http://127.0.0.1:8081` for Metro. Initial infrastructure, migration, and
+synthetic seeding are explicit separate commands documented in the repository
+README. Do not put local demo secrets or LAN addresses in source or EAS config.
+
+## Underlying Tamagui + Solito + Next + Expo Monorepo
 
 > **We highly recommend using [Takeout](https://tamagui.dev/takeout) instead** - a much more comprehensive and actively maintained starter. Available in free and pro versions:
 >
@@ -78,21 +95,20 @@ must use an independent Firebase project and rejects a Firebase project ID
 containing `alpha`. Never use a Firebase Admin service-account JSON.
 
 The mobile app requires an explicit `EXPO_PUBLIC_API_URL`; it never falls back
-to a workstation or emulator address. For local physical-device development,
-create the ignored `apps/expo/.env` file:
+to a workstation or emulator address. For the disposable local demo, use the
+repository launcher rather than placing a LAN address in `apps/expo/.env` or
+starting Uvicorn directly. Its default emulator API is loopback-bound; a
+physical Android exception requires an exact RFC1918 API host and a contained
+RFC1918 client CIDR:
 
-```dotenv
-EXPO_PUBLIC_API_URL=http://<LOCAL_LAN_IP>:8000
-EXPO_PUBLIC_APP_ENV=development
-EXPO_PUBLIC_ALLOW_HTTP=true
-EXPO_PUBLIC_EAS_PROJECT_ID=<DEVELOPMENT_EAS_PROJECT_ID>
-GOOGLE_SERVICES_FILE=./google-services.development.local.json
+```powershell
+.\scripts\start_demo_dev.ps1 -BackendPort 8010 -WebPort 3010 -MetroPort 8081 -StartExpo `
+  -MobileApiUrl http://<LOCAL_LAN_IP>:8010 -MobileClientCidr <LOCAL_LAN_CIDR>
 ```
 
-The phone and backend host must be on reachable networks, and FastAPI should be
-started with `python -m uvicorn app.main:app --host 0.0.0.0 --port 8000`.
-Cleartext HTTP is allowed only when the development environment explicitly sets
-`EXPO_PUBLIC_ALLOW_HTTP=true`.
+The launcher injects `EXPO_PUBLIC_API_URL`, `EXPO_PUBLIC_APP_ENV`, and
+`EXPO_PUBLIC_ALLOW_HTTP` only into the disposable Metro process. Cleartext HTTP
+remains development-only and is never a preview or production configuration.
 
 Preview and production builds obtain `EXPO_PUBLIC_API_URL` from the matching
 EAS environment. Configure each with an HTTPS deployment URL; do not put a

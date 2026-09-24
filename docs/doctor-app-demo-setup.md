@@ -1,55 +1,90 @@
 # Doctor App Demo Setup Guide
 
-> Demo/alpha only. This is not production onboarding. Use synthetic patients
-> only, set `ENV=alpha` or `ENV=development` explicitly, and keep credentials in
-> ignored environment files.
+> Disposable-development only. This is not production, pilot, preview, or
+> alpha onboarding. Use synthetic patients only and keep credentials in ignored
+> environment files.
 
-**Last updated:** 2026-07-10
+**Last updated:** 2026-09-22
 
 This guide walks you through running the Nexa Care Doctor Web App against a
 demo backend with seeded test data.
 
 ---
 
+## Recommended disposable local stack (Windows)
+
+Use this path for a visible local demo. It creates an ignored
+`.env.demo.local`, a loopback-only disposable PostgreSQL database and Redis
+container, and never targets the historical `.env` database.
+
+First time only:
+
+```powershell
+.\scripts\start_demo_dev.ps1 -InitializeInfrastructure
+.\scripts\start_demo_dev.ps1 -Migrate
+.\scripts\start_demo_dev.ps1 -Seed
+```
+
+Start the visible stack:
+
+```powershell
+.\scripts\start_demo_dev.ps1 -BackendPort 8010 -WebPort 3010 -MetroPort 8081 -StartExpo
+```
+
+Open `http://127.0.0.1:3010/doctor/login`. Sign in with
+`demo.doctor@nexacare.in`, the ignored `DEMO_PROVIDER_PASSWORD`, and a current
+TOTP code from the ignored `DEMO_PROVIDER_TOTP_SECRET` in `.env.demo.local`.
+Do not print either secret. The seed deliberately requires MFA.
+
+For a physical Android development device, use the workstation's private LAN
+IPv4 address and explicitly restrict the allowed phone subnet. This is the
+only launcher mode that binds the API beyond loopback; it binds only the exact
+literal LAN address and the route separately enforces the supplied RFC1918
+CIDR. PostgreSQL and Redis remain loopback-only:
+
+```powershell
+.\scripts\start_demo_dev.ps1 -BackendPort 8010 -WebPort 3010 -MetroPort 8081 -StartExpo `
+  -MobileApiUrl http://<LAN-IP>:8010 -MobileClientCidr <LAN-CIDR>
+```
+
+The closed synthetic-patient login appears only in this development stack and
+still performs ordinary Redis session issuance and native P-256 device
+enrollment. A development client on a real Android device or emulator is
+required to create the active device key; the seed never fabricates one.
+
+With that device attached, install or refresh the native development client
+from `nexa-client`:
+
+```powershell
+corepack yarn workspace expo-app android
+```
+
+---
+
 ## Prerequisites
 
-- Python 3.11+ with the project's virtual environment active
-- PostgreSQL or Supabase database (local or cloud)
-- Redis (for consent request state and session tokens)
+- Python 3.12.x with the project's virtual environment active
+- Docker Desktop for the launcher-managed loopback PostgreSQL and Redis
 - Node.js 18+ and Yarn 4+ (for the frontend)
 
 ---
 
-## 1. Set Environment Variables
+## 1. Launcher-managed configuration
 
-```bash
-# Backend
-export DATABASE_URL="postgresql://user:pass@localhost:5432/nexacare"
-export REDIS_URL="redis://localhost:6379/0"
-export DEMO_PROVIDER_PASSWORD="<GENERATE_A_STRONG_LOCAL_DEMO_PASSWORD>"
-
-# Frontend — point at your running backend
-export NEXT_PUBLIC_API_URL="http://localhost:8000"
-```
-
-> **No localhost in source code.** The frontend reads `NEXT_PUBLIC_API_URL` from
-> the environment at build time. The default fallback is `https://api.nexacare.in`.
+Do not set a cloud/Supabase target, edit `.env`, or run Uvicorn manually for
+this walkthrough. The launcher owns the ignored `.env.demo.local`, verifies a
+loopback `nexa_qual_demo_*` target before every mutation, and starts the doctor
+proxy with the matching local API target.
 
 ---
 
 ## 2. Seed the Demo Doctor
 
-```powershell
-Set-Location C:\path\to\Nexa_Care
-$password = .\venv\Scripts\python.exe -c "import secrets; print('Aa1!' + secrets.token_urlsafe(32))"
-# Copy $password into the ignored .env as DEMO_PROVIDER_PASSWORD, then:
-Remove-Variable password
-.\venv\Scripts\python.exe scripts\seed_demo_doctor.py
-```
-
-The normal seed command creates a missing credential but never overwrites an
-existing password. Never commit `.env` or place the generated password directly
-in a command argument.
+Use the three launcher commands shown above for first-time infrastructure,
+migration, and seed setup. The normal `-Seed` operation preserves a complete
+current synthetic fixture; it fails closed if an existing fixture has missing,
+expired, revoked, or changed clinical-trust state. It never targets `.env`, a
+cloud service, or a non-loopback database.
 
 This creates:
 
@@ -59,46 +94,29 @@ This creates:
 | **Email** | `demo.doctor@nexacare.in` |
 | **Password** | Value of the ignored local `DEMO_PROVIDER_PASSWORD` variable |
 | **Hospital** | Nexa Demo Hospital (Mumbai) |
-| **MFA** | Disabled (for demo simplicity) |
+| **MFA** | Required; use the ignored local TOTP secret |
 
 And two demo patients:
 
 | Patient | ID | Notes |
 |---------|----|----|
-| Aarav Sharma | (auto-generated UUID) | Has NFC card `04:B3:C1:DE:55:01` |
-| Priya Patel | (auto-generated UUID) | Manual search only |
+| Aarav Sharma | deterministic synthetic UUID (shown by the seed) | Has NFC card `04:B3:C1:DE:55:01` |
+| Priya Patel | deterministic synthetic UUID (shown by the seed) | Manual search only |
 
 ---
 
-## 3. Start the Backend
+## 3. Start the backend and doctor web app
 
-```bash
-cd /path/to/Nexa_Care
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Verify the backend is running:
-
-```bash
-curl http://localhost:8000/health
-```
+Run the launcher command from the top of this guide. It starts FastAPI on
+`127.0.0.1:8010`, Next on `127.0.0.1:3010`, and Metro on `127.0.0.1:8081`.
+The ordinary emulator/browser path is loopback-only; no wildcard Uvicorn bind
+is part of this guide.
 
 ---
 
-## 4. Start the Frontend
+## 4. Open the doctor experience
 
-```bash
-cd /path/to/Nexa_Care/nexa-client
-
-# Install dependencies (first time only)
-node .yarn/releases/yarn-4.5.0.cjs install
-
-# Build and start the Next.js app
-cd nexa-client/apps/next
-node ../../node_modules/next/dist/bin/next dev --port 3000
-```
-
-Open http://localhost:3000/doctor/login in your browser.
+Open `http://127.0.0.1:3010/doctor/login` in a browser.
 
 ---
 
@@ -106,14 +124,14 @@ Open http://localhost:3000/doctor/login in your browser.
 
 ### 5.1 Login
 
-1. Open http://localhost:3000/doctor/login
+1. Open `http://127.0.0.1:3010/doctor/login`
 2. Enter **Email:** `demo.doctor@nexacare.in`
 3. Enter **Password:** the value of your ignored local `DEMO_PROVIDER_PASSWORD`
 4. Click **Sign In**
 5. You are redirected to the Dashboard
 
-> MFA is disabled on the demo account. In production, login would require
-> a TOTP code from the authenticator app.
+> The disposable demo account requires TOTP MFA as well. Use the current code
+> generated from the ignored local `DEMO_PROVIDER_TOTP_SECRET`.
 
 ### 5.2 Dashboard
 
@@ -175,7 +193,7 @@ consent evidence. The challenge may be inspected without resolving it:
 ```bash
 # Get the challenge details
 curl -H "Authorization: Bearer <PATIENT_TOKEN>" \
-  http://localhost:8000/api/v2/consent/challenge/<REQUEST_ID>
+  http://127.0.0.1:8010/api/v2/consent/challenge/<REQUEST_ID>
 
 # Approval is submitted only by the mobile app after biometric-gated signing.
 ```
@@ -251,7 +269,7 @@ When consent expires, the viewer **locks immediately** with 🔒 and
 | Problem | Solution |
 |---------|----------|
 | Login fails with 401 | Verify the configured database and account status. Normal seeding does not reset an existing password. Use the explicit rotation command below when required. |
-| "Patient device not enrolled" error | The patient needs a device key; the seed script creates one |
+| "Patient device not enrolled" error | Sign in on a real Android development client and complete native P-256 device enrollment; the seed intentionally does not create a device key |
 | Consent challenge not found | Redis must be running; challenges are stored in Redis with 120s TTL |
 | Frontend shows blank page | Check `NEXT_PUBLIC_API_URL` is set correctly |
 | 401 on data requests | Session token may have expired; log in again |
@@ -261,44 +279,43 @@ When consent expires, the viewer **locks immediately** with 🔒 and
 
 ## 8. Demo Password Rotation and Seed Reruns
 
-Re-running the normal seed command is non-destructive and leaves the password,
-lockout state, and active-state decisions unchanged:
+Re-run the normal launcher seed only when the synthetic fixture remains
+complete and current. It preserves passwords, lockouts, device state, and
+clinical-trust decisions; it fails closed instead of recreating a missing,
+expired, revoked, or changed authority row:
 
 ```powershell
-.\venv\Scripts\python.exe scripts\seed_demo_doctor.py
+.\scripts\start_demo_dev.ps1 -Seed
 ```
 
-To intentionally rotate only `demo.doctor@nexacare.in`, first generate a new
-strong value and place it in the ignored `.env`, then run both confirmation
-flags:
+To rotate the synthetic provider password, update only the ignored
+`.env.demo.local`, then run the explicit confirmation path against that same
+file. The command never prints the password, TOTP secret, or issued token:
 
 ```powershell
+$env:NEXA_DEMO_ENV_FILE = (Resolve-Path .\.env.demo.local)
 .\venv\Scripts\python.exe scripts\seed_demo_doctor.py `
   --reset-password `
   --confirm-demo-provider-reset
+Remove-Item Env:NEXA_DEMO_ENV_FILE
 ```
 
 Rotation writes only the canonical `password_hash`, clears password lockout and
 failed attempts, updates `password_changed_at`, revokes existing provider and
 pending-MFA sessions, and writes an audit event. It does not reactivate a
-disabled identity or credential unless the corresponding explicit flag is also
-provided. Restarting Uvicorn is not required after a database-only rotation.
-
-Verify login without displaying the returned token:
+disabled identity, credential, affiliation, or verification. Recovering a
+changed synthetic trust fixture is deliberately broader and requires the same
+confirmed reset plus both reactivation flags; this re-establishes only the
+canonical synthetic provider/facility/affiliation verification fixture:
 
 ```powershell
-$body = @{
-  login_identifier = "demo.doctor@nexacare.in"
-  password = (Get-Content .env | Where-Object { $_ -match '^DEMO_PROVIDER_PASSWORD=' } | Select-Object -First 1).Split('=', 2)[1].Trim('"')
-} | ConvertTo-Json
-$response = Invoke-WebRequest -Uri "http://127.0.0.1:8000/api/v2/auth/login" -Method POST -ContentType "application/json" -Body $body
-$json = $response.Content | ConvertFrom-Json
-[pscustomobject]@{
-  http_status = $response.StatusCode
-  token_present = [bool]$json.access_token
-  provider_uid_present = [bool]$json.provider_uid
-  hospital_id_present = [bool]$json.hospital_id
-  mfa_required = [bool]$json.mfa_token
-}
-Remove-Variable body, response, json
+$env:NEXA_DEMO_ENV_FILE = (Resolve-Path .\.env.demo.local)
+.\venv\Scripts\python.exe scripts\seed_demo_doctor.py `
+  --reset-password `
+  --confirm-demo-provider-reset `
+  --reactivate-provider `
+  --reactivate-credential
+Remove-Item Env:NEXA_DEMO_ENV_FILE
 ```
+
+Restarting Uvicorn is not required after a database-only seed operation.

@@ -13,6 +13,7 @@ from typing import Any
 import jwt
 
 from app.core.redis import get_async_redis_client as get_redis_client
+from app.services.local_demo_patient_auth import is_supported_patient_auth_identity
 from app.services.patient_session_authority import (
     PatientSessionAuthorityUnavailable,
     _epoch_key,
@@ -56,6 +57,8 @@ def issue_patient_access_token(
     *,
     session_id: str | None = None,
     session_epoch: int | None = None,
+    identity_provider: str = "supabase",
+    auth_method: str = "phone_otp",
 ) -> tuple[str, datetime]:
     """Encode a patient JWT; live authority is established separately in Redis.
 
@@ -67,6 +70,10 @@ def issue_patient_access_token(
 
     if (session_id is None) != (session_epoch is None):
         raise ValueError("session_id and session_epoch must be supplied together")
+    if not is_supported_patient_auth_identity(
+        provider=identity_provider, auth_method=auth_method
+    ):
+        raise ValueError("Unsupported patient authentication identity")
 
     now = datetime.now(timezone.utc)
     expires = now + timedelta(seconds=PATIENT_ACCESS_TTL_SECONDS)
@@ -75,7 +82,8 @@ def issue_patient_access_token(
         "actor_type": "patient",
         "patient_id": patient_id,
         "supabase_user_id": supabase_user_id,
-        "auth_method": "phone_otp",
+        "identity_provider": identity_provider,
+        "auth_method": auth_method,
         "iat": int(now.timestamp()),
         "exp": int(expires.timestamp()),
         "jti": secrets.token_urlsafe(24),
@@ -87,7 +95,11 @@ def issue_patient_access_token(
 
 
 async def issue_patient_access_session(
-    patient_id: str, supabase_user_id: str
+    patient_id: str,
+    supabase_user_id: str,
+    *,
+    identity_provider: str = "supabase",
+    auth_method: str = "phone_otp",
 ) -> tuple[str, datetime, str]:
     """Issue a patient JWT only after establishing matching live authority."""
 
@@ -99,6 +111,8 @@ async def issue_patient_access_session(
         supabase_user_id,
         session_id=session_id,
         session_epoch=session_epoch,
+        identity_provider=identity_provider,
+        auth_method=auth_method,
     )
     await create_patient_session(
         patient_id=patient_id,
@@ -107,6 +121,8 @@ async def issue_patient_access_session(
         session_epoch=session_epoch,
         issued_at=issued_at,
         expires_at=expires_at,
+        identity_provider=identity_provider,
+        auth_method=auth_method,
     )
     return access_token, expires_at, session_id
 
@@ -117,9 +133,15 @@ def decode_patient_access_token(token: str) -> dict[str, Any] | None:
         claims = jwt.decode(clean, _jwt_secret(), algorithms=["HS256"])
     except (jwt.PyJWTError, RuntimeError):
         return None
+    identity_provider = claims.get("identity_provider", "supabase")
+    auth_method = claims.get("auth_method")
     if (
         claims.get("actor_type") != "patient"
-        or claims.get("auth_method") != "phone_otp"
+        or not isinstance(identity_provider, str)
+        or not isinstance(auth_method, str)
+        or not is_supported_patient_auth_identity(
+            provider=identity_provider, auth_method=auth_method
+        )
     ):
         return None
     if claims.get("sub") != claims.get("patient_id"):

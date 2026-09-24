@@ -22,7 +22,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.ai.async_textract import AsyncTextractProvider
 from app.api.routes import router as api_router
 from app.api.v2.assurance_routes import router as assurance_v2_router
-from app.api.v2.auth_routes import router as auth_v2_router
+from app.api.v2.auth_routes import (
+    include_local_demo_patient_auth_router,
+    router as auth_v2_router,
+)
 from app.api.v2.consent_history_routes import router as consent_history_v2_router
 from app.api.v2.consent_routes import router as consent_v2_router
 from app.api.v2.consent_v3_routes import router as consent_v3_router
@@ -428,6 +431,7 @@ app.add_middleware(GlobalLoggingMiddleware)
 
 app.include_router(api_router)
 app.include_router(auth_v2_router)
+include_local_demo_patient_auth_router(app)
 app.include_router(registration_recovery_v2_router)
 app.include_router(registration_recovery_review_v2_router)
 app.include_router(consent_v2_router)

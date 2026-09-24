@@ -31,6 +31,36 @@ Nexa Care defaults to deny, grants least privilege for a declared purpose, deriv
 
 The system minimises data and observability, uses durable idempotency, distinguishes secure deletion from mere logical blocking, never fabricates clinical data, preserves source provenance, and distinguishes mock coverage from PostgreSQL, Redis, KMS, object-storage, and physical-device evidence.
 
+### Disposable development synthetic-patient authentication boundary
+
+The local demo may authenticate only its two explicitly seeded synthetic
+patients when `ENVIRONMENT=development` and
+`NEXA_DEMO_PATIENT_LOGIN_ENABLED=true` are both present. The route is not
+registered unless both gates are true at application startup; its handler also
+returns `404` for an unsupported transport or missing seed link. It accepts a
+closed synthetic key rather than a patient identifier or arbitrary subject.
+The launcher binds the ordinary emulator/browser path to `127.0.0.1`; a
+physical Android exception requires an explicit literal RFC1918 bind address
+and a client CIDR contained within the RFC1918 allocation. The resulting token
+must still resolve through the ordinary Redis session, current PostgreSQL
+identity link, and device-enrollment controls. This is not a Supabase,
+physical-device, consent, production-authentication, or compliance claim;
+turning the flag off invalidates this authentication method at token resolution
+as well as issuance.
+
+Routine disposable-demo seeding may create a coherent first-run synthetic
+fixture or preserve its complete current state, but it must not reuse an
+ambiguous, privilege-bearing, legacy, or non-synthetic identity; reassign an
+NFC UID or local patient identity; accept extra trust-management grants or
+affiliations; or silently recreate/re-enable missing, revoked, expired, or
+changed clinical trust rows. Existing synthetic patient identities and clinical
+rows must match the closed fixture exactly. A transaction-scoped advisory lock
+serializes first-run clinical-row creation because the legacy clinical shard has
+no global uniqueness constraint. Recovery requires the separately confirmed
+password-reset path and both provider and credential reactivation flags; it
+remains limited to the canonical synthetic fixture on the loopback disposable
+database.
+
 ## 3. Security findings register
 
 | ID | Area | Original defect and threat | Corrected invariant / prohibited regression | Authoritative implementation | Required tests | Status | Last verified |
@@ -201,6 +231,15 @@ forcing no source-failure reason and no grace. Stable lifecycle failures expose
 only a canonical error code. These routes do not create grants, change roles,
 assign clinical capability, modify patient/consent/emergency workflows, or
 provide a Phase 3G scheduler/worker.
+
+The only permitted plaintext-HTTP cookie exception is the disposable local
+development demo: `ENVIRONMENT=development`, the explicit
+`NEXA_DEMO_ALLOW_INSECURE_LOOPBACK_WEB_COOKIES=true` flag, an HTTP request to a
+loopback host, and a loopback client source must all be present. That mode uses
+first-party `SameSite=Lax` cookies without `Secure`; any missing condition,
+non-loopback source, configuration error, or non-development environment
+fails closed to `Secure; SameSite=None`. It does not relax session identity,
+HttpOnly, expiry, CSRF, or server-side authority requirements.
 
 Slice 2 wires `ClinicalEligibilityService` through a central interactive
 dependency for NFC/discovery, consent request/status/claim, record/FHIR reads,

@@ -9,6 +9,9 @@ export interface PatientOtpVerifyResponse {
   device_authority_state: 'bootstrap_enrollment' | 'existing_device_required'
 }
 
+/** Closed keys for the two explicitly seeded local-development patients. */
+export type LocalDemoPatient = 'aarav' | 'priya'
+
 export interface SubmissionGuard {
   current: boolean
 }
@@ -39,6 +42,23 @@ export async function verifyPatientOtp(
   const { data } = await apiClient.post<PatientOtpVerifyResponse>(
     '/api/v2/auth/otp/verify',
     { phone, otp },
+    { noAuth: true }
+  )
+  return data
+}
+
+/**
+ * Obtain ordinary patient session authority for one seeded synthetic patient.
+ *
+ * The backend rejects this route unless its own explicit development-only
+ * gates are satisfied; this client function contains no credential or bypass.
+ */
+export async function loginLocalDemoPatient(
+  demoPatient: LocalDemoPatient
+): Promise<PatientOtpVerifyResponse> {
+  const { data } = await apiClient.post<PatientOtpVerifyResponse>(
+    '/api/v2/auth/demo/patient-login',
+    { demo_patient: demoPatient },
     { noAuth: true }
   )
   return data
