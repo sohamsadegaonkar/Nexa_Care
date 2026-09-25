@@ -29,6 +29,7 @@ from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa:
 from app.models.patient import Patient  # noqa: E402
 from app.models.provider import HospitalRegistry, ProviderIdentity  # noqa: E402
 from app.security.clinical_policy import CLINICAL_CONTACT_ASSURANCE_POLICY  # noqa: E402
+from app.security.erasure_registry import check_erasure_registry  # noqa: E402
 from app.security.provider_capabilities import ClinicalCapability  # noqa: E402
 from app.services.clinical_eligibility import (  # noqa: E402
     ClinicalAuthenticationMethod,
@@ -159,6 +160,10 @@ async def _demo_state(database_url: str) -> tuple[bool, str | None]:
                     or patient.public_patient_id != demo_public_patient_id(patient_id)
                 ):
                     return False, "DEMO_PATIENT_DISCOVERY_NOT_READY"
+                try:
+                    await check_erasure_registry(str(patient_id), db)
+                except Exception:
+                    return False, "DEMO_PATIENT_ERASURE_BLOCKED_OR_UNAVAILABLE"
 
             card = await db.scalar(
                 select(NFCCardRegistry).where(NFCCardRegistry.card_uid == DEMO_NFC_UID)
