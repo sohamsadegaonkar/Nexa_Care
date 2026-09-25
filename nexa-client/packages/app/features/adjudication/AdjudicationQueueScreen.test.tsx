@@ -62,11 +62,11 @@ describe('adjudication case creation recovery', () => {
       })
     renderQueue()
 
-    const input = await screen.findByLabelText('Eligible routing reference')
+    const input = await screen.findByLabelText('Document review reference')
     fireEvent.change(input, { target: { value: 'route-1' } })
-    fireEvent.click(screen.getByText('Create field-linked case'))
-    expect(await screen.findByText('The adjudication case could not be created.')).toBeTruthy()
-    fireEvent.click(screen.getByText('Create field-linked case'))
+    fireEvent.click(screen.getByText('Review Document'))
+    expect(await screen.findByText('The document review could not be opened.')).toBeTruthy()
+    fireEvent.click(screen.getByText('Review Document'))
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
     expect(create.mock.calls[1]).toEqual(create.mock.calls[0])
@@ -82,9 +82,9 @@ describe('adjudication case creation recovery', () => {
       .mockReturnValue(pending)
     renderQueue()
 
-    const input = await screen.findByLabelText('Eligible routing reference')
+    const input = await screen.findByLabelText('Document review reference')
     fireEvent.change(input, { target: { value: 'route-1' } })
-    const button = screen.getByText('Create field-linked case')
+    const button = screen.getByText('Review Document')
     fireEvent.click(button)
     fireEvent.click(button)
 
@@ -108,6 +108,6 @@ describe('adjudication case creation recovery', () => {
         'Your role may view operational case status but cannot enter or commit clinical information.'
       )
     ).toBeTruthy()
-    expect(screen.queryByText('Create field-linked case')).toBeNull()
+    expect(screen.queryByText('Review Document')).toBeNull()
   })
 })

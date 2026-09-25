@@ -235,7 +235,7 @@ export function EmergencyAccessScreen() {
 
         <Card bg="$nexaDangerSoft" borderWidth={1} borderColor="$red10" borderRadius={14} p="$4">
           <Paragraph color="$red10" fontSize={13} lineHeight={20}>
-            Emergency access is audited, time limited, rate limited, and may trigger patient and compliance notifications.
+            Emergency access is permanently recorded in the audit trail, time limited, rate limited, and may trigger patient and compliance notifications. Unauthorized or non-emergency use is a compliance violation.
           </Paragraph>
         </Card>
 

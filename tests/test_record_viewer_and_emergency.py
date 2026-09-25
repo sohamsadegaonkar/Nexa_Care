@@ -658,19 +658,18 @@ class TestNeitherScreenApproves:
 class TestEmergencyBackendContract:
     """Emergency access screen must match the backend contract."""
 
-    def test_calls_break_glass_issue_endpoint(self) -> None:
+    def test_calls_discovery_bound_break_glass_endpoint(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
-        # The screen may use NexaApiClient.breakGlassIssue() or call the endpoint directly
-        assert (
-            "breakGlassIssue" in code or "/api/v2/consent/break-glass/issue" in code
-        ), "Must call break-glass API (via NexaApiClient or direct endpoint)"
+        assert "breakGlassDiscoveredIssue" in code
+        assert "NexaApiClient.breakGlassIssue(" not in code
 
-    def test_sends_required_fields(self) -> None:
-        """Must send patient_id, reason_code, and clinical justification."""
+    def test_sends_discovery_authority_and_required_clinical_fields(self) -> None:
+        """The clinician sends a discovery capability, never a selected canonical patient UUID."""
         code = _read_screen("EmergencyAccessScreen")
-        assert "patient_id" in code, "Must send patient_id"
-        assert "reason_code" in code, "Must send reason_code"
-        assert "justification" in code, "Must send justification"
+        assert "discovery_handle" in code
+        assert "patient_id:" not in code
+        assert "reason_code" in code
+        assert "justification" in code
 
     def test_backend_enforces_rate_limit(self) -> None:
         """Backend must enforce rate limiting on break-glass."""

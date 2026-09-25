@@ -56,14 +56,14 @@ export function AdjudicationQueueScreen() {
     } catch (reason) {
       if (isTerminalAdjudicationAccessError(reason)) {
         clearAllAdjudicationWorkflows()
-        setError('Adjudication access is no longer authorized. Sign in or request access again.')
+        setError('Document review access is no longer authorized. Sign in or request access again.')
         return
       }
       if (reason instanceof ApiError && reason.status === 401) {
         router.replace('/doctor/login')
         return
       }
-      setError('The adjudication queue could not be loaded.')
+      setError('The review queue could not be loaded.')
     } finally {
       setLoading(false)
     }
@@ -78,7 +78,7 @@ export function AdjudicationQueueScreen() {
     if (creatingRef.current || !clinicallyQualified) return
     const sourceId = (source === 'route' ? routingId : jobId).trim()
     if (!sourceId) {
-      setError(`Enter the eligible ${source === 'route' ? 'routing' : 'job'} reference.`)
+      setError('Enter the document review reference.')
       return
     }
     creatingRef.current = true
@@ -112,11 +112,11 @@ export function AdjudicationQueueScreen() {
           return
         }
         if (reason.code === 'ADJUDICATION_ROUTE_INELIGIBLE') {
-          setError('Only an ordinary SOURCE_ONLY retained route can be reviewed here.')
+          setError('This document is not eligible for clinical verification in this workflow.')
           return
         }
       }
-      setError('The adjudication case could not be created.')
+      setError('The document review could not be opened.')
     } finally {
       creatingRef.current = false
       setCreating(null)
