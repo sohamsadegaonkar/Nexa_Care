@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.models.provider import (
+    AffiliationTrustStatus,
     ProviderCredential,
     ProviderHospitalAffiliation,
     ProviderIdentity,
@@ -22,6 +24,20 @@ from scripts.seed_demo_doctor import (
 
 
 STRONG_PASSWORD = "Alpha-Only-Strong-Password-42!"
+DEMO_MFA_SECRET = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
+
+
+@pytest.fixture(autouse=True)
+def _demo_mfa_environment(monkeypatch):
+    monkeypatch.setenv("DEMO_PROVIDER_MFA_SECRET", DEMO_MFA_SECRET)
+    monkeypatch.setattr(
+        "scripts.seed_demo_doctor.encrypt_mfa_secret",
+        lambda secret: "encrypted-demo-secret",
+    )
+    monkeypatch.setattr(
+        "scripts.seed_demo_doctor.decrypt_mfa_secret",
+        lambda _ciphertext: DEMO_MFA_SECRET,
+    )
 
 
 def provider_row(*, active: bool = True) -> ProviderIdentity:
@@ -42,7 +58,8 @@ def credential_row(
         provider_id=provider.id,
         login_identifier=DEMO_PROVIDER_EMAIL,
         password_hash=password_hash,
-        mfa_enabled=False,
+        mfa_enabled=True,
+        mfa_secret_encrypted="encrypted-demo-secret",
         failed_login_attempts=0,
         is_active=True,
     )
@@ -59,7 +76,10 @@ def affiliation_row(
         affiliation_type="permanent",
         roles=["clinician"],
         is_primary=True,
+        valid_from=datetime.now(timezone.utc) - timedelta(days=1),
+        valid_until=datetime.now(timezone.utc) + timedelta(days=365),
         is_active=True,
+        trust_status=AffiliationTrustStatus.ACTIVE.value,
     )
     affiliation.id = uuid.uuid4()
     return affiliation
