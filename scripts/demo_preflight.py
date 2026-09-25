@@ -130,27 +130,41 @@ async def _demo_state(database_url: str) -> tuple[bool, str | None]:
                 return False, "DEMO_HOSPITAL_MISSING"
 
             now = datetime.now(timezone.utc)
-            eligibility = await ClinicalEligibilityService(
-                contact_assurance_policy=CLINICAL_CONTACT_ASSURANCE_POLICY
-            ).evaluate_interactive(
-                db,
-                provider,
-                InteractiveClinicalAuthentication(
-                    provider_id=provider.id,
-                    hospital_id=hospital_id,
-                    method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
-                    session_authenticated=True,
-                    mfa_verified_at=now,
-                ),
-                ClinicalCapability.PATIENT_DISCOVER,
-                now=now,
+            authentication = InteractiveClinicalAuthentication(
+                provider_id=provider.id,
+                hospital_id=hospital_id,
+                method=ClinicalAuthenticationMethod.PROVIDER_SESSION,
+                session_authenticated=True,
+                mfa_verified_at=now,
             )
-            if not eligibility.allowed:
-                return False, (
-                    eligibility.denial_code.value
-                    if eligibility.denial_code is not None
-                    else "CLINICAL_ELIGIBILITY_DENIED"
+            eligibility_service = ClinicalEligibilityService(
+                contact_assurance_policy=CLINICAL_CONTACT_ASSURANCE_POLICY
+            )
+            required_capabilities = (
+                ClinicalCapability.PATIENT_DISCOVER,
+                ClinicalCapability.CONSENT_REQUEST,
+                ClinicalCapability.RECORD_READ,
+                ClinicalCapability.DOCUMENTS_UPLOAD,
+                ClinicalCapability.DOCUMENTS_PROCESS,
+                ClinicalCapability.DOCUMENTS_REVIEW,
+                ClinicalCapability.DOCUMENTS_COMMIT,
+                ClinicalCapability.EMERGENCY_ATTEMPT,
+            )
+            for capability in required_capabilities:
+                eligibility = await eligibility_service.evaluate_interactive(
+                    db,
+                    provider,
+                    authentication,
+                    capability,
+                    now=now,
                 )
+                if not eligibility.allowed:
+                    denial = (
+                        eligibility.denial_code.value
+                        if eligibility.denial_code is not None
+                        else "CLINICAL_ELIGIBILITY_DENIED"
+                    )
+                    return False, f"{capability.value}:{denial}"
 
             for patient_id in (DEMO_PATIENT_1_ID, DEMO_PATIENT_2_ID):
                 patient = await db.get(Patient, patient_id)
@@ -180,8 +194,9 @@ async def _demo_state(database_url: str) -> tuple[bool, str | None]:
 
 
 async def run_preflight() -> bool:
-    require_demo_environment("demo_preflight")
+    environment = require_demo_environment("demo_preflight")
     print("NEXA CARE DEVELOPMENT PREFLIGHT")
+    print(f"database_environment_classification={environment}")
     all_go = True
 
     database_url = get_database_config().url
