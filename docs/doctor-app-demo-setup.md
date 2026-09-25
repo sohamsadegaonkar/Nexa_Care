@@ -27,6 +27,7 @@ demo backend with seeded test data.
 export DATABASE_URL="postgresql://user:pass@localhost:5432/nexacare"
 export REDIS_URL="redis://localhost:6379/0"
 export DEMO_PROVIDER_PASSWORD="<GENERATE_A_STRONG_LOCAL_DEMO_PASSWORD>"
+export DEMO_PROVIDER_MFA_SECRET="<GENERATE_BASE32_TOTP_SECRET_AND_KEEP_IGNORED>"
 
 # Frontend — point at your running backend
 export NEXT_PUBLIC_API_URL="http://localhost:8000"
@@ -41,10 +42,12 @@ export NEXT_PUBLIC_API_URL="http://localhost:8000"
 
 ```powershell
 Set-Location C:\path\to\Nexa_Care
-$password = .\venv\Scripts\python.exe -c "import secrets; print('Aa1!' + secrets.token_urlsafe(32))"
-# Copy $password into the ignored .env as DEMO_PROVIDER_PASSWORD, then:
-Remove-Variable password
-.\venv\Scripts\python.exe scripts\seed_demo_doctor.py
+$password = .\.venv\Scripts\python.exe -c "import secrets; print('Aa1!' + secrets.token_urlsafe(32))"
+$mfaSecret = .\.venv\Scripts\python.exe -c "import pyotp; print(pyotp.random_base32())"
+# Copy these into the ignored .env as DEMO_PROVIDER_PASSWORD and
+# DEMO_PROVIDER_MFA_SECRET. Do not paste either value into source or logs.
+Remove-Variable password, mfaSecret
+.\.venv\Scripts\python.exe scripts\seed_demo_doctor.py
 ```
 
 The normal seed command creates a missing credential but never overwrites an
@@ -59,7 +62,7 @@ This creates:
 | **Email** | `demo.doctor@nexacare.in` |
 | **Password** | Value of the ignored local `DEMO_PROVIDER_PASSWORD` variable |
 | **Hospital** | Nexa Demo Hospital (Mumbai) |
-| **MFA** | Disabled (for demo simplicity) |
+| **MFA** | Real TOTP, enrolled from ignored `DEMO_PROVIDER_MFA_SECRET` |
 
 And two demo patients:
 
@@ -110,10 +113,12 @@ Open http://localhost:3000/doctor/login in your browser.
 2. Enter **Email:** `demo.doctor@nexacare.in`
 3. Enter **Password:** the value of your ignored local `DEMO_PROVIDER_PASSWORD`
 4. Click **Sign In**
-5. You are redirected to the Dashboard
+5. Complete the real TOTP challenge using the authenticator seeded from the
+   ignored `DEMO_PROVIDER_MFA_SECRET`.
+6. You are redirected to the Dashboard.
 
-> MFA is disabled on the demo account. In production, login would require
-> a TOTP code from the authenticator app.
+> Demo MFA uses the same verification path as other providers. The seeder
+> does not bypass MFA, print the secret, or put it in client configuration.
 
 ### 5.2 Dashboard
 
@@ -200,6 +205,11 @@ When consent expires, the viewer **locks immediately** with 🔒 and
 "Consent expired. Request access again."
 
 ### 5.8 Emergency Break-Glass
+
+> Task-1 backend now provides the additive discovery-bound endpoint
+> `POST /api/v2/consent/break-glass/discovered/issue`. The existing doctor UI
+> remains on the legacy direct-patient-ID contract until the separate frontend
+> migration lands; do not treat that legacy UI as the target security design.
 
 1. From the Dashboard, click **🚨 Emergency Access**
 2. You see the emergency form with:
