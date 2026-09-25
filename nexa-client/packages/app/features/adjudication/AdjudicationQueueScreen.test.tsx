@@ -64,9 +64,9 @@ describe('adjudication case creation recovery', () => {
 
     const input = await screen.findByLabelText('Document review reference')
     fireEvent.change(input, { target: { value: 'route-1' } })
-    fireEvent.click(screen.getByText('Review Document'))
+    fireEvent.click(screen.getAllByText('Review Document')[0])
     expect(await screen.findByText('The document review could not be opened.')).toBeTruthy()
-    fireEvent.click(screen.getByText('Review Document'))
+    fireEvent.click(screen.getAllByText('Review Document')[0])
 
     await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
     expect(create.mock.calls[1]).toEqual(create.mock.calls[0])
@@ -84,7 +84,7 @@ describe('adjudication case creation recovery', () => {
 
     const input = await screen.findByLabelText('Document review reference')
     fireEvent.change(input, { target: { value: 'route-1' } })
-    const button = screen.getByText('Review Document')
+    const button = screen.getAllByText('Review Document')[0]
     fireEvent.click(button)
     fireEvent.click(button)
 
