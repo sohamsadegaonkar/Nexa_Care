@@ -339,6 +339,181 @@ async def seed_provider(
     )
 
 
+async def seed_provider_trust(
+    session, provider_id: uuid.UUID, hospital_id: uuid.UUID
+) -> None:
+    """Create internally consistent synthetic trust evidence for the demo only.
+
+    Runtime authorization still goes through ClinicalEligibilityService. This
+    direct bootstrap exists because the interactive registry/reviewer workflows
+    are not appropriate for deterministic local fixtures.
+    """
+
+    now = datetime.now(timezone.utc)
+    reviewer = await session.scalar(
+        select(ProviderIdentity).where(
+            func.lower(func.trim(ProviderIdentity.contact_email))
+            == normalize_provider_login_identifier(DEMO_REVIEWER_EMAIL)
+        )
+    )
+    if reviewer is None:
+        reviewer = ProviderIdentity(
+            display_name="Nexa Demo Trust Reviewer",
+            contact_email=DEMO_REVIEWER_EMAIL,
+            status="active",
+            is_active=True,
+        )
+        session.add(reviewer)
+        await session.flush()
+    if reviewer.id == provider_id:
+        raise RuntimeError("Demo clinical provider cannot self-review trust evidence")
+
+    professional = await session.scalar(
+        select(ProfessionalVerification).where(
+            ProfessionalVerification.provider_id == provider_id
+        )
+    )
+    if professional is None:
+        professional = ProfessionalVerification(
+            provider_id=provider_id,
+            registration_authority_code="NEXA-DEMO-MMC",
+            registration_number_normalized="MMC-2019-45231-DEMO",
+            status=ProfessionalVerificationStatus.VERIFIED.value,
+            verification_method="SYNTHETIC_DEMO_REVIEW",
+            verification_source="NEXA_DEMO_FIXTURE",
+            verification_reference="DEMO-PROFESSIONAL-V1",
+            identity_binding_method="SYNTHETIC_DEMO_BINDING",
+            identity_binding_status="MATCHED",
+            registration_valid_from=now - timedelta(days=30),
+            registration_valid_until=now + timedelta(days=365),
+            verified_at=now,
+            last_checked_at=now,
+            next_review_at=now + timedelta(days=180),
+            reviewer_id=str(reviewer.id),
+            decision_reason_code="SYNTHETIC_DEMO_VERIFIED",
+            version=1,
+        )
+        session.add(professional)
+        await session.flush()
+    elif professional.status != ProfessionalVerificationStatus.VERIFIED.value:
+        raise RuntimeError(
+            "Demo professional verification is not VERIFIED; explicit trust repair is required"
+        )
+
+    hospital = await session.get(HospitalRegistry, hospital_id)
+    if hospital is None:
+        raise RuntimeError("Demo hospital disappeared during bootstrap")
+    facility = await session.scalar(
+        select(FacilityVerification).where(
+            FacilityVerification.facility_id == hospital_id
+        )
+    )
+    if facility is None:
+        facility = FacilityVerification(
+            facility_id=hospital_id,
+            status=FacilityVerificationStatus.VERIFIED.value,
+            verification_method="SYNTHETIC_DEMO_REVIEW",
+            verification_source="NEXA_DEMO_FIXTURE",
+            verification_reference="DEMO-FACILITY-V1",
+            registration_authority_code="NEXA-DEMO-FACILITY",
+            registration_number_normalized=DEMO_HOSPITAL_CODE,
+            registration_valid_from=now - timedelta(days=30),
+            registration_valid_until=now + timedelta(days=365),
+            verified_at=now,
+            last_checked_at=now,
+            next_review_at=now + timedelta(days=180),
+            reviewer_id=str(reviewer.id),
+            decision_reason_code="SYNTHETIC_DEMO_VERIFIED",
+            version=1,
+        )
+        session.add(facility)
+        await session.flush()
+    elif facility.status != FacilityVerificationStatus.VERIFIED.value:
+        raise RuntimeError(
+            "Demo facility verification is not VERIFIED; explicit trust repair is required"
+        )
+
+    async def ensure_evidence(
+        *,
+        source_id: str,
+        professional_id: uuid.UUID | None = None,
+        facility_id: uuid.UUID | None = None,
+        resource_version: int,
+        identity_binding: str,
+    ) -> ProviderTrustVerificationEvidence:
+        evidence = await session.scalar(
+            select(ProviderTrustVerificationEvidence).where(
+                ProviderTrustVerificationEvidence.source_id == source_id
+            )
+        )
+        if evidence is None:
+            evidence = ProviderTrustVerificationEvidence(
+                professional_verification_id=professional_id,
+                facility_verification_id=facility_id,
+                origin=VerificationEvidenceOrigin.MANUAL_REVIEWER_ATTESTATION.value,
+                source_id=source_id,
+                observed_at=now,
+                lookup_purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW.value,
+                outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value,
+                source_record_reference=source_id,
+                observed_valid_from=now - timedelta(days=30),
+                observed_valid_until=now + timedelta(days=365),
+                identity_binding_result=identity_binding,
+                binding_method="SYNTHETIC_DEMO_BINDING",
+                response_digest=hashlib.sha256(source_id.encode("utf-8")).hexdigest(),
+                observed_resource_version=resource_version,
+            )
+            session.add(evidence)
+            await session.flush()
+        return evidence
+
+    professional_evidence = await ensure_evidence(
+        source_id="NEXA_DEMO_PROFESSIONAL_EVIDENCE_V1",
+        professional_id=professional.id,
+        resource_version=professional.version,
+        identity_binding=VerificationIdentityBindingResult.MATCHED.value,
+    )
+    facility_evidence = await ensure_evidence(
+        source_id="NEXA_DEMO_FACILITY_EVIDENCE_V1",
+        facility_id=facility.id,
+        resource_version=facility.version,
+        identity_binding=VerificationIdentityBindingResult.NOT_EVALUATED.value,
+    )
+    if professional.server_provenance_evidence_id is None:
+        professional.server_provenance_evidence_id = professional_evidence.id
+    if facility.server_provenance_evidence_id is None:
+        facility.server_provenance_evidence_id = facility_evidence.id
+    await session.flush()
+
+
+async def seed_patient_identity(session, patient_id: uuid.UUID) -> Patient:
+    """Create/reuse one active synthetic patient with a deterministic opaque public ID."""
+
+    expected_public_id = demo_public_patient_id(patient_id)
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        conflicting = await session.scalar(
+            select(Patient).where(Patient.public_patient_id == expected_public_id)
+        )
+        if conflicting is not None and conflicting.patient_uuid != patient_id:
+            raise RuntimeError("Synthetic demo public patient ID collision")
+        patient = Patient(
+            patient_uuid=patient_id,
+            public_patient_id=expected_public_id,
+            is_deleted=False,
+        )
+        session.add(patient)
+        await session.flush()
+    else:
+        if patient.is_deleted:
+            raise RuntimeError("Demo patient is deleted; explicit repair is required")
+        if patient.public_patient_id != expected_public_id:
+            raise RuntimeError(
+                "Demo patient already has a different public ID; refusing silent rotation"
+            )
+    return patient
+
+
 async def seed_nfc_card(session, patient_id: uuid.UUID, provider_id: uuid.UUID) -> None:
     """Upsert the demo NFC card."""
     stmt = (
