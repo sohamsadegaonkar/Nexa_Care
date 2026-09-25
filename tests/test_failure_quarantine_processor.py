@@ -14,6 +14,13 @@ from app.services.failure_quarantine_processor import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_failure_quarantine_health():
+    record_worker_success("failure_quarantine")
+    yield
+    record_worker_success("failure_quarantine")
+
+
 class SessionContext:
     def __init__(self, db: AsyncMock) -> None:
         self.db = db
