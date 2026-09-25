@@ -16,6 +16,7 @@ from app.api.v2.consent_routes import (
     _prepare_break_glass_request,
     issue_discovered_break_glass_consent_route,
 )
+from app.security.clinical_categories import UnsupportedClinicalCategoryError
 from app.services.break_glass_policy import BreakGlassReasonCode
 from app.services.patient_discovery_service import (
     DiscoveryHandleInvalid,
@@ -76,6 +77,57 @@ def test_discovered_payload_rejects_client_authority_overrides(field, value) -> 
     }
     with pytest.raises(ValidationError):
         DiscoveredBreakGlassConsentIssueRequest(**values)
+
+
+def test_discovered_payload_rejects_malformed_handle() -> None:
+    with pytest.raises(ValidationError):
+        _payload(discovery_handle="too-short")
+
+
+@pytest.mark.asyncio
+async def test_scope_widening_fails_closed_before_session_or_discovery() -> None:
+    provider = _provider()
+    with pytest.raises(UnsupportedClinicalCategoryError):
+        await _prepare_break_glass_request(
+            request=_request(),
+            provider=provider,
+            reason_code=BreakGlassReasonCode.UNCONSCIOUS_PATIENT,
+            justification_raw="Immediate emergency treatment required.",
+            requested_scope=["clinical.not-a-canonical-category"],
+        )
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_denial_does_not_consume_discovery_handle() -> None:
+    provider = _provider()
+    service = SimpleNamespace(consume_handle=AsyncMock())
+
+    with (
+        patch(
+            "app.api.v2.consent_routes._break_glass_limiter",
+            new=AsyncMock(
+                side_effect=HTTPException(
+                    status_code=429,
+                    detail={"error_code": "RATE_LIMIT_EXCEEDED"},
+                )
+            ),
+        ),
+        patch(
+            "app.api.v2.consent_routes.PatientDiscoveryService",
+            return_value=service,
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await issue_discovered_break_glass_consent_route(
+                request=_request(),
+                payload=_payload(),
+                background_tasks=BackgroundTasks(),
+                db=MagicMock(),
+                provider=provider,
+            )
+
+    assert exc_info.value.status_code == 429
+    service.consume_handle.assert_not_awaited()
 
 
 @pytest.mark.asyncio
