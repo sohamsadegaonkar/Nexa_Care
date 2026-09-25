@@ -2,173 +2,287 @@
 
 import {
   ActionButton,
+  Card,
   InlineNotice,
   LoadingState,
   Paragraph,
   ScreenContainer,
   ScreenHeader,
+  SectionHeading,
   StatusBadge,
   Surface,
   Text,
   XStack,
   YStack,
 } from '@my/ui'
-import { FilePlus2, RefreshCw } from '@tamagui/lucide-icons'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { ApiError, NexaApiClient, type AdjudicationCaseResponse } from '../../utils/apiClient'
+import {
+  AlertCircle,
+  ArrowRight,
+  CheckCircle,
+  Clock,
+  FilePlus,
+  FileText,
+  Filter,
+} from '@tamagui/lucide-icons'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useCallback, useEffect, useState } from 'react'
+import {
+  ApiError,
+  NexaApiClient,
+  type AdjudicationCaseResponse,
+} from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
 
-type DocumentFilter = 'all' | 'needs_review' | 'processing' | 'completed'
+type DocumentFilterTab = 'all' | 'needs_review' | 'processing' | 'completed'
 
-const FILTERS: Array<{ value: DocumentFilter; label: string }> = [
+const FILTERS: Array<{ value: DocumentFilterTab; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'needs_review', label: 'Needs Review' },
   { value: 'processing', label: 'Processing' },
   { value: 'completed', label: 'Completed' },
 ]
 
-function documentBucket(item: AdjudicationCaseResponse): Exclude<DocumentFilter, 'all'> {
-  if (item.clinical_committed_at || item.status === 'REJECTED') return 'completed'
-  if (item.status === 'ACCEPTED' && !item.clinical_committed_at) return 'processing'
-  return 'needs_review'
+function safePatientLabel(patientId: string): string {
+  if (!patientId) return 'Patient Record'
+  if (patientId.startsWith('NC-')) return patientId
+  return `Patient #${patientId.slice(0, 8)}`
 }
 
-function documentStatus(item: AdjudicationCaseResponse): {
-  label: string
-  tone: 'warning' | 'info' | 'success'
-} {
-  if (item.clinical_committed_at) return { label: 'Added to Patient Record', tone: 'success' }
-  if (item.status === 'REJECTED') return { label: 'Review Complete — Not Added', tone: 'info' }
-  if (item.status === 'ACCEPTED') return { label: 'Verified — Ready to Add', tone: 'info' }
-  if (item.status === 'NEEDS_SPECIALIST_REVIEW') return { label: 'Specialist Review Needed', tone: 'warning' }
-  return { label: 'Needs Clinical Verification', tone: 'warning' }
-}
-
-function workspaceError(reason: unknown): string {
-  if (!(reason instanceof ApiError)) return 'Documents could not be loaded. Try again.'
-  if (reason.code === 'CLINICAL_ELIGIBILITY_DENIED' || reason.status === 403) {
-    return 'Document review is not currently authorized for this provider account. Review provider verification status or contact your clinical administrator.'
-  }
-  if (reason.status === 401) return 'Your provider session expired. Sign in again to open Documents.'
-  if (reason.status >= 500 || reason.status === 0) {
-    return 'Documents are temporarily unavailable because a required service cannot be reached.'
-  }
-  return 'Documents could not be loaded. Try again.'
+function friendlyDocumentType(sourceDocId: string): string {
+  const lower = sourceDocId.toLowerCase()
+  if (lower.includes('lab') || lower.includes('blood') || lower.includes('test')) return 'Lab Report'
+  if (lower.includes('rx') || lower.includes('presc')) return 'Prescription'
+  if (lower.includes('discharge')) return 'Discharge Summary'
+  if (lower.includes('radiology') || lower.includes('xray') || lower.includes('scan')) return 'Imaging Report'
+  return 'External Medical Record'
 }
 
 export function DocumentsWorkspaceScreen() {
   const router = useRouter()
-  const { hydrated, isAuthenticated } = useProviderAuth()
-  const [filter, setFilter] = useState<DocumentFilter>('all')
-  const [items, setItems] = useState<AdjudicationCaseResponse[]>([])
+  const searchParams = useSearchParams()
+  const { hydrated, isAuthenticated, discoverySelection, accessGrant } = useProviderAuth()
+
+  const initialTab = (searchParams.get('tab') as DocumentFilterTab) || 'all'
+  const [filterTab, setFilterTab] = useState<DocumentFilterTab>(
+    initialTab === 'needs_review' || initialTab === 'processing' || initialTab === 'completed'
+      ? initialTab
+      : 'all'
+  )
+
+  const [cases, setCases] = useState<AdjudicationCaseResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  const load = useCallback(async () => {
+  const loadDocuments = useCallback(async () => {
     if (!isAuthenticated) return
     setLoading(true)
     setError(null)
     try {
-      setItems(await NexaApiClient.listAdjudicationCases())
-    } catch (reason) {
-      setError(workspaceError(reason))
+      const items = await NexaApiClient.listAdjudicationCases()
+      setCases(items)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.replace('/doctor/login')
+        return
+      }
+      setError('Documents list is temporarily unavailable. Please try again.')
     } finally {
       setLoading(false)
     }
-  }, [isAuthenticated])
+  }, [isAuthenticated, router])
 
   useEffect(() => {
     if (hydrated && !isAuthenticated) {
       router.replace('/doctor/login')
-      return
+    } else if (isAuthenticated) {
+      void loadDocuments()
     }
-    if (hydrated && isAuthenticated) void load()
-  }, [hydrated, isAuthenticated, load, router])
+  }, [hydrated, isAuthenticated, loadDocuments, router])
 
-  const visible = useMemo(
-    () => items.filter((item) => filter === 'all' || documentBucket(item) === filter),
-    [filter, items]
-  )
+  const handleAddDocument = () => {
+    // If patient context already exists in memory, proceed directly to upload
+    if (accessGrant?.patientId || discoverySelection?.discoveryHandle) {
+      router.push('/doctor/pipeline/upload')
+    } else {
+      // Otherwise, request patient selection first
+      router.push('/doctor/patient-search?intent=document_upload')
+    }
+  }
 
-  if (!hydrated || (loading && !items.length)) return <LoadingState label="Opening Documents..." />
+  const filteredCases = cases.filter((item) => {
+    if (filterTab === 'needs_review') return item.status === 'PENDING'
+    if (filterTab === 'processing') return false // Mock/future active pipeline jobs
+    if (filterTab === 'completed') return item.status === 'ACCEPTED' || item.status === 'REJECTED'
+    return true
+  })
+
+  const needsReviewCount = cases.filter((c) => c.status === 'PENDING').length
 
   return (
     <ScreenContainer>
       <ScreenHeader
-        eyebrow="CLINICAL DOCUMENTS"
         title="Documents"
-        description="Import external records, see what needs clinical verification, and track what has been added to patient records."
+        description="Review and manage external medical records, imported lab results, and previous prescriptions."
         action={
-          <ActionButton onPress={() => router.push('/doctor/patient-search?intent=document_upload')}>
-            <XStack gap="$2" alignItems="center"><FilePlus2 size={17} /> <Text>Import Document</Text></XStack>
+          <ActionButton intent="primary" onPress={handleAddDocument}>
+            <XStack alignItems="center" gap="$2">
+              <FilePlus size={18} color="$nexaOnAccent" />
+              <Text color="$nexaOnAccent" fontWeight="700">
+                + Add Patient Document
+              </Text>
+            </XStack>
           </ActionButton>
         }
       />
 
+      {/* Filter Tabs */}
       <XStack gap="$2" flexWrap="wrap">
-        {FILTERS.map((item) => (
-          <ActionButton
-            key={item.value}
-            intent={filter === item.value ? 'primary' : undefined}
-            onPress={() => setFilter(item.value)}
-          >
-            {item.label}
-          </ActionButton>
-        ))}
-        <ActionButton onPress={() => void load()} disabled={loading}>
-          <XStack gap="$2" alignItems="center"><RefreshCw size={16} /> <Text>Refresh</Text></XStack>
-        </ActionButton>
-      </XStack>
-
-      {error ? <InlineNotice tone="danger" title="Documents unavailable">{error}</InlineNotice> : null}
-
-      {!loading && !error && visible.length === 0 ? (
-        <Surface padding="$6" alignItems="center" gap="$2">
-          <Text fontSize={18} fontWeight="800">No documents in this view</Text>
-          <Paragraph color="$nexaSecondary">
-            Imported records will appear here as they move through verification and into the patient record.
-          </Paragraph>
-        </Surface>
-      ) : null}
-
-      <YStack gap="$3">
-        {visible.map((item) => {
-          const status = documentStatus(item)
-          const bucket = documentBucket(item)
+        {FILTERS.map((tab) => {
+          const isSelected = filterTab === tab.value
           return (
-            <Surface key={item.case_id} padding="$4" gap="$3">
-              <XStack justifyContent="space-between" alignItems="center" flexWrap="wrap" gap="$2">
-                <YStack gap="$1">
-                  <Text fontWeight="800" fontSize={16}>Imported record</Text>
-                  <Paragraph color="$nexaSecondary" fontSize={13}>
-                    Received {new Date(item.created_at).toLocaleString()}
-                  </Paragraph>
-                </YStack>
-                <StatusBadge tone={status.tone}>{status.label}</StatusBadge>
+            <ActionButton
+              key={tab.value}
+              size="$3"
+              intent={isSelected ? 'primary' : undefined}
+              onPress={() => setFilterTab(tab.value)}
+            >
+              <XStack alignItems="center" gap="$1.5">
+                <Text color={isSelected ? '$nexaOnAccent' : '$nexaText'} fontWeight="700">
+                  {tab.label}
+                  {tab.value === 'all' && ` (${cases.length})`}
+                  {tab.value === 'processing' && ' (0)'}
+                </Text>
+                {tab.value === 'needs_review' && needsReviewCount > 0 && (
+                  <StatusBadge tone="warning">
+                    {needsReviewCount}
+                  </StatusBadge>
+                )}
               </XStack>
-              {item.clinical_committed_at ? (
-                <Paragraph color="$nexaSecondary">
-                  Added to the patient record {new Date(item.clinical_committed_at).toLocaleString()}.
-                </Paragraph>
-              ) : item.resolved_at ? (
-                <Paragraph color="$nexaSecondary">
-                  Clinician review completed {new Date(item.resolved_at).toLocaleString()}.
-                </Paragraph>
-              ) : (
-                <Paragraph color="$nexaSecondary">
-                  The original document must be reviewed before any imported information can be added.
-                </Paragraph>
-              )}
-              {bucket !== 'completed' ? (
-                <ActionButton onPress={() => router.push('/doctor/pipeline/adjudication')}>
-                  {bucket === 'processing' ? 'Add to Patient Record' : 'Review Document'}
-                </ActionButton>
-              ) : null}
-            </Surface>
+            </ActionButton>
           )
         })}
-      </YStack>
+      </XStack>
+
+      {error && <InlineNotice title={error} tone="danger" />}
+
+      {/* Content Section */}
+      {loading ? (
+        <Surface padding="$6" alignItems="center" justifyContent="center">
+          <LoadingState label="Loading patient documents..." />
+        </Surface>
+      ) : filteredCases.length === 0 ? (
+        <Surface padding="$6" alignItems="center" justifyContent="center" gap="$3" borderRadius={14}>
+          <FileText size={40} color="$nexaSecondary" />
+          <SectionHeading>
+            {filterTab === 'needs_review'
+              ? 'No documents need review'
+              : filterTab === 'completed'
+                ? 'No completed documents yet'
+                : 'No external documents found'}
+          </SectionHeading>
+          <Paragraph color="$nexaSecondary" textAlign="center" maxWidth={480}>
+            {filterTab === 'needs_review'
+              ? 'All imported records have been verified by a clinician. New uploaded documents will appear here.'
+              : 'Add an external medical record, lab report, or prescription to import it into the patient record.'}
+          </Paragraph>
+          <ActionButton intent="primary" onPress={handleAddDocument}>
+            + Add Patient Document
+          </ActionButton>
+        </Surface>
+      ) : (
+        <YStack gap="$3">
+          {filteredCases.map((item) => {
+            const isPending = item.status === 'PENDING'
+            const isAccepted = item.status === 'ACCEPTED'
+            const docType = friendlyDocumentType(item.source_document_id)
+            const patientDisplay = safePatientLabel(item.patient_id)
+
+            return (
+              <Surface
+                key={item.case_id}
+                padding="$4.5"
+                borderRadius={12}
+                backgroundColor="$nexaSurface"
+                borderColor="$nexaBorder"
+                hoverStyle={{ borderColor: '$nexaAccent' }}
+                gap="$3"
+              >
+                <XStack
+                  alignItems="center"
+                  justifyContent="space-between"
+                  flexWrap="wrap"
+                  gap="$3"
+                >
+                  <YStack gap="$1.5">
+                    <XStack alignItems="center" gap="$2.5" flexWrap="wrap">
+                      <Text color="$nexaText" fontWeight="800" fontSize={16}>
+                        {patientDisplay}
+                      </Text>
+                      <StatusBadge tone="neutral">
+                        {docType}
+                      </StatusBadge>
+                      {isPending ? (
+                        <StatusBadge tone="warning">
+                          Needs clinical verification
+                        </StatusBadge>
+                      ) : isAccepted ? (
+                        <StatusBadge tone="success">
+                          Verified & Added
+                        </StatusBadge>
+                      ) : (
+                        <StatusBadge tone="danger">
+                          Rejected
+                        </StatusBadge>
+                      )}
+                    </XStack>
+
+                    <XStack gap="$3" alignItems="center" flexWrap="wrap">
+                      <XStack alignItems="center" gap="$1.5">
+                        <Clock size={14} color="$nexaSecondary" />
+                        <Text color="$nexaSecondary" fontSize={12}>
+                          Uploaded: {new Date(item.created_at).toLocaleDateString()}
+                        </Text>
+                      </XStack>
+                    </XStack>
+
+                    {isPending && (
+                      <Paragraph color="$nexaSecondary" fontSize={13}>
+                        This document needs clinical verification before information is added to the patient record.
+                      </Paragraph>
+                    )}
+                  </YStack>
+
+                  <XStack gap="$2" alignItems="center">
+                    {isPending ? (
+                      <ActionButton
+                        intent="primary"
+                        onPress={() =>
+                          router.push(
+                            `/doctor/pipeline/adjudication/${encodeURIComponent(item.case_id)}/review`
+                          )
+                        }
+                      >
+                        <XStack alignItems="center" gap="$1.5">
+                          <Text color="$nexaOnAccent" fontWeight="700">
+                            Review Document
+                          </Text>
+                          <ArrowRight size={14} color="$nexaOnAccent" />
+                        </XStack>
+                      </ActionButton>
+                    ) : (
+                      <ActionButton
+                        onPress={() => router.push('/doctor/patient-record')}
+                      >
+                        View Record
+                      </ActionButton>
+                    )}
+                  </XStack>
+                </XStack>
+              </Surface>
+            )
+          })}
+        </YStack>
+      )}
     </ScreenContainer>
   )
 }

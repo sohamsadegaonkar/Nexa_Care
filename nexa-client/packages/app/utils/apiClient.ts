@@ -1777,7 +1777,7 @@ export const NexaApiClient = {
     }>('/api/v2/consent/break-glass/issue', { method: 'POST', body: JSON.stringify(payload) })
   },
 
-  /** Issue emergency authority for the patient resolved by a one-use discovery capability. */
+  /** Issue emergency authority for the patient resolved by a one-use discovery capability (audited, rate-limited). */
   breakGlassDiscoveredIssue(payload: {
     discovery_handle: string
     reason_code: string

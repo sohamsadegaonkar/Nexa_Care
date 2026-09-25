@@ -21,7 +21,7 @@ function renderQueue() {
   )
 }
 
-describe('adjudication case creation recovery', () => {
+describe('AdjudicationQueueScreen Clinician Review Inbox', () => {
   afterEach(clearAllAdjudicationWorkflows)
 
   beforeEach(() => {
@@ -40,18 +40,16 @@ describe('adjudication case creation recovery', () => {
     vi.spyOn(NexaApiClient, 'listAdjudicationCases').mockResolvedValue([])
   })
 
-  it('reuses the same session and idempotency key after a lost response', async () => {
-    const create = vi
-      .spyOn(NexaApiClient, 'createAdjudicationCaseFromRoute')
-      .mockRejectedValueOnce(new ApiError('network response lost', 0, 'NETWORK_ERROR', true))
-      .mockResolvedValueOnce({
+  it('renders clinical review inbox and navigates to case review', async () => {
+    vi.spyOn(NexaApiClient, 'listAdjudicationCases').mockResolvedValue([
+      {
         case_id: 'case-1',
-        patient_id: 'redacted-by-ui',
+        patient_id: 'NC-PATIENT-1234',
         tenant_id: 'tenant-1',
-        source_document_id: 'document-1',
-        job_id: 'job-1',
-        routing_id: 'route-1',
-        decision_id: 'decision-1',
+        source_document_id: 'blood-panel-report.pdf',
+        job_id: 'secret-job-1',
+        routing_id: 'secret-route-1',
+        decision_id: 'secret-decision-1',
         reviewer_id: 'provider-1',
         reviewer_role: 'clinician',
         status: 'PENDING',
@@ -59,36 +57,35 @@ describe('adjudication case creation recovery', () => {
         created_at: '2026-07-29T10:00:00Z',
         resolved_at: null,
         clinical_committed_at: null,
-      })
+      },
+    ])
     renderQueue()
 
-    const input = await screen.findByLabelText('Document review reference')
-    fireEvent.change(input, { target: { value: 'route-1' } })
-    fireEvent.click(screen.getAllByText('Review Document')[0])
-    expect(await screen.findByText('The document review could not be opened.')).toBeTruthy()
-    fireEvent.click(screen.getAllByText('Review Document')[0])
+    expect(await screen.findByText('Review Imported Records')).toBeTruthy()
+    expect(await screen.findByText('Lab Report')).toBeTruthy()
+    expect(screen.getByText('Needs Clinical Verification')).toBeTruthy()
+    expect(screen.getByText('Patient: NC-PATIENT-1234')).toBeTruthy()
 
-    await waitFor(() => expect(create).toHaveBeenCalledTimes(2))
-    expect(create.mock.calls[1]).toEqual(create.mock.calls[0])
-    await waitFor(() =>
-      expect(push).toHaveBeenCalledWith('/doctor/pipeline/adjudication/case-1/review')
-    )
+    // Assert engineering input fields are absent
+    expect(screen.queryByLabelText('Eligible routing reference')).toBeNull()
+    expect(screen.queryByText('Create field-linked case')).toBeNull()
+    expect(screen.queryByText('secret-job-1')).toBeNull()
+    expect(screen.queryByText('secret-route-1')).toBeNull()
+
+    fireEvent.click(screen.getByText('Review Document'))
+    expect(push).toHaveBeenCalledWith('/doctor/pipeline/adjudication/case-1/review')
   })
 
-  it('allows one create request while the action is pending', async () => {
-    const pending = new Promise<never>(() => undefined)
-    const create = vi
-      .spyOn(NexaApiClient, 'createAdjudicationCaseFromRoute')
-      .mockReturnValue(pending)
+  it('renders empty inbox state with navigation to Documents workspace', async () => {
+    vi.spyOn(NexaApiClient, 'listAdjudicationCases').mockResolvedValue([])
     renderQueue()
 
-    const input = await screen.findByLabelText('Document review reference')
-    fireEvent.change(input, { target: { value: 'route-1' } })
-    const button = screen.getAllByText('Review Document')[0]
-    fireEvent.click(button)
-    fireEvent.click(button)
+    expect(
+      await screen.findByText('No records currently need clinical review')
+    ).toBeTruthy()
 
-    expect(create).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByText('Open Documents Workspace'))
+    expect(push).toHaveBeenCalledWith('/doctor/documents')
   })
 
   it('keeps mutation controls hidden from an admin-only provider', async () => {
@@ -108,6 +105,17 @@ describe('adjudication case creation recovery', () => {
         'Your role may view operational case status but cannot enter or commit clinical information.'
       )
     ).toBeTruthy()
-    expect(screen.queryByText('Review Document')).toBeNull()
+    expect(screen.queryByText('Create field-linked case')).toBeNull()
+  })
+
+  it('shows error notice when session expires', async () => {
+    vi.spyOn(NexaApiClient, 'listAdjudicationCases').mockRejectedValue(
+      new ApiError('Access expired', 403, 'ADJUDICATION_CONSENT_INACTIVE')
+    )
+    renderQueue()
+
+    expect(
+      await screen.findByText('Your access to these records has expired. Request access again.')
+    ).toBeTruthy()
   })
 })

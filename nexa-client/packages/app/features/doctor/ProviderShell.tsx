@@ -25,7 +25,7 @@ const navigation = [
     label: 'Patients',
     path: '/doctor/patient-search',
     icon: Users,
-    matches: (path: string) => /\/doctor\/(patient|request-consent|waiting)/.test(path),
+    matches: (path: string) => /\/doctor\/(patient|request-consent|waiting|treatment-vitals)/.test(path),
   },
   {
     label: 'Documents',
