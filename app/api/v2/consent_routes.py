@@ -68,6 +68,11 @@ from app.services.consent_engine import (
     issue_break_glass,
 )
 from app.services.provider_auth_service import resolve_provider_session_context
+from app.services.patient_discovery_service import (
+    DiscoveryHandleInvalid,
+    DiscoveryUnavailable,
+    PatientDiscoveryService,
+)
 from app.services.break_glass_policy import (
     BREAK_GLASS_POLICY_VERSION,
     BREAK_GLASS_REASON_CODE_VERSION,
@@ -124,6 +129,8 @@ class RoutineConsentIssueRequest(BaseModel):
 
 
 class BreakGlassConsentIssueRequest(BaseModel):
+    """Legacy direct-UUID emergency contract retained during frontend migration."""
+
     patient_id: str
     reason_code: BreakGlassReasonCode
     justification: str = Field(..., min_length=1, max_length=500)
@@ -131,6 +138,18 @@ class BreakGlassConsentIssueRequest(BaseModel):
     purpose: Literal["EMERGENCY"] = "EMERGENCY"
 
     model_config = ConfigDict(frozen=True)
+
+
+class DiscoveredBreakGlassConsentIssueRequest(BaseModel):
+    """Clinician emergency request bound to a one-use server discovery handle."""
+
+    discovery_handle: str = Field(..., min_length=32, max_length=256)
+    reason_code: BreakGlassReasonCode
+    justification: str = Field(..., min_length=1, max_length=500)
+    requested_scope: list[str] | None = None
+    purpose: Literal["EMERGENCY"] = "EMERGENCY"
+
+    model_config = ConfigDict(frozen=True, strict=True, extra="forbid")
 
 
 class BreakGlassRevokeRequest(BaseModel):
@@ -153,6 +172,10 @@ class BreakGlassConsentIssueResponse(ConsentIssueResponse):
     approved_scope: list[str]
     policy_version: str
     authorization_ref: str
+
+
+class DiscoveredBreakGlassConsentIssueResponse(BreakGlassConsentIssueResponse):
+    patient_id: str
 
 
 class RoutineConsentGrantRequest(BaseModel):
