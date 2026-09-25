@@ -52,6 +52,7 @@ def test_routine_interactive_routes_use_exact_typed_capabilities() -> None:
         fhir_routes.export_fhir_bundle: ClinicalCapability.RECORD_READ,
         patient_routes.get_emergency_summary: ClinicalCapability.EMERGENCY_ATTEMPT,
         consent_routes.issue_break_glass_consent_route: ClinicalCapability.EMERGENCY_ATTEMPT,
+        consent_routes.issue_discovered_break_glass_consent_route: ClinicalCapability.EMERGENCY_ATTEMPT,
     }
     assert {
         endpoint: _clinical_capability(endpoint) for endpoint in expected
