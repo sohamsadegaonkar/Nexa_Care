@@ -59,6 +59,9 @@ from app.main import app
 #   8. Slice 11A adds the authenticated provider clinical workspace metadata
 #      projection at /api/v2/provider/workspace; provider and hospital authority
 #      are derived server-side and no bearer clinical capability is returned.
+#   9. Demo runtime readiness adds an additive discovery-handle break-glass issue
+#      route; the server resolves the canonical patient only after consuming the
+#      provider/hospital/session-bound one-use discovery authority.
 #
 # If this file goes red again, confirm the owning route was intentionally
 # added or removed before updating this set.
@@ -124,6 +127,7 @@ EXPECTED_ROUTES = {
     ("GET", "/api/v2/consent/validate"),
     ("POST", "/api/v2/consent/routine/issue"),
     ("POST", "/api/v2/consent/break-glass/issue"),
+    ("POST", "/api/v2/consent/break-glass/discovered/issue"),
     ("POST", "/api/v2/consent/break-glass/revoke"),
     ("POST", "/api/v2/nfc/resolve"),
     ("POST", "/api/v2/patient-discovery"),
