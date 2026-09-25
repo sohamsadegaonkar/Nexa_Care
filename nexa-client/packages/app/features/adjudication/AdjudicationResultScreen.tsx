@@ -122,7 +122,7 @@ export function AdjudicationResultScreen() {
       width="100%"
       marginHorizontal="auto"
     >
-      <H2>Review Result</H2>
+      <H2>Review Complete</H2>
       <Card
         borderWidth={1}
         padding="$4"
@@ -136,12 +136,11 @@ export function AdjudicationResultScreen() {
               : 'Specialist review requested'}
         </Text>
         <Paragraph>
-          Human verification is a provenance state. It is not AI confidence and does not itself mean
-          clinical information was committed.
+          This review confirms what was verified from the source document. Nothing is added to the patient record until you confirm the final step.
         </Paragraph>
         {committedAt ? (
           <>
-            <Paragraph color="$green10">Verified information committed successfully.</Paragraph>
+            <Paragraph color="$green10">Verified information added to the patient record.</Paragraph>
             <Paragraph>Committed {new Date(committedAt).toLocaleString()}</Paragraph>
             <Paragraph>Verified by clinician</Paragraph>
           </>
@@ -163,7 +162,7 @@ export function AdjudicationResultScreen() {
           disabled={committing}
           onPress={() => setConfirming(true)}
         >
-          Commit verified information
+          Add to Patient Record
         </Button>
       ) : null}
       {canCommit && confirming ? (
@@ -172,7 +171,7 @@ export function AdjudicationResultScreen() {
           padding="$4"
           gap="$3"
         >
-          <Text fontWeight="700">Final clinical commit confirmation</Text>
+          <Text fontWeight="700">Add to Patient Record</Text>
           <Paragraph>
             Add the verified information to the patient record. The original document remains the source of truth for this review.
           </Paragraph>
@@ -181,7 +180,7 @@ export function AdjudicationResultScreen() {
             disabled={committing}
             onPress={() => void commit()}
           >
-            {committing ? 'Committing…' : 'Confirm clinical commit'}
+            {committing ? 'Adding…' : 'Confirm Add to Patient Record'}
           </Button>
           <Button
             disabled={committing}
@@ -194,8 +193,7 @@ export function AdjudicationResultScreen() {
 
       {!canCommit && !committedAt ? (
         <Paragraph>
-          This outcome cannot be clinically committed. Rejected and specialist-review cases remain
-          non-committable.
+          This review outcome cannot be added to the patient record. Rejected items and cases sent for specialist review remain unchanged.
         </Paragraph>
       ) : null}
 
