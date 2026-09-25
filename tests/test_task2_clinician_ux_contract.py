@@ -56,6 +56,8 @@ def test_documents_navigation_opens_workspace_before_patient_selection() -> None
 def test_review_ui_removes_internal_clinician_jargon() -> None:
     shell = read("features/doctor/ProviderShell.tsx")
     queue = read("features/adjudication/AdjudicationQueueScreen.tsx")
+    review = read("features/adjudication/AdjudicationReviewScreen.tsx")
+    result = read("features/adjudication/AdjudicationResultScreen.tsx")
     assert "label: 'Adjudication'" not in shell
     for forbidden in (
         "Source adjudication",
@@ -72,3 +74,5 @@ def test_review_ui_removes_internal_clinician_jargon() -> None:
         "Review Document",
     ):
         assert expected in queue
+    assert "Verify or Correct" in review
+    assert "Add to Patient Record" in result
