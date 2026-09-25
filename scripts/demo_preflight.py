@@ -27,7 +27,7 @@ load_dotenv(ROOT / ".env", override=False)
 from app.core.config import get_database_config, get_redis_config  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402
 from app.models.patient import Patient  # noqa: E402
-from app.models.provider import ProviderIdentity  # noqa: E402
+from app.models.provider import HospitalRegistry, ProviderIdentity  # noqa: E402
 from app.security.clinical_policy import CLINICAL_CONTACT_ASSURANCE_POLICY  # noqa: E402
 from app.security.provider_capabilities import ClinicalCapability  # noqa: E402
 from app.services.clinical_eligibility import (  # noqa: E402
@@ -121,11 +121,8 @@ async def _demo_state(database_url: str) -> tuple[bool, str | None]:
                 return False, "DEMO_PROVIDER_MISSING"
 
             hospital_id = await db.scalar(
-                __import__("sqlalchemy").select(
-                    __import__("app.models.provider", fromlist=["HospitalRegistry"]).HospitalRegistry.id
-                ).where(
-                    __import__("app.models.provider", fromlist=["HospitalRegistry"]).HospitalRegistry.facility_code
-                    == DEMO_HOSPITAL_CODE
+                select(HospitalRegistry.id).where(
+                    HospitalRegistry.facility_code == DEMO_HOSPITAL_CODE
                 )
             )
             if hospital_id is None:
