@@ -28,10 +28,10 @@ import { useProviderAuth } from '../doctor/ProviderAuthContext'
 import { isTerminalAdjudicationAccessError } from './adjudicationAccess'
 
 const STATUS_LABELS: Record<AdjudicationCaseResponse['status'], string> = {
-  PENDING: 'Pending source review',
-  ACCEPTED: 'Accepted by human reviewer',
+  PENDING: 'Needs Clinical Verification',
+  ACCEPTED: 'Verified by clinician',
   REJECTED: 'Rejected',
-  NEEDS_SPECIALIST_REVIEW: 'Specialist review requested',
+  NEEDS_SPECIALIST_REVIEW: 'Specialist Review Needed',
 }
 
 export function AdjudicationQueueScreen() {
@@ -144,10 +144,9 @@ export function AdjudicationQueueScreen() {
         width="100%"
         marginHorizontal="auto"
       >
-        <H2>Source adjudication</H2>
+        <H2>Review Imported Records</H2>
         <Paragraph>
-          Review archived SOURCE_ONLY documents. Extraction routing is not a clinical proposal and
-          no AI-derived value is shown here.
+          Review imported records against their original document before anything is added to the patient record.
         </Paragraph>
 
         {clinicallyQualified ? (
@@ -156,37 +155,36 @@ export function AdjudicationQueueScreen() {
             padding="$4"
             gap="$3"
           >
-            <Text fontWeight="700">Start an authorized review</Text>
+            <Text fontWeight="700">Needs Clinical Verification</Text>
             <Paragraph size="$2">
-              Use an eligible retained routing reference, or a source-only job with no supported
-              candidates. Patient identifiers are derived by the server.
+              Open the imported document that needs verification. Patient identity and source evidence are resolved by Nexa Care.
             </Paragraph>
             <Input
-              aria-label="Eligible routing reference"
+              aria-label="Document review reference"
               value={routingId}
               onChangeText={setRoutingId}
-              placeholder="Eligible routing reference"
+              placeholder="Document review reference"
               autoCapitalize="none"
             />
             <Button
               disabled={creating !== null}
               onPress={() => void createCase('route')}
             >
-              {creating === 'route' ? 'Creating…' : 'Create field-linked case'}
+              {creating === 'route' ? 'Opening…' : 'Review Document'}
             </Button>
             <Separator />
             <Input
-              aria-label="Zero-candidate job reference"
+              aria-label="Imported document reference"
               value={jobId}
               onChangeText={setJobId}
-              placeholder="Zero-candidate job reference"
+              placeholder="Imported document reference"
               autoCapitalize="none"
             />
             <Button
               disabled={creating !== null}
               onPress={() => void createCase('job')}
             >
-              {creating === 'job' ? 'Creating…' : 'Create document-level case'}
+              {creating === 'job' ? 'Opening…' : 'Review Document'}
             </Button>
           </Card>
         ) : (
@@ -216,7 +214,7 @@ export function AdjudicationQueueScreen() {
           justifyContent="space-between"
           alignItems="center"
         >
-          <Text fontWeight="700">Cases</Text>
+          <Text fontWeight="700">Documents to Review</Text>
           <Button
             size="$2"
             disabled={loading}
@@ -227,7 +225,7 @@ export function AdjudicationQueueScreen() {
         </XStack>
         {loading ? <Spinner /> : null}
         {!loading && cases.length === 0 ? (
-          <Paragraph>No ordinary SOURCE_ONLY adjudication cases are available.</Paragraph>
+          <Paragraph>No imported records currently need clinical verification.</Paragraph>
         ) : null}
         {cases.map((item) => {
           const workflow = getAdjudicationWorkflow(item.case_id)
@@ -245,7 +243,7 @@ export function AdjudicationQueueScreen() {
                 gap="$2"
               >
                 <Text fontWeight="700">{STATUS_LABELS[item.status]}</Text>
-                <Text>{item.routing_id ? 'Field-linked case' : 'Document-level case'}</Text>
+                <Text>Imported document</Text>
               </XStack>
               <Paragraph size="$2">Created {new Date(item.created_at).toLocaleString()}</Paragraph>
               <Paragraph size="$2">
@@ -266,7 +264,7 @@ export function AdjudicationQueueScreen() {
                     )
                   }
                 >
-                  {workflow.submission ? 'View result' : 'Continue review'}
+                  {workflow.submission ? 'View Review' : 'Review Document'}
                 </Button>
               ) : item.status === 'PENDING' && clinicallyQualified ? (
                 <Button

@@ -1777,6 +1777,34 @@ export const NexaApiClient = {
     }>('/api/v2/consent/break-glass/issue', { method: 'POST', body: JSON.stringify(payload) })
   },
 
+  /** Issue emergency authority for the patient resolved by a one-use discovery capability. */
+  breakGlassDiscoveredIssue(payload: {
+    discovery_handle: string
+    reason_code: string
+    justification: string
+    requested_scope?: string[]
+    purpose?: 'EMERGENCY'
+  }): Promise<{
+    patient_id: string
+    consent_token: string
+    expires_at: string
+    approved_scope: string[]
+    policy_version: string
+    authorization_ref: string
+  }> {
+    return request<{
+      patient_id: string
+      consent_token: string
+      expires_at: string
+      approved_scope: string[]
+      policy_version: string
+      authorization_ref: string
+    }>('/api/v2/consent/break-glass/discovered/issue', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    })
+  },
+
   verifyActionMfa(code: string): Promise<{ verified: boolean }> {
     return request<{ verified: boolean }>('/api/v2/auth/mfa/verify-action', {
       method: 'POST',
