@@ -631,12 +631,17 @@ async def main(argv: list[str] | None = None) -> int:
                         "Audit write failed; demo provider password reset aborted"
                     )
 
-            # Patient 1: Aarav Sharma (NFC card holder)
-            await seed_nfc_card(session, DEMO_PATIENT_1_ID, provider_id)
-            await seed_clinical_records(session, DEMO_PATIENT_1_ID, "aarav")
+            await seed_provider_trust(session, provider_id, hospital_id)
 
-            # Patient 2: Priya Patel (manual search only)
-            await seed_clinical_records(session, DEMO_PATIENT_2_ID, "priya")
+            patient_1 = await seed_patient_identity(session, DEMO_PATIENT_1_ID)
+            patient_2 = await seed_patient_identity(session, DEMO_PATIENT_2_ID)
+
+            # Patient 1: canonical NFC + public-ID/QR demo patient.
+            await seed_nfc_card(session, patient_1.patient_uuid, provider_id)
+            await seed_clinical_records(session, patient_1.patient_uuid, "aarav")
+
+            # Patient 2: public-ID/QR discovery only.
+            await seed_clinical_records(session, patient_2.patient_uuid, "priya")
 
             await session.commit()
         except Exception:
@@ -644,7 +649,7 @@ async def main(argv: list[str] | None = None) -> int:
             raise
 
     print("\n" + "=" * 72)
-    print("NEXA CARE DEMO DOCTOR SEEDED")
+    print("NEXA CARE DEMO CLINICAL ENVIRONMENT SEEDED")
     print("=" * 72)
     print(f"provider={'created' if provider_result.provider_created else 'reused'}")
     print(f"credential={'created' if provider_result.credential_created else 'reused'}")
@@ -652,17 +657,16 @@ async def main(argv: list[str] | None = None) -> int:
         f"affiliation={'created' if provider_result.affiliation_created else 'reused'}"
     )
     print(f"password={'reset' if provider_result.password_reset else 'unchanged'}")
-    print(f"provider_active={str(provider_result.provider_active).lower()}")
-    print(f"credential_active={str(provider_result.credential_active).lower()}")
-    print(f"provider_id={provider_id}")
-    print(f"hospital_id={hospital_id}")
+    print("ready_for_clinical_access=true")
     print()
-    print("Patient 1 (NFC): Aarav Sharma")
-    print(f"  Patient ID:    {DEMO_PATIENT_1_ID}")
-    print(f"  NFC Card UID:  {DEMO_NFC_UID}")
+    print("DEMO PATIENT A")
+    print(f"  public_id={demo_public_patient_id(DEMO_PATIENT_1_ID)}")
+    print(f"  nfc_uid={DEMO_NFC_UID}")
+    print("  qr_supported=true")
     print()
-    print("Patient 2 (Manual): Priya Patel")
-    print(f"  Patient ID:    {DEMO_PATIENT_2_ID}")
+    print("DEMO PATIENT B")
+    print(f"  public_id={demo_public_patient_id(DEMO_PATIENT_2_ID)}")
+    print("  qr_supported=true")
     print("=" * 72 + "\n")
     return 0
 
