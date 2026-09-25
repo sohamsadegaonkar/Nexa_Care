@@ -515,25 +515,25 @@ async def seed_patient_identity(session, patient_id: uuid.UUID) -> Patient:
 
 
 async def seed_nfc_card(session, patient_id: uuid.UUID, provider_id: uuid.UUID) -> None:
-    """Upsert the demo NFC card."""
-    stmt = (
-        insert(NFCCardRegistry)
-        .values(
+    """Create/reuse the exact synthetic NFC binding without hijacking another card."""
+
+    existing = await session.scalar(
+        select(NFCCardRegistry).where(NFCCardRegistry.card_uid == DEMO_NFC_UID)
+    )
+    if existing is not None and existing.patient_id != patient_id:
+        raise RuntimeError("Demo NFC UID is already bound to a different patient")
+    if existing is None:
+        existing = NFCCardRegistry(
             card_uid=DEMO_NFC_UID,
             patient_id=patient_id,
             status=NFCCardStatus.ACTIVE.value,
             issued_by=provider_id,
         )
-        .on_conflict_do_update(
-            index_elements=[NFCCardRegistry.card_uid],
-            set_={
-                "patient_id": patient_id,
-                "status": NFCCardStatus.ACTIVE.value,
-                "issued_by": provider_id,
-            },
-        )
-    )
-    await session.execute(stmt)
+        session.add(existing)
+    else:
+        existing.status = NFCCardStatus.ACTIVE.value
+        existing.issued_by = provider_id
+    await session.flush()
 
 
 async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> None:
