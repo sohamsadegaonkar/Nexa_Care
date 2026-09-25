@@ -801,12 +801,12 @@ class TestConsentTokenNotDisplayed:
         code = _read_screen("PatientRecordViewerScreen")
         assert "maskToken" in code, "Must use maskToken to hide raw consent token"
 
-    def test_emergency_success_shows_masked_token(self) -> None:
-        """Emergency success screen must show masked authorization reference, not raw token."""
+    def test_emergency_never_renders_raw_capability(self) -> None:
+        """Emergency capabilities remain in provider memory and are never rendered."""
         code = _read_screen("EmergencyAccessScreen")
-        assert (
-            "maskToken" in code
-        ), "Must use maskToken to hide raw consent token in success screen"
+        assert "consentToken: result.consent_token" in code
+        assert "result.consent_token}" not in code
+        assert "consent_token=" not in code
 
 
 class TestScopeAwareTabs:

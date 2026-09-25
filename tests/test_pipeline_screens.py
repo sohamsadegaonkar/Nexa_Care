@@ -622,7 +622,8 @@ class TestJobStatusPolling:
             "routing_lane",
         ]:
             assert contract in code, f"JobStatusScreen missing {contract}."
-        assert "Auto-commit is disabled" in code
+        assert "Automatic addition is disabled" in code
+        assert "Clinical verification is required" in code
 
     def test_go_to_review_queue_button(self) -> None:
         """When review_pending, must show 'Go to Review Queue' button."""
