@@ -266,12 +266,16 @@ async def run_preflight() -> bool:
     }
     print("android_tooling=" + ",".join(f"{k}:{'ok' if v else 'missing'}" for k, v in tooling.items()))
 
+    patient_a_public_id = demo_public_patient_id(DEMO_PATIENT_1_ID)
+    patient_b_public_id = demo_public_patient_id(DEMO_PATIENT_2_ID)
     print("DEMO_PATIENT_A")
-    print(f"public_id={demo_public_patient_id(DEMO_PATIENT_1_ID)}")
+    print(f"public_id={patient_a_public_id}")
     print(f"nfc_uid={DEMO_NFC_UID}")
+    print(f"qr_payload=nexa://patient-discovery/v1/{patient_a_public_id}")
     print("qr_supported=true")
     print("DEMO_PATIENT_B")
-    print(f"public_id={demo_public_patient_id(DEMO_PATIENT_2_ID)}")
+    print(f"public_id={patient_b_public_id}")
+    print(f"qr_payload=nexa://patient-discovery/v1/{patient_b_public_id}")
     print("qr_supported=true")
 
     print(f"preflight={'GO' if all_go else 'NO-GO'}")
