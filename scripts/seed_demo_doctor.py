@@ -4,7 +4,7 @@
 Creates:
 - Hospital: Nexa Care Demo Hospital (NEXA-DEMO-HOSPITAL)
 - Provider: Dr. Meera Joshi (password supplied through DEMO_PROVIDER_PASSWORD)
-- MFA: disabled (for demo simplicity)
+- MFA: real TOTP enrollment from DEMO_PROVIDER_MFA_SECRET
 - Patient: Aarav Sharma (demo NFC card + clinical data)
 - Patient: Priya Patel (second demo patient)
 
@@ -20,10 +20,11 @@ import os
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+import pyotp
 from sqlalchemy import String, bindparam, func, select, text
 from sqlalchemy.dialects.postgresql import JSONB, insert
 
@@ -44,13 +45,25 @@ if __name__ == "__main__":
     load_standalone_demo_env()
 
 from app.core.database import get_session_factory  # noqa: E402
+from app.core.security import decrypt_mfa_secret, encrypt_mfa_secret  # noqa: E402
+from app.models.patient import Patient  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402
 from app.models.provider import (  # noqa: E402
+    AffiliationTrustStatus,
     AffiliationType,
+    FacilityVerification,
+    FacilityVerificationStatus,
     HospitalRegistry,
+    ProfessionalVerification,
+    ProfessionalVerificationStatus,
     ProviderCredential,
     ProviderHospitalAffiliation,
     ProviderIdentity,
+    ProviderTrustVerificationEvidence,
+    VerificationEvidenceLookupPurpose,
+    VerificationEvidenceOrigin,
+    VerificationEvidenceOutcome,
+    VerificationIdentityBindingResult,
 )
 from app.observability.audit_ledger import append_audit_log  # noqa: E402
 from app.security.audit_context import AuditContext, AuditDomain  # noqa: E402
@@ -64,6 +77,7 @@ from scripts.demo_environment import require_demo_environment  # noqa: E402
 # ── Demo credentials ─────────────────────────────────────────────────────────
 
 DEMO_PROVIDER_EMAIL = "demo.doctor@nexacare.in"
+DEMO_REVIEWER_EMAIL = "demo.trust.reviewer@nexacare.in"
 DEMO_HOSPITAL_CODE = "NEXA-DEMO-HOSPITAL"
 DEMO_NFC_UID = "04:B3:C1:DE:55:01"
 
@@ -126,6 +140,30 @@ def require_demo_provider_password() -> str:
             "DEMO_PROVIDER_PASSWORD must contain upper, lower, numeric, and symbol characters"
         )
     return password
+
+
+def require_demo_provider_mfa_secret() -> str:
+    """Validate the ignored local TOTP secret without exposing it."""
+
+    secret = os.getenv("DEMO_PROVIDER_MFA_SECRET", "").strip().replace(" ", "")
+    if not secret:
+        raise RuntimeError(
+            "Missing required script environment variable: DEMO_PROVIDER_MFA_SECRET"
+        )
+    try:
+        pyotp.TOTP(secret).byte_secret()
+    except Exception as exc:
+        raise RuntimeError("DEMO_PROVIDER_MFA_SECRET is not a valid TOTP base32 secret") from exc
+    if len(secret) < 16:
+        raise RuntimeError("DEMO_PROVIDER_MFA_SECRET must contain at least 16 base32 characters")
+    return secret
+
+
+def demo_public_patient_id(patient_id: uuid.UUID) -> str:
+    """Derive a stable opaque public ID only for deterministic synthetic fixtures."""
+
+    digest = hashlib.sha256(f"nexa-demo-public:{patient_id}".encode("utf-8")).hexdigest()
+    return "NC-" + digest[:24].upper()
 
 
 async def seed_hospital(session) -> uuid.UUID:
