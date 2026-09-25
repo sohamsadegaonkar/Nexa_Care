@@ -232,12 +232,16 @@ else {
 
 # Patient mobile bundler — Expo Metro
 if (@(Get-PortProcesses -Port 8081).Count -eq 0) {
+    $firebaseLine = if ($googleServicesValue) {
+        "`$env:GOOGLE_SERVICES_FILE = '$googleServicesValue'"
+    } else {
+        "Remove-Item Env:GOOGLE_SERVICES_FILE -ErrorAction SilentlyContinue"
+    }
     $metroBody = @"
 `$env:EXPO_PUBLIC_API_URL = 'http://127.0.0.1:8000'
 `$env:EXPO_PUBLIC_APP_ENV = 'development'
 `$env:EXPO_PUBLIC_ALLOW_HTTP = 'true'
-`$env:EXPO_PUBLIC_EAS_PROJECT_ID = '3e9612c9-2661-4deb-8012-e78bd3500534'
-`$env:GOOGLE_SERVICES_FILE = './google-services.json'
+$firebaseLine
 
 & '$corepack' yarn workspace expo-app start
 "@
@@ -295,7 +299,7 @@ if (-not $NoBrowser) {
 }
 
 Write-Host ''
-Write-Host 'Nexa Care development stack started:' -ForegroundColor Green
+Write-Host 'NEXA STARTUP: GO' -ForegroundColor Green
 Write-Host '  Backend: http://localhost:8000'
 Write-Host '  Doctor:  http://localhost:3000'
 Write-Host '  Metro:   http://localhost:8081'
