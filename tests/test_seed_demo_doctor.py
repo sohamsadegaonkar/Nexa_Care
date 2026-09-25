@@ -18,6 +18,7 @@ from scripts.seed_demo_doctor import (
     ProviderSeedResult,
     main,
     parse_args,
+    require_demo_provider_mfa_secret,
     require_demo_provider_password,
     seed_provider,
 )
@@ -239,6 +240,12 @@ def test_reset_rejects_missing_environment_password(monkeypatch):
         require_demo_provider_password()
 
 
+def test_demo_mfa_secret_is_required_and_never_generated_by_the_seeder(monkeypatch):
+    monkeypatch.delenv("DEMO_PROVIDER_MFA_SECRET", raising=False)
+    with pytest.raises(RuntimeError, match="DEMO_PROVIDER_MFA_SECRET"):
+        require_demo_provider_mfa_secret()
+
+
 @pytest.mark.parametrize(
     "password",
     [
@@ -315,6 +322,16 @@ async def test_main_reset_revokes_sessions_and_writes_audit(monkeypatch):
         ),
         patch(
             "scripts.seed_demo_doctor.seed_provider", new=AsyncMock(return_value=result)
+        ),
+        patch("scripts.seed_demo_doctor.seed_provider_trust", new=AsyncMock()),
+        patch(
+            "scripts.seed_demo_doctor.seed_patient_identity",
+            new=AsyncMock(
+                side_effect=[
+                    SimpleNamespace(patient_uuid=uuid.uuid4()),
+                    SimpleNamespace(patient_uuid=uuid.uuid4()),
+                ]
+            ),
         ),
         patch("scripts.seed_demo_doctor.seed_nfc_card", new=AsyncMock()),
         patch("scripts.seed_demo_doctor.seed_clinical_records", new=AsyncMock()),
