@@ -254,7 +254,7 @@ export function AdjudicationReviewScreen() {
               padding="$4"
               gap="$3"
             >
-              <Text fontWeight="700">Human adjudication</Text>
+              <Text fontWeight="700">Clinical verification</Text>
               <Paragraph size="$2">
                 Human verification is separate from AI extraction, authorization consent, and the
                 later clinical commit.
@@ -449,7 +449,7 @@ export function AdjudicationReviewScreen() {
                   disabled={submitting}
                   onPress={() => void submit()}
                 >
-                  {submitting ? 'Submitting…' : 'Submit adjudication'}
+                  {submitting ? 'Saving…' : 'Save Review'}
                 </Button>
                 <Button
                   disabled={submitting}

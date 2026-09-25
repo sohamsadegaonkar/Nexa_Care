@@ -49,7 +49,7 @@ export function AdjudicationResultScreen() {
           setError('Result access expired. Reopen the authorized workflow.')
           return
         }
-        setError('The current adjudication result could not be loaded.')
+        setError('The current document review could not be loaded.')
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -96,10 +96,10 @@ export function AdjudicationResultScreen() {
         gap="$3"
         role="alert"
       >
-        <H2>Adjudication session unavailable</H2>
+        <H2>Review session unavailable</H2>
         <Paragraph>
           The in-memory review result is unavailable after refresh or session loss. Reopen the case
-          safely from the adjudication queue.
+          safely from the review queue.
         </Paragraph>
         <Button onPress={() => router.replace('/doctor/pipeline/adjudication')}>
           Back to cases
@@ -122,7 +122,7 @@ export function AdjudicationResultScreen() {
       width="100%"
       marginHorizontal="auto"
     >
-      <H2>Adjudication result</H2>
+      <H2>Review Result</H2>
       <Card
         borderWidth={1}
         padding="$4"
@@ -143,7 +143,7 @@ export function AdjudicationResultScreen() {
           <>
             <Paragraph color="$green10">Verified information committed successfully.</Paragraph>
             <Paragraph>Committed {new Date(committedAt).toLocaleString()}</Paragraph>
-            <Paragraph>Provenance: human_adjudicated</Paragraph>
+            <Paragraph>Verified by clinician</Paragraph>
           </>
         ) : null}
       </Card>
@@ -174,8 +174,7 @@ export function AdjudicationResultScreen() {
         >
           <Text fontWeight="700">Final clinical commit confirmation</Text>
           <Paragraph>
-            Commit the accepted human-adjudicated information to the clinical record with
-            human_adjudicated provenance. No AI confidence will be assigned.
+            Add the verified information to the patient record. The original document remains the source of truth for this review.
           </Paragraph>
           <Button
             theme="blue"
@@ -209,7 +208,7 @@ export function AdjudicationResultScreen() {
           does not return the accepted structured submission needed for full reconfirmation.
         </Paragraph>
       </Card>
-      <Button onPress={() => router.replace('/doctor/pipeline/adjudication')}>Back to cases</Button>
+      <Button onPress={() => router.replace('/doctor/pipeline/adjudication')}>Back to Reviews</Button>
     </YStack>
   )
 }

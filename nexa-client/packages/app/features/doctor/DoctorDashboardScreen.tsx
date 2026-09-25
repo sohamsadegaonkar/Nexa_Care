@@ -40,16 +40,16 @@ import {
 
 const secondaryTools = [
   {
-    title: 'Upload external document',
-    description: 'Import and review previous prescriptions, labs, or hospital records.',
-    label: 'Upload & Extract',
+    title: 'Documents',
+    description: 'Import previous prescriptions, labs, or hospital records and track their review status.',
+    label: 'Open Documents',
     icon: FileText,
-    route: '/doctor/patient-search?intent=document_upload',
+    route: '/doctor/documents',
   },
   {
-    title: 'Needs clinical verification',
-    description: 'Review and verify extracted document evidence against authentic source pages.',
-    label: 'Verify Records',
+    title: 'Review imported records',
+    description: 'Verify imported information against the original document before adding it to the patient record.',
+    label: 'Review Documents',
     icon: ClipboardCheck,
     route: '/doctor/pipeline/adjudication',
   },

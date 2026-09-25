@@ -29,13 +29,13 @@ const navigation = [
   },
   {
     label: 'Documents',
-    path: '/doctor/patient-search?intent=document_upload',
+    path: '/doctor/documents',
     icon: FileText,
     matches: (path: string) =>
-      path.startsWith('/doctor/pipeline/') && !path.includes('adjudication'),
+      path === '/doctor/documents' || (path.startsWith('/doctor/pipeline/') && !path.includes('adjudication')),
   },
   {
-    label: 'Adjudication',
+    label: 'Review',
     path: '/doctor/pipeline/adjudication',
     icon: ClipboardCheck,
     matches: (path: string) => path.includes('/adjudication'),
