@@ -294,7 +294,6 @@ async def test_stale_mfa_gets_correct_precondition_response() -> None:
             new=AsyncMock(
                 return_value={
                     "provider_id": str(provider.provider.provider_id),
-                    "hospital_id": str(provider.hospital_id),
                     "mfa_verified_at": stale.isoformat(),
                 }
             ),
