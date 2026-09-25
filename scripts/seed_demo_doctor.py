@@ -196,8 +196,9 @@ async def seed_provider(
     reactivate_provider: bool = False,
     reactivate_credential: bool = False,
 ) -> ProviderSeedResult:
-    """Create or safely reuse Dr. Meera Joshi and the canonical credential."""
+    """Create or safely reuse Dr. Meera Joshi under real auth/MFA rules."""
 
+    now = datetime.now(timezone.utc)
     normalized_login = normalize_provider_login_identifier(DEMO_PROVIDER_EMAIL)
     provider = await session.scalar(
         select(ProviderIdentity).where(
@@ -212,14 +213,22 @@ async def seed_provider(
             specialty="Internal Medicine",
             contact_email=DEMO_PROVIDER_EMAIL,
             contact_phone="+91 98765 00001",
+            email_verified_at=now,
+            phone_verified_at=now,
             status="active",
             is_active=True,
         )
         session.add(provider)
         await session.flush()
-    elif reactivate_provider:
-        provider.is_active = True
-        provider.status = "active"
+    else:
+        if provider.display_name not in (None, "Dr. Meera Joshi"):
+            raise RuntimeError("Demo provider login is bound to an unexpected identity")
+        if reactivate_provider:
+            provider.is_active = True
+            provider.status = "active"
+        if provider.is_active and provider.status == "active":
+            provider.email_verified_at = provider.email_verified_at or now
+            provider.phone_verified_at = provider.phone_verified_at or now
 
     credentials = list(
         (
@@ -237,13 +246,15 @@ async def seed_provider(
         )
     credential = credentials[0] if credentials else None
     credential_created = credential is None
+    mfa_secret = require_demo_provider_mfa_secret()
     if credential is None:
         password = require_demo_provider_password()
         credential = ProviderCredential(
             provider_id=provider.id,
             login_identifier=normalized_login,
             password_hash=hash_provider_password(password),
-            mfa_enabled=False,
+            mfa_enabled=True,
+            mfa_secret_encrypted=encrypt_mfa_secret(mfa_secret),
             is_active=True,
         )
         session.add(credential)
@@ -260,9 +271,22 @@ async def seed_provider(
             )
             credential.failed_login_attempts = 0
             credential.locked_until = None
-            credential.password_changed_at = datetime.now(timezone.utc)
+            credential.password_changed_at = now
         if reactivate_credential:
             credential.is_active = True
+
+        if credential.mfa_secret_encrypted:
+            enrolled_secret = decrypt_mfa_secret(credential.mfa_secret_encrypted)
+            if enrolled_secret != mfa_secret:
+                raise RuntimeError(
+                    "DEMO_PROVIDER_MFA_SECRET does not match the enrolled demo credential; "
+                    "use the explicit demo reset workflow rather than silently rotating MFA"
+                )
+        else:
+            credential.mfa_secret_encrypted = encrypt_mfa_secret(mfa_secret)
+        credential.mfa_enabled = True
+        # Never populate the retired plaintext legacy column.
+        credential.mfa_secret = None
 
     affiliation = await session.scalar(
         select(ProviderHospitalAffiliation).where(
@@ -277,11 +301,31 @@ async def seed_provider(
             hospital_id=hospital_id,
             affiliation_type=AffiliationType.PERMANENT.value,
             department="Internal Medicine",
-            roles=["clinician", "emergency_reader"],
+            roles=["clinician"],
             is_primary=True,
+            valid_from=now - timedelta(days=1),
+            valid_until=now + timedelta(days=365),
             is_active=True,
+            trust_status=AffiliationTrustStatus.ACTIVE.value,
         )
         session.add(affiliation)
+    else:
+        if affiliation.trust_status == AffiliationTrustStatus.PENDING_ACTIVATION.value:
+            # Narrow migration of the exact synthetic row produced by the older
+            # demo seeder. Suspended/revoked/left rows remain fail-closed.
+            affiliation.trust_status = AffiliationTrustStatus.ACTIVE.value
+        elif affiliation.trust_status != AffiliationTrustStatus.ACTIVE.value:
+            raise RuntimeError(
+                "Demo affiliation is not ACTIVE; explicit trust repair is required"
+            )
+        roles = list(affiliation.roles or [])
+        if "clinician" not in {str(role).strip().lower() for role in roles}:
+            roles.append("clinician")
+            affiliation.roles = roles
+        affiliation.valid_from = affiliation.valid_from or (now - timedelta(days=1))
+        if affiliation.valid_until is None or affiliation.valid_until <= now:
+            affiliation.valid_until = now + timedelta(days=365)
+        affiliation.is_active = True
 
     await session.flush()
     return ProviderSeedResult(
