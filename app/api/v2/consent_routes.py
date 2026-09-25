@@ -234,6 +234,168 @@ async def issue_routine_consent_route(
     )
 
 
+async def _prepare_break_glass_request(
+    *,
+    request: Request,
+    provider: ProviderContext,
+    reason_code: BreakGlassReasonCode,
+    justification_raw: str,
+    requested_scope: list[str] | None,
+) -> tuple[str, list[str], datetime, int]:
+    """Validate emergency policy and exact live provider-session MFA state."""
+
+    justification = validate_justification(justification_raw)
+    approved_scope = approved_break_glass_scope(reason_code, requested_scope)
+    raw_session = provider_session_token(request)
+    if not raw_session or provider.session_binding != provider_session_binding(request):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error_code": "BREAK_GLASS_SESSION_REQUIRED"},
+        )
+    session_data = await resolve_provider_session_context(raw_session)
+    if not session_data or str(session_data.get("provider_id")) != str(
+        provider.provider.provider_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"error_code": "BREAK_GLASS_SESSION_INVALID"},
+        )
+    raw_mfa_verified_at = session_data.get("mfa_verified_at")
+    if not isinstance(raw_mfa_verified_at, str):
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={"error_code": "BREAK_GLASS_STEP_UP_MFA_REQUIRED"},
+        )
+    try:
+        mfa_verified_at = datetime.fromisoformat(raw_mfa_verified_at)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={"error_code": "BREAK_GLASS_STEP_UP_MFA_REQUIRED"},
+        ) from exc
+    if mfa_verified_at.tzinfo is None:
+        mfa_verified_at = mfa_verified_at.replace(tzinfo=timezone.utc)
+    mfa_age_seconds = int(
+        (datetime.now(timezone.utc) - mfa_verified_at).total_seconds()
+    )
+    if (
+        mfa_age_seconds < 0
+        or mfa_age_seconds > get_break_glass_mfa_max_age_seconds()
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail={"error_code": "BREAK_GLASS_STEP_UP_MFA_REQUIRED"},
+        )
+    return justification, approved_scope, mfa_verified_at, mfa_age_seconds
+
+
+async def _issue_break_glass_for_patient(
+    *,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession,
+    provider: ProviderContext,
+    patient_id: str,
+    reason_code: BreakGlassReasonCode,
+    justification: str,
+    approved_scope: list[str],
+    mfa_verified_at: datetime,
+    mfa_age_seconds: int,
+) -> BreakGlassConsentIssueResponse:
+    """Issue one audited emergency capability for a server-resolved patient."""
+
+    duplicate_material = ":".join(
+        [
+            provider.session_binding,
+            patient_id,
+            reason_code.value,
+            ",".join(approved_scope),
+        ]
+    )
+    duplicate_key = (
+        "break_glass_issue:"
+        + hashlib.sha256(duplicate_material.encode()).hexdigest()
+    )
+    redis = get_async_redis_client()
+    acquired = await _redis_call(redis.set, duplicate_key, "1", nx=True, ex=60)
+    if not acquired:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"error_code": "BREAK_GLASS_DUPLICATE_REQUEST"},
+        )
+
+    await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
+        actor_uid=provider.actor_uid,
+        event_type="BREAK_GLASS_GOVERNANCE_APPROVED",
+        target_id=patient_id,
+        status="SUCCESS",
+        metadata={
+            "reason_code": reason_code.value,
+            "reason_code_version": BREAK_GLASS_REASON_CODE_VERSION,
+            "scope_policy_version": BREAK_GLASS_POLICY_VERSION,
+            "approved_scope": approved_scope,
+            "mfa_assurance": "totp",
+            "mfa_age_seconds": mfa_age_seconds,
+            "justification_present": bool(justification),
+            "hospital_id": str(provider.hospital.hospital_id),
+        },
+    )
+    token = await issue_break_glass(
+        db=db,
+        patient_id=patient_id,
+        clinician_id=provider.actor_uid,
+        reason_code=reason_code.value,
+        hospital_id=str(provider.hospital_id),
+        scope=approved_scope,
+        reason_code_version=BREAK_GLASS_REASON_CODE_VERSION,
+        session_binding=provider.session_binding,
+        mfa_verified_at=mfa_verified_at,
+    )
+    notification_event_id = str(uuid.uuid4())
+    try:
+        pid_uuid = uuid.UUID(patient_id)
+    except ValueError:
+        pid_uuid = None
+    push_token = None
+    if pid_uuid is not None:
+        token_result = await db.execute(
+            select(PatientPushToken)
+            .where(
+                PatientPushToken.patient_id == pid_uuid,
+                PatientPushToken.is_active.is_(True),
+            )
+            .order_by(PatientPushToken.updated_at.desc())
+            .limit(1)
+        )
+        push_token = token_result.scalar_one_or_none()
+    if push_token and isinstance(getattr(push_token, "expo_push_token", None), str):
+        background_tasks.add_task(
+            push_notification_service.send_emergency_access_notice,
+            patient_id=patient_id,
+            event_id=notification_event_id,
+            expo_push_token=push_token.expo_push_token,
+        )
+        notification_status = "queued"
+    else:
+        notification_status = "unavailable"
+    await append_audit_log_or_503(
+        audit_context=current_audit_context(AuditDomain.CONSENT),
+        actor_uid=provider.actor_uid,
+        event_type="BREAK_GLASS_PATIENT_NOTIFICATION",
+        target_id=patient_id,
+        status=notification_status.upper(),
+        metadata={"notification_event_id": notification_event_id},
+    )
+    return BreakGlassConsentIssueResponse(
+        consent_token=token,
+        expires_at=_expires_at(BREAK_GLASS_TTL_SECONDS),
+        approved_scope=approved_scope,
+        policy_version=BREAK_GLASS_POLICY_VERSION,
+        authorization_ref=hashlib.sha256(token.encode("utf-8")).hexdigest()[:16],
+    )
+
+
 @router.post("/break-glass/issue", response_model=BreakGlassConsentIssueResponse)
 async def issue_break_glass_consent_route(
     request: Request,
@@ -244,143 +406,117 @@ async def issue_break_glass_consent_route(
         require_clinical_capability(ClinicalCapability.EMERGENCY_ATTEMPT)
     ),
 ):
-    """Issue an emergency break-glass consent token."""
-    # Enforce rate limit per provider
+    """Legacy direct-patient UUID emergency endpoint.
+
+    Kept only for compatibility until the clinician UI migrates to the
+    discovery-bound contract. It must not be broadened or used by new UI code.
+    """
+
     await _break_glass_limiter(request=request, provider_id=provider.actor_uid)
-
     try:
-        justification = validate_justification(payload.justification)
-        approved_scope = approved_break_glass_scope(
-            payload.reason_code, payload.requested_scope
+        justification, approved_scope, mfa_verified_at, mfa_age_seconds = (
+            await _prepare_break_glass_request(
+                request=request,
+                provider=provider,
+                reason_code=payload.reason_code,
+                justification_raw=payload.justification,
+                requested_scope=payload.requested_scope,
+            )
         )
-        raw_session = provider_session_token(request)
-        if not raw_session or provider.session_binding != provider_session_binding(
-            request
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"error_code": "BREAK_GLASS_SESSION_REQUIRED"},
-            )
-        session_data = await resolve_provider_session_context(raw_session)
-        if not session_data or str(session_data.get("provider_id")) != str(
-            provider.provider.provider_id
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail={"error_code": "BREAK_GLASS_SESSION_INVALID"},
-            )
-        raw_mfa_verified_at = session_data.get("mfa_verified_at")
-        if not isinstance(raw_mfa_verified_at, str):
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail={"error_code": "BREAK_GLASS_STEP_UP_MFA_REQUIRED"},
-            )
-        try:
-            mfa_verified_at = datetime.fromisoformat(raw_mfa_verified_at)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail={"error_code": "BREAK_GLASS_STEP_UP_MFA_REQUIRED"},
-            ) from exc
-        if mfa_verified_at.tzinfo is None:
-            mfa_verified_at = mfa_verified_at.replace(tzinfo=timezone.utc)
-        mfa_age_seconds = (datetime.now(timezone.utc) - mfa_verified_at).total_seconds()
-        if (
-            mfa_age_seconds < 0
-            or mfa_age_seconds > get_break_glass_mfa_max_age_seconds()
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_428_PRECONDITION_REQUIRED,
-                detail={"error_code": "BREAK_GLASS_STEP_UP_MFA_REQUIRED"},
-            )
-
-        duplicate_material = ":".join(
-            [
-                provider.session_binding,
-                payload.patient_id,
-                payload.reason_code.value,
-                ",".join(approved_scope),
-            ]
-        )
-        duplicate_key = f"break_glass_issue:{hashlib.sha256(duplicate_material.encode()).hexdigest()}"
-        redis = get_async_redis_client()
-        acquired = await _redis_call(redis.set, duplicate_key, "1", nx=True, ex=60)
-        if not acquired:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail={"error_code": "BREAK_GLASS_DUPLICATE_REQUEST"},
-            )
-
-        await append_audit_log_or_503(
-            audit_context=current_audit_context(AuditDomain.CONSENT),
-            actor_uid=provider.actor_uid,
-            event_type="BREAK_GLASS_GOVERNANCE_APPROVED",
-            target_id=payload.patient_id,
-            status="SUCCESS",
-            metadata={
-                "reason_code": payload.reason_code.value,
-                "reason_code_version": BREAK_GLASS_REASON_CODE_VERSION,
-                "scope_policy_version": BREAK_GLASS_POLICY_VERSION,
-                "approved_scope": approved_scope,
-                "mfa_assurance": "totp",
-                "mfa_age_seconds": int(mfa_age_seconds),
-                "justification_present": bool(justification),
-                "hospital_id": str(provider.hospital.hospital_id),
-            },
-        )
-        token = await issue_break_glass(
+        return await _issue_break_glass_for_patient(
+            request=request,
+            background_tasks=background_tasks,
             db=db,
+            provider=provider,
             patient_id=payload.patient_id,
-            clinician_id=provider.actor_uid,
-            reason_code=payload.reason_code.value,
-            hospital_id=str(provider.hospital_id),
-            scope=approved_scope,
-            reason_code_version=BREAK_GLASS_REASON_CODE_VERSION,
-            session_binding=provider.session_binding,
-            mfa_verified_at=mfa_verified_at,
-        )
-        notification_event_id = str(uuid.uuid4())
-        try:
-            pid_uuid = uuid.UUID(payload.patient_id)
-        except ValueError:
-            pid_uuid = None
-        push_token = None
-        if pid_uuid is not None:
-            token_result = await db.execute(
-                select(PatientPushToken)
-                .where(
-                    PatientPushToken.patient_id == pid_uuid,
-                    PatientPushToken.is_active.is_(True),
-                )
-                .order_by(PatientPushToken.updated_at.desc())
-                .limit(1)
-            )
-            push_token = token_result.scalar_one_or_none()
-        if push_token and isinstance(getattr(push_token, "expo_push_token", None), str):
-            background_tasks.add_task(
-                push_notification_service.send_emergency_access_notice,
-                patient_id=payload.patient_id,
-                event_id=notification_event_id,
-                expo_push_token=push_token.expo_push_token,
-            )
-            notification_status = "queued"
-        else:
-            notification_status = "unavailable"
-        await append_audit_log_or_503(
-            audit_context=current_audit_context(AuditDomain.CONSENT),
-            actor_uid=provider.actor_uid,
-            event_type="BREAK_GLASS_PATIENT_NOTIFICATION",
-            target_id=payload.patient_id,
-            status=notification_status.upper(),
-            metadata={"notification_event_id": notification_event_id},
-        )
-        return BreakGlassConsentIssueResponse(
-            consent_token=token,
-            expires_at=_expires_at(BREAK_GLASS_TTL_SECONDS),
+            reason_code=payload.reason_code,
+            justification=justification,
             approved_scope=approved_scope,
-            policy_version=BREAK_GLASS_POLICY_VERSION,
-            authorization_ref=hashlib.sha256(token.encode("utf-8")).hexdigest()[:16],
+            mfa_verified_at=mfa_verified_at,
+            mfa_age_seconds=mfa_age_seconds,
         )
+    except HTTPException:
+        raise
+    except UnsupportedClinicalCategoryError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": err.error_code, "category": err.category},
+        ) from err
+    except ValueError as err:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error_code": "BREAK_GLASS_POLICY_REJECTED"},
+        ) from err
+    except ConsentEngineUnavailable as err:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "CONSENT_SERVICE_UNAVAILABLE"},
+        ) from err
+
+
+@router.post(
+    "/break-glass/discovered/issue",
+    response_model=DiscoveredBreakGlassConsentIssueResponse,
+)
+async def issue_discovered_break_glass_consent_route(
+    request: Request,
+    payload: DiscoveredBreakGlassConsentIssueRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db_session),
+    provider: ProviderContext = Depends(
+        require_clinical_capability(ClinicalCapability.EMERGENCY_ATTEMPT)
+    ),
+) -> DiscoveredBreakGlassConsentIssueResponse:
+    """Issue emergency authority only from an exact-session discovery handle."""
+
+    await _break_glass_limiter(request=request, provider_id=provider.actor_uid)
+    try:
+        justification, approved_scope, mfa_verified_at, mfa_age_seconds = (
+            await _prepare_break_glass_request(
+                request=request,
+                provider=provider,
+                reason_code=payload.reason_code,
+                justification_raw=payload.justification,
+                requested_scope=payload.requested_scope,
+            )
+        )
+        service = PatientDiscoveryService(db, get_async_redis_client())
+        patient = await service.consume_handle(
+            raw_handle=payload.discovery_handle,
+            provider_id=provider.actor_uid,
+            hospital_id=str(provider.hospital_id),
+            session_binding=provider.session_binding,
+        )
+        issued = await _issue_break_glass_for_patient(
+            request=request,
+            background_tasks=background_tasks,
+            db=db,
+            provider=provider,
+            patient_id=str(patient.patient_uuid),
+            reason_code=payload.reason_code,
+            justification=justification,
+            approved_scope=approved_scope,
+            mfa_verified_at=mfa_verified_at,
+            mfa_age_seconds=mfa_age_seconds,
+        )
+        return DiscoveredBreakGlassConsentIssueResponse(
+            patient_id=str(patient.patient_uuid),
+            consent_token=issued.consent_token,
+            expires_at=issued.expires_at,
+            approved_scope=issued.approved_scope,
+            policy_version=issued.policy_version,
+            authorization_ref=issued.authorization_ref,
+        )
+    except DiscoveryHandleInvalid as err:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error_code": "DISCOVERY_HANDLE_INVALID"},
+        ) from err
+    except DiscoveryUnavailable as err:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error_code": "DISCOVERY_UNAVAILABLE"},
+        ) from err
     except HTTPException:
         raise
     except UnsupportedClinicalCategoryError as err:
