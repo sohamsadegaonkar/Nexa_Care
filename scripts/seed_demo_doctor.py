@@ -26,7 +26,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import pyotp
 from sqlalchemy import String, bindparam, func, select, text
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.postgresql import JSONB
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
