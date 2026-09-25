@@ -253,10 +253,8 @@ async def _prepare_break_glass_request(
             detail={"error_code": "BREAK_GLASS_SESSION_REQUIRED"},
         )
     session_data = await resolve_provider_session_context(raw_session)
-    if (
-        not session_data
-        or str(session_data.get("provider_id")) != str(provider.provider.provider_id)
-        or str(session_data.get("hospital_id")) != str(provider.hospital_id)
+    if not session_data or str(session_data.get("provider_id")) != str(
+        provider.provider.provider_id
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
