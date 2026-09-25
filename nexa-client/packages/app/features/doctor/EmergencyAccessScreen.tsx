@@ -41,10 +41,10 @@ function validateJustification(reasonCode: BreakGlassReasonCode, value: string):
       ? OTHER_JUSTIFICATION_LENGTH
       : MIN_JUSTIFICATION_LENGTH
   if (clean.length < minimumLength) {
-    return \`A \${minimumLength}-character clinical justification is required.\`
+    return `A ${minimumLength}-character clinical justification is required.`
   }
   if (clean.length > MAX_JUSTIFICATION_LENGTH) {
-    return \`Clinical justification must not exceed \${MAX_JUSTIFICATION_LENGTH} characters.\`
+    return `Clinical justification must not exceed ${MAX_JUSTIFICATION_LENGTH} characters.`
   }
   return null
 }
