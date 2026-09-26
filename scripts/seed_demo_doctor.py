@@ -340,7 +340,11 @@ async def seed_provider(
 
 
 async def seed_provider_trust(
-    session, provider_id: uuid.UUID, hospital_id: uuid.UUID
+    session,
+    provider_id: uuid.UUID,
+    hospital_id: uuid.UUID,
+    *,
+    repair_legacy_trust: bool = False,
 ) -> None:
     """Create internally consistent synthetic trust evidence for the demo only.
 
@@ -350,6 +354,33 @@ async def seed_provider_trust(
     """
 
     now = datetime.now(timezone.utc)
+    if repair_legacy_trust:
+        require_demo_environment("seed_demo_doctor_trust_repair")
+
+    provider = await session.get(ProviderIdentity, provider_id)
+    if provider is None:
+        raise RuntimeError("Demo provider disappeared during bootstrap")
+    if repair_legacy_trust:
+        normalized_provider_email = normalize_provider_login_identifier(
+            DEMO_PROVIDER_EMAIL
+        )
+        if (
+            normalize_provider_login_identifier(provider.contact_email or "")
+            != normalized_provider_email
+            or (provider.display_name and provider.display_name != "Dr. Meera Joshi")
+            or (
+                provider.medical_registration_number
+                and provider.medical_registration_number != "MMC-2019-45231"
+            )
+        ):
+            raise RuntimeError("Demo trust repair is bound strictly to Dr. Meera Joshi")
+
+    hospital = await session.get(HospitalRegistry, hospital_id)
+    if hospital is None:
+        raise RuntimeError("Demo hospital disappeared during bootstrap")
+    if repair_legacy_trust and hospital.facility_code != DEMO_HOSPITAL_CODE:
+        raise RuntimeError("Demo trust repair is bound strictly to NEXA-DEMO-HOSPITAL")
+
     reviewer = await session.scalar(
         select(ProviderIdentity).where(
             func.lower(func.trim(ProviderIdentity.contact_email))
@@ -395,14 +426,59 @@ async def seed_provider_trust(
         )
         session.add(professional)
         await session.flush()
-    elif professional.status != ProfessionalVerificationStatus.VERIFIED.value:
+    elif professional.status == ProfessionalVerificationStatus.VERIFIED.value:
+        pass
+    elif repair_legacy_trust:
+        if (
+            professional.status
+            != ProfessionalVerificationStatus.NOT_SUBMITTED.value
+        ):
+            raise RuntimeError(
+                f"Demo professional verification status {professional.status} is non-initial; "
+                "refusing trust repair"
+            )
+        if (
+            professional.authoritative_adverse_signal_at is not None
+            or professional.recheck_failure_reason is not None
+            or (
+                professional.verification_source
+                and professional.verification_source != "NEXA_DEMO_FIXTURE"
+            )
+            or (
+                professional.verification_method
+                and professional.verification_method != "SYNTHETIC_DEMO_REVIEW"
+            )
+            or (
+                professional.reviewer_id
+                and professional.reviewer_id not in (None, str(reviewer.id))
+            )
+        ):
+            raise RuntimeError(
+                "Demo professional verification has conflicting or adverse state; "
+                "refusing trust repair"
+            )
+        professional.registration_authority_code = "NEXA-DEMO-MMC"
+        professional.registration_number_normalized = "MMC-2019-45231-DEMO"
+        professional.status = ProfessionalVerificationStatus.VERIFIED.value
+        professional.verification_method = "SYNTHETIC_DEMO_REVIEW"
+        professional.verification_source = "NEXA_DEMO_FIXTURE"
+        professional.verification_reference = "DEMO-PROFESSIONAL-V1"
+        professional.identity_binding_method = "SYNTHETIC_DEMO_BINDING"
+        professional.identity_binding_status = "MATCHED"
+        professional.registration_valid_from = now - timedelta(days=30)
+        professional.registration_valid_until = now + timedelta(days=365)
+        professional.verified_at = now
+        professional.last_checked_at = now
+        professional.next_review_at = now + timedelta(days=180)
+        professional.reviewer_id = str(reviewer.id)
+        professional.decision_reason_code = "SYNTHETIC_DEMO_VERIFIED"
+        professional.version = (professional.version or 1) + 1
+        await session.flush()
+    else:
         raise RuntimeError(
             "Demo professional verification is not VERIFIED; explicit trust repair is required"
         )
 
-    hospital = await session.get(HospitalRegistry, hospital_id)
-    if hospital is None:
-        raise RuntimeError("Demo hospital disappeared during bootstrap")
     facility = await session.scalar(
         select(FacilityVerification).where(
             FacilityVerification.facility_id == hospital_id
@@ -428,7 +504,50 @@ async def seed_provider_trust(
         )
         session.add(facility)
         await session.flush()
-    elif facility.status != FacilityVerificationStatus.VERIFIED.value:
+    elif facility.status == FacilityVerificationStatus.VERIFIED.value:
+        pass
+    elif repair_legacy_trust:
+        if facility.status != FacilityVerificationStatus.DRAFT.value:
+            raise RuntimeError(
+                f"Demo facility verification status {facility.status} is non-initial; "
+                "refusing trust repair"
+            )
+        if (
+            facility.authoritative_adverse_signal_at is not None
+            or facility.recheck_failure_reason is not None
+            or (
+                facility.verification_source
+                and facility.verification_source != "NEXA_DEMO_FIXTURE"
+            )
+            or (
+                facility.verification_method
+                and facility.verification_method != "SYNTHETIC_DEMO_REVIEW"
+            )
+            or (
+                facility.reviewer_id
+                and facility.reviewer_id not in (None, str(reviewer.id))
+            )
+        ):
+            raise RuntimeError(
+                "Demo facility verification has conflicting or adverse state; "
+                "refusing trust repair"
+            )
+        facility.status = FacilityVerificationStatus.VERIFIED.value
+        facility.verification_method = "SYNTHETIC_DEMO_REVIEW"
+        facility.verification_source = "NEXA_DEMO_FIXTURE"
+        facility.verification_reference = "DEMO-FACILITY-V1"
+        facility.registration_authority_code = "NEXA-DEMO-FACILITY"
+        facility.registration_number_normalized = DEMO_HOSPITAL_CODE
+        facility.registration_valid_from = now - timedelta(days=30)
+        facility.registration_valid_until = now + timedelta(days=365)
+        facility.verified_at = now
+        facility.last_checked_at = now
+        facility.next_review_at = now + timedelta(days=180)
+        facility.reviewer_id = str(reviewer.id)
+        facility.decision_reason_code = "SYNTHETIC_DEMO_VERIFIED"
+        facility.version = (facility.version or 1) + 1
+        await session.flush()
+    else:
         raise RuntimeError(
             "Demo facility verification is not VERIFIED; explicit trust repair is required"
         )
@@ -582,6 +701,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-demo-provider-reset", action="store_true")
     parser.add_argument("--reactivate-provider", action="store_true")
     parser.add_argument("--reactivate-credential", action="store_true")
+    parser.add_argument("--repair-legacy-demo-trust", action="store_true")
+    parser.add_argument("--confirm-demo-trust-repair", action="store_true")
     args = parser.parse_args(argv)
     if args.reset_password != args.confirm_demo_provider_reset:
         parser.error(
@@ -593,6 +714,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ) and not args.reset_password:
         parser.error(
             "reactivation flags are allowed only during an explicit password reset"
+        )
+    if args.repair_legacy_demo_trust != args.confirm_demo_trust_repair:
+        parser.error(
+            "trust repair requires both --repair-legacy-demo-trust and "
+            "--confirm-demo-trust-repair"
         )
     return args
 
@@ -631,7 +757,12 @@ async def main(argv: list[str] | None = None) -> int:
                         "Audit write failed; demo provider password reset aborted"
                     )
 
-            await seed_provider_trust(session, provider_id, hospital_id)
+            await seed_provider_trust(
+                session,
+                provider_id,
+                hospital_id,
+                repair_legacy_trust=args.repair_legacy_demo_trust,
+            )
 
             patient_1 = await seed_patient_identity(session, DEMO_PATIENT_1_ID)
             patient_2 = await seed_patient_identity(session, DEMO_PATIENT_2_ID)
@@ -657,6 +788,9 @@ async def main(argv: list[str] | None = None) -> int:
         f"affiliation={'created' if provider_result.affiliation_created else 'reused'}"
     )
     print(f"password={'reset' if provider_result.password_reset else 'unchanged'}")
+    print(
+        f"trust_repair={'repaired' if args.repair_legacy_demo_trust else 'unchanged'}"
+    )
     print("ready_for_clinical_access=true")
     print()
     print("DEMO PATIENT A")

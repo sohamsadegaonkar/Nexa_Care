@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import pytest
+
+from scripts import demo_preflight
 
 ROOT = Path(__file__).resolve().parents[1]
 START = ROOT / "scripts" / "start_nexa_dev.ps1"
@@ -49,3 +55,43 @@ def test_preflight_uses_real_clinical_eligibility_and_erasure_checks() -> None:
     assert "ClinicalCapability.PATIENT_DISCOVER" in source
     assert "check_erasure_registry" in source
     assert "clinical_denial_code=" in source
+
+
+class _CloseOnlyRedisClient:
+    def __init__(self) -> None:
+        self.closed = False
+
+    async def ping(self) -> bool:
+        return True
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_preflight_closes_redis_4_client_without_aclose(monkeypatch, capsys) -> None:
+    client = _CloseOnlyRedisClient()
+
+    monkeypatch.setattr(demo_preflight, "require_demo_environment", lambda _: "development")
+    monkeypatch.setattr(
+        demo_preflight,
+        "get_database_config",
+        lambda: SimpleNamespace(url="postgresql+asyncpg://localhost/nexa_demo"),
+    )
+    monkeypatch.setattr(
+        demo_preflight,
+        "get_redis_config",
+        lambda: SimpleNamespace(url="redis://localhost:6379/0"),
+    )
+    monkeypatch.setattr(
+        demo_preflight,
+        "_database_revisions",
+        AsyncMock(return_value=("20260919_medication_catalog", "20260919_medication_catalog")),
+    )
+    monkeypatch.setattr(demo_preflight, "_schema_ready", AsyncMock(return_value=(True, [])))
+    monkeypatch.setattr(demo_preflight, "_demo_state", AsyncMock(return_value=(True, None)))
+    monkeypatch.setattr(demo_preflight.redis_async, "from_url", lambda _: client)
+
+    assert await demo_preflight.run_preflight() is True
+    assert client.closed is True
+    assert "redis=reachable" in capsys.readouterr().out
