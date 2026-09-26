@@ -402,13 +402,12 @@ class TestEmergencyAccessScreen:
         code = _read_screen("EmergencyAccessScreen")
         assert "useProviderAuth" in code, "Must use ProviderAuthContext"
 
-    def test_calls_break_glass_api(self) -> None:
+    def test_calls_discovery_bound_break_glass_api(self) -> None:
         code = _read_screen("EmergencyAccessScreen")
-        # The screen calls NexaApiClient.breakGlassIssue() which encapsulates
-        # the API endpoint — check for the method call or the raw endpoint.
-        assert (
-            "breakGlassIssue" in code or "/api/v2/consent/break-glass/" in code
-        ), "Must call break-glass API (via NexaApiClient or direct endpoint)"
+        assert "breakGlassDiscoveredIssue" in code
+        assert "NexaApiClient.breakGlassIssue(" not in code
+        assert "discoverPatientExact" in code
+        assert "resolveNfcCard" in code
 
     def test_has_reason_code_input(self) -> None:
         code = _read_screen("EmergencyAccessScreen")

@@ -512,7 +512,7 @@ export function JobStatusScreen() {
               fontSize="$2"
               fontWeight="700"
             >
-              Auto-commit is disabled. Clinician adjudication is mandatory.
+              Automatic addition is disabled. Clinical verification is required before adding this information to the patient record.
             </Text>
           </Card>
 
@@ -648,7 +648,7 @@ export function JobStatusScreen() {
             size="$4"
             onPress={() => router.push('/doctor/pipeline/adjudication')}
           >
-            Open source adjudication
+            Review Document
           </Button>
         )}
 
@@ -657,7 +657,7 @@ export function JobStatusScreen() {
             color="$red10"
             fontSize="$3"
           >
-            Quarantined jobs cannot enter ordinary adjudication.
+            This document is quarantined and cannot be added to the patient record.
           </Text>
         )}
 

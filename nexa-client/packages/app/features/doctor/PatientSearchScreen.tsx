@@ -51,20 +51,42 @@ function safeDisplay(mode: SearchMode, input: string): Pick<PatientDiscoverySele
 
 function discoveryError(error: unknown): string {
   if (!(error instanceof ApiError)) {
-    return 'Patient could not be identified with this method. Verify the input and try again.'
+    return 'Patient search could not be completed. Check the details or try another method.'
   }
-  if (error.code === 'DISCOVERY_RECENT_MFA_REQUIRED') {
-    return 'Recent multi-factor verification is required for phone discovery. Sign in again with MFA and retry.'
+  if (error.code === 'CLINICAL_ELIGIBILITY_DENIED') {
+    return 'Patient search is not currently available for this provider account. Review provider verification status or contact your clinical administrator.'
   }
-  if (error.code === 'DISCOVERY_RATE_LIMITED') {
-    return 'Too many discovery attempts. Wait before trying again.'
+  if (
+    error.code === 'DISCOVERY_RECENT_MFA_REQUIRED' ||
+    error.code === 'CLINICAL_MFA_REQUIRED' ||
+    error.code === 'RECENT_MFA_REQUIRED'
+  ) {
+    return 'Additional verification is required before using this search method. Complete MFA and try again.'
   }
-  if (error.status >= 500) {
-    return 'Patient discovery is temporarily unavailable. Please try again later.'
+  if (error.code === 'DISCOVERY_NO_MATCH') {
+    return 'No patient could be matched with the information provided. Check the details or use another search method.'
   }
-  // Deliberately collapse no-match, opted-out, malformed and other ordinary
-  // lookup failures. The client must not become an account-enumeration oracle.
-  return 'Patient could not be identified with this method. Verify the input and try again.'
+  if (error.code === 'DISCOVERY_RATE_LIMITED' || error.status === 429) {
+    return 'Patient search is temporarily limited after repeated attempts. Wait briefly, then try again.'
+  }
+  if (error.code === 'DISCOVERY_HANDLE_INVALID') {
+    return 'The patient selection expired. Find the patient again.'
+  }
+  if (
+    error.code === 'DISCOVERY_UNAVAILABLE' ||
+    error.code === 'DISCOVERY_SECURITY_CONTROL_UNAVAILABLE' ||
+    error.status >= 500 ||
+    error.status === 0
+  ) {
+    return 'Patient search is temporarily unavailable because a required service cannot be reached. Try again when the service recovers.'
+  }
+  if (error.status === 401) {
+    return 'Your provider session expired. Sign in again before searching for a patient.'
+  }
+  if (error.status === 403) {
+    return 'Your current clinical session is not authorized to search for patients. Re-authenticate or contact your clinical administrator.'
+  }
+  return 'Patient search could not be completed. Check the details or try another method.'
 }
 
 /**
@@ -225,7 +247,7 @@ export function PatientSearchScreen() {
           <YStack gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
               <SectionHeading>Enter Nexa Patient Identifier</SectionHeading>
-              <StatusBadge tone="info">Opaque Resolution</StatusBadge>
+              <StatusBadge tone="info">Privacy Protected</StatusBadge>
             </XStack>
             <Paragraph color="$nexaSecondary" fontSize={14}>
               Enter the public identifier shown on the patient's Nexa Care app or printed health card.
@@ -234,7 +256,7 @@ export function PatientSearchScreen() {
               id="patient-search-id"
               label="Patient Public ID"
               placeholder="NC-..."
-              hint="Format: NC- followed by 24 hexadecimal characters."
+              hint="Enter the Nexa Patient ID exactly as shown in the patient app or health card."
               value={value}
               onChangeText={(text) => {
                 setValue(text.toUpperCase())
@@ -251,11 +273,11 @@ export function PatientSearchScreen() {
         {mode === 'phone' && (
           <YStack gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
-              <SectionHeading>Exact Verified Phone Lookup</SectionHeading>
-              <StatusBadge tone="warning">Recent MFA Required</StatusBadge>
+              <SectionHeading>Find by Phone</SectionHeading>
+              <StatusBadge tone="warning">Additional verification may be requested</StatusBadge>
             </XStack>
             <Paragraph color="$nexaSecondary" fontSize={14}>
-              Available only when the patient has explicitly enabled phone discoverability. No candidate list or profile data is returned.
+              Use the phone number the patient has chosen for Nexa Care. For privacy, search does not reveal why an entry cannot be matched.
             </Paragraph>
             <SearchInputField
               id="patient-search-phone"
@@ -277,11 +299,11 @@ export function PatientSearchScreen() {
         {mode === 'qr' && (
           <YStack gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
-              <SectionHeading>Scan Nexa Discovery QR</SectionHeading>
-              <StatusBadge tone="info">Public-ID Only</StatusBadge>
+              <SectionHeading>Scan Nexa QR</SectionHeading>
+              <StatusBadge tone="info">Patient QR</StatusBadge>
             </XStack>
             <Paragraph color="$nexaSecondary" fontSize={14}>
-              Nexa QR codes contain only a versioned opaque public discovery identifier. Access tokens, patient UUIDs and consent authority are rejected.
+              Scan the QR shown in the patient's Nexa Care app or health card. Clinical access still requires patient authorization.
             </Paragraph>
             <SearchInputField
               id="patient-search-qr"
@@ -304,7 +326,7 @@ export function PatientSearchScreen() {
           <YStack gap="$3">
             <XStack justifyContent="space-between" alignItems="center">
               <SectionHeading>Tap NFC Health Card</SectionHeading>
-              <StatusBadge tone="success">Contactless Ready</StatusBadge>
+              <StatusBadge tone="success">Ready to Scan</StatusBadge>
             </XStack>
             <YStack
               backgroundColor="$nexaAccentSoft"
@@ -368,10 +390,10 @@ export function PatientSearchScreen() {
           <ShieldCheck size={24} color="$nexaAccent" />
           <YStack gap="$1" flex={1}>
             <Text color="$nexaText" fontWeight="700" fontSize={14}>
-              Minimum-Disclosure Resolution
+              Private Patient Matching
             </Text>
             <Paragraph color="$nexaSecondary" fontSize={13} lineHeight={20}>
-              Successful resolution returns only an opaque, short-lived, single-use discovery handle. It is not patient authentication, consent or clinical-access authority; clinical data remains unavailable until the patient grants explicit permission.
+              Nexa Care matches the patient without exposing clinical information. Patient permission is still required before routine clinical records can be opened.
             </Paragraph>
           </YStack>
         </XStack>

@@ -286,7 +286,7 @@ export function RequestConsentScreen() {
               color="$color10"
               fontSize={13}
             >
-              This grant can authorize document upload, extraction results, and source adjudication
+              This grant can authorize document upload, extraction results, and clinical verification
               only.
             </Paragraph>
           </Card>

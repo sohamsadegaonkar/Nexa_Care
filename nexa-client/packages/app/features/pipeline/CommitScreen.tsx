@@ -349,7 +349,7 @@ export function CommitScreen() {
         if (err.status === 409) {
           setCommitError(
             'Review incomplete: job contains unresolved fields needing review. ' +
-              'Please return to the Review Cockpit and adjudicate all remaining fields.'
+              'Please return to Review Imported Records and verify all remaining fields.'
           )
         } else if (err.status === 400) {
           setCommitError(err.message || 'Invalid commit request.')
@@ -718,7 +718,7 @@ export function CommitScreen() {
             color="$orange10"
             fontSize="$3"
           >
-            All fields must be adjudicated before committing. Return to the Review Cockpit to
+            All fields must be verified before adding them to the patient record. Return to Review Imported Records to
             approve, edit, or reject remaining fields.
           </Paragraph>
           <Button
