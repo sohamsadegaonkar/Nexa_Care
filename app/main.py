@@ -99,6 +99,7 @@ from app.services.audit_outbox_processor import (
     get_outbox_health,
     run_outbox_processor_forever,
 )
+from app.services.background_worker_resilience import get_worker_runtime_health
 from app.services.crypto_kms import PatientDataErased, get_encryption_provider
 from app.services.document_storage import get_document_storage
 from app.services.failure_quarantine_processor import (
@@ -605,10 +606,22 @@ async def _readiness_snapshot(*, detailed: bool, include_aws: bool) -> dict:
             "status": scanner_state,
         }
 
+    audit_task_status = _worker_status(getattr(app.state, "audit_outbox_task", None))
+    quarantine_task_status = _worker_status(
+        getattr(app.state, "failure_quarantine_task", None)
+    )
+    audit_runtime = get_worker_runtime_health("audit_outbox")
+    quarantine_runtime = get_worker_runtime_health("failure_quarantine")
     worker_details = {
-        "audit_outbox": _worker_status(getattr(app.state, "audit_outbox_task", None)),
-        "failure_quarantine": _worker_status(
-            getattr(app.state, "failure_quarantine_task", None)
+        "audit_outbox": (
+            "degraded"
+            if audit_task_status == "ok" and bool(audit_runtime["degraded"])
+            else audit_task_status
+        ),
+        "failure_quarantine": (
+            "degraded"
+            if quarantine_task_status == "ok" and bool(quarantine_runtime["degraded"])
+            else quarantine_task_status
         ),
     }
     provider_required = bool(
@@ -628,6 +641,10 @@ async def _readiness_snapshot(*, detailed: bool, include_aws: bool) -> dict:
     )
     if detailed:
         details["workers"] = worker_details
+        details["worker_runtime"] = {
+            "audit_outbox": audit_runtime,
+            "failure_quarantine": quarantine_runtime,
+        }
 
     if include_aws:
         try:

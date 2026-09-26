@@ -10,11 +10,50 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $clientRoot = Join-Path $repoRoot 'nexa-client'
+$expoRoot = Join-Path $clientRoot 'apps\expo'
 
-$python = Join-Path $repoRoot 'venv\Scripts\python.exe'
-$javaHome = 'C:\Program Files\Microsoft\jdk-17'
-$androidSdk = 'C:\Android\Sdk'
-$androidNdk = 'C:\Android\Sdk\ndk\27.1.12297006'
+function Resolve-RepoPython {
+    $candidates = @()
+    if ($env:VIRTUAL_ENV) {
+        $candidates += (Join-Path $env:VIRTUAL_ENV 'Scripts\python.exe')
+    }
+    $candidates += (Join-Path $repoRoot '.venv\Scripts\python.exe')
+    $candidates += (Join-Path $repoRoot 'venv\Scripts\python.exe')
+
+    foreach ($candidate in $candidates | Select-Object -Unique) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+    throw 'No repository Python environment found. Activate the repo venv or create .venv/venv.'
+}
+
+$python = Resolve-RepoPython
+
+$javaCandidates = @(
+    $env:JAVA_HOME,
+    'C:\Program Files\Microsoft\jdk-17',
+    'C:\Program Files\Eclipse Adoptium\jdk-17'
+) | Where-Object { $_ }
+$javaHome = $javaCandidates |
+    Where-Object { Test-Path (Join-Path $_ 'bin\java.exe') } |
+    Select-Object -First 1
+if (-not $javaHome) {
+    throw 'Java 17 was not found. Set JAVA_HOME to a JDK 17 installation.'
+}
+
+$androidCandidates = @(
+    $env:ANDROID_SDK_ROOT,
+    $env:ANDROID_HOME,
+    'C:\Android\Sdk'
+) | Where-Object { $_ }
+$androidSdk = $androidCandidates |
+    Where-Object { Test-Path (Join-Path $_ 'platform-tools\adb.exe') } |
+    Select-Object -First 1
+if (-not $androidSdk) {
+    throw 'Android SDK/adb was not found. Set ANDROID_SDK_ROOT or ANDROID_HOME.'
+}
+$androidNdk = Join-Path $androidSdk 'ndk\27.1.12297006'
 $adb = Join-Path $androidSdk 'platform-tools\adb.exe'
 
 $corepackCommand = Get-Command corepack.cmd -ErrorAction SilentlyContinue
@@ -35,12 +74,51 @@ $requiredPaths = [ordered]@{
     'Android SDK' = $androidSdk
     'ADB'         = $adb
     'Client'      = $clientRoot
+    'Expo app'    = $expoRoot
 }
 
 foreach ($item in $requiredPaths.GetEnumerator()) {
     if (-not (Test-Path $item.Value)) {
         throw "$($item.Key) was not found: $($item.Value)"
     }
+}
+
+& $python -c "import sys, alembic, fastapi, sqlalchemy; print(f'python={sys.version_info.major}.{sys.version_info.minor}')"
+if ($LASTEXITCODE -ne 0) {
+    throw 'Repository Python or required backend dependencies are unavailable.'
+}
+$prevErrorAction = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+$javaVersion = (& (Join-Path $javaHome 'bin\java.exe') -version 2>&1 | Out-String)
+$ErrorActionPreference = $prevErrorAction
+if ($javaVersion -notmatch 'version "17\.') {
+    throw 'Nexa Care Android development requires Java 17.'
+}
+
+$localGoogleServices = Join-Path $expoRoot 'google-services.development.local.json'
+$googleServicesValue = $null
+if (Test-Path $localGoogleServices) {
+    $googleServicesValue = './google-services.development.local.json'
+}
+elseif ($env:GOOGLE_SERVICES_FILE) {
+    $configuredGoogleServices = if ([IO.Path]::IsPathRooted($env:GOOGLE_SERVICES_FILE)) {
+        $env:GOOGLE_SERVICES_FILE
+    } else {
+        Join-Path $expoRoot $env:GOOGLE_SERVICES_FILE
+    }
+    if (-not (Test-Path $configuredGoogleServices)) {
+        throw "Configured GOOGLE_SERVICES_FILE does not exist: $configuredGoogleServices"
+    }
+    $googleServicesValue = $env:GOOGLE_SERVICES_FILE
+}
+else {
+    Write-Warning 'Firebase Android client config not present; push-dependent demo features may be unavailable.'
+}
+
+& $python (Join-Path $repoRoot 'scripts\demo_preflight.py')
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'NEXA STARTUP: NO-GO' -ForegroundColor Red
+    throw 'Development preflight failed. No automatic database mutation was performed.'
 }
 
 function Get-PortProcesses {
@@ -157,12 +235,16 @@ else {
 
 # Patient mobile bundler — Expo Metro
 if (@(Get-PortProcesses -Port 8081).Count -eq 0) {
+    $firebaseLine = if ($googleServicesValue) {
+        "`$env:GOOGLE_SERVICES_FILE = '$googleServicesValue'"
+    } else {
+        "Remove-Item Env:GOOGLE_SERVICES_FILE -ErrorAction SilentlyContinue"
+    }
     $metroBody = @"
 `$env:EXPO_PUBLIC_API_URL = 'http://127.0.0.1:8000'
 `$env:EXPO_PUBLIC_APP_ENV = 'development'
 `$env:EXPO_PUBLIC_ALLOW_HTTP = 'true'
-`$env:EXPO_PUBLIC_EAS_PROJECT_ID = '3e9612c9-2661-4deb-8012-e78bd3500534'
-`$env:GOOGLE_SERVICES_FILE = './google-services.json'
+$firebaseLine
 
 & '$corepack' yarn workspace expo-app start
 "@
@@ -220,7 +302,7 @@ if (-not $NoBrowser) {
 }
 
 Write-Host ''
-Write-Host 'Nexa Care development stack started:' -ForegroundColor Green
+Write-Host 'NEXA STARTUP: GO' -ForegroundColor Green
 Write-Host '  Backend: http://localhost:8000'
 Write-Host '  Doctor:  http://localhost:3000'
 Write-Host '  Metro:   http://localhost:8081'

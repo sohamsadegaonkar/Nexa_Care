@@ -128,6 +128,38 @@ async def test_real_redis_audit_state_machines_without_postgres(monkeypatch) -> 
                 session_binding="session-a",
             )
 
+        wrong_hospital = await issue_handle()
+        assert await service.activate_handle(raw_handle=wrong_hospital.value) is True
+        with pytest.raises(DiscoveryHandleInvalid):
+            await service.consume_handle(
+                raw_handle=wrong_hospital.value,
+                provider_id="provider-a",
+                hospital_id="hospital-b",
+                session_binding="session-a",
+            )
+
+        wrong_session = await issue_handle()
+        assert await service.activate_handle(raw_handle=wrong_session.value) is True
+        with pytest.raises(DiscoveryHandleInvalid):
+            await service.consume_handle(
+                raw_handle=wrong_session.value,
+                provider_id="provider-a",
+                hospital_id="hospital-a",
+                session_binding="session-b",
+            )
+
+        expired = await issue_handle()
+        assert await service.activate_handle(raw_handle=expired.value) is True
+        # Expire deterministically without a timing sleep.
+        assert await redis.pexpire(_handle_key(expired.value), 0) in (True, 1)
+        with pytest.raises(DiscoveryHandleInvalid):
+            await service.consume_handle(
+                raw_handle=expired.value,
+                provider_id="provider-a",
+                hospital_id="hospital-a",
+                session_binding="session-a",
+            )
+
         request_id = str(uuid4())
         consent_key = f"consent_request:{request_id}"
         keys.append(consent_key)

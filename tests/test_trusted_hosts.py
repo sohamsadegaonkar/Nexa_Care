@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi.testclient import TestClient
 
 from app.main import _trusted_hosts, app
+from app.services.background_worker_resilience import record_worker_success
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,6 +53,11 @@ def test_health_accepts_testserver_and_rejects_untrusted_host() -> None:
     running_task = MagicMock()
     running_task.done.return_value = False
     app.state.audit_outbox_task = running_task
+    # Readiness now incorporates live worker-runtime health. Reset any state left by
+    # earlier resilience unit tests so this test exercises trusted-host behavior
+    # rather than cross-test process-global health history.
+    record_worker_success("audit_outbox")
+    record_worker_success("failure_quarantine")
     with (
         patch("app.main.get_async_redis_client", return_value=redis),
         patch("app.main.get_async_engine", return_value=engine),
