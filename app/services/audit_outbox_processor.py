@@ -21,6 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.observability.audit_ledger import append_audit_log_for_stored_partition
 from app.observability.safe_exceptions import log_safe_exception
+from app.services.background_worker_resilience import (
+    record_worker_failure,
+    record_worker_success,
+    wait_for_worker_delay,
+)
 
 logger = logging.getLogger("nexa_logger")
 
@@ -231,19 +236,25 @@ async def run_outbox_processor_forever(
     stop = shutdown_event or asyncio.Event()
     worker_id = make_worker_id()
     while not stop.is_set():
+        delay_seconds = poll_interval_seconds
         try:
+            # A fresh session is created for every cycle. A dead connection is
+            # therefore never retained across retries.
             async with session_factory() as db:
                 await process_outbox_batch(db, worker_id=worker_id)
+            record_worker_success("audit_outbox")
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:  # noqa: BLE001 - the loop itself must survive
-            log_safe_exception(
-                logger,
-                logging.ERROR,
-                "audit_outbox_processor_loop_failed",
-                exc,
-                subsystem="audit_outbox",
-                operation="run_outbox_processor_forever",
-            )
-        try:
-            await asyncio.wait_for(stop.wait(), timeout=poll_interval_seconds)
-        except asyncio.TimeoutError:
-            pass
+            delay_seconds, should_log = record_worker_failure("audit_outbox", exc)
+            if should_log:
+                log_safe_exception(
+                    logger,
+                    logging.WARNING,
+                    "audit_outbox_processor_transient_failure",
+                    exc,
+                    subsystem="audit_outbox",
+                    operation="run_outbox_processor_forever",
+                    fields={"retry_delay_seconds": delay_seconds},
+                )
+        await wait_for_worker_delay(stop, delay_seconds)

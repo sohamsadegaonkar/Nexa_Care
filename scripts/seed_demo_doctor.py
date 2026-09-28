@@ -4,7 +4,7 @@
 Creates:
 - Hospital: Nexa Care Demo Hospital (NEXA-DEMO-HOSPITAL)
 - Provider: Dr. Meera Joshi (password supplied through DEMO_PROVIDER_PASSWORD)
-- MFA: disabled (for demo simplicity)
+- MFA: real TOTP enrollment from DEMO_PROVIDER_MFA_SECRET
 - Patient: Aarav Sharma (demo NFC card + clinical data)
 - Patient: Priya Patel (second demo patient)
 
@@ -20,12 +20,13 @@ import os
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
+import pyotp
 from sqlalchemy import String, bindparam, func, select, text
-from sqlalchemy.dialects.postgresql import JSONB, insert
+from sqlalchemy.dialects.postgresql import JSONB
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -44,13 +45,25 @@ if __name__ == "__main__":
     load_standalone_demo_env()
 
 from app.core.database import get_session_factory  # noqa: E402
+from app.core.security import decrypt_mfa_secret, encrypt_mfa_secret  # noqa: E402
+from app.models.patient import Patient  # noqa: E402
 from app.models.nfc_card_registry import NFCCardRegistry, NFCCardStatus  # noqa: E402
 from app.models.provider import (  # noqa: E402
+    AffiliationTrustStatus,
     AffiliationType,
+    FacilityVerification,
+    FacilityVerificationStatus,
     HospitalRegistry,
+    ProfessionalVerification,
+    ProfessionalVerificationStatus,
     ProviderCredential,
     ProviderHospitalAffiliation,
     ProviderIdentity,
+    ProviderTrustVerificationEvidence,
+    VerificationEvidenceLookupPurpose,
+    VerificationEvidenceOrigin,
+    VerificationEvidenceOutcome,
+    VerificationIdentityBindingResult,
 )
 from app.observability.audit_ledger import append_audit_log  # noqa: E402
 from app.security.audit_context import AuditContext, AuditDomain  # noqa: E402
@@ -64,6 +77,7 @@ from scripts.demo_environment import require_demo_environment  # noqa: E402
 # ── Demo credentials ─────────────────────────────────────────────────────────
 
 DEMO_PROVIDER_EMAIL = "demo.doctor@nexacare.in"
+DEMO_REVIEWER_EMAIL = "demo.trust.reviewer@nexacare.in"
 DEMO_HOSPITAL_CODE = "NEXA-DEMO-HOSPITAL"
 DEMO_NFC_UID = "04:B3:C1:DE:55:01"
 
@@ -128,6 +142,30 @@ def require_demo_provider_password() -> str:
     return password
 
 
+def require_demo_provider_mfa_secret() -> str:
+    """Validate the ignored local TOTP secret without exposing it."""
+
+    secret = os.getenv("DEMO_PROVIDER_MFA_SECRET", "").strip().replace(" ", "")
+    if not secret:
+        raise RuntimeError(
+            "Missing required script environment variable: DEMO_PROVIDER_MFA_SECRET"
+        )
+    try:
+        pyotp.TOTP(secret).byte_secret()
+    except Exception as exc:
+        raise RuntimeError("DEMO_PROVIDER_MFA_SECRET is not a valid TOTP base32 secret") from exc
+    if len(secret) < 16:
+        raise RuntimeError("DEMO_PROVIDER_MFA_SECRET must contain at least 16 base32 characters")
+    return secret
+
+
+def demo_public_patient_id(patient_id: uuid.UUID) -> str:
+    """Derive a stable opaque public ID only for deterministic synthetic fixtures."""
+
+    digest = hashlib.sha256(f"nexa-demo-public:{patient_id}".encode("utf-8")).hexdigest()
+    return "NC-" + digest[:24].upper()
+
+
 async def seed_hospital(session) -> uuid.UUID:
     """Create or reuse the demo hospital."""
     hospital = await session.scalar(
@@ -158,8 +196,9 @@ async def seed_provider(
     reactivate_provider: bool = False,
     reactivate_credential: bool = False,
 ) -> ProviderSeedResult:
-    """Create or safely reuse Dr. Meera Joshi and the canonical credential."""
+    """Create or safely reuse Dr. Meera Joshi under real auth/MFA rules."""
 
+    now = datetime.now(timezone.utc)
     normalized_login = normalize_provider_login_identifier(DEMO_PROVIDER_EMAIL)
     provider = await session.scalar(
         select(ProviderIdentity).where(
@@ -174,14 +213,22 @@ async def seed_provider(
             specialty="Internal Medicine",
             contact_email=DEMO_PROVIDER_EMAIL,
             contact_phone="+91 98765 00001",
+            email_verified_at=now,
+            phone_verified_at=now,
             status="active",
             is_active=True,
         )
         session.add(provider)
         await session.flush()
-    elif reactivate_provider:
-        provider.is_active = True
-        provider.status = "active"
+    else:
+        if provider.display_name not in (None, "Dr. Meera Joshi"):
+            raise RuntimeError("Demo provider login is bound to an unexpected identity")
+        if reactivate_provider:
+            provider.is_active = True
+            provider.status = "active"
+        if provider.is_active and provider.status == "active":
+            provider.email_verified_at = provider.email_verified_at or now
+            provider.phone_verified_at = provider.phone_verified_at or now
 
     credentials = list(
         (
@@ -199,13 +246,15 @@ async def seed_provider(
         )
     credential = credentials[0] if credentials else None
     credential_created = credential is None
+    mfa_secret = require_demo_provider_mfa_secret()
     if credential is None:
         password = require_demo_provider_password()
         credential = ProviderCredential(
             provider_id=provider.id,
             login_identifier=normalized_login,
             password_hash=hash_provider_password(password),
-            mfa_enabled=False,
+            mfa_enabled=True,
+            mfa_secret_encrypted=encrypt_mfa_secret(mfa_secret),
             is_active=True,
         )
         session.add(credential)
@@ -222,9 +271,22 @@ async def seed_provider(
             )
             credential.failed_login_attempts = 0
             credential.locked_until = None
-            credential.password_changed_at = datetime.now(timezone.utc)
+            credential.password_changed_at = now
         if reactivate_credential:
             credential.is_active = True
+
+        if credential.mfa_secret_encrypted:
+            enrolled_secret = decrypt_mfa_secret(credential.mfa_secret_encrypted)
+            if enrolled_secret != mfa_secret:
+                raise RuntimeError(
+                    "DEMO_PROVIDER_MFA_SECRET does not match the enrolled demo credential; "
+                    "use the explicit demo reset workflow rather than silently rotating MFA"
+                )
+        else:
+            credential.mfa_secret_encrypted = encrypt_mfa_secret(mfa_secret)
+        credential.mfa_enabled = True
+        # Never populate the retired plaintext legacy column.
+        credential.mfa_secret = None
 
     affiliation = await session.scalar(
         select(ProviderHospitalAffiliation).where(
@@ -239,11 +301,31 @@ async def seed_provider(
             hospital_id=hospital_id,
             affiliation_type=AffiliationType.PERMANENT.value,
             department="Internal Medicine",
-            roles=["clinician", "emergency_reader"],
+            roles=["clinician"],
             is_primary=True,
+            valid_from=now - timedelta(days=1),
+            valid_until=now + timedelta(days=365),
             is_active=True,
+            trust_status=AffiliationTrustStatus.ACTIVE.value,
         )
         session.add(affiliation)
+    else:
+        if affiliation.trust_status == AffiliationTrustStatus.PENDING_ACTIVATION.value:
+            # Narrow migration of the exact synthetic row produced by the older
+            # demo seeder. Suspended/revoked/left rows remain fail-closed.
+            affiliation.trust_status = AffiliationTrustStatus.ACTIVE.value
+        elif affiliation.trust_status != AffiliationTrustStatus.ACTIVE.value:
+            raise RuntimeError(
+                "Demo affiliation is not ACTIVE; explicit trust repair is required"
+            )
+        roles = list(affiliation.roles or [])
+        if "clinician" not in {str(role).strip().lower() for role in roles}:
+            roles.append("clinician")
+            affiliation.roles = roles
+        affiliation.valid_from = affiliation.valid_from or (now - timedelta(days=1))
+        if affiliation.valid_until is None or affiliation.valid_until <= now:
+            affiliation.valid_until = now + timedelta(days=365)
+        affiliation.is_active = True
 
     await session.flush()
     return ProviderSeedResult(
@@ -257,26 +339,320 @@ async def seed_provider(
     )
 
 
+async def seed_provider_trust(
+    session,
+    provider_id: uuid.UUID,
+    hospital_id: uuid.UUID,
+    *,
+    repair_legacy_trust: bool = False,
+) -> None:
+    """Create internally consistent synthetic trust evidence for the demo only.
+
+    Runtime authorization still goes through ClinicalEligibilityService. This
+    direct bootstrap exists because the interactive registry/reviewer workflows
+    are not appropriate for deterministic local fixtures.
+    """
+
+    now = datetime.now(timezone.utc)
+    if repair_legacy_trust:
+        require_demo_environment("seed_demo_doctor_trust_repair")
+
+    provider = await session.get(ProviderIdentity, provider_id)
+    if provider is None:
+        raise RuntimeError("Demo provider disappeared during bootstrap")
+    if repair_legacy_trust:
+        normalized_provider_email = normalize_provider_login_identifier(
+            DEMO_PROVIDER_EMAIL
+        )
+        if (
+            normalize_provider_login_identifier(provider.contact_email or "")
+            != normalized_provider_email
+            or (provider.display_name and provider.display_name != "Dr. Meera Joshi")
+            or (
+                provider.medical_registration_number
+                and provider.medical_registration_number != "MMC-2019-45231"
+            )
+        ):
+            raise RuntimeError("Demo trust repair is bound strictly to Dr. Meera Joshi")
+
+    hospital = await session.get(HospitalRegistry, hospital_id)
+    if hospital is None:
+        raise RuntimeError("Demo hospital disappeared during bootstrap")
+    if repair_legacy_trust and hospital.facility_code != DEMO_HOSPITAL_CODE:
+        raise RuntimeError("Demo trust repair is bound strictly to NEXA-DEMO-HOSPITAL")
+
+    reviewer = await session.scalar(
+        select(ProviderIdentity).where(
+            func.lower(func.trim(ProviderIdentity.contact_email))
+            == normalize_provider_login_identifier(DEMO_REVIEWER_EMAIL)
+        )
+    )
+    if reviewer is None:
+        reviewer = ProviderIdentity(
+            display_name="Nexa Demo Trust Reviewer",
+            contact_email=DEMO_REVIEWER_EMAIL,
+            status="active",
+            is_active=True,
+        )
+        session.add(reviewer)
+        await session.flush()
+    if reviewer.id == provider_id:
+        raise RuntimeError("Demo clinical provider cannot self-review trust evidence")
+
+    professional = await session.scalar(
+        select(ProfessionalVerification).where(
+            ProfessionalVerification.provider_id == provider_id
+        )
+    )
+    if professional is None:
+        professional = ProfessionalVerification(
+            provider_id=provider_id,
+            registration_authority_code="NEXA-DEMO-MMC",
+            registration_number_normalized="MMC-2019-45231-DEMO",
+            status=ProfessionalVerificationStatus.VERIFIED.value,
+            verification_method="SYNTHETIC_DEMO_REVIEW",
+            verification_source="NEXA_DEMO_FIXTURE",
+            verification_reference="DEMO-PROFESSIONAL-V1",
+            identity_binding_method="SYNTHETIC_DEMO_BINDING",
+            identity_binding_status="MATCHED",
+            registration_valid_from=now - timedelta(days=30),
+            registration_valid_until=now + timedelta(days=365),
+            verified_at=now,
+            last_checked_at=now,
+            next_review_at=now + timedelta(days=180),
+            reviewer_id=str(reviewer.id),
+            decision_reason_code="SYNTHETIC_DEMO_VERIFIED",
+            version=1,
+        )
+        session.add(professional)
+        await session.flush()
+    elif professional.status == ProfessionalVerificationStatus.VERIFIED.value:
+        pass
+    elif repair_legacy_trust:
+        if (
+            professional.status
+            != ProfessionalVerificationStatus.NOT_SUBMITTED.value
+        ):
+            raise RuntimeError(
+                f"Demo professional verification status {professional.status} is non-initial; "
+                "refusing trust repair"
+            )
+        if (
+            professional.authoritative_adverse_signal_at is not None
+            or professional.recheck_failure_reason is not None
+            or (
+                professional.verification_source
+                and professional.verification_source != "NEXA_DEMO_FIXTURE"
+            )
+            or (
+                professional.verification_method
+                and professional.verification_method != "SYNTHETIC_DEMO_REVIEW"
+            )
+            or (
+                professional.reviewer_id
+                and professional.reviewer_id not in (None, str(reviewer.id))
+            )
+        ):
+            raise RuntimeError(
+                "Demo professional verification has conflicting or adverse state; "
+                "refusing trust repair"
+            )
+        professional.registration_authority_code = "NEXA-DEMO-MMC"
+        professional.registration_number_normalized = "MMC-2019-45231-DEMO"
+        professional.status = ProfessionalVerificationStatus.VERIFIED.value
+        professional.verification_method = "SYNTHETIC_DEMO_REVIEW"
+        professional.verification_source = "NEXA_DEMO_FIXTURE"
+        professional.verification_reference = "DEMO-PROFESSIONAL-V1"
+        professional.identity_binding_method = "SYNTHETIC_DEMO_BINDING"
+        professional.identity_binding_status = "MATCHED"
+        professional.registration_valid_from = now - timedelta(days=30)
+        professional.registration_valid_until = now + timedelta(days=365)
+        professional.verified_at = now
+        professional.last_checked_at = now
+        professional.next_review_at = now + timedelta(days=180)
+        professional.reviewer_id = str(reviewer.id)
+        professional.decision_reason_code = "SYNTHETIC_DEMO_VERIFIED"
+        professional.version = (professional.version or 1) + 1
+        await session.flush()
+    else:
+        raise RuntimeError(
+            "Demo professional verification is not VERIFIED; explicit trust repair is required"
+        )
+
+    facility = await session.scalar(
+        select(FacilityVerification).where(
+            FacilityVerification.facility_id == hospital_id
+        )
+    )
+    if facility is None:
+        facility = FacilityVerification(
+            facility_id=hospital_id,
+            status=FacilityVerificationStatus.VERIFIED.value,
+            verification_method="SYNTHETIC_DEMO_REVIEW",
+            verification_source="NEXA_DEMO_FIXTURE",
+            verification_reference="DEMO-FACILITY-V1",
+            registration_authority_code="NEXA-DEMO-FACILITY",
+            registration_number_normalized=DEMO_HOSPITAL_CODE,
+            registration_valid_from=now - timedelta(days=30),
+            registration_valid_until=now + timedelta(days=365),
+            verified_at=now,
+            last_checked_at=now,
+            next_review_at=now + timedelta(days=180),
+            reviewer_id=str(reviewer.id),
+            decision_reason_code="SYNTHETIC_DEMO_VERIFIED",
+            version=1,
+        )
+        session.add(facility)
+        await session.flush()
+    elif facility.status == FacilityVerificationStatus.VERIFIED.value:
+        pass
+    elif repair_legacy_trust:
+        if facility.status != FacilityVerificationStatus.DRAFT.value:
+            raise RuntimeError(
+                f"Demo facility verification status {facility.status} is non-initial; "
+                "refusing trust repair"
+            )
+        if (
+            facility.authoritative_adverse_signal_at is not None
+            or facility.recheck_failure_reason is not None
+            or (
+                facility.verification_source
+                and facility.verification_source != "NEXA_DEMO_FIXTURE"
+            )
+            or (
+                facility.verification_method
+                and facility.verification_method != "SYNTHETIC_DEMO_REVIEW"
+            )
+            or (
+                facility.reviewer_id
+                and facility.reviewer_id not in (None, str(reviewer.id))
+            )
+        ):
+            raise RuntimeError(
+                "Demo facility verification has conflicting or adverse state; "
+                "refusing trust repair"
+            )
+        facility.status = FacilityVerificationStatus.VERIFIED.value
+        facility.verification_method = "SYNTHETIC_DEMO_REVIEW"
+        facility.verification_source = "NEXA_DEMO_FIXTURE"
+        facility.verification_reference = "DEMO-FACILITY-V1"
+        facility.registration_authority_code = "NEXA-DEMO-FACILITY"
+        facility.registration_number_normalized = DEMO_HOSPITAL_CODE
+        facility.registration_valid_from = now - timedelta(days=30)
+        facility.registration_valid_until = now + timedelta(days=365)
+        facility.verified_at = now
+        facility.last_checked_at = now
+        facility.next_review_at = now + timedelta(days=180)
+        facility.reviewer_id = str(reviewer.id)
+        facility.decision_reason_code = "SYNTHETIC_DEMO_VERIFIED"
+        facility.version = (facility.version or 1) + 1
+        await session.flush()
+    else:
+        raise RuntimeError(
+            "Demo facility verification is not VERIFIED; explicit trust repair is required"
+        )
+
+    async def ensure_evidence(
+        *,
+        source_id: str,
+        professional_id: uuid.UUID | None = None,
+        facility_id: uuid.UUID | None = None,
+        resource_version: int,
+        identity_binding: str,
+    ) -> ProviderTrustVerificationEvidence:
+        evidence = await session.scalar(
+            select(ProviderTrustVerificationEvidence).where(
+                ProviderTrustVerificationEvidence.source_id == source_id
+            )
+        )
+        if evidence is None:
+            evidence = ProviderTrustVerificationEvidence(
+                professional_verification_id=professional_id,
+                facility_verification_id=facility_id,
+                origin=VerificationEvidenceOrigin.MANUAL_REVIEWER_ATTESTATION.value,
+                source_id=source_id,
+                observed_at=now,
+                lookup_purpose=VerificationEvidenceLookupPurpose.MANUAL_REVIEW.value,
+                outcome=VerificationEvidenceOutcome.CONFIRMED_ACTIVE.value,
+                source_record_reference=source_id,
+                observed_valid_from=now - timedelta(days=30),
+                observed_valid_until=now + timedelta(days=365),
+                identity_binding_result=identity_binding,
+                binding_method="SYNTHETIC_DEMO_BINDING",
+                response_digest=hashlib.sha256(source_id.encode("utf-8")).hexdigest(),
+                observed_resource_version=resource_version,
+            )
+            session.add(evidence)
+            await session.flush()
+        return evidence
+
+    professional_evidence = await ensure_evidence(
+        source_id="NEXA_DEMO_PROFESSIONAL_EVIDENCE_V1",
+        professional_id=professional.id,
+        resource_version=professional.version,
+        identity_binding=VerificationIdentityBindingResult.MATCHED.value,
+    )
+    facility_evidence = await ensure_evidence(
+        source_id="NEXA_DEMO_FACILITY_EVIDENCE_V1",
+        facility_id=facility.id,
+        resource_version=facility.version,
+        identity_binding=VerificationIdentityBindingResult.NOT_EVALUATED.value,
+    )
+    if professional.server_provenance_evidence_id is None:
+        professional.server_provenance_evidence_id = professional_evidence.id
+    if facility.server_provenance_evidence_id is None:
+        facility.server_provenance_evidence_id = facility_evidence.id
+    await session.flush()
+
+
+async def seed_patient_identity(session, patient_id: uuid.UUID) -> Patient:
+    """Create/reuse one active synthetic patient with a deterministic opaque public ID."""
+
+    expected_public_id = demo_public_patient_id(patient_id)
+    patient = await session.get(Patient, patient_id)
+    if patient is None:
+        conflicting = await session.scalar(
+            select(Patient).where(Patient.public_patient_id == expected_public_id)
+        )
+        if conflicting is not None and conflicting.patient_uuid != patient_id:
+            raise RuntimeError("Synthetic demo public patient ID collision")
+        patient = Patient(
+            patient_uuid=patient_id,
+            public_patient_id=expected_public_id,
+            is_deleted=False,
+        )
+        session.add(patient)
+        await session.flush()
+    else:
+        if patient.is_deleted:
+            raise RuntimeError("Demo patient is deleted; explicit repair is required")
+        if patient.public_patient_id != expected_public_id:
+            raise RuntimeError(
+                "Demo patient already has a different public ID; refusing silent rotation"
+            )
+    return patient
+
+
 async def seed_nfc_card(session, patient_id: uuid.UUID, provider_id: uuid.UUID) -> None:
-    """Upsert the demo NFC card."""
-    stmt = (
-        insert(NFCCardRegistry)
-        .values(
+    """Create/reuse the exact synthetic NFC binding without hijacking another card."""
+
+    existing = await session.scalar(
+        select(NFCCardRegistry).where(NFCCardRegistry.card_uid == DEMO_NFC_UID)
+    )
+    if existing is not None and existing.patient_id != patient_id:
+        raise RuntimeError("Demo NFC UID is already bound to a different patient")
+    if existing is None:
+        existing = NFCCardRegistry(
             card_uid=DEMO_NFC_UID,
             patient_id=patient_id,
             status=NFCCardStatus.ACTIVE.value,
             issued_by=provider_id,
         )
-        .on_conflict_do_update(
-            index_elements=[NFCCardRegistry.card_uid],
-            set_={
-                "patient_id": patient_id,
-                "status": NFCCardStatus.ACTIVE.value,
-                "issued_by": provider_id,
-            },
-        )
-    )
-    await session.execute(stmt)
+        session.add(existing)
+    else:
+        existing.status = NFCCardStatus.ACTIVE.value
+        existing.issued_by = provider_id
+    await session.flush()
 
 
 async def seed_clinical_records(session, patient_id: uuid.UUID, name: str) -> None:
@@ -325,6 +701,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-demo-provider-reset", action="store_true")
     parser.add_argument("--reactivate-provider", action="store_true")
     parser.add_argument("--reactivate-credential", action="store_true")
+    parser.add_argument("--repair-legacy-demo-trust", action="store_true")
+    parser.add_argument("--confirm-demo-trust-repair", action="store_true")
     args = parser.parse_args(argv)
     if args.reset_password != args.confirm_demo_provider_reset:
         parser.error(
@@ -336,6 +714,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ) and not args.reset_password:
         parser.error(
             "reactivation flags are allowed only during an explicit password reset"
+        )
+    if args.repair_legacy_demo_trust != args.confirm_demo_trust_repair:
+        parser.error(
+            "trust repair requires both --repair-legacy-demo-trust and "
+            "--confirm-demo-trust-repair"
         )
     return args
 
@@ -374,12 +757,22 @@ async def main(argv: list[str] | None = None) -> int:
                         "Audit write failed; demo provider password reset aborted"
                     )
 
-            # Patient 1: Aarav Sharma (NFC card holder)
-            await seed_nfc_card(session, DEMO_PATIENT_1_ID, provider_id)
-            await seed_clinical_records(session, DEMO_PATIENT_1_ID, "aarav")
+            await seed_provider_trust(
+                session,
+                provider_id,
+                hospital_id,
+                repair_legacy_trust=args.repair_legacy_demo_trust,
+            )
 
-            # Patient 2: Priya Patel (manual search only)
-            await seed_clinical_records(session, DEMO_PATIENT_2_ID, "priya")
+            patient_1 = await seed_patient_identity(session, DEMO_PATIENT_1_ID)
+            patient_2 = await seed_patient_identity(session, DEMO_PATIENT_2_ID)
+
+            # Patient 1: canonical NFC + public-ID/QR demo patient.
+            await seed_nfc_card(session, patient_1.patient_uuid, provider_id)
+            await seed_clinical_records(session, patient_1.patient_uuid, "aarav")
+
+            # Patient 2: public-ID/QR discovery only.
+            await seed_clinical_records(session, patient_2.patient_uuid, "priya")
 
             await session.commit()
         except Exception:
@@ -387,7 +780,7 @@ async def main(argv: list[str] | None = None) -> int:
             raise
 
     print("\n" + "=" * 72)
-    print("NEXA CARE DEMO DOCTOR SEEDED")
+    print("NEXA CARE DEMO CLINICAL ENVIRONMENT SEEDED")
     print("=" * 72)
     print(f"provider={'created' if provider_result.provider_created else 'reused'}")
     print(f"credential={'created' if provider_result.credential_created else 'reused'}")
@@ -395,17 +788,23 @@ async def main(argv: list[str] | None = None) -> int:
         f"affiliation={'created' if provider_result.affiliation_created else 'reused'}"
     )
     print(f"password={'reset' if provider_result.password_reset else 'unchanged'}")
-    print(f"provider_active={str(provider_result.provider_active).lower()}")
-    print(f"credential_active={str(provider_result.credential_active).lower()}")
-    print(f"provider_id={provider_id}")
-    print(f"hospital_id={hospital_id}")
+    print(
+        f"trust_repair={'repaired' if args.repair_legacy_demo_trust else 'unchanged'}"
+    )
+    print("ready_for_clinical_access=true")
     print()
-    print("Patient 1 (NFC): Aarav Sharma")
-    print(f"  Patient ID:    {DEMO_PATIENT_1_ID}")
-    print(f"  NFC Card UID:  {DEMO_NFC_UID}")
+    print("DEMO PATIENT A")
+    patient_a_public_id = demo_public_patient_id(DEMO_PATIENT_1_ID)
+    print(f"  public_id={patient_a_public_id}")
+    print(f"  nfc_uid={DEMO_NFC_UID}")
+    print(f"  qr_payload=nexa://patient-discovery/v1/{patient_a_public_id}")
+    print("  qr_supported=true")
     print()
-    print("Patient 2 (Manual): Priya Patel")
-    print(f"  Patient ID:    {DEMO_PATIENT_2_ID}")
+    print("DEMO PATIENT B")
+    patient_b_public_id = demo_public_patient_id(DEMO_PATIENT_2_ID)
+    print(f"  public_id={patient_b_public_id}")
+    print(f"  qr_payload=nexa://patient-discovery/v1/{patient_b_public_id}")
+    print("  qr_supported=true")
     print("=" * 72 + "\n")
     return 0
 
