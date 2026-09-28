@@ -49,6 +49,9 @@ vi.mock('@tamagui/lucide-icons', () => {
     UserCheck: MockIcon,
     Users: MockIcon,
     XCircle: MockIcon,
+    HeartPulse: MockIcon,
+    Activity: MockIcon,
+    RotateCw: MockIcon,
   }
 })
 

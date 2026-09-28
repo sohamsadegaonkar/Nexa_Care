@@ -1427,7 +1427,7 @@ export function PatientRecordViewerScreen() {
                   color="$color10"
                   fontSize={14}
                 >
-                  Scope:
+                  Access scope:
                 </Text>
                 <Text color="$color12">{summary.shard_scope}</Text>
               </XStack>

@@ -59,6 +59,9 @@ from app.api.v2.provider_trust_routes import (
     provider_trust_route_error_response,
     router as provider_trust_v2_router,
 )
+from app.api.v2.provider_workspace_routes import (
+    router as provider_workspace_v2_router,
+)
 from app.api.v2.registration_recovery_routes import (
     router as registration_recovery_v2_router,
 )
@@ -457,6 +460,7 @@ app.include_router(patient_self_v2_router)
 app.include_router(patient_discovery_v2_router)
 app.include_router(provider_trust_v2_router)
 app.include_router(provider_trust_permission_v2_router)
+app.include_router(provider_workspace_v2_router)
 
 app.add_exception_handler(ProviderTrustRouteError, provider_trust_route_error_response)
 app.add_exception_handler(
