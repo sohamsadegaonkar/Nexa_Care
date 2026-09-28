@@ -271,7 +271,7 @@ export function ReviewQueueScreen() {
             fontSize="$3"
             marginTop="$2"
           >
-            All flagged fields have been adjudicated or no documents have been processed yet.
+            All flagged fields have been reviewed, or no documents currently need verification.
           </Paragraph>
         </YStack>
       )}

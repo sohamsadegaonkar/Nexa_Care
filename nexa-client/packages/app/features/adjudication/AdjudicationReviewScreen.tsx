@@ -223,9 +223,9 @@ export function AdjudicationReviewScreen() {
         width="100%"
         marginHorizontal="auto"
       >
-        <H2>Verify archived source</H2>
+        <H2>Review Document</H2>
         <Paragraph fontWeight="700">
-          Enter only information you can directly verify in the source document.
+          Verify or correct only information you can directly confirm in the source document.
         </Paragraph>
         <XStack
           gap="$4"
@@ -254,10 +254,9 @@ export function AdjudicationReviewScreen() {
               padding="$4"
               gap="$3"
             >
-              <Text fontWeight="700">Human adjudication</Text>
+              <Text fontWeight="700">Verify or Correct</Text>
               <Paragraph size="$2">
-                Human verification is separate from AI extraction, authorization consent, and the
-                later clinical commit.
+                Your review confirms what the source document says before anything is added to the patient record.
               </Paragraph>
               <Text fontWeight="700">Outcome</Text>
               {OUTCOMES.map((item) => (
@@ -279,7 +278,7 @@ export function AdjudicationReviewScreen() {
                 padding="$4"
                 gap="$3"
               >
-                <Text fontWeight="700">Structured clinical field</Text>
+                <Text fontWeight="700">Correct Clinical Information</Text>
                 <XStack gap="$2">
                   <Button
                     flex={1}
@@ -386,7 +385,7 @@ export function AdjudicationReviewScreen() {
               padding="$4"
               gap="$2"
             >
-              <Text fontWeight="700">Safe reason codes</Text>
+              <Text fontWeight="700">Review Reason</Text>
               {allowedReasons.map((reason) => (
                 <Button
                   key={reason}
@@ -414,7 +413,7 @@ export function AdjudicationReviewScreen() {
                 disabled={submitting}
                 onPress={prepareConfirmation}
               >
-                Review submission
+                Verify Review
               </Button>
             ) : (
               <Card
@@ -422,7 +421,7 @@ export function AdjudicationReviewScreen() {
                 padding="$4"
                 gap="$2"
               >
-                <Text fontWeight="700">Confirm human verification</Text>
+                <Text fontWeight="700">Confirm Review</Text>
                 {confirmation.map((field) => (
                   <YStack
                     key={field.kind}
@@ -441,7 +440,7 @@ export function AdjudicationReviewScreen() {
                 ))}
                 <Paragraph>Reason codes: {reasons.join(', ') || 'None selected'}</Paragraph>
                 <Paragraph>
-                  I verified this information directly against the displayed archived source.
+                  I verified or corrected this information directly against the displayed source document.
                 </Paragraph>
                 <Separator />
                 <Button
@@ -449,7 +448,7 @@ export function AdjudicationReviewScreen() {
                   disabled={submitting}
                   onPress={() => void submit()}
                 >
-                  {submitting ? 'Submitting…' : 'Submit adjudication'}
+                  {submitting ? 'Saving…' : 'Save Verified Review'}
                 </Button>
                 <Button
                   disabled={submitting}

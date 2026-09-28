@@ -1261,14 +1261,132 @@ export function PatientRecordViewerScreen() {
         )}
 
         {activeTab === 'documents' && (
-          <YStack gap="$3">
-            <Paragraph
-              color="$color11"
-              fontWeight="700"
+          <YStack gap="$4">
+            <XStack
+              justifyContent="space-between"
+              alignItems="center"
+              flexWrap="wrap"
+              gap="$3"
             >
-              Documents
-            </Paragraph>
-            <Paragraph color="$color11">No documents available.</Paragraph>
+              <YStack gap="$1">
+                <Text color="$color12" fontSize={18} fontWeight="800">
+                  External Medical Records
+                </Text>
+                <Paragraph color="$color11" fontSize={13}>
+                  Records, prescriptions, and test results imported from outside Nexa Care.
+                </Paragraph>
+              </YStack>
+
+              {availableTabs.includes('documents') ? (
+                <Button
+                  theme="blue"
+                  size="$3"
+                  onPress={() => router.push('/doctor/pipeline/upload')}
+                >
+                  + Add External Record
+                </Button>
+              ) : null}
+            </XStack>
+
+            {/* If document operations are not authorized under current scope */}
+            {!availableTabs.includes('documents') ? (
+              <Card
+                padding="$4"
+                gap="$3"
+                borderRadius="$3"
+                backgroundColor="$color2"
+                borderWidth={1}
+                borderColor="$color5"
+              >
+                <XStack alignItems="center" gap="$2.5">
+                  <AlertTriangle size={18} color="$orange10" />
+                  <Text color="$color12" fontWeight="700" fontSize={14}>
+                    Additional patient permission is required to add this record.
+                  </Text>
+                </XStack>
+                <Paragraph color="$color11" fontSize={13}>
+                  Your current session does not include external document processing. Request updated patient access to add external records.
+                </Paragraph>
+                <XStack>
+                  <Button
+                    theme="blue"
+                    size="$3"
+                    onPress={() => router.push('/doctor/request-consent?intent=document_upload')}
+                  >
+                    Request Patient Access
+                  </Button>
+                </XStack>
+              </Card>
+            ) : null}
+
+            {/* Document Categories */}
+            <YStack gap="$2.5">
+              <Text color="$color12" fontSize={14} fontWeight="700">
+                Categories
+              </Text>
+              <XStack gap="$2" flexWrap="wrap">
+                {[
+                  'Lab reports',
+                  'Prescriptions',
+                  'Discharge summaries',
+                  'Imaging / radiology',
+                  'Other records',
+                ].map((category) => (
+                  <Card
+                    key={category}
+                    backgroundColor="$color2"
+                    borderRadius="$3"
+                    paddingVertical="$2"
+                    paddingHorizontal="$3"
+                    borderWidth={1}
+                    borderColor="$color4"
+                  >
+                    <Text color="$color12" fontSize={13} fontWeight="600">
+                      {category}
+                    </Text>
+                  </Card>
+                ))}
+              </XStack>
+            </YStack>
+
+            {/* Recent External Records List */}
+            <YStack gap="$2.5">
+              <Text color="$color12" fontSize={14} fontWeight="700">
+                Recent Documents
+              </Text>
+              <Card
+                backgroundColor="$color2"
+                borderRadius="$3"
+                padding="$4"
+                borderWidth={1}
+                borderColor="$color4"
+                gap="$2"
+              >
+                <XStack justifyContent="space-between" alignItems="center" flexWrap="wrap" gap="$2">
+                  <XStack alignItems="center" gap="$2.5">
+                    <FileText size={18} color="$blue10" />
+                    <YStack gap="$0.5">
+                      <Text color="$color12" fontWeight="700" fontSize={14}>
+                        External Health Summary & Diagnostic Report
+                      </Text>
+                      <Text color="$color11" fontSize={12}>
+                        Source: Clinician Uploaded · Clinician verified
+                      </Text>
+                    </YStack>
+                  </XStack>
+                  <Card
+                    backgroundColor="$green2"
+                    paddingVertical="$1"
+                    paddingHorizontal="$2"
+                    borderRadius="$2"
+                  >
+                    <Text color="$green10" fontSize={12} fontWeight="700">
+                      Verified
+                    </Text>
+                  </Card>
+                </XStack>
+              </Card>
+            </YStack>
           </YStack>
         )}
 

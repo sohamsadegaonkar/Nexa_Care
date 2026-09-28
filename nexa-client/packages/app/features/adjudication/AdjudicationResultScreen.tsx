@@ -49,7 +49,7 @@ export function AdjudicationResultScreen() {
           setError('Result access expired. Reopen the authorized workflow.')
           return
         }
-        setError('The current adjudication result could not be loaded.')
+        setError('The current document review could not be loaded.')
       })
       .finally(() => {
         if (active) setLoading(false)
@@ -96,10 +96,10 @@ export function AdjudicationResultScreen() {
         gap="$3"
         role="alert"
       >
-        <H2>Adjudication session unavailable</H2>
+        <H2>Review session unavailable</H2>
         <Paragraph>
           The in-memory review result is unavailable after refresh or session loss. Reopen the case
-          safely from the adjudication queue.
+          safely from the review queue.
         </Paragraph>
         <Button onPress={() => router.replace('/doctor/pipeline/adjudication')}>
           Back to cases
@@ -122,7 +122,7 @@ export function AdjudicationResultScreen() {
       width="100%"
       marginHorizontal="auto"
     >
-      <H2>Adjudication result</H2>
+      <H2>Review Complete</H2>
       <Card
         borderWidth={1}
         padding="$4"
@@ -136,14 +136,13 @@ export function AdjudicationResultScreen() {
               : 'Specialist review requested'}
         </Text>
         <Paragraph>
-          Human verification is a provenance state. It is not AI confidence and does not itself mean
-          clinical information was committed.
+          This review confirms what was verified from the source document. Nothing is added to the patient record until you confirm the final step.
         </Paragraph>
         {committedAt ? (
           <>
-            <Paragraph color="$green10">Verified information committed successfully.</Paragraph>
+            <Paragraph color="$green10">Verified information added to the patient record.</Paragraph>
             <Paragraph>Committed {new Date(committedAt).toLocaleString()}</Paragraph>
-            <Paragraph>Provenance: human_adjudicated</Paragraph>
+            <Paragraph>Verified by clinician</Paragraph>
           </>
         ) : null}
       </Card>
@@ -163,7 +162,7 @@ export function AdjudicationResultScreen() {
           disabled={committing}
           onPress={() => setConfirming(true)}
         >
-          Commit verified information
+          Add to Patient Record
         </Button>
       ) : null}
       {canCommit && confirming ? (
@@ -172,17 +171,16 @@ export function AdjudicationResultScreen() {
           padding="$4"
           gap="$3"
         >
-          <Text fontWeight="700">Final clinical commit confirmation</Text>
+          <Text fontWeight="700">Add to Patient Record</Text>
           <Paragraph>
-            Commit the accepted human-adjudicated information to the clinical record with
-            human_adjudicated provenance. No AI confidence will be assigned.
+            Add the verified information to the patient record. The original document remains the source of truth for this review.
           </Paragraph>
           <Button
             theme="blue"
             disabled={committing}
             onPress={() => void commit()}
           >
-            {committing ? 'Committing…' : 'Confirm clinical commit'}
+            {committing ? 'Adding…' : 'Confirm Add to Patient Record'}
           </Button>
           <Button
             disabled={committing}
@@ -195,8 +193,7 @@ export function AdjudicationResultScreen() {
 
       {!canCommit && !committedAt ? (
         <Paragraph>
-          This outcome cannot be clinically committed. Rejected and specialist-review cases remain
-          non-committable.
+          This review outcome cannot be added to the patient record. Rejected items and cases sent for specialist review remain unchanged.
         </Paragraph>
       ) : null}
 
@@ -209,7 +206,7 @@ export function AdjudicationResultScreen() {
           does not return the accepted structured submission needed for full reconfirmation.
         </Paragraph>
       </Card>
-      <Button onPress={() => router.replace('/doctor/pipeline/adjudication')}>Back to cases</Button>
+      <Button onPress={() => router.replace('/doctor/pipeline/adjudication')}>Back to Reviews</Button>
     </YStack>
   )
 }

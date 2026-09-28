@@ -40,18 +40,18 @@ import {
 
 const secondaryTools = [
   {
-    title: 'Upload external document',
-    description: 'Import and review previous prescriptions, labs, or hospital records.',
-    label: 'Upload & Extract',
+    title: 'Documents',
+    description: 'Import previous prescriptions, labs, or hospital records and track their review status.',
+    label: 'Open Documents',
     icon: FileText,
-    route: '/doctor/patient-search?intent=document_upload',
+    route: '/doctor/documents',
   },
   {
-    title: 'Needs clinical verification',
-    description: 'Review and verify extracted document evidence against authentic source pages.',
-    label: 'Verify Records',
+    title: 'Review imported records',
+    description: 'Verify imported information against the original document before adding it to the patient record.',
+    label: 'Review Documents',
     icon: ClipboardCheck,
-    route: '/doctor/pipeline/adjudication',
+    route: '/doctor/documents?tab=needs_review',
   },
   {
     title: 'Registration recovery review',
@@ -637,12 +637,13 @@ export function DoctorDashboardScreen() {
         </XStack>
       </YStack>
 
-      {/* Emergency Break-Glass Panel */}
+      {/* Emergency Access Panel */}
       <Surface
         backgroundColor="$nexaDangerSoft"
         borderColor="$nexaDanger"
         padding="$4.5"
         gap="$3"
+        borderRadius={14}
       >
         <XStack
           gap="$3"
@@ -659,13 +660,13 @@ export function DoctorDashboardScreen() {
             />
           </YStack>
           <YStack gap="$0.5">
-            <SectionHeading>Emergency break-glass access</SectionHeading>
+            <SectionHeading>Emergency Access</SectionHeading>
             <Text
               color="$nexaDanger"
               fontSize={13}
               fontWeight="700"
             >
-              For life-threatening situations where routine patient consent is impossible
+              Use emergency access only when urgent care cannot wait for the normal patient approval process.
             </Text>
           </YStack>
         </XStack>
@@ -674,14 +675,14 @@ export function DoctorDashboardScreen() {
           fontSize={14}
           lineHeight={22}
         >
-          Requires an approved emergency reason code and clinical justification. Access is limited to minimum-necessary emergency categories, strictly time-bounded, and immediately recorded in the patient's permanent access history.
+          Emergency access is limited, time-bound and recorded for patient safety. Access lasts up to 15 minutes and is recorded.
         </Paragraph>
         <ActionButton
           intent="danger"
           alignSelf="flex-start"
           onPress={() => router.push('/doctor/emergency-access')}
         >
-          Review emergency access
+          Emergency Access
         </ActionButton>
       </Surface>
 

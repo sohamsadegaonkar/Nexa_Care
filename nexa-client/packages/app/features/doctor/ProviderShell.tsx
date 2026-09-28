@@ -25,17 +25,17 @@ const navigation = [
     label: 'Patients',
     path: '/doctor/patient-search',
     icon: Users,
-    matches: (path: string) => /\/doctor\/(patient|request-consent|waiting)/.test(path),
+    matches: (path: string) => /\/doctor\/(patient|request-consent|waiting|treatment-vitals)/.test(path),
   },
   {
     label: 'Documents',
-    path: '/doctor/patient-search?intent=document_upload',
+    path: '/doctor/documents',
     icon: FileText,
     matches: (path: string) =>
-      path.startsWith('/doctor/pipeline/') && !path.includes('adjudication'),
+      path === '/doctor/documents' || (path.startsWith('/doctor/pipeline/') && !path.includes('adjudication')),
   },
   {
-    label: 'Adjudication',
+    label: 'Review',
     path: '/doctor/pipeline/adjudication',
     icon: ClipboardCheck,
     matches: (path: string) => path.includes('/adjudication'),
