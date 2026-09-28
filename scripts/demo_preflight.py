@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect as stdlib_inspect
 import os
 import shutil
 import sys
@@ -63,6 +64,18 @@ _REQUIRED_PROVIDER_COLUMNS = {
 
 def _tool(name: str) -> bool:
     return shutil.which(name) is not None
+
+
+async def _close_redis_client(client: object) -> None:
+    close = getattr(client, "aclose", None)
+    if close is None:
+        close = getattr(client, "close", None)
+    if close is None:
+        return
+
+    result = close()
+    if stdlib_inspect.isawaitable(result):
+        await result
 
 
 async def _database_revisions(database_url: str) -> tuple[str | None, str]:
@@ -234,7 +247,7 @@ async def run_preflight() -> bool:
             await client.ping()
             print("redis=reachable")
         finally:
-            await client.aclose()
+            await _close_redis_client(client)
     except Exception as exc:
         print(f"redis=unavailable error_type={type(exc).__name__}")
         all_go = False

@@ -87,7 +87,10 @@ foreach ($item in $requiredPaths.GetEnumerator()) {
 if ($LASTEXITCODE -ne 0) {
     throw 'Repository Python or required backend dependencies are unavailable.'
 }
+$prevErrorAction = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
 $javaVersion = (& (Join-Path $javaHome 'bin\java.exe') -version 2>&1 | Out-String)
+$ErrorActionPreference = $prevErrorAction
 if ($javaVersion -notmatch 'version "17\.') {
     throw 'Nexa Care Android development requires Java 17.'
 }
