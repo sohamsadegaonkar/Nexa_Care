@@ -29,6 +29,28 @@ def test_canonical_consent_contract_is_v3_and_explicitly_versioned() -> None:
     assert "**Endpoint:** `POST /api/v2/consent/approve-signed`" not in contract
 
 
+def test_canonical_treatment_session_contract_documents_only_current_write_surface() -> None:
+    contract = _read("docs/API-CONTRACTS.md")
+
+    for route in (
+        "/api/v2/treatment-session/v1/request",
+        "/api/v2/treatment-session/v1/challenge/{request_id}",
+        "/api/v2/treatment-session/v1/approve-signed",
+        "/api/v2/treatment-session/v1/{request_id}/claim",
+        "/api/v2/treatment-session/v1/encounter",
+        "/api/v2/treatment-session/v1/vitals",
+        "/api/v2/consent/history/self/{public_ref}",
+    ):
+        assert route in contract
+
+    assert "CREATE_ENCOUNTER" in contract
+    assert "WRITE_VITALS" in contract
+    assert "WRITE_PRESCRIPTION PERSISTENCE BLOCKED" in contract
+    assert "Signed Consent V3 remains `READ_CLINICAL_HISTORY` only" in contract
+    assert "Treatment Session V1 write authority beyond the currently implemented" in contract
+
+
+
 def test_canonical_device_contract_covers_current_authority_paths() -> None:
     contract = _read("docs/API-CONTRACTS.md")
 
@@ -116,8 +138,12 @@ def test_current_state_preserves_live_external_and_manual_boundaries() -> None:
     assert "backend + UI MERGED / QUALIFIED" in current
     assert "Slice 10A" in current
     assert "MERGED / QUALIFIED" in current
-    assert "Slice 10B" in current
-    assert "20260917_treatment_session_operations" in current
+    assert "Slice 10B / 10B.5" in current
+    assert "20260919_medication_catalog" in current
+    assert "CREATE_ENCOUNTER" in current
+    assert "WRITE_VITALS" in current
+    assert "WRITE_PRESCRIPTION PERSISTENCE BLOCKED" in current
+    assert "Patient self-revocation is implemented" in current
     assert "patient-opted-in `PHONE`" in current
     assert "Name-only search" in current
     assert "remain prohibited" in current

@@ -1,13 +1,14 @@
 # Nexa Care — Canonical Authority-Critical API Contracts
 
-**Reconciled:** 2026-09-16  
-**Source:** Slice 10A merged/qualified authority contract plus active Slice 10B bounded clinical-access-session hardening on `main`.
+**Reconciled:** 2026-09-30  
+**Source:** authoritative `main` at `44ab956ce5601141bf623604a7d2599ae4ba90da`, including current Signed Consent V3, Treatment Session V1 through canonical Encounter + `WRITE_VITALS`, patient treatment-session revocation, and provider/demo integration through PR #96.
 
 ## Scope
 
 This document is the current canonical contract for authority-critical patient
-discovery, Signed Consent V3, bounded routine clinical read authority, patient
-cryptographic-device lifecycle/recovery, and consent-gated FHIR export.
+discovery, Signed Consent V3, bounded routine clinical read authority, patient-
+signed Treatment Session V1 authority, patient treatment-access revocation,
+patient cryptographic-device lifecycle/recovery, and consent-gated FHIR export.
 
 Historical V2/raw-ID/direct-issuance contracts are not current authority even
 when compatibility code still exists. Endpoint-specific pipeline/emergency
@@ -164,6 +165,21 @@ The response contains no patient UUID, public identifier, redirect chain, or
 clinical data. The NFC path converges on the same opaque,
 provider/hospital/session-bound, short-lived, single-use, audit-gated discovery
 capability boundary.
+
+### 1.6 Discovery-bound emergency issue
+
+The normal clinician emergency workflow uses:
+
+`POST /api/v2/consent/break-glass/discovered/issue`
+
+after obtaining a valid discovery handle. The server consumes the
+provider/hospital/session-bound discovery authority and resolves the canonical
+patient server-side. The clinician UI does not submit a canonical patient UUID
+as emergency identity authority.
+
+The request still requires the governed emergency reason/justification contract
+and any required provider MFA/eligibility assurance. Discovery is identity
+resolution only; it does not itself create emergency access authority.
 
 ## 2. Signed Consent V3 request
 
@@ -372,6 +388,95 @@ routine authority. Claim-finalization failures invalidate Redis and compensate
 any durable session/grant state fail-closed; an unaudited successful claim must
 not remain usable.
 
+## 5A. Patient-Signed Treatment Session V1
+
+Treatment Session V1 is cryptographically separate from Signed Consent V3.
+Signed Consent V3 remains `READ_CLINICAL_HISTORY` only and is never a write
+fallback.
+
+The registered lifecycle is:
+
+- `POST /api/v2/treatment-session/v1/request`;
+- `GET /api/v2/treatment-session/v1/challenge/{request_id}`;
+- `POST /api/v2/treatment-session/v1/approve-signed`;
+- `POST /api/v2/treatment-session/v1/{request_id}/claim`.
+
+The patient-signed Treatment Session context binds the exact patient, provider,
+hospital, request, one-way provider-session binding hash, challenge, expiry,
+device/key version, purpose, policy and exact closed operation set. Claim is
+one-time and revalidates current provider/hospital/session/device authority.
+
+A successful claim creates matching live Redis and durable PostgreSQL treatment
+authority. The raw treatment bearer and raw provider-session binding are not
+persisted. The central `require_clinical_session(operation)` gate requires the
+live capability, durable `ClinicalAccessSessionRecord`, durable
+`ConsentGrantLog`, current provider/hospital/session state, expiry/revocation
+state, policy and exact requested operation to agree. Missing, stale, revoked,
+rebound, cross-patient, cross-provider, cross-hospital or store-inconsistent
+authority fails closed.
+
+### 5A.1 Current executable operation boundary
+
+The current client/runtime exposes exactly:
+
+```text
+CREATE_ENCOUNTER
+WRITE_VITALS
+```
+
+`CREATE_ENCOUNTER` is consumed by:
+
+`POST /api/v2/treatment-session/v1/encounter`
+
+It materializes one canonical server-owned Encounter bound to that exact
+Treatment Session. The client does not choose the patient, provider, hospital,
+clinical-session or Encounter authority.
+
+`WRITE_VITALS` is consumed by:
+
+`POST /api/v2/treatment-session/v1/vitals`
+
+It is the only currently enabled Treatment Session clinical-record mutation
+family. It requires the same session's canonical Encounter, exact
+`WRITE_VITALS` authority, typed validation, durable idempotency and
+transactional audit.
+
+The existence of other names in the server-owned
+`ClinicalAccessOperation` vocabulary does not make those operations
+executable. There is no current Treatment Session prescription, diagnosis,
+clinical-note or investigation-order persistence route.
+
+### 5A.2 Patient treatment-access visibility and revocation
+
+Patient treatment-access history is exposed through:
+
+- `GET /api/v2/consent/history/self`;
+- `DELETE /api/v2/consent/history/self/{public_ref}`.
+
+The patient-facing `public_ref` is opaque and does not expose the durable grant
+UUID. For Treatment Session grants, revocation first invalidates live Redis
+claim/capability authority. Only after live invalidation succeeds does the
+server mark the durable grant and durable ClinicalAccessSession revoked. If
+live invalidation is unavailable, the durable mutation fails closed.
+
+After successful revocation, later
+`POST /api/v2/treatment-session/v1/encounter` and
+`POST /api/v2/treatment-session/v1/vitals` calls fail the central treatment
+gate.
+
+### 5A.3 Prescription and additional write boundary
+
+`WRITE_PRESCRIPTION PERSISTENCE BLOCKED` remains authoritative.
+
+Prescriber-eligibility authority, medication-classification contracts,
+medication-catalog infrastructure and package-independent release-readiness
+tooling do not themselves create a canonical Prescription write route or
+patient treatment authority.
+
+Diagnosis, clinical-note and investigation-order write families likewise remain
+unimplemented through Treatment Session V1 until independently designed and
+qualified.
+
 ## 6. Legacy consent compatibility boundary
 
 Legacy Signed Consent V2 bytes are not mutated in place. New V2 requests are
@@ -561,10 +666,12 @@ This contract does not claim:
   external-ID patient discovery;
 - that phone discoverability is enabled for a patient who has not explicitly
   opted in or whose current binding cannot be revalidated;
-- current Signed Consent V3 write authority, encounter creation authority, or
-  prescription/diagnosis/vitals/clinical-note write authority;
-- Slice 10B completion before its revocation and exact-head adversarial gates are
-  green;
+- current Signed Consent V3 write authority; Signed Consent V3 remains
+  `READ_CLINICAL_HISTORY` only;
+- Treatment Session V1 write authority beyond the currently implemented
+  `CREATE_ENCOUNTER` and `WRITE_VITALS` boundaries;
+- `WRITE_PRESCRIPTION` persistence, diagnosis persistence, clinical-note
+  persistence, or investigation-order persistence through Treatment Session V1;
 - completion of Slice 6I physical handset qualification;
 - physical StrongBox/Secure Enclave/native NFC execution;
 - external FHIR certification;
