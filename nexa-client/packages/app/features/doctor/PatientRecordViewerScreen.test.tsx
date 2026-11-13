@@ -228,6 +228,30 @@ describe('PatientRecordViewerScreen capability handoff', () => {
     expect(screen.queryByText('No timeline events recorded in the available history.')).toBeNull()
   })
 
+  it('fails closed when a timeline read reports revoked consent after summary retrieval', async () => {
+    accessGrant = {
+      requestId: 'request-1', patientId: 'patient-1',
+      consentToken: 'capability-secret', purpose: 'treatment',
+      scope: 'clinical', expiresAt: '2099-01-01T00:00:00Z',
+    }
+    vi.spyOn(NexaApiClient, 'getPatientSummary').mockResolvedValue({
+      patient_id: 'patient-1',
+      pii: { patient_name: '[REDACTED]', phone: '', aadhaar_abha_id: '' },
+      clinical_summary: {
+        blood_group: '', allergies: ['Penicillin (severe)'],
+        chronic_conditions: [], active_medications: [],
+      },
+      shard_scope: 'clinical',
+    })
+    vi.spyOn(NexaApiClient, 'getPatientTimeline').mockRejectedValue(
+      new ApiError('Grant revoked', 403, 'CONSENT_REVOKED', false)
+    )
+    renderWithTamagui(<PatientRecordViewerScreen />)
+    expect(await screen.findByText('Access Error')).toBeTruthy()
+    expect(clearAccessGrant).toHaveBeenCalled()
+    expect(screen.queryByText('ALLERGIES: Penicillin (severe)')).toBeNull()
+  })
+
   it('never displays a hardcoded or inferred verified document for a patient', async () => {
     accessGrant = {
       requestId: 'request-1', patientId: 'patient-1',
