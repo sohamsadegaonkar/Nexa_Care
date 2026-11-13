@@ -1,4 +1,4 @@
-import { act, screen } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import { ApiError, NexaApiClient } from '../../utils/apiClient'
@@ -133,4 +133,125 @@ describe('PatientRecordViewerScreen capability handoff', () => {
     expect(await screen.findByText('Access Error')).toBeTruthy()
     expect(clearAccessGrant).toHaveBeenCalled()
   })
+  it.each(['clinical', 'full'])(
+    'shows a sourced allergy warning and fetches timeline for V3 %s read scope',
+    async (scope) => {
+      accessGrant = {
+        requestId: 'request-1',
+        patientId: 'patient-1',
+        consentToken: 'capability-secret',
+        purpose: 'treatment',
+        scope,
+        expiresAt: '2099-01-01T00:00:00Z',
+      }
+      vi.spyOn(NexaApiClient, 'getPatientSummary').mockResolvedValue({
+        patient_id: 'patient-1',
+        pii: { patient_name: '[REDACTED]', phone: '', aadhaar_abha_id: '' },
+        clinical_summary: {
+          blood_group: '',
+          allergies: ['Penicillin (severe)'],
+          chronic_conditions: [],
+          active_medications: [],
+        },
+        shard_scope: 'clinical',
+      })
+      const timeline = vi.spyOn(NexaApiClient, 'getPatientTimeline').mockResolvedValue({
+        patient_id: 'patient-1',
+        events: [{
+          event_id: 'event-1',
+          event_type: 'ALLERGY',
+          title: 'Allergy observation',
+          summary: 'Documented allergy',
+          event_date: '2026-09-18T12:00:00Z',
+          source: 'manual',
+        }],
+        next_cursor: null,
+      } as any)
+
+      renderWithTamagui(<PatientRecordViewerScreen />)
+      expect(await screen.findByText('ALLERGIES: Penicillin (severe)')).toBeTruthy()
+      await waitFor(() => {
+        expect(timeline).toHaveBeenCalledWith(
+          'patient-1',
+          'capability-secret',
+          'hospital-1'
+        )
+      })
+      fireEvent.click(screen.getByText('Timeline'))
+      expect(await screen.findByText('Allergy observation')).toBeTruthy()
+    }
+  )
+
+  it('treats absent allergy entries as unknown, never confirmed allergy-free', async () => {
+    accessGrant = {
+      requestId: 'request-1', patientId: 'patient-1',
+      consentToken: 'capability-secret', purpose: 'treatment',
+      scope: 'clinical', expiresAt: '2099-01-01T00:00:00Z',
+    }
+    vi.spyOn(NexaApiClient, 'getPatientSummary').mockResolvedValue({
+      patient_id: 'patient-1',
+      pii: { patient_name: '[REDACTED]', phone: '', aadhaar_abha_id: '' },
+      clinical_summary: {
+        blood_group: '', allergies: [], chronic_conditions: [], active_medications: [],
+      },
+      shard_scope: 'clinical',
+    })
+    vi.spyOn(NexaApiClient, 'getPatientTimeline').mockResolvedValue({
+      patient_id: 'patient-1', events: [], next_cursor: null,
+    })
+    renderWithTamagui(<PatientRecordViewerScreen />)
+    await screen.findByText('Patient Record')
+    fireEvent.click(screen.getByText('Allergies'))
+    expect(await screen.findByText('No allergy information recorded in available Nexa Care records.')).toBeTruthy()
+    expect(screen.queryByText('No known allergies.')).toBeNull()
+  })
+
+  it('does not present a failed history request as an empty clinical timeline', async () => {
+    accessGrant = {
+      requestId: 'request-1', patientId: 'patient-1',
+      consentToken: 'capability-secret', purpose: 'treatment',
+      scope: 'clinical', expiresAt: '2099-01-01T00:00:00Z',
+    }
+    vi.spyOn(NexaApiClient, 'getPatientSummary').mockResolvedValue({
+      patient_id: 'patient-1',
+      pii: { patient_name: '[REDACTED]', phone: '', aadhaar_abha_id: '' },
+      clinical_summary: {
+        blood_group: '', allergies: [], chronic_conditions: [], active_medications: [],
+      },
+      shard_scope: 'clinical',
+    })
+    vi.spyOn(NexaApiClient, 'getPatientTimeline').mockRejectedValue(new Error('network unavailable'))
+    renderWithTamagui(<PatientRecordViewerScreen />)
+    await screen.findByText('Patient Record')
+    fireEvent.click(screen.getByText('Timeline'))
+    expect(await screen.findByText(/Clinical timeline could not be loaded/)).toBeTruthy()
+    expect(screen.queryByText('No timeline events recorded in the available history.')).toBeNull()
+  })
+
+  it('never displays a hardcoded or inferred verified document for a patient', async () => {
+    accessGrant = {
+      requestId: 'request-1', patientId: 'patient-1',
+      consentToken: 'capability-secret', purpose: 'treatment',
+      scope: 'full', expiresAt: '2099-01-01T00:00:00Z',
+    }
+    vi.spyOn(NexaApiClient, 'getPatientSummary').mockResolvedValue({
+      patient_id: 'patient-1',
+      pii: { patient_name: 'Patient', phone: '', aadhaar_abha_id: '' },
+      clinical_summary: {
+        blood_group: '', allergies: [], chronic_conditions: [], active_medications: [],
+      },
+      shard_scope: 'full',
+    })
+    vi.spyOn(NexaApiClient, 'getPatientTimeline').mockResolvedValue({
+      patient_id: 'patient-1', events: [], next_cursor: null,
+    })
+    renderWithTamagui(<PatientRecordViewerScreen />)
+    await screen.findByText('Patient Record')
+    fireEvent.click(screen.getByText('Documents'))
+    expect(await screen.findByText(/Patient-specific documents are not available in this view yet/)).toBeTruthy()
+    expect(screen.queryByText('External Health Summary & Diagnostic Report')).toBeNull()
+    expect(screen.queryByText('Clinician verified')).toBeNull()
+    expect(screen.queryByText('+ Add External Record')).toBeNull()
+  })
+
 })
