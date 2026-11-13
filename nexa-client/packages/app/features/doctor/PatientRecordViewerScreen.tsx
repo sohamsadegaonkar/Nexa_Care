@@ -428,9 +428,16 @@ export function PatientRecordViewerScreen() {
             hospitalId
           )) as any
           setTimeline(tlData?.events ?? [])
-        } catch {
-          // The clinical summary may still be useful, but a failed timeline read
-          // must not be described as proof that the patient has no timeline.
+        } catch (timelineError) {
+          // A revoked or invalid capability is terminal even if the summary
+          // was fetched just before it. Never keep showing previously read PHI.
+          if (
+            timelineError instanceof ApiError &&
+            (timelineError.status === 401 || timelineError.status === 403)
+          ) {
+            throw timelineError
+          }
+          // A transient timeline failure is not evidence of an empty history.
           setTimelineUnavailable(true)
         }
       }
