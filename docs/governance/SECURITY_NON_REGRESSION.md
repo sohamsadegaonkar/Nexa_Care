@@ -999,3 +999,20 @@ Review this register every 90 days and whenever a security defect, invariant, en
 - Cross-references: [decisions](../../tools/orchestrator_gateway/DECISIONS.md),
   [deployment and limitations](../../tools/orchestrator_gateway/README.md),
   [validation report](../../tools/orchestrator_gateway/VALIDATION.md).
+
+## Clinician record-viewer truth-in-evidence follow-up (14 November 2026)
+
+**Status:** Branch-level corrective implementation awaiting frontend CI, security/clinical review, and user-authorized merge. This implementation note is **not** a policy expansion or a claim of qualified physical/device or live clinical performance.
+
+**Affected established safeguards:** SEC-002 (server-side clinical access scope), SEC-005 (separate emergency authorization), SEC-015 (no inferred clinical verification), SEC-020 (unqualified physical workflows), SEC-021 (truthful patient-facing presentation), and the Engineering Constitution's patient-control, provenance, and no-fabricated-clinical-data commitments.
+
+**Problem and intended correction:** The clinician record viewer used legacy frontend scope names to decide whether to display authorized V3 allergies or fetch the timeline; an empty allergy list was represented as "No known allergies"; the documents panel displayed a hardcoded clinician-verified example; and patient record detail equated source-document presence with clinical verification. These are **UI trust/visibility defects**, not evidence that the server permitted access without consent.
+
+**Non-regression conditions:** Preserve server-authoritative authorization and memory-only capability custody; V3 `clinical`/`full` read grants must display available permitted allergy/timeline data without broadening permissions; terminal 401/403 timeline failure must fail closed; transient timeline failures must not be shown as empty history; no clinical verification label without explicit evidence; source attachments must not be promoted to clinician-verified facts. Emergency grant categories, signed read access, and Treatment Session write limits remain unchanged.
+
+**Change scope:** `nexa-client/packages/app/features/doctor/PatientRecordViewerScreen.tsx`, `nexa-client/packages/app/features/patient/PatientRecordDetailModal.tsx`, and their focused component tests. A patient-document inventory, clinician source drill-down, and clinical-grade summary remain **future work** and are not implied by hiding demo placeholders.
+
+**Required validation:** Targeted Vitest tests for `clinical`/`full` scope, allergy unknown semantics, missing/failed timeline, revoked capability, and unverified source; complete frontend test/build in CI; explicit human clinical/safety review of displays and phrasing before real-patient pilot. Do not treat mere repository commit as test PASS.
+
+**Change impact:** No backend/API/DB schema or migration; no consent scope, retention, data-storage, erasure, identity, AI extraction, audit, or emergency authority expansion. Existing security and regulatory rules are unchanged.
+
