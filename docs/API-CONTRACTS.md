@@ -660,7 +660,7 @@ trusted-device, provider-access or consent authority.
 
 ### Provider document-reference inventory (Slice P1A, draft pending review)
 
-`GET /api/v2/provider/records/documents?limit=20&cursor=...` is a
+`GET /api/v2/provider/records/documents?limit=20` is a
 **read-only clinical-history metadata** projection from existing canonical
 `DocumentReference` and completed patient-owned external import rows.
 
@@ -670,8 +670,9 @@ trusted-device, provider-access or consent authority.
   **not** authority; `RECORD_READ` provider clinical capability and the
   current live read-consent gate `require_consent("clinical_summary")` are
   both required. Redis and PostgreSQL session validity remain enforced.
-- Query parameters: server-bounded `limit` (1–50), optional keyset `cursor`
-  (at most 512 characters; malformed cursor rejected). Results are in
+- Pagination: server-bounded `limit` (1–50) query parameter, optional
+  `X-Page-Cursor` header (at most 512 characters; malformed cursor rejected).
+  No record-reference metadata is placed in a URL. Results are in
   descending `uploaded_at`, `document_id` order, with `next_cursor`
   only if another page exists. Patient deletion/erasure blocks reads.
 - Response: `items[{ document_id, document_type, uploaded_at,
