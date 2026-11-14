@@ -45,6 +45,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { ApiError, NexaApiClient, type EmergencySummaryResponse } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
+import { ProviderDocumentInventory } from './ProviderDocumentInventory'
 
 // ── Data types ──────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ type ViewerState = 'loading' | 'active' | 'expired' | 'error'
 // ── Scope → Tab mapping ─────────────────────────────────────────────────────
 
 const SCOPE_TO_TABS: Record<string, string[]> = {
-  clinical: ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'timeline'],
+  clinical: ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'documents', 'timeline'],
   full: [
     'summary',
     'vitals',
@@ -349,6 +350,10 @@ export function PatientRecordViewerScreen() {
   // ── Compute available tabs from consent scope ─────────────────────────
 
   const availableTabs = useMemo(() => {
+    // Emergency authority never permits the routine document inventory.
+    if (isBreakGlassGrant(accessGrant?.purpose)) {
+      return ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'access']
+    }
     if (!consentValidation?.scope || consentValidation.scope.length === 0) {
       return ALL_TABS
     }
@@ -362,7 +367,7 @@ export function PatientRecordViewerScreen() {
     allowedTabKeys.add('access')
     if (allowedTabKeys.size <= 1) return ALL_TABS
     return ALL_TABS.filter((t) => allowedTabKeys.has(t))
-  }, [consentValidation?.scope])
+  }, [consentValidation?.scope, accessGrant?.purpose])
 
   // ── Fetch patient record ──────────────────────────────────────────────
 
@@ -1292,53 +1297,20 @@ export function PatientRecordViewerScreen() {
 
             </XStack>
             <Paragraph color="$color11" fontSize={13}>
-              Document upload requires separate patient-approved document-processing access.
-              This read-only viewer does not load the patient document inventory yet.
+              This viewer lists authorized document references only. Opening original
+              files requires separately approved document-read authority.
             </Paragraph>
 
-            {/* Document Categories */}
-            <YStack gap="$2.5">
-              <Text color="$color12" fontSize={14} fontWeight="700">
-                Supported document types
-              </Text>
-              <XStack gap="$2" flexWrap="wrap">
-                {[
-                  'Lab reports',
-                  'Prescriptions',
-                  'Discharge summaries',
-                  'Imaging / radiology',
-                  'Other records',
-                ].map((category) => (
-                  <Card
-                    key={category}
-                    backgroundColor="$color2"
-                    borderRadius="$3"
-                    paddingVertical="$2"
-                    paddingHorizontal="$3"
-                    borderWidth={1}
-                    borderColor="$color4"
-                  >
-                    <Text color="$color12" fontSize={13} fontWeight="600">
-                      {category}
-                    </Text>
-                  </Card>
-                ))}
-              </XStack>
-            </YStack>
-
-            {/* Do not show sample records or inferred verification as patient data. */}
-            <Card
-              backgroundColor="$color2"
-              borderRadius="$3"
-              padding="$4"
-              borderWidth={1}
-              borderColor="$color4"
-            >
-              <Paragraph color="$color11">
-                Patient-specific documents are not available in this view yet.
-                No document or clinician-verification status can be inferred here.
-              </Paragraph>
-            </Card>
+            <ProviderDocumentInventory
+              patientId={patientId}
+              consentToken={accessGrant?.consentToken ?? ''}
+              hospitalId={hospitalId}
+              onAuthorizationFailure={() => {
+                clearAccessGrant()
+                setError('Approved access is no longer valid. Request or reclaim access again.')
+                setViewerState('error')
+              }}
+            />
           </YStack>
         )}
 
