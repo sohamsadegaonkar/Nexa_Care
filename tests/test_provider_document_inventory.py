@@ -120,11 +120,7 @@ def test_read_route_requires_both_provider_capability_and_routine_consent():
         if getattr(route, "path", "").endswith("/documents")
     )
     deps = [d.call for d in path.dependant.dependencies]
-    assert any(
-        getattr(d, "__name__", "") == "require_clinical_capability"
-        or getattr(d, "__name__", "") == "_clinical_capability_gate"
-        for d in deps
-    ) or any("capability" in repr(d) for d in deps)
+    assert any(getattr(d, "__name__", "") == "_require_clinical_capability" for d in deps)
     assert any(getattr(d, "__name__", "") == "_consent_gate" for d in deps)
     assert set(path.methods) == {"GET"}
     assert not any("/source" in getattr(x, "path", "") for x in routes.router.routes)
