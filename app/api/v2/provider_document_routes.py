@@ -112,7 +112,7 @@ async def list_provider_patient_documents(
     response: Response,
     patient_id: str = Header(alias="X-Patient-Id"),
     limit: int = Query(default=20, ge=1, le=50),
-    cursor: str | None = Query(default=None, max_length=512),
+    cursor: str | None = Header(default=None, alias="X-Page-Cursor", max_length=512),
     provider: ProviderContext = Depends(
         require_clinical_capability(ClinicalCapability.RECORD_READ)
     ),
