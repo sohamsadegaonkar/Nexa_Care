@@ -67,6 +67,7 @@ from app.main import app
 # added or removed before updating this set.
 EXPECTED_ROUTES = {
     ("GET", "/api/v2/provider/workspace"),
+    ("GET", "/api/v2/provider/records/documents"),
     ("POST", "/api/v2/auth/otp/send"),
     ("POST", "/api/v2/auth/otp/verify"),
     ("POST", "/api/v2/auth/patient/logout"),
