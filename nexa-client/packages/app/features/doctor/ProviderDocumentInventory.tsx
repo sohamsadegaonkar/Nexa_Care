@@ -27,6 +27,11 @@ export function ProviderDocumentInventory({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const requestVersion = useRef(0)
+  const authFailureRef = useRef(onAuthorizationFailure)
+
+  useEffect(() => {
+    authFailureRef.current = onAuthorizationFailure
+  }, [onAuthorizationFailure])
 
   const fetchPage = async (next: string | null, version: number) => {
     setLoading(true)
@@ -43,7 +48,7 @@ export function ProviderDocumentInventory({
       if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
         setItems([])
         setCursor(null)
-        onAuthorizationFailure()
+        authFailureRef.current()
         return
       }
       setError('Document references could not be loaded. The available record inventory is unknown.')
@@ -60,9 +65,7 @@ export function ProviderDocumentInventory({
     return () => {
       requestVersion.current += 1
     }
-    // Patient identity, provider session, and memory-only capability changes
-    // are the triggers; an unstable parent callback must not force refetches.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // A changed patient or capability invalidates stale responses immediately.
   }, [patientId, consentToken, hospitalId])
 
   const retry = () => {
