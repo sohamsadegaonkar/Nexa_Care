@@ -1307,7 +1307,7 @@ export function PatientRecordViewerScreen() {
               hospitalId={hospitalId}
               onAuthorizationFailure={() => {
                 clearAccessGrant()
-                setError('Approved access is no longer valid. Request or reclaim access again.')
+                setError('Consent is no longer valid. Request or reclaim access again.')
                 setViewerState('error')
               }}
             />
