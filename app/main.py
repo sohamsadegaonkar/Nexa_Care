@@ -415,6 +415,7 @@ app.add_middleware(
         "Content-Type",
         "X-Hospital-Id",
         "X-Patient-Id",
+        "X-Page-Cursor",
         "X-Consent-Token",
         "X-Consent-Purpose",
         "X-CSRF-Token",
