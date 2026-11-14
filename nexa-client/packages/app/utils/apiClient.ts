@@ -1449,12 +1449,11 @@ export const NexaApiClient = {
     hospitalId: string,
     cursor?: string | null
   ): Promise<ProviderDocumentPage> {
-    const params = new URLSearchParams({ limit: '20' })
-    if (cursor) params.set('cursor', cursor)
     return request<ProviderDocumentPage>(
-      `/api/v2/provider/records/documents?${params.toString()}`,
+      '/api/v2/provider/records/documents?limit=20',
       { method: 'GET' },
       {
+        ...(cursor ? { 'X-Page-Cursor': cursor } : {}),
         'X-Patient-Id': patientId,
         'X-Consent-Token': consentToken,
         'X-Consent-Purpose': 'clinical_summary',
