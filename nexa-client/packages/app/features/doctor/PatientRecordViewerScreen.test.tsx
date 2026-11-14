@@ -27,6 +27,10 @@ vi.mock('@tamagui/lucide-icons', () => {
   }
 })
 
+vi.mock('./ProviderDocumentInventory', () => ({
+  ProviderDocumentInventory: () => 'Authorized patient document inventory',
+}))
+
 vi.mock('./ProviderAuthContext', () => ({
   useProviderAuth: () => ({
     providerId: 'provider-1',
@@ -272,7 +276,7 @@ describe('PatientRecordViewerScreen capability handoff', () => {
     renderWithTamagui(<PatientRecordViewerScreen />)
     await screen.findByText('Patient Record')
     fireEvent.click(screen.getByText('Documents'))
-    expect(await screen.findByText(/Patient-specific documents are not available in this view yet/)).toBeTruthy()
+    expect(await screen.findByText('Authorized patient document inventory')).toBeTruthy()
     expect(screen.queryByText('External Health Summary & Diagnostic Report')).toBeNull()
     expect(screen.queryByText('Clinician verified')).toBeNull()
     expect(screen.queryByText('+ Add External Record')).toBeNull()
