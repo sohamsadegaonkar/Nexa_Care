@@ -26,6 +26,7 @@ export function ProviderDocumentInventory({
   const [cursor, setCursor] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [authorizationDenied, setAuthorizationDenied] = useState(false)
   const requestVersion = useRef(0)
   const authFailureRef = useRef(onAuthorizationFailure)
 
@@ -46,6 +47,7 @@ export function ProviderDocumentInventory({
     } catch (caught) {
       if (requestVersion.current !== version) return
       if (caught instanceof ApiError && (caught.status === 401 || caught.status === 403)) {
+        setAuthorizationDenied(true)
         setItems([])
         setCursor(null)
         authFailureRef.current()
@@ -59,6 +61,7 @@ export function ProviderDocumentInventory({
 
   useEffect(() => {
     const version = ++requestVersion.current
+    setAuthorizationDenied(false)
     setItems([])
     setCursor(null)
     void fetchPage(null, version)
@@ -138,13 +141,13 @@ export function ProviderDocumentInventory({
         </YStack>
       )}
 
-      {!loading && !error && items.length === 0 && (
+      {!loading && !error && !authorizationDenied && items.length === 0 && (
         <Paragraph color="$color11">
           No document references recorded in the available Nexa Care history.
         </Paragraph>
       )}
 
-      {!loading && !error && cursor && (
+      {!loading && !error && !authorizationDenied && cursor && (
         <Button onPress={loadOlder} disabled={loading}>Load older documents</Button>
       )}
     </YStack>
