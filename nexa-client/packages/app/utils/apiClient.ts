@@ -340,6 +340,22 @@ export interface ConsentStatusResponse {
   responded_at?: string | null
 }
 
+/** Record references returned under a routine V3 read capability.
+ * This does not grant access to source document bytes or assert verification. */
+export interface ProviderDocumentItem {
+  document_id: string
+  document_type: string
+  uploaded_at: string
+  source_origin: 'patient_imported_external' | 'not_established'
+  verification_status: 'patient_reviewed_not_clinician_verified' | 'not_established'
+  original_access: 'separate_authorization_required'
+}
+
+export interface ProviderDocumentPage {
+  items: ProviderDocumentItem[]
+  next_cursor: string | null
+}
+
 export interface PatientSummaryResponse {
   patient_id: string
   pii: {
@@ -1421,6 +1437,26 @@ export const NexaApiClient = {
       {
         'X-Consent-Token': consentToken,
         'X-Consent-Purpose': purpose,
+        'X-Hospital-Id': hospitalId,
+      }
+    )
+  },
+
+  /** Metadata only; patient identity and bearer stay in headers, never a query. */
+  getProviderPatientDocuments(
+    patientId: string,
+    consentToken: string,
+    hospitalId: string,
+    cursor?: string | null
+  ): Promise<ProviderDocumentPage> {
+    return request<ProviderDocumentPage>(
+      '/api/v2/provider/records/documents?limit=20',
+      { method: 'GET' },
+      {
+        ...(cursor ? { 'X-Page-Cursor': cursor } : {}),
+        'X-Patient-Id': patientId,
+        'X-Consent-Token': consentToken,
+        'X-Consent-Purpose': 'clinical_summary',
         'X-Hospital-Id': hospitalId,
       }
     )

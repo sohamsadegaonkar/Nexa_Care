@@ -658,6 +658,44 @@ See [the UI handoff](governance/SLICE_9A_UI_HANDOFF.md) for exact routes, respon
 fields and patient next actions. Reviewer resolution never issues patient,
 trusted-device, provider-access or consent authority.
 
+### Provider document-reference inventory (Slice P1A, draft pending review)
+
+`GET /api/v2/provider/records/documents?limit=20` is a
+**read-only clinical-history metadata** projection from existing canonical
+`DocumentReference` and completed patient-owned external import rows.
+
+- Headers: `X-Patient-Id` (canonical UUID), existing `X-Consent-Token`, and
+  existing provider session/affiliation headers. No patient identifier or
+  capability is placed in the URL. The patient header is a request lookup only,
+  **not** authority; `RECORD_READ` provider clinical capability and the
+  current live read-consent gate `require_consent("clinical_summary")` are
+  both required. Redis and PostgreSQL session validity remain enforced.
+- Pagination: server-bounded `limit` (1–50) query parameter, optional
+  `X-Page-Cursor` header (at most 512 characters; malformed cursor rejected).
+  No record-reference metadata is placed in a URL. Results are in
+  descending `uploaded_at`, `document_id` order, with `next_cursor`
+  only if another page exists. Patient deletion/erasure blocks reads.
+- Response: `items[{ document_id, document_type, uploaded_at,
+  source_origin, verification_status, original_access }]`,
+  `next_cursor`. `source_origin` is
+  `patient_imported_external` only for a matching, completed,
+  patient-owned import; otherwise `not_established`.
+  `verification_status` is either
+  `patient_reviewed_not_clinician_verified` or `not_established`.
+  `original_access` always equals `separate_authorization_required`.
+- The response contains **no document bytes, file contents, original filename,
+  storage reference, extraction candidate, field confidence, other patient's
+  identity data, or clinician-verified assertion inferred from patient review**.
+  Cache policy: `private, no-store`.
+- Signed Consent V3 remains `READ_CLINICAL_HISTORY` only, not
+  `READ_DOCUMENTS`. This endpoint only inventories reference metadata already
+  within clinical-history projections. It does not authorize an original
+  PDF/image source read or silently use a document-processing upload grant.
+  Do not enable source opening until independent operation/consent,
+  audit/privacy and clinical safety review is completed.
+- Existing `require_consent` audit continues to record the protected
+  patient-record read; no new audit event vocabulary is invented.
+
 ## 12. Explicit nonclaims
 
 This contract does not claim:
