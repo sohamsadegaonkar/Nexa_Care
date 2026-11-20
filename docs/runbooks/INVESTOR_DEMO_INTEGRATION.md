@@ -61,3 +61,17 @@ runbook, not executed evidence. The demo uses synthetic data and does
 not establish clinical accuracy, regulatory compliance or production
 readiness. Do not publish a public development login. Do not provision,
 deploy or merge into main without the owner's explicit approval.
+
+
+## Full-service Azure review profile
+
+The optional azure_services object for the offline renderer selects the
+real SDK adapters (version-pinned DEK key, dedicated Document Intelligence
+endpoint, digest-pinned ClamAV sidecar in the same dedicated registry).
+See the fixture in tests/test_azure_demo_plan.py. Retain the safe default
+profile if actual resources and authorization are absent. The full
+profile remains private, 0–1 replicas, one-page/2 MiB extraction, single
+job attempt, no clinical auto-commit and no production-like runtime. A
+TCP scanner probe is insufficient to qualify signature freshness.
+The generated candidate must remain non-deployable until actual cost,
+identity, TLS, scanner and live service checks are approved and passed.

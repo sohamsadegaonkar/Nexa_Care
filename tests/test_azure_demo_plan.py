@@ -89,3 +89,42 @@ def test_rejects_cross_subscription_or_cross_project_environment():
     )
     with pytest.raises(ValueError):
         render_plan(spec)
+
+
+def _full_spec():
+    spec = _spec()
+    spec["azure_services"] = {
+        "dek_key_id": "https://nexa-demo-test.vault.azure.net/keys/nexa-demo-dek/" + "a" * 32,
+        "document_ai_endpoint": "https://nexa-demo-test.cognitiveservices.azure.com",
+        "clamd_image": "nexademotest.azurecr.io/nexa-care-clamd@sha256:" + "c" * 64,
+    }
+    return spec
+
+
+def test_full_azure_service_profile_is_private_and_explicitly_non_deployable():
+    plan = render_plan(_full_spec())
+    assert plan["status"] == "REVIEW_CANDIDATE_NOT_DEPLOYABLE"
+    props = plan["candidate"]["properties"]
+    assert props["configuration"]["ingress"]["external"] is False
+    api, scanner = props["template"]["containers"]
+    env = {item["name"]: item.get("value") for item in api["env"]}
+    assert env["ENCRYPTION_BACKEND"] == "azure_key_vault"
+    assert env["AZURE_KMS_SYNTHETIC_ONLY"] == "YES"
+    assert env["DOCUMENT_EXTRACTION_PROVIDER"] == "azure_document_intelligence"
+    assert env["AZURE_DOCUMENT_AI_SYNTHETIC_ONLY"] == "YES"
+    assert env["MAX_UPLOAD_BYTES"] == "2097152"
+    assert env["DOCUMENT_AI_JOB_MAX_ATTEMPTS"] == "1"
+    assert scanner["name"] == "patient-source-clamd"
+    assert props["template"]["scale"] == {"minReplicas": 0, "maxReplicas": 1}
+
+
+@pytest.mark.parametrize("field,value", [
+    ("dek_key_id", "https://nexa-demo-other.vault.azure.net/keys/nexa-demo-dek/" + "a" * 32),
+    ("document_ai_endpoint", "https://campuspool.cognitiveservices.azure.com"),
+    ("clamd_image", "nexademotest.azurecr.io/nexa-care-clamd:latest"),
+])
+def test_full_service_profile_rejects_wrong_or_unpinned_resources(field, value):
+    spec = _full_spec()
+    spec["azure_services"][field] = value
+    with pytest.raises(ValueError):
+        render_plan(spec)
