@@ -218,23 +218,32 @@ def require_consent(
         x_consent_token: str | None = Header(default=None, alias="X-Consent-Token"),
         db: AsyncSession = Depends(get_db_session),
     ) -> ConsentCapability | ApprovedAccessCapability:
-        patient_id = request.path_params.get("patient_id") or request.path_params.get(
-            "id"
-        )
-        if not patient_id:
-            patient_id = request.query_params.get("patient_id")
-        if not patient_id:
-            patient_id = request.headers.get("X-Patient-Id")
-        if not patient_id and request.method in ("POST", "PUT", "PATCH"):
+        selectors = [
+            str(value) for value in (
+                request.path_params.get("patient_id"),
+                request.path_params.get("id"),
+                *request.query_params.getlist("patient_id"),
+                *request.headers.getlist("X-Patient-Id"),
+            ) if value is not None
+        ]
+        if request.method in ("POST", "PUT", "PATCH"):
             try:
                 body_json = await request.json()
-                if isinstance(body_json, dict):
-                    patient_id = body_json.get("patient_id")
-            except (ValueError, UnicodeDecodeError) as exc:
-                logger.info(
-                    "Consent gate could not parse request body",
-                    extra={"error_type": type(exc).__name__},
-                )
+            except (ValueError, UnicodeDecodeError):
+                body_json = None
+            if isinstance(body_json, dict) and "patient_id" in body_json:
+                selectors.append(str(body_json["patient_id"]))
+        if len(set(selectors)) > 1:
+            await append_audit_log_or_503(
+                audit_context=current_audit_context(AuditDomain.CONSENT),
+                actor_uid=provider.actor_uid,
+                event_type="CONSENT_GATED_DECRYPT_FAILED",
+                target_id="UNKNOWN",
+                status="CONFLICTING_PATIENT_REFERENCE",
+                metadata={"purpose": purpose},
+            )
+            raise HTTPException(403, detail={"error_code": "CONFLICTING_PATIENT_REFERENCE"})
+        patient_id = next(iter(selectors), None)
 
         return await validate_consent_for_patient(
             patient_id=patient_id,

@@ -26,6 +26,7 @@
     "expo-local-authentication": "~17.0.8",
     "expo-notifications": "~0.32.17",
     "expo-secure-store": "~15.0.8",
+    "pdfjs-dist": "6.5.438",
     "react-native-safe-area-context": "~5.6.0",
     "solito": "patch:solito@npm%3A5.0.0#~/.yarn/patches/solito-npm-5.0.0-44b0b420f4.patch",
     "zod": "^3.23.0"

@@ -993,6 +993,31 @@ export function setApiErrorHandlers(reAuth: ReAuthHandler, toast: ErrorToastHand
   onErrorToast = toast
 }
 
+export interface OriginalReceipt {
+  request_id: string
+  status: 'pending' | 'approved' | 'opened' | 'revoked' | 'expired' | 'denied'
+  expires_at: string
+}
+export interface OriginalDecisionCard extends OriginalReceipt {
+  context: Record<string, string>
+  provider: string | null
+  hospital: string
+  category: string
+  uploaded_at: string
+}
+export interface OriginalReadContext {
+  patientId: string
+  hospitalId: string
+  consentToken: string
+}
+function originalHeaders(access: OriginalReadContext) {
+  return { 'X-Patient-Id': access.patientId, 'X-Hospital-Id': access.hospitalId,
+    'X-Consent-Token': access.consentToken }
+}
+function originalPost(body: object): RequestInit {
+  return { method: 'POST', cache: 'no-store', body: JSON.stringify(body) }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -1440,6 +1465,28 @@ export const NexaApiClient = {
         'X-Hospital-Id': hospitalId,
       }
     )
+  },
+
+  requestOriginal(access: OriginalReadContext, documentId: string) {
+    return request<OriginalReceipt>('/api/v2/original-access/v1/request',
+      originalPost({ document_id: documentId }), originalHeaders(access))
+  },
+  originalStatus(access: OriginalReadContext, requestId: string) {
+    return request<OriginalReceipt>('/api/v2/original-access/v1/status',
+      originalPost({ request_id: requestId }), originalHeaders(access))
+  },
+  openOriginal(access: OriginalReadContext, requestId: string) {
+    return request<Blob>('/api/v2/original-access/v1/open',
+      originalPost({ request_id: requestId }), originalHeaders(access), false, DEFAULT_TIMEOUT_MS, false, 'blob')
+  },
+  myOriginalRequests() {
+    return request<OriginalDecisionCard[]>('/api/v2/original-access/v1/mine', { cache: 'no-store' })
+  },
+  decideOriginal(body: { request_id: string; key_id: string; signature: string; decision: 'approved' | 'denied' }) {
+    return request<OriginalReceipt>('/api/v2/original-access/v1/decision', originalPost(body))
+  },
+  revokeOriginal(requestId: string) {
+    return request<OriginalReceipt>('/api/v2/original-access/v1/revoke', originalPost({ request_id: requestId }))
   },
 
   /** Metadata only; patient identity and bearer stay in headers, never a query. */

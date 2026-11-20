@@ -477,6 +477,7 @@ async def test_true_patient_provider_routine_access_e2e() -> None:
 
 @dataclass(slots=True)
 class EstablishedClinicalAccess:
+    patient_token: str
     client: httpx.AsyncClient
     headers: dict[str, str]
     auth_headers: dict[str, str]
@@ -619,6 +620,7 @@ async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAcc
             assert summary.json()["patient_id"] == graph["patient_id"]
 
             yield EstablishedClinicalAccess(
+                patient_token=patient_token,
                 client=client,
                 headers=headers,
                 auth_headers=auth_headers,

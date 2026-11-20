@@ -16,6 +16,8 @@ import {
   type PatientConsentHistoryItem,
 } from '../../utils/apiClient'
 
+import { OriginalDocumentDecisions } from './OriginalDocumentDecisions'
+
 function formatDate(iso: string): string {
   try {
     const d = new Date(iso)
@@ -143,6 +145,7 @@ export default function PatientTreatmentAccessScreen() {
         </Button>
       </XStack>
 
+      <OriginalDocumentDecisions />
       <Separator />
 
       {/* Live Region for Action Announcements */}

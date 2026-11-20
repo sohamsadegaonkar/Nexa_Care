@@ -157,7 +157,7 @@ async def validate_active_session(
         await db.execute(
             select(ClinicalAccessSessionRecord).where(
                 ClinicalAccessSessionRecord.session_id == sid
-            )
+            ).execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if row is None:

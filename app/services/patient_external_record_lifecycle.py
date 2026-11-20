@@ -11,11 +11,12 @@ from __future__ import annotations
 import uuid
 
 from fastapi import HTTPException
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import ConfigError
+from app.models.original_document_access import OriginalDocumentAccess
 from app.models.patient import Patient
 from app.models.patient_external_record_import import PatientExternalRecordImport
 from app.models.patient_records import DocumentReference
@@ -125,6 +126,9 @@ async def delete_patient_external_record_sources(
             "patient external source metadata unavailable"
         ) from exc
 
+    # The audit ledger retains event evidence. Remove linkable decision material
+    # (including the source digest and signature) inside the erasure transaction.
+    await db.execute(delete(OriginalDocumentAccess).where(OriginalDocumentAccess.patient_id == patient_uuid))
     if not source_rows and not import_rows:
         return 0
 

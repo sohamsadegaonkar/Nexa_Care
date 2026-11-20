@@ -118,6 +118,7 @@ _READ_PATIENT_ACCESS_HISTORY_SQL = text(
           AND (
               (action IN (
                   'PATIENT_RECORD_READ_SUCCESS',
+                  'ORIGINAL_DOCUMENT_OPENED',
                   'BREAK_GLASS_EMERGENCY_SUMMARY_ACCESSED',
                   'SNAPSHOT_ACCESSED'
               ) AND status = 'SUCCESS')
