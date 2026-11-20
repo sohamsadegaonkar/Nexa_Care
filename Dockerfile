@@ -15,11 +15,18 @@ WORKDIR /app
 
 # Copy requirements first for Docker layer caching.
 COPY requirements.txt ./requirements.txt
+COPY requirements-azure.txt ./requirements-azure.txt
+ARG INSTALL_AZURE_SDK=false
 
 # Install the lightweight remote-API dependency set. Local PyTorch and
 # Transformers are intentionally excluded for 512MB free-tier deployments.
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && python -m pip install -r requirements.txt
+    && python -m pip install -r requirements.txt \
+    && case "$INSTALL_AZURE_SDK" in \
+        true) python -m pip install -r requirements-azure.txt && python -m pip check ;; \
+        false) ;; \
+        *) exit 1 ;; \
+    esac
 
 # Run as a non-root user in production.
 RUN groupadd --system nexa_user \

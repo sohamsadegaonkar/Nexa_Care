@@ -100,6 +100,8 @@ class DocumentExtractionConfig:
     timeout_seconds: float = 30.0
     provider_max_attempts: int = 3
     job_max_attempts: int = 3
+    azure_endpoint: str | None = None
+    azure_identity_client_id: str | None = None
     async_multipage_enabled: bool = False
     reconciliation_max_attempts: int = 3
     reconciliation_window_seconds: int = 900
@@ -116,6 +118,9 @@ class DocumentStorageConfig:
     s3_bucket: str | None = None
     s3_region: str | None = None
     s3_kms_key_id: str | None = None
+    azure_account: str | None = None
+    azure_container: str | None = None
+    azure_managed_identity_client_id: str | None = None
 
 
 logger = logging.getLogger("nexa_config")
@@ -218,9 +223,9 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
             "ENVIRONMENT (or ENV) must explicitly identify the runtime environment"
         )
     provider = _require_env("DOCUMENT_EXTRACTION_PROVIDER").strip().lower()
-    if provider not in {"remote", "demo", "aws_textract"}:
+    if provider not in {"remote", "demo", "aws_textract", "azure_document_intelligence"}:
         raise ConfigError(
-            "DOCUMENT_EXTRACTION_PROVIDER must be 'remote', 'demo', or 'aws_textract'"
+            "Unsupported DOCUMENT_EXTRACTION_PROVIDER"
         )
 
     async_raw = (
@@ -306,6 +311,36 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
         logger.warning(
             "DOCUMENT_AI_MAX_ATTEMPTS is deprecated; configure separate provider and job retry budgets"
         )
+    if provider == "azure_document_intelligence":
+        if environment not in {"local", "development", "test"}:
+            raise ConfigError("Azure extraction is not qualified for this environment")
+        if os.getenv("AZURE_DOCUMENT_AI_SYNTHETIC_ONLY") != "YES":
+            raise ConfigError("Azure extraction requires synthetic-only opt-in")
+        if async_multipage_enabled:
+            raise ConfigError("Azure extraction does not support async multipage jobs")
+        endpoint = _require_env("AZURE_DOCUMENT_AI_ENDPOINT")
+        client_id = _require_env("AZURE_DOCUMENT_AI_MANAGED_IDENTITY_CLIENT_ID")
+        if not re.fullmatch(
+            r"https://nexa-demo-[a-z0-9-]+\.cognitiveservices\.azure\.com",
+            endpoint,
+        ):
+            raise ConfigError("A dedicated Azure Document Intelligence endpoint is required")
+        if not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            client_id,
+        ):
+            raise ConfigError("Explicit Azure extraction managed identity UUID required")
+        if timeout_seconds > 120:
+            raise ConfigError("Azure extraction timeout must be at most 120 seconds")
+        return DocumentExtractionConfig(
+            provider=provider,
+            environment=environment,
+            azure_endpoint=endpoint,
+            azure_identity_client_id=client_id,
+            timeout_seconds=timeout_seconds,
+            provider_max_attempts=1,
+            job_max_attempts=job_max_attempts,
+        )
     if provider == "aws_textract":
         aws_region = os.getenv("DOCUMENT_AI_AWS_REGION", "ap-south-1").strip()
         if not aws_region:
@@ -377,7 +412,29 @@ def get_document_storage_config() -> DocumentStorageConfig:
             s3_region=_require_env("DOCUMENT_STORAGE_S3_REGION"),
             s3_kms_key_id=_require_env("DOCUMENT_STORAGE_S3_KMS_KEY_ID"),
         )
-    raise ConfigError("DOCUMENT_STORAGE_PROVIDER must be 'local' or 's3'")
+    if provider == "azure_blob":
+        # A development candidate, not a production storage/key migration.
+        if environment not in {"local", "development", "test"}:
+            raise ConfigError("Azure document storage is not qualified for this environment")
+        if os.getenv("DOCUMENT_STORAGE_AZURE_SYNTHETIC_ONLY") != "YES":
+            raise ConfigError("Azure document storage requires explicit synthetic-only opt-in")
+        account = _require_env("DOCUMENT_STORAGE_AZURE_ACCOUNT")
+        container = _require_env("DOCUMENT_STORAGE_AZURE_CONTAINER")
+        if not re.fullmatch(r"[a-z0-9]{3,24}", account):
+            raise ConfigError("Invalid Azure storage account name")
+        if not re.fullmatch(r"nexa-demo-[a-z0-9]+(?:-[a-z0-9]+)*", container) or len(container) > 63:
+            raise ConfigError("Use a dedicated nexa-demo- Azure container")
+        return DocumentStorageConfig(
+            provider=provider,
+            environment=environment,
+            encryption_key=_require_env("DOCUMENT_STORAGE_ENCRYPTION_KEY"),
+            azure_account=account,
+            azure_container=container,
+            azure_managed_identity_client_id=os.getenv(
+                "DOCUMENT_STORAGE_AZURE_MANAGED_IDENTITY_CLIENT_ID"
+            ) or None,
+        )
+    raise ConfigError("DOCUMENT_STORAGE_PROVIDER must be 'local', 's3' or 'azure_blob'")
 
 
 def get_supabase_config() -> SupabaseConfig:
@@ -498,6 +555,8 @@ class KMSConfig:
     encryption_backend: str = "local"
     kms_key_id: str | None = None
     aws_region: str | None = None
+    azure_key_id: str | None = None
+    azure_identity_client_id: str | None = None
 
 
 def get_kms_config() -> KMSConfig:
@@ -509,6 +568,29 @@ def get_kms_config() -> KMSConfig:
     """
     backend = os.getenv("ENCRYPTION_BACKEND", "local").strip().lower()
     root_secret = os.getenv("KEK_ROOT_SECRET")
+    if backend == "azure_key_vault":
+        if runtime_environment() not in {"local", "development", "test"}:
+            raise ConfigError("Azure Key Vault wrapping is not qualified for this environment")
+        if os.getenv("AZURE_KMS_SYNTHETIC_ONLY") != "YES":
+            raise ConfigError("Azure Key Vault wrapping requires synthetic-only opt-in")
+        key_id = _require_env("AZURE_DEK_KEY_ID")
+        client_id = _require_env("AZURE_KMS_MANAGED_IDENTITY_CLIENT_ID")
+        if not re.fullmatch(
+            r"https://nexa-demo-[a-z0-9-]{1,14}\.vault\.azure\.net/keys/nexa-demo-dek/[0-9a-f]{32}",
+            key_id,
+        ) or len(key_id) > 128:
+            raise ConfigError("A dedicated version-pinned Azure DEK wrapping key is required")
+        if not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            client_id,
+        ):
+            raise ConfigError("Explicit Azure KMS managed identity UUID required")
+        return KMSConfig(
+            kek_root_secret=root_secret,
+            encryption_backend=backend,
+            azure_key_id=key_id,
+            azure_identity_client_id=client_id,
+        )
     if backend == "local" and not root_secret:
         raise ConfigError("Missing required environment variable: KEK_ROOT_SECRET")
     key_id = os.getenv("KMS_KEY_ID")

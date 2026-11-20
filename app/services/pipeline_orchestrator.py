@@ -24,6 +24,7 @@ from app.ai.extractor import (
     RemoteExtractionProvider,
     get_medical_document_extractor,
 )
+from app.ai.azure_document_intelligence import AzureDocumentIntelligenceProvider
 from app.ai.identity_decision import (
     IdentityDecision,
     IdentityDecisionState,
@@ -112,6 +113,7 @@ _SUPPORTED_PRIOR_EXTRACTION_STATUSES = frozenset(
 )
 _APPROVED_PROVIDER_TYPES = {
     "aws_textract": AwsTextractExtractionProvider,
+    "azure_document_intelligence": AzureDocumentIntelligenceProvider,
     "remote": RemoteExtractionProvider,
     "demo": DemoExtractionProvider,
 }

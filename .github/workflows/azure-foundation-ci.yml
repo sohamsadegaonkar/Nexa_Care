@@ -1,0 +1,49 @@
+name: Azure Foundation Offline CI
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'app/services/azure_document_storage.py'
+      - 'app/services/azure_key_vault_envelope.py'
+      - 'app/services/crypto_kms.py'
+      - 'app/ai/azure_document_intelligence.py'
+      - 'app/ai/extractor.py'
+      - 'app/services/pipeline_orchestrator.py'
+      - 'app/services/document_storage.py'
+      - 'app/core/config.py'
+      - 'requirements*.txt'
+      - 'Dockerfile'
+      - 'scripts/render_azure_demo_plan.py'
+      - 'tests/test_azure*.py'
+      - '.github/workflows/azure-foundation-ci.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install and verify SDK dependency compatibility
+        run: |
+          python -m pip install -r requirements.txt -r requirements_dev.txt -r requirements-azure.txt
+          python -m pip check
+          python -c "from azure.ai.documentintelligence import DocumentIntelligenceClient; from azure.keyvault.keys.crypto import CryptographyClient; from azure.identity import ManagedIdentityCredential; from azure.storage.blob import ContainerClient; from azure.core.exceptions import ResourceNotFoundError"
+      - name: Offline Azure adapter and review plan tests
+        run: python -m pytest tests/test_azure_document_storage.py tests/test_azure_demo_plan.py tests/test_azure_key_vault_envelope.py tests/test_azure_document_intelligence.py -q --junitxml=.test-results/azure-offline.xml
+        env:
+          ENVIRONMENT: test
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_KEY: synthetic-placeholder
+          UPSTASH_REDIS_URL: redis://127.0.0.1:6379/0
+          DATABASE_URL: postgresql+asyncpg://ci:ci@127.0.0.1:5432/nexa_ci
+          KEK_ROOT_SECRET: synthetic-ci-demo-root-secret
+          HANDSHAKE_PEPPER_SECRET: synthetic-ci-pepper
+      - name: Assert zero skips
+        run: python scripts/ci/assert_pytest_junit.py .test-results/azure-offline.xml
