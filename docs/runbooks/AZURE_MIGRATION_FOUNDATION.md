@@ -80,3 +80,46 @@ preflight/rollback; independently verified restore; only then an approved
 cutover. Existing AWS KMS-wrapped data cannot be unwrapped merely by choosing
 a different vault. Preserve old AWS configuration, key IDs, backups and
 adapters until authorized recovery/retention review. No automated deletion.
+
+## Investor-demo acceleration (synthetic dataset confirmed)
+
+The founder confirms the demo data are synthetic. Prefer a new isolated database
+over copying historical data; no AWS data migration is required for this demo.
+No deletion or reset of any existing resource is implied.
+
+For the first cloud rehearsal, keep the established local envelope provider
+in development mode, fetch its independent root secret through **version-pinned
+Key Vault secret references** on Azure Container Apps, and select the explicit
+demo extraction provider (deterministic synthetic output, NOT Azure Document
+Intelligence or live OCR). This is a cost-saving demo profile, not a replacement
+for patient-specific KMS cryptographic erasure or a production-equivalent mode.
+Never expose development access to public ingress. The application still
+requires PostgreSQL/Redis, signed consent, MFA, source scanning and audit.
+
+`python scripts/render_azure_demo_plan.py <metadata-only-spec.json>` renders
+an offline review candidate for an already-existing dedicated Azure environment
+and user-assigned identity. See the input fixture in
+`tests/test_azure_demo_plan.py` for the exact JSON schema. It requires versioned
+Key Vault secret references (no actual secret values), a dedicated digest-pinned
+ACR image, dedicated storage and internal-only ingress with 0–1 replicas.
+It intentionally marks the output NOT DEPLOYABLE: private environment, scanner
+sidecar, database/Redis TLS, source-retention and other gates remain outstanding.
+Do not remove blockers or deploy the candidate as a shortcut.
+
+Build a candidate API image locally with
+`docker build --build-arg INSTALL_AZURE_SDK=true -t nexa-care-azure-demo .`.
+No upload or ARM call is part of this step. The optional SDK CI installs SDKs,
+checks import/dependency compatibility, and runs offline tests without Azure
+credentials. PostgreSQL managed service/Redis endpoint, image registry, vault,
+network and storage remain separately cost-approved resources. There is no
+guarantee of zero cost from a replica limit; idle services and logs can bill.
+
+The `DOCUMENT_EXTRACTION_PROVIDER=demo` provider intentionally returns only
+synthetic fixture data, without real extraction evidence. Do not present that
+as a successful report extraction. Azure Document Intelligence mapping and
+clinical source-bound benchmarking remain a separate engineering task.
+A genuine Azure Key Vault cryptographic wrapping provider remains a separate
+security design; the demo's vault-backed secret custody is not equivalent.
+
+References: https://learn.microsoft.com/azure/container-apps/manage-secrets
+and https://learn.microsoft.com/azure/container-apps/ingress .
