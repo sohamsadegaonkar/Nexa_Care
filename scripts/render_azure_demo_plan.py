@@ -74,7 +74,7 @@ def render_plan(spec: dict[str, Any]) -> dict[str, Any]:
     vaults = set()
     secrets = []
     env = []
-    for name in _SECRET_ENV:
+    for index, name in enumerate(_SECRET_ENV, start=1):
         uri = refs[name]
         match = _VAULT_SECRET.fullmatch(uri) if isinstance(uri, str) else None
         expected_name = name.lower().replace("_", "-")
@@ -82,11 +82,11 @@ def render_plan(spec: dict[str, Any]) -> dict[str, Any]:
             _fail("VERSION_PINNED_DEDICATED_VAULT_SECRET_REQUIRED")
         vaults.add(match.group(1))
         secrets.append({
-            "name": expected_name,
+            "name": f"nexa-secret-{index:02d}",
             "keyVaultUrl": uri,
             "identity": spec["identity_id"],
         })
-        env.append({"name": name, "secretRef": expected_name})
+        env.append({"name": name, "secretRef": f"nexa-secret-{index:02d}"})
     if len(vaults) != 1:
         _fail("ONE_DEDICATED_VAULT_REQUIRED")
     fixed = {

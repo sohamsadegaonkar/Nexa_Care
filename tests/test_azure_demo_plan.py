@@ -41,8 +41,12 @@ def test_private_cost_bounded_review_candidate_without_aws_runtime():
     assert env["DOCUMENT_STORAGE_PROVIDER"]["value"] == "azure_blob"
     assert env["PATIENT_SOURCE_MALWARE_SCANNER"]["value"] == "clamd"
     assert not any(k.startswith("AWS_") or "_S3_" in k for k in env)
+    aliases = {s["name"] for s in props["configuration"]["secrets"]}
+    assert len(aliases) == len(_SECRET_ENV)
+    assert all(len(alias) <= 20 for alias in aliases)
     for name in _SECRET_ENV:
         assert set(env[name]) == {"name", "secretRef"}
+        assert env[name]["secretRef"] in aliases
     assert "password=" not in json.dumps(plan)
 
 
