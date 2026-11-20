@@ -137,3 +137,17 @@ This is actual SDK call integration, **not live vault qualification**.
 No vault/key creation or deletion is implemented. The default deployment plan
 remains on local envelope encryption until the candidate is qualified.
 See https://learn.microsoft.com/en-us/python/api/overview/azure/keyvault-keys-readme .
+
+## Azure Document Intelligence candidate
+
+Explicit synthetic-only azure_document_intelligence uses Azure v4 Layout
+with keyValuePairs and Unicode code point indexes. One PDF/image page up to
+2 MiB, validated before submission; managed identity only, dedicated endpoint,
+one submission with bounded timeout, no external source URL. Only exact
+allowlisted labeled form values are accepted. No table parsing, inferred
+diagnosis, manufactured confidence or automatic clinical commit. Evidence is
+marked incomplete. Unsupported forms fail closed; current identity, consent
+and review paths stay authoritative. Live clinical benchmark, cost and privacy
+review are outstanding; no production-like activation.
+References: https://learn.microsoft.com/azure/ai-services/document-intelligence/concept-general-document
+and https://learn.microsoft.com/en-us/python/api/overview/azure/ai-documentintelligence-readme .

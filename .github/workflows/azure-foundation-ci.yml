@@ -7,6 +7,9 @@ on:
       - 'app/services/azure_document_storage.py'
       - 'app/services/azure_key_vault_envelope.py'
       - 'app/services/crypto_kms.py'
+      - 'app/ai/azure_document_intelligence.py'
+      - 'app/ai/extractor.py'
+      - 'app/services/pipeline_orchestrator.py'
       - 'app/services/document_storage.py'
       - 'app/core/config.py'
       - 'requirements*.txt'
@@ -31,9 +34,9 @@ jobs:
         run: |
           python -m pip install -r requirements.txt -r requirements_dev.txt -r requirements-azure.txt
           python -m pip check
-          python -c "from azure.keyvault.keys.crypto import CryptographyClient; from azure.identity import ManagedIdentityCredential; from azure.storage.blob import ContainerClient; from azure.core.exceptions import ResourceNotFoundError"
+          python -c "from azure.ai.documentintelligence import DocumentIntelligenceClient; from azure.keyvault.keys.crypto import CryptographyClient; from azure.identity import ManagedIdentityCredential; from azure.storage.blob import ContainerClient; from azure.core.exceptions import ResourceNotFoundError"
       - name: Offline Azure adapter and review plan tests
-        run: python -m pytest tests/test_azure_document_storage.py tests/test_azure_demo_plan.py tests/test_azure_key_vault_envelope.py -q --junitxml=.test-results/azure-offline.xml
+        run: python -m pytest tests/test_azure_document_storage.py tests/test_azure_demo_plan.py tests/test_azure_key_vault_envelope.py tests/test_azure_document_intelligence.py -q --junitxml=.test-results/azure-offline.xml
         env:
           ENVIRONMENT: test
           SUPABASE_URL: https://placeholder.supabase.co

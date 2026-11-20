@@ -100,6 +100,8 @@ class DocumentExtractionConfig:
     timeout_seconds: float = 30.0
     provider_max_attempts: int = 3
     job_max_attempts: int = 3
+    azure_endpoint: str | None = None
+    azure_identity_client_id: str | None = None
     async_multipage_enabled: bool = False
     reconciliation_max_attempts: int = 3
     reconciliation_window_seconds: int = 900
@@ -221,9 +223,9 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
             "ENVIRONMENT (or ENV) must explicitly identify the runtime environment"
         )
     provider = _require_env("DOCUMENT_EXTRACTION_PROVIDER").strip().lower()
-    if provider not in {"remote", "demo", "aws_textract"}:
+    if provider not in {"remote", "demo", "aws_textract", "azure_document_intelligence"}:
         raise ConfigError(
-            "DOCUMENT_EXTRACTION_PROVIDER must be 'remote', 'demo', or 'aws_textract'"
+            "Unsupported DOCUMENT_EXTRACTION_PROVIDER"
         )
 
     async_raw = (
@@ -308,6 +310,36 @@ def get_document_extraction_config() -> DocumentExtractionConfig:
     ):
         logger.warning(
             "DOCUMENT_AI_MAX_ATTEMPTS is deprecated; configure separate provider and job retry budgets"
+        )
+    if provider == "azure_document_intelligence":
+        if environment not in {"local", "development", "test"}:
+            raise ConfigError("Azure extraction is not qualified for this environment")
+        if os.getenv("AZURE_DOCUMENT_AI_SYNTHETIC_ONLY") != "YES":
+            raise ConfigError("Azure extraction requires synthetic-only opt-in")
+        if async_multipage_enabled:
+            raise ConfigError("Azure extraction does not support async multipage jobs")
+        endpoint = _require_env("AZURE_DOCUMENT_AI_ENDPOINT")
+        client_id = _require_env("AZURE_DOCUMENT_AI_MANAGED_IDENTITY_CLIENT_ID")
+        if not re.fullmatch(
+            r"https://nexa-demo-[a-z0-9-]+\.cognitiveservices\.azure\.com",
+            endpoint,
+        ):
+            raise ConfigError("A dedicated Azure Document Intelligence endpoint is required")
+        if not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            client_id,
+        ):
+            raise ConfigError("Explicit Azure extraction managed identity UUID required")
+        if timeout_seconds > 120:
+            raise ConfigError("Azure extraction timeout must be at most 120 seconds")
+        return DocumentExtractionConfig(
+            provider=provider,
+            environment=environment,
+            azure_endpoint=endpoint,
+            azure_identity_client_id=client_id,
+            timeout_seconds=timeout_seconds,
+            provider_max_attempts=1,
+            job_max_attempts=job_max_attempts,
         )
     if provider == "aws_textract":
         aws_region = os.getenv("DOCUMENT_AI_AWS_REGION", "ap-south-1").strip()

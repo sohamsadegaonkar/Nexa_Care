@@ -1035,3 +1035,13 @@ production-like enablement. Existing local and AWS modes are unchanged.
 Offline SDK doubles are not live key or destruction proof. REG-001/003 remain
 subject to human privacy/security/legal review. No access/consent/identity/
 clinical-write scope expansion. Same existing schema; no database migration.
+
+### Azure Layout synthetic form extraction candidate (20 November 2026)
+
+SEC-013/014/015/023: managed identity, dedicated endpoint, one bounded
+synthetic page, no source URLs or raw provider errors; exact source spans,
+closed labels, no identity inference, missing field confidence stays unknown,
+and incomplete evidence preserves existing review/quarantine gates. No
+clinically verified or auto-committed claims. No production activation or
+reprocessing of identity quarantine. Provider benchmark and privacy/clinical
+review outstanding; current consent and identity policy unchanged.
