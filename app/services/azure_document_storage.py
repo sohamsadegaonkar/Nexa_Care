@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import importlib
+from importlib import import_module
 import os
 import re
 import uuid
@@ -56,9 +56,9 @@ class AzureEncryptedDocumentStorage(DocumentStorage):
             self._canonical_id(self.client_id)
         self._prefix = f"azure+encrypted://{account}/{container}/"
         try:
-            self._identity_type = importlib.import_module("azure.identity").ManagedIdentityCredential
-            self._container_type = importlib.import_module("azure.storage.blob").ContainerClient
-            self._not_found = importlib.import_module("azure.core.exceptions").ResourceNotFoundError
+            self._identity_type = import_module("azure.identity").ManagedIdentityCredential
+            self._container_type = import_module("azure.storage.blob").ContainerClient
+            self._not_found = import_module("azure.core.exceptions").ResourceNotFoundError
         except (ImportError, AttributeError) as exc:
             raise ConfigError("Install the optional Azure document-storage dependencies") from exc
 

@@ -87,7 +87,7 @@ def fake_cloud(monkeypatch):
     monkeypatch.setenv("DOCUMENT_STORAGE_AZURE_CONTAINER", "nexa-demo-documents")
     monkeypatch.setenv("DOCUMENT_STORAGE_ENCRYPTION_KEY", KEY)
     monkeypatch.delenv("DOCUMENT_STORAGE_AZURE_MANAGED_IDENTITY_CLIENT_ID", raising=False)
-    monkeypatch.setattr(module.importlib, "import_module", lambda name: modules[name])
+    monkeypatch.setattr(module, "import_module", lambda name: modules[name])
     return state
 
 
