@@ -116,6 +116,9 @@ class DocumentStorageConfig:
     s3_bucket: str | None = None
     s3_region: str | None = None
     s3_kms_key_id: str | None = None
+    azure_account: str | None = None
+    azure_container: str | None = None
+    azure_managed_identity_client_id: str | None = None
 
 
 logger = logging.getLogger("nexa_config")
@@ -377,7 +380,29 @@ def get_document_storage_config() -> DocumentStorageConfig:
             s3_region=_require_env("DOCUMENT_STORAGE_S3_REGION"),
             s3_kms_key_id=_require_env("DOCUMENT_STORAGE_S3_KMS_KEY_ID"),
         )
-    raise ConfigError("DOCUMENT_STORAGE_PROVIDER must be 'local' or 's3'")
+    if provider == "azure_blob":
+        # A development candidate, not a production storage/key migration.
+        if environment not in {"local", "development", "test"}:
+            raise ConfigError("Azure document storage is not qualified for this environment")
+        if os.getenv("DOCUMENT_STORAGE_AZURE_SYNTHETIC_ONLY") != "YES":
+            raise ConfigError("Azure document storage requires explicit synthetic-only opt-in")
+        account = _require_env("DOCUMENT_STORAGE_AZURE_ACCOUNT")
+        container = _require_env("DOCUMENT_STORAGE_AZURE_CONTAINER")
+        if not re.fullmatch(r"[a-z0-9]{3,24}", account):
+            raise ConfigError("Invalid Azure storage account name")
+        if not re.fullmatch(r"nexa-demo-[a-z0-9]+(?:-[a-z0-9]+)*", container) or len(container) > 63:
+            raise ConfigError("Use a dedicated nexa-demo- Azure container")
+        return DocumentStorageConfig(
+            provider=provider,
+            environment=environment,
+            encryption_key=_require_env("DOCUMENT_STORAGE_ENCRYPTION_KEY"),
+            azure_account=account,
+            azure_container=container,
+            azure_managed_identity_client_id=os.getenv(
+                "DOCUMENT_STORAGE_AZURE_MANAGED_IDENTITY_CLIENT_ID"
+            ) or None,
+        )
+    raise ConfigError("DOCUMENT_STORAGE_PROVIDER must be 'local', 's3' or 'azure_blob'")
 
 
 def get_supabase_config() -> SupabaseConfig:

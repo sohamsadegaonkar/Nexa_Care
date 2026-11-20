@@ -1,0 +1,4 @@
+# Optional development-only Azure storage SDKs. Install alongside requirements.txt.
+# No Azure account or resource creation is performed by package installation.
+azure-identity==1.27.0
+azure-storage-blob==12.31.1

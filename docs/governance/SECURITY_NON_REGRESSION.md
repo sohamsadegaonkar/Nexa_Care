@@ -999,3 +999,27 @@ Review this register every 90 days and whenever a security defect, invariant, en
 - Cross-references: [decisions](../../tools/orchestrator_gateway/DECISIONS.md),
   [deployment and limitations](../../tools/orchestrator_gateway/README.md),
   [validation report](../../tools/orchestrator_gateway/VALIDATION.md).
+
+## Azure document-storage adapter foundation — 20 November 2026 (draft)
+
+This is an explicit synthetic-only development candidate, not a cloud
+cutover or clinical release. Applicable invariants are SEC-002 (server-owned
+scope), SEC-011 (erasure), SEC-012 (key isolation), SEC-013 (privacy-safe
+logging), SEC-014 (authentic source evidence), SEC-018 (no migration at
+startup), SEC-019 (readiness), and SEC-023 (source authorization).
+Regulatory baseline REG-001/003 and engineering commitments to patient
+control, provenance, isolation, and truthful validation remain unchanged.
+No new disclosure, consent, access, identity, clinical write, extraction,
+audit or emergency authority is introduced.
+
+The new Azure adapter uses a dedicated private container, managed identity
+only, account/container/tenant/patient/object-bound AES-GCM AAD, opaque remote
+blob names, non-overwriting ciphertext uploads and sanitized failures.
+Local/development/test plus explicit synthetic opt-in is required; all
+production-like and alpha environments are refused. No legacy source refs
+are reinterpreted; no resource creation or automatic migration. Logical
+deletion is not proof of irreversible cloud erasure. Existing AWS
+key/backup recovery remains a distinct approval boundary. Offline tests
+are not Azure runtime qualification; actual SDK/security review and isolated
+cloud validation remain required. See
+[Azure migration foundation](../runbooks/AZURE_MIGRATION_FOUNDATION.md).
