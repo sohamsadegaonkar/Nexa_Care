@@ -1023,3 +1023,15 @@ key/backup recovery remains a distinct approval boundary. Offline tests
 are not Azure runtime qualification; actual SDK/security review and isolated
 cloud validation remain required. See
 [Azure migration foundation](../runbooks/AZURE_MIGRATION_FOUNDATION.md).
+
+### Azure Key Vault synthetic wrapping candidate (20 November 2026)
+
+SEC-011/012/013/018/019: version-pinned dedicated shared RSA key via managed
+identity, wrapped payload binds patient UUID, DEK version and key identifier;
+durable row metadata validated before unwrapping; erasure registry rechecked
+and no plaintext-DEK cache. Reject mixed histories, no legacy fallback, no
+key lifecycle provisioning. Shared-key erasure is only access-blocked; no
+production-like enablement. Existing local and AWS modes are unchanged.
+Offline SDK doubles are not live key or destruction proof. REG-001/003 remain
+subject to human privacy/security/legal review. No access/consent/identity/
+clinical-write scope expansion. Same existing schema; no database migration.

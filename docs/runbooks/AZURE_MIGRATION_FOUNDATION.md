@@ -123,3 +123,17 @@ security design; the demo's vault-backed secret custody is not equivalent.
 
 References: https://learn.microsoft.com/azure/container-apps/manage-secrets
 and https://learn.microsoft.com/azure/container-apps/ingress .
+
+## Optional cryptographic wrapping candidate
+
+The `azure_key_vault` backend uses managed identity and a **version-pinned
+dedicated RSA vault key** for RSA-OAEP-256 wrap/unwrap of random per-patient
+AES DEKs with a checked patient/version/key binding. Fresh synthetic database
+only; no legacy fallback or plaintext cache. The existing shared-key
+erasure path blocks access, never claims external key destruction. Changing
+the vault key version requires a separately reviewed rewrap plan; do not rotate
+the configured wrapping key or use this on old ciphertext.
+This is actual SDK call integration, **not live vault qualification**.
+No vault/key creation or deletion is implemented. The default deployment plan
+remains on local envelope encryption until the candidate is qualified.
+See https://learn.microsoft.com/en-us/python/api/overview/azure/keyvault-keys-readme .

@@ -523,6 +523,8 @@ class KMSConfig:
     encryption_backend: str = "local"
     kms_key_id: str | None = None
     aws_region: str | None = None
+    azure_key_id: str | None = None
+    azure_identity_client_id: str | None = None
 
 
 def get_kms_config() -> KMSConfig:
@@ -534,6 +536,29 @@ def get_kms_config() -> KMSConfig:
     """
     backend = os.getenv("ENCRYPTION_BACKEND", "local").strip().lower()
     root_secret = os.getenv("KEK_ROOT_SECRET")
+    if backend == "azure_key_vault":
+        if runtime_environment() not in {"local", "development", "test"}:
+            raise ConfigError("Azure Key Vault wrapping is not qualified for this environment")
+        if os.getenv("AZURE_KMS_SYNTHETIC_ONLY") != "YES":
+            raise ConfigError("Azure Key Vault wrapping requires synthetic-only opt-in")
+        key_id = _require_env("AZURE_DEK_KEY_ID")
+        client_id = _require_env("AZURE_KMS_MANAGED_IDENTITY_CLIENT_ID")
+        if not re.fullmatch(
+            r"https://nexa-demo-[a-z0-9-]{1,14}\.vault\.azure\.net/keys/nexa-demo-dek/[0-9a-f]{32}",
+            key_id,
+        ) or len(key_id) > 128:
+            raise ConfigError("A dedicated version-pinned Azure DEK wrapping key is required")
+        if not re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            client_id,
+        ):
+            raise ConfigError("Explicit Azure KMS managed identity UUID required")
+        return KMSConfig(
+            kek_root_secret=root_secret,
+            encryption_backend=backend,
+            azure_key_id=key_id,
+            azure_identity_client_id=client_id,
+        )
     if backend == "local" and not root_secret:
         raise ConfigError("Missing required environment variable: KEK_ROOT_SECRET")
     key_id = os.getenv("KMS_KEY_ID")
