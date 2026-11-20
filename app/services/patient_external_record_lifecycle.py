@@ -126,11 +126,8 @@ async def delete_patient_external_record_sources(
             "patient external source metadata unavailable"
         ) from exc
 
-    # The audit ledger retains event evidence. Remove linkable decision material
-    # (including the source digest and signature) inside the erasure transaction.
-    await db.execute(delete(OriginalDocumentAccess).where(OriginalDocumentAccess.patient_id == patient_uuid))
-    if not source_rows and not import_rows:
-        return 0
+    # Original-document approvals can survive removal of the source metadata.
+    # Always neutralize decision material, even when source/import rows are gone.
 
     pending_source_rows = [
         row for row in source_rows if row.storage_ref != _ERASED_SOURCE_REF
@@ -164,6 +161,11 @@ async def delete_patient_external_record_sources(
     ]
 
     try:
+        await db.execute(
+            delete(OriginalDocumentAccess).where(
+                OriginalDocumentAccess.patient_id == patient_uuid
+            )
+        )
         for row in source_rows:
             row.storage_ref = _ERASED_SOURCE_REF
             row.original_filename = None

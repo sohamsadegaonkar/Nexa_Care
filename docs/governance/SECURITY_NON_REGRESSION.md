@@ -1104,3 +1104,13 @@ and incomplete evidence preserves existing review/quarantine gates. No
 clinically verified or auto-committed claims. No production activation or
 reprocessing of identity quarantine. Provider benchmark and privacy/clinical
 review outstanding; current consent and identity policy unchanged.
+
+### Combined demo erasure/preview regression correction (20 November 2026)
+
+SEC-011/013/021/023: commit original-document decision cleanup even when
+source/import rows are already absent, only after source deletion succeeds;
+database errors in metadata cleanup roll back and fail closed. Maintain
+the canonical erasure denial and avoid false irreversible-deletion claims.
+The jsdom test harness supplies browser object URL double methods only;
+no production preview authority, signed-consent, revocation or audit
+logic is weakened. Fresh combined CI and live device review are required.

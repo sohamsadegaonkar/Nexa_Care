@@ -133,7 +133,8 @@ async def test_delete_patient_sources_deletes_and_neutralizes_metadata(
         side_effect=[
             _Result(source_rows),
             _Result(import_rows),
-            _Result([]),
+            _Result([]),  # original-document access deletion
+            _Result([]),  # document-reference neutralization
         ]
     )
     db = SimpleNamespace(
@@ -162,7 +163,8 @@ async def test_delete_patient_sources_deletes_and_neutralizes_metadata(
     assert all(row.content_hash is None for row in source_rows)
     assert all(row.uploader_id is None for row in source_rows)
     assert all(row.content_hash is None for row in import_rows)
-    assert "document_references" in str(execute.await_args_list[2].args[0]).lower()
+    assert "original_document_access" in str(execute.await_args_list[2].args[0]).lower()
+    assert "document_references" in str(execute.await_args_list[3].args[0]).lower()
     assert str(patient_uuid) not in lifecycle_module._ERASED_DOCUMENT_REF
     db.flush.assert_awaited_once()
     db.commit.assert_awaited_once()
@@ -184,7 +186,8 @@ async def test_metadata_neutralization_runs_when_source_rows_are_already_gone(
         side_effect=[
             _Result([]),
             _Result([import_row]),
-            _Result([]),
+            _Result([]),  # original-document access deletion
+            _Result([]),  # document-reference neutralization
         ]
     )
     db = SimpleNamespace(
@@ -200,7 +203,8 @@ async def test_metadata_neutralization_runs_when_source_rows_are_already_gone(
 
     assert deleted == 0
     assert import_row.content_hash is None
-    assert "document_references" in str(execute.await_args_list[2].args[0]).lower()
+    assert "original_document_access" in str(execute.await_args_list[2].args[0]).lower()
+    assert "document_references" in str(execute.await_args_list[3].args[0]).lower()
     storage_factory.assert_not_called()
     db.commit.assert_awaited_once()
 
@@ -387,4 +391,21 @@ async def test_source_read_denies_erased_patient_before_storage_access(
         )
 
     assert exc_info.value.status_code == 410
+    storage_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_erasure_removes_original_decisions_without_source_rows(monkeypatch) -> None:
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[_Result([]), _Result([]), _Result([])]),
+        flush=AsyncMock(),
+        commit=AsyncMock(),
+        rollback=AsyncMock(),
+    )
+    storage_factory = MagicMock()
+    monkeypatch.setattr(lifecycle_module, "get_document_storage", storage_factory)
+    assert await delete_patient_external_record_sources(db, patient_id=str(uuid.uuid4())) == 0
+    assert "original_document_access" in str(db.execute.await_args_list[2].args[0]).lower()
+    db.flush.assert_awaited_once()
+    db.commit.assert_awaited_once()
     storage_factory.assert_not_called()
