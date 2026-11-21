@@ -496,7 +496,7 @@ export function TreatmentVitalsScreen() {
           <Paragraph>{deepLink}</Paragraph>
           <XStack gap="$3" flexWrap="wrap">
             <ActionButton
-              accessibilityLabel="Copy patient Treatment Session approval link"
+              aria-label="Copy patient Treatment Session approval link"
               onPress={() => {
                 if (typeof navigator !== 'undefined' && navigator.clipboard) {
                   void navigator.clipboard.writeText(deepLink).then(() => setLinkCopied(true))
@@ -506,7 +506,7 @@ export function TreatmentVitalsScreen() {
               Copy Approval Link
             </ActionButton>
             <ActionButton
-              accessibilityLabel="Check Treatment Session approval now"
+              aria-label="Check Treatment Session approval now"
               onPress={() => void claimApprovedSession()}
             >
               Check Approval
@@ -593,7 +593,7 @@ export function TreatmentVitalsScreen() {
             <ActionButton
               key={value}
               intent={kind === value ? 'primary' : undefined}
-              accessibilityLabel={`Select ${label} observation`}
+              aria-label={`Select ${label} observation`}
               onPress={() => {
                 setKind(value)
                 resetWriteStatusOnEdit()
@@ -705,7 +705,7 @@ export function TreatmentVitalsScreen() {
           <ActionButton
             intent="primary"
             disabled={writeState === 'submitting'}
-            accessibilityLabel={
+            aria-label={
               writeState === 'uncertain'
                 ? 'Retry unchanged vital observation with the same idempotency key'
                 : 'Submit one vital observation'

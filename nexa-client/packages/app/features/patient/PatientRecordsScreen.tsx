@@ -186,8 +186,8 @@ export default function PatientRecordsScreen() {
               size="$2"
               chromeless
               onPress={handleBackToOverview}
-              accessibilityRole="button"
-              accessibilityLabel="Return to all record categories"
+              role="button"
+              aria-label="Return to all record categories"
             >
               ← All Categories
             </Button>
@@ -196,8 +196,8 @@ export default function PatientRecordsScreen() {
               size="$2.5"
               theme="blue"
               onPress={() => router.push('/patient/records/import')}
-              accessibilityRole="button"
-              accessibilityLabel="Add Medical Record"
+              role="button"
+              aria-label="Add Medical Record"
             >
               + Add Record
             </Button>
@@ -270,7 +270,7 @@ export default function PatientRecordsScreen() {
                   placeholder={`Search ${CATEGORY_DEFINITIONS[selectedCategory]?.label || 'records'}…`}
                   value={searchQuery}
                   onChangeText={setSearchQuery}
-                  accessibilityLabel={`Search ${CATEGORY_DEFINITIONS[selectedCategory]?.label || 'records'}`}
+                  aria-label={`Search ${CATEGORY_DEFINITIONS[selectedCategory]?.label || 'records'}`}
                   backgroundColor="$backgroundHover"
                 />
                 {searchQuery.length > 0 ? (
@@ -278,8 +278,8 @@ export default function PatientRecordsScreen() {
                     size="$3"
                     chromeless
                     onPress={() => setSearchQuery('')}
-                    accessibilityRole="button"
-                    accessibilityLabel="Clear search"
+                    role="button"
+                    aria-label="Clear search"
                   >
                     Clear
                   </Button>
@@ -304,7 +304,7 @@ export default function PatientRecordsScreen() {
                 borderRadius="$4"
                 alignItems="center"
                 gap="$2"
-                accessibilityRole="alert"
+                role="alert"
               >
                 <Text fontSize={32}>⚠️</Text>
                 <Text color="$red11" fontSize="$4" fontWeight="700">
@@ -318,8 +318,8 @@ export default function PatientRecordsScreen() {
                   theme="red"
                   marginTop="$1"
                   onPress={() => void loadCategoryRecords(selectedCategory)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Retry loading ${CATEGORY_DEFINITIONS[selectedCategory]?.label || selectedCategory} records`}
+                  role="button"
+                  aria-label={`Retry loading ${CATEGORY_DEFINITIONS[selectedCategory]?.label || selectedCategory} records`}
                 >
                   Retry
                 </Button>
@@ -351,8 +351,8 @@ export default function PatientRecordsScreen() {
                   size="$2.5"
                   chromeless
                   onPress={() => setSearchQuery('')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Clear search filter"
+                  role="button"
+                  aria-label="Clear search filter"
                 >
                   Clear Search
                 </Button>
@@ -369,8 +369,8 @@ export default function PatientRecordsScreen() {
                     gap="$2"
                     pressStyle={{ opacity: 0.85 }}
                     onPress={() => setSelectedRecord(item)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`View details for ${title}`}
+                    role="button"
+                    aria-label={`View details for ${title}`}
                   >
                     <XStack justifyContent="space-between" alignItems="center">
                       <Text color="$color" fontSize="$4" fontWeight="700">
@@ -415,8 +415,8 @@ export default function PatientRecordsScreen() {
                   onPress={() =>
                     void loadCategoryRecords(selectedCategory, categoryNextCursor, true)
                   }
-                  accessibilityRole="button"
-                  accessibilityLabel="Load older category records"
+                  role="button"
+                  aria-label="Load older category records"
                 >
                   {loadingOlder ? (
                     <XStack gap="$2" alignItems="center">
@@ -454,8 +454,8 @@ export default function PatientRecordsScreen() {
                   gap="$2.5"
                   pressStyle={{ opacity: 0.85 }}
                   onPress={() => handleSelectCategory(cat.category)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Browse ${def.label}`}
+                  role="button"
+                  aria-label={`Browse ${def.label}`}
                 >
                   <XStack justifyContent="space-between" alignItems="center">
                     <XStack alignItems="center" gap="$3">

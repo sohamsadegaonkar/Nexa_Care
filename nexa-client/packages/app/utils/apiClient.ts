@@ -1070,7 +1070,7 @@ async function request<T>(
 
   if (!(options.body instanceof FormData) && !headers['Content-Type']) {
     headers['Content-Type'] = 'application/json'
-    headers['Accept'] = 'application/json'
+    if (!headers['Accept']) headers['Accept'] = 'application/json'
   }
 
   const url = `${API_BASE_URL}${path}`
@@ -1624,6 +1624,21 @@ export const NexaApiClient = {
       extracted_fields: Array.isArray(response.extracted_fields) ? response.extracted_fields : [],
       routing_reasons: routingReasons,
     }
+  },
+
+  getExtractionJobDocument(jobId: string, consentToken: string): Promise<Blob> {
+    return request<Blob>(
+      `/api/v2/pipeline/jobs/${encodeURIComponent(jobId)}/document`,
+      { method: 'GET' },
+      {
+        Accept: 'application/pdf,image/*,*/*',
+        'X-Consent-Token': consentToken,
+      },
+      false,
+      DEFAULT_TIMEOUT_MS,
+      false,
+      'blob'
+    )
   },
 
   getReviewQueue(

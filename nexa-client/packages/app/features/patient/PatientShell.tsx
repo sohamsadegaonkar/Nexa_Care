@@ -92,6 +92,7 @@ export function PatientShell({ children }: { children: ReactNode }) {
       {/* Top Header */}
       <XStack
         render="header"
+        className="nexa-shell-header"
         flexWrap="wrap"
         alignItems="center"
         justifyContent="space-between"
@@ -166,7 +167,7 @@ export function PatientShell({ children }: { children: ReactNode }) {
           aria-label="Patient navigation"
           padding="$3"
           gap="$2"
-          backgroundColor="$nexaSurface"
+          backgroundColor="$nexaCanvas"
           borderBottomWidth={1}
           borderColor="$nexaBorder"
           $lg={{ width: 236, borderBottomWidth: 0, borderRightWidth: 1, padding: '$4' }}
@@ -184,8 +185,8 @@ export function PatientShell({ children }: { children: ReactNode }) {
                   key={item.label}
                   justifyContent="flex-start"
                   aria-current={isCurrent ? 'page' : undefined}
-                  backgroundColor={isCurrent ? '$nexaAccentSoft' : '$nexaSurface'}
-                  borderColor={isCurrent ? '$nexaAccent' : 'transparent'}
+                  backgroundColor={isCurrent ? '$nexaAccentSoft' : 'transparent'}
+                  borderColor="transparent"
                   hoverStyle={{
                     backgroundColor: isCurrent ? '$nexaAccentSoft' : '$nexaMuted',
                     borderColor: '$nexaAccent',
@@ -197,6 +198,13 @@ export function PatientShell({ children }: { children: ReactNode }) {
                     gap="$2.5"
                     width="100%"
                   >
+                    <YStack
+                      width={3}
+                      height={20}
+                      borderRadius={2}
+                      backgroundColor={isCurrent ? '$nexaAccent' : 'transparent'}
+                      aria-hidden
+                    />
                     <Icon
                       size={18}
                       color={isCurrent ? '$nexaAccent' : '$nexaSecondary'}

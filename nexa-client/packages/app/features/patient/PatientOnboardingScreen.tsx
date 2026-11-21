@@ -44,8 +44,8 @@ export default function PatientOnboardingScreen() {
             size="$2.5"
             chromeless
             onPress={() => router.push('/patient/dashboard')}
-            accessibilityRole="button"
-            accessibilityLabel="Skip to Health Dashboard"
+            role="button"
+            aria-label="Skip to Health Dashboard"
           >
             Skip to Dashboard →
           </Button>
@@ -108,8 +108,8 @@ export default function PatientOnboardingScreen() {
             width="100%"
             minHeight={48}
             onPress={() => router.push('/patient/dashboard')}
-            accessibilityRole="button"
-            accessibilityLabel="Continue to Health Dashboard"
+            role="button"
+            aria-label="Continue to Health Dashboard"
           >
             <Text color="white" fontWeight="800" fontSize="$3">
               Go to Health Dashboard →

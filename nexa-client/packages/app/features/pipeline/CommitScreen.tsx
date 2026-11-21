@@ -24,7 +24,7 @@
  * - Session guard: must be authenticated.
  * - Backend enforces that no `needs_review` fields remain (HTTP 409).
  *
- * Route: /doctor/pipeline/commit/[jobId]?workflow_id=...&patient_id=...
+ * Route: /doctor/pipeline/commit/[jobId]?workflow_id=...
  */
 
 'use client'
@@ -169,7 +169,6 @@ export function CommitScreen() {
 
   // jobId comes from the [jobId] route param (camelCase); snake_case only in API payloads
   const jobId = (routeParams.jobId as string) ?? ''
-  const patientId = searchParams.get('patient_id') ?? ''
   const workflowId = searchParams.get('workflow_id')
   const capability = useCapability(workflowId)
   const consentToken = capability?.token ?? ''
@@ -328,13 +327,13 @@ export function CommitScreen() {
 
   // ── Commit handler ───────────────────────────────────────────────────
   const handleCommit = useCallback(async () => {
-    if (!jobId || !patientId || !consentToken) return
+    if (!jobId || !job?.patient_id || !consentToken) return
     setCommitState('committing')
     setCommitError(null)
     try {
       const result = await NexaApiClient.commitExtractionJob(
         jobId,
-        { patient_id: patientId, encounter_summary: encounterSummary || undefined },
+        { patient_id: job.patient_id, encounter_summary: encounterSummary || undefined },
         consentToken
       )
       setCommitResult(result)
@@ -362,7 +361,7 @@ export function CommitScreen() {
         setCommitError('Network error. Please try again.')
       }
     }
-  }, [jobId, patientId, consentToken, encounterSummary, router])
+  }, [jobId, job, consentToken, encounterSummary, router])
 
   // ── Loading state ────────────────────────────────────────────────────
   if (loading) {
@@ -582,7 +581,7 @@ export function CommitScreen() {
               fontSize="$4"
               fontWeight="600"
             >
-              {patientId}
+              {job?.patient_id ?? '—'}
             </Text>
           </YStack>
           <YStack alignItems="flex-end">
@@ -726,7 +725,7 @@ export function CommitScreen() {
             size="$3"
             onPress={() =>
               router.push(
-                `/doctor/pipeline/review/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`
+                `/doctor/pipeline/review/${encodeURIComponent(jobId)}${workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : ''}`
               )
             }
           >
@@ -954,7 +953,7 @@ export function CommitScreen() {
           chromeless
           onPress={() =>
             router.push(
-              `/doctor/pipeline/review/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`
+              `/doctor/pipeline/review/${encodeURIComponent(jobId)}${workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : ''}`
             )
           }
         >

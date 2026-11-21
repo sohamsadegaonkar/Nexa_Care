@@ -138,7 +138,6 @@ export default function PatientTreatmentAccessScreen() {
           chromeless
           minHeight={44}
           onPress={() => router.push('/patient/dashboard')}
-          accessibilityLabel="Back to Dashboard"
           aria-label="Back to Dashboard"
         >
           ← Dashboard
@@ -157,7 +156,7 @@ export default function PatientTreatmentAccessScreen() {
           borderRadius="$3"
           padding="$3"
           role="alert"
-          accessibilityLiveRegion="polite"
+          aria-live="polite"
         >
           <Paragraph
             color={actionMessage.tone === 'success' ? '$green11' : '$red11'}
@@ -196,7 +195,6 @@ export default function PatientTreatmentAccessScreen() {
             minHeight={44}
             alignSelf="flex-start"
             onPress={() => void loadHistory()}
-            accessibilityLabel="Try Again"
             aria-label="Try Again"
           >
             Try Again
@@ -238,7 +236,7 @@ export default function PatientTreatmentAccessScreen() {
                     padding="$4"
                     gap="$3"
                     role="region"
-                    accessibilityLabel={`Active treatment access for ${grant.purpose}`}
+                    aria-label={`Active treatment access for ${grant.purpose}`}
                   >
                     <XStack justifyContent="space-between" alignItems="center" flexWrap="wrap" gap="$2">
                       <XStack gap="$2" alignItems="center">
@@ -303,7 +301,6 @@ export default function PatientTreatmentAccessScreen() {
                             minHeight={44}
                             disabled={isRevoking}
                             onPress={() => void handleRevoke(grant.public_ref)}
-                            accessibilityLabel="Confirm revoke treatment access"
                             aria-label="Confirm revoke treatment access"
                           >
                             {isRevoking ? 'Revoking...' : 'Yes, Revoke Access'}
@@ -314,7 +311,6 @@ export default function PatientTreatmentAccessScreen() {
                             minHeight={44}
                             disabled={isRevoking}
                             onPress={() => setConfirmingRef(null)}
-                            accessibilityLabel="Cancel revocation"
                             aria-label="Cancel revocation"
                           >
                             Cancel
@@ -329,7 +325,6 @@ export default function PatientTreatmentAccessScreen() {
                           minHeight={44}
                           disabled={Boolean(revokingRef)}
                           onPress={() => setConfirmingRef(grant.public_ref)}
-                          accessibilityLabel={`Revoke treatment access for ${grant.purpose}`}
                           aria-label={`Revoke treatment access for ${grant.purpose}`}
                         >
                           Revoke Access

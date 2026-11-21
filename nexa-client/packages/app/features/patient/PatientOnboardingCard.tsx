@@ -69,7 +69,7 @@ export default function PatientOnboardingCard({
       {/* Header with Optional Badge */}
       <XStack justifyContent="space-between" alignItems="center" flexWrap="wrap" gap="$2">
         <XStack alignItems="center" gap="$2.5">
-          <Text fontSize={28} accessibilityLabel="Medical documents icon">
+          <Text fontSize={28} aria-label="Medical documents icon">
             📁
           </Text>
           <YStack>
@@ -112,8 +112,7 @@ export default function PatientOnboardingCard({
           size="$3.5"
           chromeless
           onPress={handleSkipPress}
-          accessibilityRole="button"
-          accessibilityLabel="Skip adding records for now"
+          role="button"
           aria-label="Skip adding records for now"
           minHeight={44}
           paddingHorizontal="$4"
@@ -127,8 +126,7 @@ export default function PatientOnboardingCard({
           size="$3.5"
           theme="blue"
           onPress={handleAddPress}
-          accessibilityRole="button"
-          accessibilityLabel="Add Medical Record"
+          role="button"
           aria-label="Add Medical Record"
           minHeight={44}
           paddingHorizontal="$4"

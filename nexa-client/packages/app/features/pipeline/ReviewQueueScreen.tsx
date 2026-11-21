@@ -1,12 +1,13 @@
 /**
- * Review queue screen — list all flagged fields needing human adjudication.
+ * Review queue screen — ALPHA clinical-review workflow; not verified medical truth.
+ * Lists all flagged fields needing human adjudication.
  *
  * Fetches GET /api/v2/pipeline/review-queue and displays items grouped by
  * job. Each item shows document title, flagged field count, highest risk
  * level, and queued timestamp.
  *
- * ALPHA: This is an alpha implementation. Filtering and sorting are not
- * yet implemented. Queue items may use placeholder data.
+ * Filtering and sorting are not yet implemented. Queue cards are rendered
+ * only from the authorized API response; the screen does not add sample rows.
  *
  * SECURITY:
  * - All requests go through the shared NexaApiClient — no raw fetch/axios.
@@ -293,11 +294,14 @@ export function ReviewQueueScreen() {
                   borderRadius="$4"
                   hoverStyle={{ backgroundColor: '$backgroundFocus' }}
                   pressStyle={{ backgroundColor: '$backgroundPress' }}
-                  onPress={() =>
+                  onPress={() => {
+                    const workflowQuery = workflowId
+                      ? `?workflow_id=${encodeURIComponent(workflowId)}`
+                      : ''
                     router.push(
-                      `/doctor/pipeline/review/${item.job_id}?patient_id=${item.patient_id}&workflow_id=${workflowId}`
+                      `/doctor/pipeline/review/${encodeURIComponent(item.job_id)}${workflowQuery}`
                     )
-                  }
+                  }}
                 >
                   <XStack
                     justifyContent="space-between"

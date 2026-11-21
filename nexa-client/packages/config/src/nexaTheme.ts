@@ -1,11 +1,11 @@
 // Semantic product colors shared by Tamagui and native navigation.
 export const nexaLight = {
-  nexaCanvas: '#F4F7F7',
+  nexaCanvas: '#F6F7F3',
   nexaSurface: '#FFFFFF',
-  nexaMuted: '#EAF1F1',
-  nexaBorder: '#CCDADA',
-  nexaText: '#182F35',
-  nexaSecondary: '#4D666C',
+  nexaMuted: '#EDF2EF',
+  nexaBorder: '#D3DDD8',
+  nexaText: '#20332E',
+  nexaSecondary: '#52655F',
   nexaAccent: '#086F6B',
   nexaAccentHover: '#075C59',
   nexaOnAccent: '#FFFFFF',

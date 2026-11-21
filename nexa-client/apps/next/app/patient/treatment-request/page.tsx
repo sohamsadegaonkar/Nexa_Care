@@ -24,7 +24,7 @@ export default function WebTreatmentRequestPage() {
           chromeless
           paddingHorizontal="$2"
           onPress={() => router.push('/patient/dashboard')}
-          accessibilityLabel="Back to Dashboard"
+          aria-label="Back to Dashboard"
         >
           <XStack alignItems="center" gap="$1.5">
             <ArrowLeft size={16} color="$nexaSecondary" />
@@ -102,7 +102,7 @@ export default function WebTreatmentRequestPage() {
             intent="primary"
             minHeight={44}
             onPress={() => router.push('/patient/treatment-access')}
-            accessibilityLabel="View Treatment Access"
+            aria-label="View Treatment Access"
           >
             <XStack alignItems="center" gap="$2">
               <ShieldCheck size={16} color="white" />
@@ -115,7 +115,7 @@ export default function WebTreatmentRequestPage() {
           <ActionButton
             minHeight={44}
             onPress={() => router.push('/patient/dashboard')}
-            accessibilityLabel="Return to Dashboard"
+            aria-label="Return to Dashboard"
           >
             <Text fontSize={14} fontWeight="600" color="$nexaText">
               Return to Dashboard

@@ -204,7 +204,7 @@ export default function TreatmentSessionRequestScreen({
         <ActionButton
           intent="primary"
           disabled={submitting}
-          accessibilityLabel="Approve Treatment Session with biometrics"
+          aria-label="Approve Treatment Session with biometrics"
           onPress={() => void approve()}
         >
           {submitting ? 'Confirming...' : 'Approve with Biometrics'}
@@ -212,7 +212,7 @@ export default function TreatmentSessionRequestScreen({
         <ActionButton
           intent="danger"
           disabled={submitting}
-          accessibilityLabel="Deny Treatment Session request"
+          aria-label="Deny Treatment Session request"
           onPress={() => void deny()}
         >
           Deny
