@@ -644,22 +644,27 @@ export function DoctorDashboardScreen() {
         padding="$4.5"
         gap="$3"
         borderRadius={14}
+        maxWidth="100%"
+        minWidth={0}
       >
         <XStack
           gap="$3"
           alignItems="center"
+          minWidth={0}
+          maxWidth="100%"
         >
           <YStack
             padding="$2.5"
             borderRadius={10}
             backgroundColor="rgba(165,44,57,0.15)"
+            flexShrink={0}
           >
             <ShieldAlert
               size={26}
               color="$nexaDanger"
             />
           </YStack>
-          <YStack gap="$0.5">
+          <YStack gap="$0.5" minWidth={0} flexShrink={1} flexGrow={1}>
             <SectionHeading>Emergency Access</SectionHeading>
             <Text
               color="$nexaDanger"
