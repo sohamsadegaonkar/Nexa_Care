@@ -247,8 +247,8 @@ export default function PatientTimelineScreen({
         gap="$2"
         pressStyle={{ opacity: 0.85 }}
         onPress={() => setSelectedEvent(event)}
-        accessibilityRole="button"
-        accessibilityLabel={`View details for ${event.title}`}
+        role="button"
+        aria-label={`View details for ${event.title}`}
       >
         <XStack
           alignItems="center"
@@ -363,14 +363,13 @@ export default function PatientTimelineScreen({
                 key={cat.key}
                 size="$2"
                 backgroundColor={isActive ? '$blue9' : '$backgroundHover'}
-                color={isActive ? 'white' : '$color'}
                 borderRadius="$3"
                 onPress={() => handleFilterChange(cat.key)}
-                accessibilityRole="button"
-                accessibilityLabel={`Filter timeline by ${cat.label}`}
-                accessibilityState={{ selected: isActive }}
+                role="button"
+                aria-label={`Filter timeline by ${cat.label}`}
+                aria-pressed={isActive}
               >
-                {cat.label}
+                <Text color={isActive ? 'white' : '$color'}>{cat.label}</Text>
               </Button>
             )
           })}
@@ -503,8 +502,8 @@ export default function PatientTimelineScreen({
                   theme="blue"
                   marginTop="$2"
                   onPress={() => handleFilterChange('ALL')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Show all clinical events"
+                  role="button"
+                  aria-label="Show all clinical events"
                 >
                   Show All Events
                 </Button>
@@ -543,8 +542,8 @@ export default function PatientTimelineScreen({
                 theme="blue"
                 disabled={loadingOlder}
                 onPress={() => void fetchTimeline('append', nextCursor)}
-                accessibilityRole="button"
-                accessibilityLabel="Load older timeline events"
+                role="button"
+                aria-label="Load older timeline events"
               >
                 {loadingOlder ? (
                   <XStack gap="$2" alignItems="center">

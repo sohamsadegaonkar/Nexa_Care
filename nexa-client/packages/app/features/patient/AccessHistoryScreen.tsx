@@ -206,7 +206,7 @@ export default function AccessHistoryScreen({ history: initialHistory }: AccessH
         }}
         collapsable={false}
         accessible
-        accessibilityLabel={`${accessLabel} by ${doctorName} at ${hospitalName} on ${exactTimestamp} for ${purpose}.`}
+        aria-label={`${accessLabel} by ${doctorName} at ${hospitalName} on ${exactTimestamp} for ${purpose}.`}
       >
         <Surface
           minHeight={168}

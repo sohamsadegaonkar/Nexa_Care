@@ -62,7 +62,7 @@ export default function PatientRecoveryScreen() {
 
       <YStack gap="$3">
         <Input
-          accessibilityLabel="Recovery phone number"
+          aria-label="Recovery phone number"
           placeholder="Phone number"
           value={phone}
           readOnly={busy || stage !== 'phone'}
@@ -72,7 +72,7 @@ export default function PatientRecoveryScreen() {
 
         {stage !== 'phone' ? (
           <Input
-            accessibilityLabel="Recovery OTP"
+            aria-label="Recovery OTP"
             placeholder="OTP"
             value={otp}
             readOnly={busy || stage !== 'otp'}

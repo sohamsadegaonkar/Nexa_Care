@@ -1,7 +1,7 @@
 'use client'
 
 import type { ReactNode } from 'react'
-import { ActionButton, Brand, Paragraph, StatusBadge, SwitchThemeButton, Text, XStack, YStack } from '@my/ui'
+import { ActionButton, Brand, StatusBadge, SwitchThemeButton, Text, XStack, YStack } from '@my/ui'
 import {
   LayoutDashboard,
   Users,
@@ -62,7 +62,9 @@ export function ProviderShell({ children }: { children: ReactNode }) {
       </a>
       <XStack
         render="header"
+        className="nexa-shell-header"
         flexWrap="wrap"
+        width="100%"
         alignItems="center"
         justifyContent="space-between"
         paddingHorizontal="$4"
@@ -77,11 +79,16 @@ export function ProviderShell({ children }: { children: ReactNode }) {
           alignItems="center"
           gap="$4"
           flexWrap="wrap"
+          flexShrink={1}
+          minWidth={0}
+          maxWidth="100%"
         >
           <Brand compact />
           <XStack
             alignItems="center"
             gap="$2"
+            minWidth={0}
+            maxWidth="100%"
             paddingHorizontal="$3"
             paddingVertical="$1.5"
             borderRadius={8}
@@ -95,6 +102,8 @@ export function ProviderShell({ children }: { children: ReactNode }) {
               color="$nexaText"
               fontSize={13}
               fontWeight="600"
+              flexShrink={1}
+              minWidth={0}
             >
               {hospitalName || 'Facility'}
             </Text>
@@ -104,6 +113,9 @@ export function ProviderShell({ children }: { children: ReactNode }) {
           gap="$3"
           alignItems="center"
           flexWrap="wrap"
+          flexShrink={1}
+          minWidth={0}
+          maxWidth="100%"
         >
           <XStack
             alignItems="center"
@@ -114,6 +126,8 @@ export function ProviderShell({ children }: { children: ReactNode }) {
             borderWidth={1}
             borderColor="$nexaBorder"
             backgroundColor="$nexaSurface"
+            minWidth={0}
+            maxWidth="100%"
           >
             <UserCheck
               size={15}
@@ -123,6 +137,8 @@ export function ProviderShell({ children }: { children: ReactNode }) {
               color="$nexaText"
               fontSize={13}
               fontWeight="700"
+              flexShrink={1}
+              minWidth={0}
             >
               {displayName || 'Provider'}
             </Text>
@@ -154,7 +170,7 @@ export function ProviderShell({ children }: { children: ReactNode }) {
           aria-label="Provider navigation"
           padding="$3"
           gap="$2"
-          backgroundColor="$nexaSurface"
+          backgroundColor="$nexaCanvas"
           borderBottomWidth={1}
           borderColor="$nexaBorder"
           $lg={{ width: 236, borderBottomWidth: 0, borderRightWidth: 1, padding: '$4' }}
@@ -172,8 +188,8 @@ export function ProviderShell({ children }: { children: ReactNode }) {
                   key={item.label}
                   justifyContent="flex-start"
                   aria-current={isCurrent ? 'page' : undefined}
-                  backgroundColor={isCurrent ? '$nexaAccentSoft' : '$nexaSurface'}
-                  borderColor={isCurrent ? '$nexaAccent' : 'transparent'}
+                  backgroundColor={isCurrent ? '$nexaAccentSoft' : 'transparent'}
+                  borderColor="transparent"
                   hoverStyle={{
                     backgroundColor: isCurrent ? '$nexaAccentSoft' : '$nexaMuted',
                     borderColor: '$nexaAccent',
@@ -185,6 +201,13 @@ export function ProviderShell({ children }: { children: ReactNode }) {
                     gap="$2.5"
                     width="100%"
                   >
+                    <YStack
+                      width={3}
+                      height={20}
+                      borderRadius={2}
+                      backgroundColor={isCurrent ? '$nexaAccent' : 'transparent'}
+                      aria-hidden
+                    />
                     <Icon
                       size={18}
                       color={isCurrent ? '$nexaAccent' : '$nexaSecondary'}
@@ -204,6 +227,7 @@ export function ProviderShell({ children }: { children: ReactNode }) {
               intent="danger"
               justifyContent="flex-start"
               aria-current={pathname === '/doctor/emergency-access' ? 'page' : undefined}
+              backgroundColor={pathname === '/doctor/emergency-access' ? '$nexaDangerSoft' : undefined}
               onPress={() => router.push('/doctor/emergency-access')}
             >
               <XStack

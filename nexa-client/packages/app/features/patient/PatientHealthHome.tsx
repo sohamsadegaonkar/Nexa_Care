@@ -87,8 +87,8 @@ export default function PatientHealthHome() {
             size="$2"
             chromeless
             onPress={() => router.push('/patient/access-history')}
-            accessibilityRole="button"
-            accessibilityLabel="View Access History"
+            role="button"
+            aria-label="View Access History"
           >
             Access History →
           </Button>
@@ -117,7 +117,7 @@ export default function PatientHealthHome() {
             padding="$3"
             borderRadius="$3"
             gap="$2"
-            accessibilityRole="alert"
+            role="alert"
           >
             <XStack justifyContent="space-between" alignItems="center">
               <Text color="$red11" fontSize="$3" fontWeight="600">
@@ -127,8 +127,8 @@ export default function PatientHealthHome() {
                 size="$2"
                 theme="red"
                 onPress={() => void loadSummary(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Retry loading health summary"
+                role="button"
+                aria-label="Retry loading health summary"
               >
                 Retry
               </Button>
@@ -150,8 +150,8 @@ export default function PatientHealthHome() {
             gap="$1.5"
             pressStyle={{ opacity: 0.8 }}
             onPress={() => router.push('/patient/timeline')}
-            accessibilityRole="button"
-            accessibilityLabel="Open Health Timeline"
+            role="button"
+            aria-label="Open Health Timeline"
           >
             <Text fontSize={24}>📅</Text>
             <Text color="$color" fontSize="$4" fontWeight="700">
@@ -171,8 +171,8 @@ export default function PatientHealthHome() {
             gap="$1.5"
             pressStyle={{ opacity: 0.8 }}
             onPress={() => router.push('/patient/records')}
-            accessibilityRole="button"
-            accessibilityLabel="Open Categorized Records"
+            role="button"
+            aria-label="Open Categorized Records"
           >
             <Text fontSize={24}>📁</Text>
             <Text color="$color" fontSize="$4" fontWeight="700">
@@ -192,8 +192,8 @@ export default function PatientHealthHome() {
             gap="$1.5"
             pressStyle={{ opacity: 0.8 }}
             onPress={() => router.push('/patient/prescriptions')}
-            accessibilityRole="button"
-            accessibilityLabel="Open Prescriptions"
+            role="button"
+            aria-label="Open Prescriptions"
           >
             <Text fontSize={24}>💊</Text>
             <Text color="$color" fontSize="$4" fontWeight="700">
@@ -220,8 +220,8 @@ export default function PatientHealthHome() {
                   : '/patient/treatment-request'
               )
             }
-            accessibilityRole="button"
-            accessibilityLabel="Review Treatment Session request"
+            role="button"
+            aria-label="Review Treatment Session request"
           >
             <Text fontSize={24}>🩺</Text>
             <Text color="$color" fontSize="$4" fontWeight="700">
@@ -241,8 +241,8 @@ export default function PatientHealthHome() {
             gap="$1.5"
             pressStyle={{ opacity: 0.8 }}
             onPress={() => router.push('/patient/reports')}
-            accessibilityRole="button"
-            accessibilityLabel="Open Diagnostic Reports"
+            role="button"
+            aria-label="Open Diagnostic Reports"
           >
             <Text fontSize={24}>📄</Text>
             <Text color="$color" fontSize="$4" fontWeight="700">
@@ -284,8 +284,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/prescriptions')}
-                  accessibilityRole="button"
-                  accessibilityLabel="View all active medications"
+                  role="button"
+                  aria-label="View all active medications"
                 >
                   View All →
                 </Button>
@@ -339,8 +339,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/records')}
-                  accessibilityRole="button"
-                  accessibilityLabel="View allergy details in medical records"
+                  role="button"
+                  aria-label="View allergy details in medical records"
                 >
                   Details →
                 </Button>
@@ -392,8 +392,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/records')}
-                  accessibilityRole="button"
-                  accessibilityLabel="View vitals history in medical records"
+                  role="button"
+                  aria-label="View vitals history in medical records"
                 >
                   History →
                 </Button>
@@ -444,8 +444,8 @@ export default function PatientHealthHome() {
                   size="$2"
                   chromeless
                   onPress={() => router.push('/patient/reports')}
-                  accessibilityRole="button"
-                  accessibilityLabel="View all laboratory evaluations and reports"
+                  role="button"
+                  aria-label="View all laboratory evaluations and reports"
                 >
                   All Reports →
                 </Button>

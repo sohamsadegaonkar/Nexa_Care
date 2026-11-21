@@ -75,7 +75,9 @@ describe('patient Treatment Session review', () => {
 
   it('uses the treatment-specific biometric signer for approval', async () => {
     renderWithTamagui(<TreatmentSessionRequestScreen initialChallenge={challenge} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Approve with Biometrics' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Approve Treatment Session with biometrics' })
+    )
     await waitFor(() => expect(approve).toHaveBeenCalledWith(challenge))
     expect(await screen.findByText('Treatment Session approved')).toBeTruthy()
     const button = await screen.findByRole('button', { name: 'View Treatment Access' })
@@ -85,7 +87,7 @@ describe('patient Treatment Session review', () => {
 
   it('denies through the treatment-specific signed denial path', async () => {
     renderWithTamagui(<TreatmentSessionRequestScreen initialChallenge={challenge} />)
-    fireEvent.click(screen.getByRole('button', { name: 'Deny' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Deny Treatment Session request' }))
     await waitFor(() => expect(deny).toHaveBeenCalledWith(challenge))
     expect(await screen.findByText('Treatment Session denied')).toBeTruthy()
     const button = await screen.findByRole('button', { name: 'View Treatment Access' })

@@ -8,7 +8,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: process.env.NEXA_UI_BASE_URL || 'http://127.0.0.1:3100',
+    baseURL: process.env.NEXA_UI_BASE_URL || 'https://doctor.example.test',
     channel: process.env.NEXA_BROWSER_CHANNEL || 'chromium',
     screenshot: 'only-on-failure',
   },

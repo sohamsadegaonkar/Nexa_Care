@@ -123,8 +123,8 @@ export default function PatientReportsScreen() {
             size="$3"
             theme="blue"
             onPress={() => router.push('/patient/records/import')}
-            accessibilityRole="button"
-            accessibilityLabel="Add Document or Record"
+            role="button"
+            aria-label="Add Document or Record"
           >
             + Add Record
           </Button>
@@ -143,9 +143,9 @@ export default function PatientReportsScreen() {
                   backgroundColor={active ? '$blue9' : '$backgroundHover'}
                   borderRadius="$3"
                   onPress={() => handleSelectFilter(tab.key)}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Filter by ${tab.label}`}
-                  accessibilityState={{ selected: active }}
+                  role="button"
+                  aria-label={`Filter by ${tab.label}`}
+                  aria-pressed={active}
                 >
                   <Text color={active ? 'white' : '$color'} fontSize="$2" fontWeight={active ? '700' : '500'}>
                     {tab.label}
@@ -197,8 +197,8 @@ export default function PatientReportsScreen() {
                 backgroundColor="$red6"
                 pressStyle={{ backgroundColor: '$red7' }}
                 onPress={() => void loadReports(null, false)}
-                accessibilityRole="button"
-                accessibilityLabel="Retry loading reports"
+                role="button"
+                aria-label="Retry loading reports"
               >
                 <Text color="$red11" fontSize="$2" fontWeight="700">
                   Retry
@@ -245,8 +245,8 @@ export default function PatientReportsScreen() {
                 theme="blue"
                 marginTop="$2"
                 onPress={() => handleSelectFilter('all')}
-                accessibilityRole="button"
-                accessibilityLabel="Show all reports"
+                role="button"
+                aria-label="Show all reports"
               >
                 Show All Reports
               </Button>
@@ -262,8 +262,8 @@ export default function PatientReportsScreen() {
               gap="$2"
               pressStyle={{ opacity: 0.85 }}
               onPress={() => setSelectedReport(item)}
-              accessibilityRole="button"
-              accessibilityLabel={`View report ${item.report_title}`}
+              role="button"
+              aria-label={`View report ${item.report_title}`}
             >
               <XStack justifyContent="space-between" alignItems="center">
                 <XStack alignItems="center" gap="$2" flex={1}>

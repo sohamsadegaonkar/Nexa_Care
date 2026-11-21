@@ -648,6 +648,7 @@ export function DoctorDashboardScreen() {
         <XStack
           gap="$3"
           alignItems="center"
+          minWidth={0}
         >
           <YStack
             padding="$2.5"
@@ -659,7 +660,7 @@ export function DoctorDashboardScreen() {
               color="$nexaDanger"
             />
           </YStack>
-          <YStack gap="$0.5">
+          <YStack gap="$0.5" flex={1} minWidth={0}>
             <SectionHeading>Emergency Access</SectionHeading>
             <Text
               color="$nexaDanger"

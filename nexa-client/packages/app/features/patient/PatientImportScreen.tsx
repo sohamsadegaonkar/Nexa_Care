@@ -686,12 +686,7 @@ export default function PatientImportScreen({
             size="$2.5"
             chromeless
             onPress={handleReturn}
-            accessibilityRole="button"
-            accessibilityLabel={
-              effectiveReturnTo === 'onboarding'
-                ? 'Back to Onboarding'
-                : 'Back to Medical Records'
-            }
+            role="button"
             aria-label={
               effectiveReturnTo === 'onboarding'
                 ? 'Back to Onboarding'
@@ -831,9 +826,6 @@ export default function PatientImportScreen({
                       justifyContent="space-between"
                       pressStyle={{ opacity: 0.85 }}
                       onPress={() => handleCategorySelect(cat.slug)}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected: isSelected }}
-                      accessibilityLabel={cat.label}
                       aria-label={cat.label}
                       role="radio"
                       aria-checked={isSelected}
@@ -934,8 +926,8 @@ export default function PatientImportScreen({
                         setSelectedFile(null)
                         setFileValidationError(null)
                       }}
-                      accessibilityRole="button"
-                      accessibilityLabel="Remove selected file"
+                      role="button"
+                      aria-label="Remove selected file"
                     >
                       ✕ Remove
                     </Button>
@@ -952,8 +944,8 @@ export default function PatientImportScreen({
                   alignItems="center"
                   gap="$3"
                   onPress={handleBrowsePress}
-                  accessibilityRole="button"
-                  accessibilityLabel="Browse medical document file"
+                  role="button"
+                  aria-label="Browse medical document file"
                   pressStyle={{ opacity: 0.8 }}
                   minHeight={120}
                   justifyContent="center"
@@ -971,8 +963,8 @@ export default function PatientImportScreen({
                     size="$3"
                     theme="blue"
                     onPress={handleBrowsePress}
-                    accessibilityRole="button"
-                    accessibilityLabel="Browse Files button"
+                    role="button"
+                    aria-label="Browse Files button"
                   >
                     Browse Document
                   </Button>
@@ -985,7 +977,7 @@ export default function PatientImportScreen({
                   backgroundColor="$red4"
                   padding="$3"
                   borderRadius="$3"
-                  accessibilityRole="alert"
+                  role="alert"
                 >
                   <Text color="$red10" fontSize="$2" fontWeight="700">
                     ⚠️ {fileValidationError}
@@ -1002,8 +994,7 @@ export default function PatientImportScreen({
                 disabled={!selectedCategory || !selectedFile || uploading}
                 opacity={!selectedCategory || !selectedFile || uploading ? 0.5 : 1}
                 onPress={handleUploadSubmit}
-                accessibilityRole="button"
-                accessibilityLabel="Upload and extract medical record"
+                role="button"
                 aria-label="Upload and extract medical record"
                 minHeight={48}
               >
@@ -1064,8 +1055,8 @@ export default function PatientImportScreen({
                         size="$4"
                         theme="blue"
                         onPress={() => router.push('/patient/onboarding')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Continue onboarding"
+                        role="button"
+                        aria-label="Continue onboarding"
                         minHeight={48}
                       >
                         Continue onboarding →
@@ -1074,8 +1065,8 @@ export default function PatientImportScreen({
                         size="$3.5"
                         chromeless
                         onPress={handleResetFlow}
-                        accessibilityRole="button"
-                        accessibilityLabel="Try Another Document"
+                        role="button"
+                        aria-label="Try Another Document"
                         minHeight={44}
                       >
                         Try Another Document
@@ -1087,8 +1078,8 @@ export default function PatientImportScreen({
                         size="$4"
                         theme="blue"
                         onPress={handleResetFlow}
-                        accessibilityRole="button"
-                        accessibilityLabel="Import Another Document"
+                        role="button"
+                        aria-label="Import Another Document"
                         minHeight={48}
                       >
                         Import Another Document
@@ -1097,8 +1088,8 @@ export default function PatientImportScreen({
                         size="$3.5"
                         chromeless
                         onPress={() => router.push('/patient/records')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Back to Medical Records"
+                        role="button"
+                        aria-label="Back to Medical Records"
                         minHeight={44}
                       >
                         Back to Medical Records
@@ -1117,7 +1108,7 @@ export default function PatientImportScreen({
                 width="100%"
                 alignItems="center"
                 gap="$4"
-                accessibilityRole="alert"
+                role="alert"
               >
                 <Text fontSize={48}>⚠️</Text>
                 <YStack alignItems="center" gap="$1.5">
@@ -1144,8 +1135,8 @@ export default function PatientImportScreen({
                         size="$4"
                         theme="blue"
                         onPress={() => router.push('/patient/onboarding')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Continue onboarding"
+                        role="button"
+                        aria-label="Continue onboarding"
                         minHeight={48}
                       >
                         Continue onboarding →
@@ -1154,8 +1145,8 @@ export default function PatientImportScreen({
                         size="$3.5"
                         chromeless
                         onPress={handleResetFlow}
-                        accessibilityRole="button"
-                        accessibilityLabel="Try Another Document"
+                        role="button"
+                        aria-label="Try Another Document"
                         minHeight={44}
                       >
                         Try Another Document
@@ -1167,8 +1158,8 @@ export default function PatientImportScreen({
                         size="$4"
                         theme="blue"
                         onPress={() => router.push('/patient/records')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Back to Medical Records"
+                        role="button"
+                        aria-label="Back to Medical Records"
                         minHeight={48}
                       >
                         Back to Medical Records
@@ -1177,8 +1168,8 @@ export default function PatientImportScreen({
                         size="$3.5"
                         chromeless
                         onPress={handleResetFlow}
-                        accessibilityRole="button"
-                        accessibilityLabel="Try Another Document"
+                        role="button"
+                        aria-label="Try Another Document"
                         minHeight={44}
                       >
                         Try Another Document
@@ -1236,8 +1227,7 @@ export default function PatientImportScreen({
                       theme="yellow"
                       disabled={actionLoading}
                       onPress={handleRetry}
-                      accessibilityRole="button"
-                      accessibilityLabel="Retry document extraction"
+                      role="button"
                       aria-label="Retry document extraction"
                     >
                       {actionLoading ? 'Retrying...' : '🔄 Retry Extraction'}
@@ -1247,8 +1237,7 @@ export default function PatientImportScreen({
                         size="$2.5"
                         chromeless
                         onPress={() => router.push('/patient/onboarding')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Skip for now and continue onboarding"
+                        role="button"
                         aria-label="Skip for now and continue onboarding"
                         minHeight={44}
                       >
@@ -1265,8 +1254,7 @@ export default function PatientImportScreen({
                       size="$2.5"
                       chromeless
                       onPress={() => setShowCancelModal(true)}
-                      accessibilityRole="button"
-                      accessibilityLabel="Cancel this import"
+                      role="button"
                       aria-label="Cancel this import"
                     >
                       Cancel Import
@@ -1282,8 +1270,7 @@ export default function PatientImportScreen({
                         size="$2.5"
                         chromeless
                         onPress={() => router.push('/patient/onboarding')}
-                        accessibilityRole="button"
-                        accessibilityLabel="Skip for now and continue onboarding"
+                        role="button"
                         aria-label="Skip for now and continue onboarding"
                         minHeight={44}
                       >
@@ -1359,8 +1346,7 @@ export default function PatientImportScreen({
                     size="$2.5"
                     theme="blue"
                     onPress={handleOpenSource}
-                    accessibilityRole="button"
-                    accessibilityLabel="View original source document"
+                    role="button"
                     aria-label="View original source document"
                   >
                     📄 View Source
@@ -1559,7 +1545,6 @@ export default function PatientImportScreen({
                             placeholder="Type corrected value..."
                             size="$3"
                             autoFocus
-                            accessibilityLabel={`Correction input for ${item.label}`}
                             aria-label={`Correction input for ${item.label}`}
                           />
                           <XStack gap="$2" justifyContent="flex-end">
@@ -1603,8 +1588,7 @@ export default function PatientImportScreen({
                             onPress={() =>
                               handleDecision(item.review_item_id, 'accept')
                             }
-                            accessibilityRole="button"
-                            accessibilityLabel={`Accept ${item.label}: ${item.extracted_value}`}
+                            role="button"
                             aria-label={`Accept ${item.label}: ${item.extracted_value}`}
                             minHeight={44}
                           >
@@ -1624,8 +1608,7 @@ export default function PatientImportScreen({
                                 item.corrected_value || item.extracted_value
                               )
                             }}
-                            accessibilityRole="button"
-                            accessibilityLabel={`Correct ${item.label}`}
+                            role="button"
                             aria-label={`Correct ${item.label}`}
                             minHeight={44}
                           >
@@ -1642,8 +1625,7 @@ export default function PatientImportScreen({
                             onPress={() =>
                               handleDecision(item.review_item_id, 'reject')
                             }
-                            accessibilityRole="button"
-                            accessibilityLabel={`Exclude ${item.label}`}
+                            role="button"
                             aria-label={`Exclude ${item.label}`}
                             minHeight={44}
                           >
@@ -1682,8 +1664,8 @@ export default function PatientImportScreen({
                 disabled={!currentImport?.actions.can_save || actionLoading}
                 opacity={!currentImport?.actions.can_save || actionLoading ? 0.5 : 1}
                 onPress={handleSaveImport}
-                accessibilityRole="button"
-                accessibilityLabel="Save document to medical records"
+                role="button"
+                aria-label="Save document to medical records"
                 minHeight={48}
               >
                 {actionLoading ? (
@@ -1715,8 +1697,8 @@ export default function PatientImportScreen({
                   size="$2.5"
                   chromeless
                   onPress={() => setShowCancelModal(true)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Cancel this import"
+                  role="button"
+                  aria-label="Cancel this import"
                 >
                   Cancel this import
                 </Button>
@@ -1762,8 +1744,8 @@ export default function PatientImportScreen({
                       size="$4"
                       theme="blue"
                       onPress={() => router.push('/patient/onboarding')}
-                      accessibilityRole="button"
-                      accessibilityLabel="Continue onboarding"
+                      role="button"
+                      aria-label="Continue onboarding"
                       minHeight={48}
                     >
                       Continue onboarding →
@@ -1772,8 +1754,8 @@ export default function PatientImportScreen({
                       size="$3.5"
                       chromeless
                       onPress={handleResetFlow}
-                      accessibilityRole="button"
-                      accessibilityLabel="Add Another Document"
+                      role="button"
+                      aria-label="Add Another Document"
                       minHeight={44}
                     >
                       + Add Another Document
@@ -1782,8 +1764,8 @@ export default function PatientImportScreen({
                       size="$3"
                       chromeless
                       onPress={() => router.push('/patient/records')}
-                      accessibilityRole="button"
-                      accessibilityLabel="View in Medical Records"
+                      role="button"
+                      aria-label="View in Medical Records"
                       minHeight={44}
                     >
                       View in Medical Records
@@ -1795,8 +1777,8 @@ export default function PatientImportScreen({
                       size="$4"
                       theme="blue"
                       onPress={() => router.push('/patient/records')}
-                      accessibilityRole="button"
-                      accessibilityLabel="View in Medical Records"
+                      role="button"
+                      aria-label="View in Medical Records"
                       minHeight={48}
                     >
                       View in Medical Records
@@ -1805,8 +1787,8 @@ export default function PatientImportScreen({
                       size="$3.5"
                       chromeless
                       onPress={() => router.push('/patient/timeline')}
-                      accessibilityRole="button"
-                      accessibilityLabel="View Health Timeline"
+                      role="button"
+                      aria-label="View Health Timeline"
                     >
                       View Health Timeline
                     </Button>
@@ -1814,8 +1796,8 @@ export default function PatientImportScreen({
                       size="$3"
                       chromeless
                       onPress={handleResetFlow}
-                      accessibilityRole="button"
-                      accessibilityLabel="Import Another Document"
+                      role="button"
+                      aria-label="Import Another Document"
                     >
                       + Import Another Document
                     </Button>
@@ -1865,8 +1847,8 @@ export default function PatientImportScreen({
                 chromeless
                 disabled={actionLoading}
                 onPress={() => setShowCancelModal(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Do not cancel"
+                role="button"
+                aria-label="Do not cancel"
               >
                 Keep Import
               </Button>
@@ -1875,8 +1857,8 @@ export default function PatientImportScreen({
                 theme="red"
                 disabled={actionLoading}
                 onPress={handleConfirmCancel}
-                accessibilityRole="button"
-                accessibilityLabel="Confirm cancel import"
+                role="button"
+                aria-label="Confirm cancel import"
               >
                 {actionLoading ? 'Cancelling...' : 'Yes, Cancel Import'}
               </Button>
@@ -1911,7 +1893,7 @@ export default function PatientImportScreen({
             backgroundColor="$background"
             borderRadius="$5"
             role="dialog"
-            accessibilityLabel="Original source document viewer"
+            aria-label="Original source document viewer"
           >
             <XStack justifyContent="space-between" alignItems="center">
               <H4 color="$color" fontSize="$4" fontWeight="800">
@@ -1921,8 +1903,8 @@ export default function PatientImportScreen({
                 size="$2.5"
                 chromeless
                 onPress={handleCloseSource}
-                accessibilityRole="button"
-                accessibilityLabel="Close source document viewer"
+                role="button"
+                aria-label="Close source document viewer"
               >
                 ✕ Close
               </Button>

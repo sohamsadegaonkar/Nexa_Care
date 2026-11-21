@@ -2,31 +2,24 @@
  * DocumentPreview — renders an uploaded document page with bounding-box
  * overlays for AI-extracted fields.
  *
- * The preview renders a page image as a canvas background and draws
- * semi-transparent rectangles over each extracted field's source bounding
- * box. When a field is hovered or selected, its bbox highlight becomes
- * prominent.
+ * The preview loads the authorized original document on explicit request.
+ * For image sources it can also draw source bounding boxes over page one.
  *
  * Bounding box format (from backend ExtractedFieldRecord):
  *   source_bbox: [x, y, width, height] — normalized 0–1 coordinates
  *   source_page: 1-based page number
  *
- * ALPHA: This is an alpha implementation. PDF.js rasterisation is not yet
- * integrated. The preview currently renders a placeholder page surface
- * with bounding-box overlays. When S3 presigned URLs or a document
- * rendering service is available, the page image will be fetched and
- * displayed as the canvas background.
- *
  * SECURITY:
- * - No hardcoded URLs or IDs.
- * - Document URLs come from the API response via shared NexaApiClient.
- * - Uses only Tamagui components.
+ * - Source bytes are requested through the consent-gated, audited API.
+ * - Bearer capabilities are sent in the request header and never in URLs.
+ * - Temporary object URLs are revoked when the source changes or unmounts.
  */
 
 'use client'
 
-import { YStack, XStack, Text, Button, Card, ScrollView } from '@my/ui'
-import { useMemo } from 'react'
+import { YStack, XStack, Text, Button, Card, ScrollView, Paragraph, Spinner } from '@my/ui'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { ApiError, NexaApiClient } from '../../utils/apiClient'
 
 // ── Types ──────────────────────────────────────────────────────────────
 
@@ -40,6 +33,10 @@ export interface BBoxField {
 }
 
 export interface DocumentPreviewProps {
+  /** Opaque server job identifier for the authorized source-view request. */
+  jobId: string
+  /** Memory-only consent capability; sent only in the request header. */
+  consentToken: string
   /** Total number of pages in the document. */
   totalPages: number
   /** All extracted fields with bounding box data. */
@@ -166,6 +163,16 @@ function PageThumbnail({
       hoverStyle={{ backgroundColor: '$backgroundFocus' }}
       pressStyle={{ backgroundColor: '$backgroundPress' }}
       onPress={onPress}
+      role="button"
+      aria-label={`Show page ${pageNum}`}
+      aria-pressed={isActive}
+      tabIndex={0}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onPress()
+        }
+      }}
     >
       <YStack
         width={36}
@@ -199,6 +206,8 @@ function PageThumbnail({
 // ── DocumentPreview component ──────────────────────────────────────────
 
 export function DocumentPreview({
+  jobId,
+  consentToken,
   totalPages,
   fields,
   highlightedFieldId,
@@ -206,13 +215,94 @@ export function DocumentPreview({
   currentPage,
   onPageChange,
 }: DocumentPreviewProps) {
+  const [source, setSource] = useState<{
+    url: string
+    contentType: string
+    generation: number
+  } | null>(null)
+  const [sourceLoading, setSourceLoading] = useState(false)
+  const [sourceError, setSourceError] = useState<string | null>(null)
+  const sourceRequestRef = useRef(0)
+  const sourceContextRef = useRef({ jobId, consentToken, generation: 0 })
+
+  if (
+    sourceContextRef.current.jobId !== jobId ||
+    sourceContextRef.current.consentToken !== consentToken
+  ) {
+    sourceRequestRef.current += 1
+    sourceContextRef.current = {
+      jobId,
+      consentToken,
+      generation: sourceContextRef.current.generation + 1,
+    }
+  }
+  const sourceGeneration = sourceContextRef.current.generation
+  const visibleSource = source?.generation === sourceGeneration ? source : null
+
+  useEffect(() => {
+    const objectUrl = source?.url
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [source?.url])
+
+  useEffect(
+    () => () => {
+      sourceRequestRef.current += 1
+    },
+    []
+  )
+
+  useEffect(() => {
+    setSource(null)
+    setSourceError(null)
+    setSourceLoading(false)
+  }, [sourceGeneration])
+
+  const loadSource = async () => {
+    if (!jobId || !consentToken || sourceLoading) return
+    const requestId = ++sourceRequestRef.current
+    const generation = sourceGeneration
+    setSourceLoading(true)
+    setSourceError(null)
+    try {
+      const blob = await NexaApiClient.getExtractionJobDocument(jobId, consentToken)
+      if (
+        requestId !== sourceRequestRef.current ||
+        generation !== sourceContextRef.current.generation
+      ) return
+      setSource({
+        url: URL.createObjectURL(blob),
+        contentType: blob.type.toLowerCase(),
+        generation,
+      })
+    } catch (error) {
+      if (
+        requestId !== sourceRequestRef.current ||
+        generation !== sourceContextRef.current.generation
+      ) return
+      if (error instanceof ApiError && error.status === 403) {
+        setSourceError(
+          'Your current consent does not permit viewing this source. Request the required access before continuing.'
+        )
+      } else if (error instanceof ApiError && error.status === 404) {
+        setSourceError('The original source document is unavailable.')
+      } else {
+        setSourceError('The original source could not be loaded. Retry or return to the review queue.')
+      }
+    } finally {
+      if (
+        requestId === sourceRequestRef.current &&
+        generation === sourceContextRef.current.generation
+      ) setSourceLoading(false)
+    }
+  }
+
   // ── Fields on current page ─────────────────────────────────────────
   const pageFields = useMemo(
     () => fields.filter((f) => f.source_page === currentPage),
     [fields, currentPage]
   )
-
-  const pageHasNeedsReview = pageFields.some((f) => f.status === 'needs_review')
 
   // ── Page thumbnail data ────────────────────────────────────────────
   const pageThumbnails = useMemo(() => {
@@ -285,92 +375,148 @@ export function DocumentPreview({
         position="relative"
         minHeight={400}
       >
-        {/* SVG overlay for bounding boxes */}
-        <svg
-          viewBox="0 0 100 100"
-          preserveAspectRatio="none"
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: 'none',
-          }}
-        >
-          {/* Page content placeholder background */}
-          <rect
-            x="0"
-            y="0"
-            width="100"
-            height="100"
-            fill="#fafafa"
-          />
+        {!visibleSource && !sourceLoading && !sourceError && (
+          <YStack
+            flex={1}
+            minHeight={400}
+            justifyContent="center"
+            alignItems="center"
+            gap="$3"
+            padding="$4"
+          >
+            <Paragraph textAlign="center">
+              No document page is shown until the original source is loaded. Extracted field details remain available beside this panel.
+            </Paragraph>
+            <Button
+              theme="blue"
+              minHeight={48}
+              disabled={!jobId || !consentToken}
+              aria-disabled={!jobId || !consentToken}
+              onPress={() => void loadSource()}
+              aria-label="Load original source document"
+            >
+              Load original source
+            </Button>
+          </YStack>
+        )}
 
-          {/* Simulated document text lines for visual context */}
-          {Array.from({ length: 20 }, (_, i) => (
-            <rect
-              key={`line-${i}`}
-              x="8"
-              y={5 + i * 4.5}
-              width={i % 5 === 0 ? 84 : 76}
-              height="2"
-              rx="0.5"
-              fill="#e2e8f0"
+        {sourceLoading && (
+          <YStack
+            flex={1}
+            minHeight={400}
+            justifyContent="center"
+            alignItems="center"
+            gap="$3"
+          >
+            <Spinner size="large" />
+            <Paragraph>Checking access and loading the original source.</Paragraph>
+          </YStack>
+        )}
+
+        {sourceError && (
+          <YStack
+            flex={1}
+            minHeight={400}
+            justifyContent="center"
+            alignItems="center"
+            gap="$3"
+            padding="$4"
+            role="alert"
+          >
+            <Paragraph color="$red10" textAlign="center">{sourceError}</Paragraph>
+            <Button
+              onPress={() => void loadSource()}
+              disabled={sourceLoading || !jobId || !consentToken}
+              aria-disabled={sourceLoading || !jobId || !consentToken}
+              aria-label="Retry loading original source document"
+            >
+              Retry source view
+            </Button>
+          </YStack>
+        )}
+
+        {visibleSource?.contentType === 'application/pdf' && (
+          <>
+            <object
+              aria-label="Original source document"
+              data={visibleSource.url + '#page=' + currentPage}
+              type="application/pdf"
+              style={{ display: 'block', width: '100%', minHeight: 640, border: 0 }}
+            >
+              <Paragraph padding="$4">
+                This browser could not display the protected PDF. No external viewer was opened.
+              </Paragraph>
+            </object>
+            {pageFields.some((field) => field.source_bbox) && (
+              <Paragraph color="$color10" size="$2" padding="$3">
+                Bounding boxes are not overlaid on the browser PDF viewer. Use the field details and page controls to compare against the source.
+              </Paragraph>
+            )}
+          </>
+        )}
+
+        {visibleSource?.contentType.startsWith('image/') && currentPage === 1 && (
+          <div style={{ position: 'relative', width: '100%' }}>
+            <img
+              src={visibleSource.url}
+              alt="Original source document page"
+              style={{ display: 'block', width: '100%', height: 'auto' }}
             />
-          ))}
+            <svg
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              aria-label="Source field locations"
+              style={{
+                position: 'absolute',
+                inset: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: 'none',
+              }}
+            >
+              <g style={{ pointerEvents: 'auto' }}>
+                {pageFields.map((field) => (
+                  <BBoxOverlay
+                    key={field.field_id}
+                    field={field}
+                    isHighlighted={highlightedFieldId === field.field_id}
+                    onClick={() => onFieldClick?.(field.field_id)}
+                  />
+                ))}
+              </g>
+            </svg>
+          </div>
+        )}
 
-          {/* Field bounding box overlays — these ARE interactive */}
-          <g style={{ pointerEvents: 'auto' }}>
-            {pageFields.map((field) => (
-              <BBoxOverlay
-                key={field.field_id}
-                field={field}
-                isHighlighted={highlightedFieldId === field.field_id}
-                onClick={() => onFieldClick?.(field.field_id)}
-              />
-            ))}
-          </g>
-        </svg>
-
-        {/* Page label overlay */}
-        <YStack
-          position="absolute"
-          bottom="$2"
-          right="$2"
-          backgroundColor="$background"
-          borderRadius="$3"
-          paddingHorizontal="$2"
-          paddingVertical="$1"
-          borderWidth={1}
-          borderColor="$borderColor"
-        >
-          <Text
-            color="$color10"
-            fontSize="$2"
+        {visibleSource?.contentType.startsWith('image/') && currentPage > 1 && (
+          <YStack
+            flex={1}
+            minHeight={400}
+            justifyContent="center"
+            alignItems="center"
+            padding="$4"
           >
-            Page {currentPage} of {totalPages}
-          </Text>
-        </YStack>
+            <Paragraph textAlign="center">
+              This source image contains one page. The original image for page {currentPage} is not available.
+            </Paragraph>
+          </YStack>
+        )}
 
-        {/* Field count badge */}
-        <YStack
-          position="absolute"
-          top="$2"
-          right="$2"
-          backgroundColor={pageHasNeedsReview ? '$orange4' : '$green4'}
-          borderRadius="$3"
-          paddingHorizontal="$2"
-          paddingVertical="$1"
-        >
-          <Text
-            color={pageHasNeedsReview ? '$orange10' : '$green10'}
-            fontSize="$2"
-            fontWeight="600"
-          >
-            {pageFields.length} field{pageFields.length !== 1 ? 's' : ''} on this page
-          </Text>
-        </YStack>
+        {visibleSource &&
+          visibleSource.contentType !== 'application/pdf' &&
+          !visibleSource.contentType.startsWith('image/') && (
+            <YStack
+              flex={1}
+              minHeight={400}
+              justifyContent="center"
+              alignItems="center"
+              padding="$4"
+            >
+              <Paragraph textAlign="center">
+                This source format cannot be displayed in the browser. No document was sent to an external viewer.
+              </Paragraph>
+            </YStack>
+          )}
       </YStack>
 
       {/* ── Legend ───────────────────────────────────────────────────── */}

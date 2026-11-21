@@ -183,7 +183,7 @@ export default function PatientRecordDetailModal({
             circular
             chromeless
             onPress={() => onOpenChange(false)}
-            accessibilityLabel="Close record details"
+            aria-label="Close record details"
           >
             ✕
           </Button>

@@ -1,19 +1,16 @@
 /**
- * Review cockpit screen — side-by-side document preview + field cards.
+ * Review cockpit screen — side-by-side source document and field cards.
  *
  * Layout:
- *   Left:  DocumentPreview — SVG page canvas with bounding-box overlays
- *          for AI-extracted fields. When a field card is hovered or
+ *   Left:  DocumentPreview — authorized original source with bounding-box
+ *          overlays for image sources. When a field card is hovered or
  *          selected, its source bounding box highlights on the preview.
  *          Clicking a bbox region scrolls the field card list to that field.
  *   Right: Scrollable list of FieldCard components for human adjudication.
  *
- * ALPHA: This is an alpha implementation. The document preview renders
- * bounding-box overlays on a placeholder page surface. When S3 presigned
- * URLs or a document rendering service is available, the placeholder will
- * be replaced with the actual page image. Source bounding boxes use the
- * normalized [x, y, width, height] coordinates from the backend
- * ExtractedFieldRecord.source_bbox field.
+ * Source bounding boxes use normalized [x, y, width, height] coordinates
+ * from ExtractedFieldRecord.source_bbox. PDFs use the browser viewer and
+ * display page navigation without claiming an overlay.
  *
  * SECURITY:
  * - All requests go through the shared NexaApiClient — no raw fetch/axios.
@@ -22,7 +19,7 @@
  * - Session guard: must be authenticated.
  * - Frontend field status tracking is UX-only — backend validates on commit.
  *
- * Route: /doctor/pipeline/review/[jobId]?workflow_id=...&patient_id=...
+ * Route: /doctor/pipeline/review/[jobId]?workflow_id=...
  */
 
 'use client'
@@ -60,7 +57,6 @@ export function ReviewCockpitScreen() {
 
   // jobId comes from the [jobId] route param (camelCase); snake_case only in API payloads
   const jobId = (routeParams.jobId as string) ?? ''
-  const patientId = searchParams.get('patient_id') ?? ''
   const workflowId = searchParams.get('workflow_id')
   const capability = useCapability(workflowId)
   const consentToken = capability?.token ?? ''
@@ -364,7 +360,7 @@ export function ReviewCockpitScreen() {
             color="$color10"
             fontSize="$2"
           >
-            Patient: {patientId}
+            Patient: {job?.patient_id ?? 'unavailable'}
           </Text>
           <Text
             color="$color10"
@@ -471,6 +467,8 @@ export function ReviewCockpitScreen() {
           </Text>
 
           <DocumentPreview
+            jobId={jobId}
+            consentToken={consentToken}
             totalPages={totalPages}
             fields={bboxFields}
             highlightedFieldId={highlightedFieldId}
@@ -654,7 +652,7 @@ export function ReviewCockpitScreen() {
               size="$3"
               onPress={() =>
                 router.push(
-                  `/doctor/pipeline/commit/${jobId}?patient_id=${patientId}&workflow_id=${workflowId}`
+                  `/doctor/pipeline/commit/${encodeURIComponent(jobId)}${workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}` : ''}`
                 )
               }
             >

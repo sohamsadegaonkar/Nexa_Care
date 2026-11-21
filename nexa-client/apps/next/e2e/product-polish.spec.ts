@@ -4,25 +4,24 @@ test.beforeEach(async ({ page }) => {
   // The verification build pins its production browser origin to this reserved
   // domain. Serve its assets from loopback without weakening the origin guard or
   // contacting a live API. API requests are intercepted separately below.
-  const assetOrigin = process.env.NEXA_UI_ASSET_ORIGIN
-  if (assetOrigin) {
-    const target = new URL(assetOrigin)
-    if (target.hostname !== '127.0.0.1' || target.protocol !== 'http:') {
-      throw new Error('UI asset origin must be loopback HTTP')
-    }
-    await page.route('https://doctor.example.test/**', async (route) => {
-      const original = new URL(route.request().url())
-      const response = await route.fetch({
-        url: `${target.origin}${original.pathname}${original.search}`,
-      })
-      await route.fulfill({ response })
-    })
+  const assetOrigin = process.env.NEXA_UI_ASSET_ORIGIN || 'http://127.0.0.1:3100'
+  const target = new URL(assetOrigin)
+  if (target.hostname !== '127.0.0.1' || target.protocol !== 'http:') {
+    throw new Error('UI asset origin must be loopback HTTP')
   }
+  await page.route('https://doctor.example.test/**', async (route) => {
+    const original = new URL(route.request().url())
+    const response = await route.fetch({
+      url: `${target.origin}${original.pathname}${original.search}`,
+    })
+    await route.fulfill({ response })
+  })
 })
 
 async function stubSession(page: Page, authenticated: boolean) {
   await page.route('**/api/**', async (route) => {
-    if (route.request().url().endsWith('/auth/web/session')) {
+    const requestUrl = route.request().url()
+    if (requestUrl.endsWith('/auth/web/session')) {
       await route.fulfill({
         status: authenticated ? 200 : 401,
         contentType: 'application/json',
@@ -40,6 +39,8 @@ async function stubSession(page: Page, authenticated: boolean) {
             : {}
         ),
       })
+    } else if (requestUrl.endsWith('/auth/otp/send')) {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: '{}' })
     } else {
       await route.fulfill({ status: 401, contentType: 'application/json', body: '{}' })
     }
@@ -104,10 +105,15 @@ for (const width of [360, 768, 1440]) {
   })
 }
 
-test('patient web entry explains the supported mobile path', async ({ page }) => {
+test('patient entry collects a phone number and advances to code verification', async ({ page }) => {
   await stubSession(page, false)
   await page.goto('/')
   await page.getByRole('button', { name: 'Continue as Patient' }).click()
-  await expect(page.getByRole('heading', { name: 'Your patient account' })).toBeVisible()
-  await expect(page.getByText(/Continue in the Nexa Care mobile app/)).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Your Health, Your Control' })).toBeVisible()
+  await page.getByLabel('Mobile Number').fill('9876543210')
+  const sendCode = page.getByRole('button', { name: 'Send Verification Code' })
+  await expect(sendCode).toBeEnabled()
+  await sendCode.click()
+  await expect(page.getByRole('heading', { name: 'Enter Verification Code' })).toBeVisible()
+  await expect(page.getByLabel('6-Digit Verification Code')).toBeVisible()
 })

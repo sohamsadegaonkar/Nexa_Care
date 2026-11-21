@@ -46,6 +46,34 @@ describe('shared API transport', () => {
     expect(init.headers.Authorization).toBeUndefined()
   })
 
+  it('loads extraction source bytes with consent in a header and no patient data in the URL', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('source bytes', {
+        status: 200,
+        headers: { 'Content-Type': 'application/pdf' },
+      })
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { NexaApiClient, setAuthTokenProvider } = await loadClient()
+    setAuthTokenProvider(() => 'synthetic-provider-session')
+
+    const source = await NexaApiClient.getExtractionJobDocument(
+      'job/with space',
+      'synthetic-consent-capability'
+    )
+
+    const [url, init] = requiredMockCall(fetchMock.mock.calls)
+    expect(url).toBe(
+      'https://native.example.test/api/v2/pipeline/jobs/job%2Fwith%20space/document'
+    )
+    expect(url).not.toContain('patient_id')
+    expect(init.method).toBe('GET')
+    expect(init.headers.Authorization).toBe('Bearer synthetic-provider-session')
+    expect(init.headers['X-Consent-Token']).toBe('synthetic-consent-capability')
+    expect(init.headers.Accept).toBe('application/pdf,image/*,*/*')
+    expect(await source.text()).toBe('source bytes')
+  })
+
   it('keeps the Next.js URL separate even when a mobile variable also exists', async () => {
     vi.resetModules()
     vi.stubGlobal('navigator', { product: 'Gecko' })

@@ -110,7 +110,7 @@ export default function PatientPrescriptionsScreen() {
             placeholder="Search prescriptions or medications…"
             value={searchQuery}
             onChangeText={setSearchQuery}
-            accessibilityLabel="Search prescriptions or medications"
+            aria-label="Search prescriptions or medications"
             backgroundColor="$backgroundHover"
           />
           {searchQuery.length > 0 ? (
@@ -118,8 +118,8 @@ export default function PatientPrescriptionsScreen() {
               size="$3"
               chromeless
               onPress={() => setSearchQuery('')}
-              accessibilityRole="button"
-              accessibilityLabel="Clear prescription search"
+              role="button"
+              aria-label="Clear prescription search"
             >
               Clear
             </Button>
@@ -134,9 +134,9 @@ export default function PatientPrescriptionsScreen() {
             backgroundColor={sourceFilter === 'all' ? '$blue9' : '$backgroundHover'}
             borderRadius="$3"
             onPress={() => setSourceFilter('all')}
-            accessibilityRole="button"
-            accessibilityLabel="Show all medications and prescriptions"
-            accessibilityState={{ selected: sourceFilter === 'all' }}
+            role="button"
+            aria-label="Show all medications and prescriptions"
+            aria-pressed={sourceFilter === 'all'}
           >
             <Text
               color={sourceFilter === 'all' ? 'white' : '$color'}
@@ -152,9 +152,9 @@ export default function PatientPrescriptionsScreen() {
             backgroundColor={sourceFilter === 'clinic' ? '$blue9' : '$backgroundHover'}
             borderRadius="$3"
             onPress={() => setSourceFilter('clinic')}
-            accessibilityRole="button"
-            accessibilityLabel="Show clinician prescribed treatments"
-            accessibilityState={{ selected: sourceFilter === 'clinic' }}
+            role="button"
+            aria-label="Show clinician prescribed treatments"
+            aria-pressed={sourceFilter === 'clinic'}
           >
             <Text
               color={sourceFilter === 'clinic' ? 'white' : '$color'}
@@ -170,9 +170,9 @@ export default function PatientPrescriptionsScreen() {
             backgroundColor={sourceFilter === 'external' ? '$blue9' : '$backgroundHover'}
             borderRadius="$3"
             onPress={() => setSourceFilter('external')}
-            accessibilityRole="button"
-            accessibilityLabel="Show patient uploaded prescriptions"
-            accessibilityState={{ selected: sourceFilter === 'external' }}
+            role="button"
+            aria-label="Show patient uploaded prescriptions"
+            aria-pressed={sourceFilter === 'external'}
           >
             <Text
               color={sourceFilter === 'external' ? 'white' : '$color'}
@@ -210,7 +210,7 @@ export default function PatientPrescriptionsScreen() {
             padding="$3"
             borderRadius="$3"
             gap="$2"
-            accessibilityRole="alert"
+            role="alert"
           >
             <XStack justifyContent="space-between" alignItems="center">
               <Text color="$red11" fontSize="$3" fontWeight="600">
@@ -220,8 +220,8 @@ export default function PatientPrescriptionsScreen() {
                 size="$2"
                 theme="red"
                 onPress={() => void loadPrescriptions(null, false)}
-                accessibilityRole="button"
-                accessibilityLabel="Retry loading prescriptions"
+                role="button"
+                aria-label="Retry loading prescriptions"
               >
                 Retry
               </Button>
@@ -276,8 +276,8 @@ export default function PatientPrescriptionsScreen() {
                 setSearchQuery('')
                 setSourceFilter('all')
               }}
-              accessibilityRole="button"
-              accessibilityLabel="Reset prescription filters"
+              role="button"
+              aria-label="Reset prescription filters"
             >
               Reset Filters
             </Button>
@@ -292,8 +292,8 @@ export default function PatientPrescriptionsScreen() {
               gap="$2.5"
               pressStyle={{ opacity: 0.85 }}
               onPress={() => setSelectedPrescription(item)}
-              accessibilityRole="button"
-              accessibilityLabel={`View details for ${item.medication_name}`}
+              role="button"
+              aria-label={`View details for ${item.medication_name}`}
             >
               <XStack justifyContent="space-between" alignItems="flex-start">
                 <YStack flex={1} gap="$1">
@@ -352,8 +352,8 @@ export default function PatientPrescriptionsScreen() {
               theme="blue"
               disabled={loadingOlder}
               onPress={() => void loadPrescriptions(nextCursor, true)}
-              accessibilityRole="button"
-              accessibilityLabel="Load older prescriptions"
+              role="button"
+              aria-label="Load older prescriptions"
             >
               {loadingOlder ? (
                 <XStack gap="$2" alignItems="center">
@@ -387,8 +387,8 @@ export default function PatientPrescriptionsScreen() {
           chromeless
           size="$3"
           onPress={() => router.push('/patient/records')}
-          accessibilityRole="button"
-          accessibilityLabel="Return to all categorized records"
+          role="button"
+          aria-label="Return to all categorized records"
         >
           ← All Categorized Records
         </Button>

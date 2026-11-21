@@ -23,7 +23,7 @@ export const ScreenContainer = styled(YStack, {
   alignSelf: 'center',
   padding: '$4',
   gap: '$5',
-  $md: { padding: '$6' },
+  $md: { padding: '$6', gap: '$6' },
 })
 
 export const Surface = styled(YStack, {
@@ -31,7 +31,7 @@ export const Surface = styled(YStack, {
   backgroundColor: '$nexaSurface',
   borderColor: '$nexaBorder',
   borderWidth: 1,
-  borderRadius: 16,
+  borderRadius: 14,
   padding: '$4',
   gap: '$3',
 })
@@ -280,17 +280,17 @@ export function ScreenHeader({
         {eyebrow && (
           <Text
             color="$nexaAccent"
-            fontSize={13}
+            fontSize={12}
             fontWeight="700"
-            letterSpacing={1}
+            letterSpacing={0.5}
           >
             {eyebrow}
           </Text>
         )}
         <H1
           color="$nexaText"
-          fontSize={30}
-          lineHeight={38}
+          fontSize={32}
+          lineHeight={40}
           letterSpacing={-0.8}
           fontWeight="700"
         >
