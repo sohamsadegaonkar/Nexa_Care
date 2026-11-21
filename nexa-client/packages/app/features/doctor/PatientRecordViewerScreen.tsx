@@ -45,6 +45,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { ApiError, NexaApiClient, type EmergencySummaryResponse } from '../../utils/apiClient'
 import { useProviderAuth } from './ProviderAuthContext'
+import { ProviderDocumentInventory } from './ProviderDocumentInventory'
 
 // ── Data types ──────────────────────────────────────────────────────────────
 
@@ -125,7 +126,7 @@ type ViewerState = 'loading' | 'active' | 'expired' | 'error'
 // ── Scope → Tab mapping ─────────────────────────────────────────────────────
 
 const SCOPE_TO_TABS: Record<string, string[]> = {
-  clinical: ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'timeline'],
+  clinical: ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'documents', 'timeline'],
   full: [
     'summary',
     'vitals',
@@ -325,6 +326,7 @@ export function PatientRecordViewerScreen() {
 
   const [summary, setSummary] = useState<PatientSummary | null>(null)
   const [timeline, setTimeline] = useState<TimelineEntry[]>([])
+  const [timelineUnavailable, setTimelineUnavailable] = useState(false)
   const consentValidation: ConsentValidation | null = useMemo(
     () =>
       accessGrant
@@ -348,6 +350,10 @@ export function PatientRecordViewerScreen() {
   // ── Compute available tabs from consent scope ─────────────────────────
 
   const availableTabs = useMemo(() => {
+    // Emergency authority never permits the routine document inventory.
+    if (isBreakGlassGrant(accessGrant?.purpose)) {
+      return ['summary', 'vitals', 'prescriptions', 'labs', 'allergies', 'access']
+    }
     if (!consentValidation?.scope || consentValidation.scope.length === 0) {
       return ALL_TABS
     }
@@ -361,7 +367,7 @@ export function PatientRecordViewerScreen() {
     allowedTabKeys.add('access')
     if (allowedTabKeys.size <= 1) return ALL_TABS
     return ALL_TABS.filter((t) => allowedTabKeys.has(t))
-  }, [consentValidation?.scope])
+  }, [consentValidation?.scope, accessGrant?.purpose])
 
   // ── Fetch patient record ──────────────────────────────────────────────
 
@@ -383,6 +389,7 @@ export function PatientRecordViewerScreen() {
         const data = await NexaApiClient.getEmergencySummary(patientId, accessGrant.consentToken)
         setSummary(mapEmergencySummary(data))
         setTimeline([]) // Emergency summary has no timeline; the routine timeline endpoint rejects break-glass tokens.
+        setTimelineUnavailable(false)
         setViewerState('active')
         return
       }
@@ -409,12 +416,15 @@ export function PatientRecordViewerScreen() {
       }
       setSummary(mapped)
 
-      // Fetch timeline only if scope allows
+      // Current Signed Consent V3 read grants use "clinical" or "full".
+      // Legacy UI category names alone must not suppress an authorized timeline.
       const scopeAllowsTimeline =
-        !consentValidation?.scope ||
-        consentValidation.scope.includes('clinical_record') ||
-        consentValidation.scope.includes('timeline_view')
+        consentValidation?.scope?.some((scope) =>
+          ['clinical', 'full', 'clinical_record', 'timeline_view'].includes(scope)
+        ) ?? false
 
+      setTimeline([])
+      setTimelineUnavailable(false)
       if (scopeAllowsTimeline) {
         try {
           const tlData = (await NexaApiClient.getPatientTimeline(
@@ -423,8 +433,17 @@ export function PatientRecordViewerScreen() {
             hospitalId
           )) as any
           setTimeline(tlData?.events ?? [])
-        } catch {
-          /* non-fatal */
+        } catch (timelineError) {
+          // A revoked or invalid capability is terminal even if the summary
+          // was fetched just before it. Never keep showing previously read PHI.
+          if (
+            timelineError instanceof ApiError &&
+            (timelineError.status === 401 || timelineError.status === 403)
+          ) {
+            throw timelineError
+          }
+          // A transient timeline failure is not evidence of an empty history.
+          setTimelineUnavailable(true)
         }
       }
 
@@ -684,10 +703,9 @@ export function PatientRecordViewerScreen() {
     []
 
   const allergiesInScope =
-    !consentValidation?.scope ||
-    consentValidation.scope.includes('allergies') ||
-    consentValidation.scope.includes('clinical_record') ||
-    consentValidation.scope.includes('patient_summary')
+    consentValidation?.scope?.some((scope) =>
+      ['clinical', 'full', 'allergies', 'clinical_record', 'patient_summary'].includes(scope)
+    ) ?? false
 
   // ── Tab definitions ───────────────────────────────────────────────────
 
@@ -1230,7 +1248,7 @@ export function PatientRecordViewerScreen() {
               </Text>
             </Card>
             {allergies.length === 0 ? (
-              <Paragraph color="$color11">No known allergies.</Paragraph>
+              <Paragraph color="$color11">No allergy information recorded in available Nexa Care records.</Paragraph>
             ) : (
               <XStack
                 flexWrap="wrap"
@@ -1277,116 +1295,22 @@ export function PatientRecordViewerScreen() {
                 </Paragraph>
               </YStack>
 
-              {availableTabs.includes('documents') ? (
-                <Button
-                  theme="blue"
-                  size="$3"
-                  onPress={() => router.push('/doctor/pipeline/upload')}
-                >
-                  + Add External Record
-                </Button>
-              ) : null}
             </XStack>
+            <Paragraph color="$color11" fontSize={13}>
+              This viewer lists authorized document references only. Opening original
+              files requires separately approved document-read authority.
+            </Paragraph>
 
-            {/* If document operations are not authorized under current scope */}
-            {!availableTabs.includes('documents') ? (
-              <Card
-                padding="$4"
-                gap="$3"
-                borderRadius="$3"
-                backgroundColor="$color2"
-                borderWidth={1}
-                borderColor="$color5"
-              >
-                <XStack alignItems="center" gap="$2.5">
-                  <AlertTriangle size={18} color="$orange10" />
-                  <Text color="$color12" fontWeight="700" fontSize={14}>
-                    Additional patient permission is required to add this record.
-                  </Text>
-                </XStack>
-                <Paragraph color="$color11" fontSize={13}>
-                  Your current session does not include external document processing. Request updated patient access to add external records.
-                </Paragraph>
-                <XStack>
-                  <Button
-                    theme="blue"
-                    size="$3"
-                    onPress={() => router.push('/doctor/request-consent?intent=document_upload')}
-                  >
-                    Request Patient Access
-                  </Button>
-                </XStack>
-              </Card>
-            ) : null}
-
-            {/* Document Categories */}
-            <YStack gap="$2.5">
-              <Text color="$color12" fontSize={14} fontWeight="700">
-                Categories
-              </Text>
-              <XStack gap="$2" flexWrap="wrap">
-                {[
-                  'Lab reports',
-                  'Prescriptions',
-                  'Discharge summaries',
-                  'Imaging / radiology',
-                  'Other records',
-                ].map((category) => (
-                  <Card
-                    key={category}
-                    backgroundColor="$color2"
-                    borderRadius="$3"
-                    paddingVertical="$2"
-                    paddingHorizontal="$3"
-                    borderWidth={1}
-                    borderColor="$color4"
-                  >
-                    <Text color="$color12" fontSize={13} fontWeight="600">
-                      {category}
-                    </Text>
-                  </Card>
-                ))}
-              </XStack>
-            </YStack>
-
-            {/* Recent External Records List */}
-            <YStack gap="$2.5">
-              <Text color="$color12" fontSize={14} fontWeight="700">
-                Recent Documents
-              </Text>
-              <Card
-                backgroundColor="$color2"
-                borderRadius="$3"
-                padding="$4"
-                borderWidth={1}
-                borderColor="$color4"
-                gap="$2"
-              >
-                <XStack justifyContent="space-between" alignItems="center" flexWrap="wrap" gap="$2">
-                  <XStack alignItems="center" gap="$2.5">
-                    <FileText size={18} color="$blue10" />
-                    <YStack gap="$0.5">
-                      <Text color="$color12" fontWeight="700" fontSize={14}>
-                        External Health Summary & Diagnostic Report
-                      </Text>
-                      <Text color="$color11" fontSize={12}>
-                        Source: Clinician Uploaded · Clinician verified
-                      </Text>
-                    </YStack>
-                  </XStack>
-                  <Card
-                    backgroundColor="$green2"
-                    paddingVertical="$1"
-                    paddingHorizontal="$2"
-                    borderRadius="$2"
-                  >
-                    <Text color="$green10" fontSize={12} fontWeight="700">
-                      Verified
-                    </Text>
-                  </Card>
-                </XStack>
-              </Card>
-            </YStack>
+            <ProviderDocumentInventory
+              patientId={patientId}
+              consentToken={accessGrant?.consentToken ?? ''}
+              hospitalId={hospitalId}
+              onAuthorizationFailure={() => {
+                clearAccessGrant()
+                setError('Consent is no longer valid. Request or reclaim access again.')
+                setViewerState('error')
+              }}
+            />
           </YStack>
         )}
 
@@ -1398,8 +1322,13 @@ export function PatientRecordViewerScreen() {
             >
               Clinical Timeline
             </Paragraph>
-            {timeline.length === 0 ? (
-              <Paragraph color="$color11">No timeline events available.</Paragraph>
+            {timelineUnavailable ? (
+              <Paragraph color="$orange10">
+                Clinical timeline could not be loaded. Retry secure validation before
+                interpreting this as an empty history.
+              </Paragraph>
+            ) : timeline.length === 0 ? (
+              <Paragraph color="$color11">No timeline events recorded in the available history.</Paragraph>
             ) : (
               timeline.map((t) => (
                 <YStack

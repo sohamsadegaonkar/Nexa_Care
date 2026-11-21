@@ -868,6 +868,36 @@ describe('PatientLongitudinalRecords UX Suite', () => {
       expect(screen.queryByText(/provider_id/i)).toBeNull()
     })
 
+    it('does not treat an attached external source as clinician verified', async () => {
+      vi.spyOn(NexaApiClient, 'getMyRecordDetail').mockResolvedValue({
+        record_id: 'external-doc-1',
+        patient_id: 'pat-1',
+        category: 'documents',
+        title: 'External laboratory report',
+        fields: { document_type: 'lab_report' },
+        recorded_at: '2026-09-18T10:00:00Z',
+        provenance: {
+          source: 'patient_uploaded',
+          source_display: 'Imported by you from an external report',
+          has_source_document: true,
+        },
+      })
+
+      renderWithTamagui(
+        <PatientRecordDetailModal
+          open={true}
+          onOpenChange={vi.fn()}
+          category="documents"
+          recordId="external-doc-1"
+        />
+      )
+
+      expect(await screen.findByText(
+        'Source document referenced in this record; clinical verification is not implied.'
+      )).toBeTruthy()
+      expect(screen.queryByText('Verified clinical document on file.')).toBeNull()
+    })
+
     it('dismisses on Escape key press on web', async () => {
       const onOpenChange = vi.fn()
       vi.spyOn(NexaApiClient, 'getMyRecordDetail').mockResolvedValue({
