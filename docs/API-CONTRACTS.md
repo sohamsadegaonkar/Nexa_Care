@@ -636,7 +636,7 @@ canonical:
   search-index match, Redis capability alone, or durable session row alone does
   not independently authorize routine clinical access.
 - The current single database migration head is
-  `20260919_medication_catalog`.
+  `20261120_document_access`.
 
 ### Registration recovery manual review (Slice 9A)
 
@@ -716,3 +716,18 @@ This contract does not claim:
 - live official ABDM/NHA HPR/HFR qualification;
 - generic production deployment certification;
 - that Nexa Care is "fully secure".
+
+## P1B single-document decision, development branch
+
+All paths below start with `/api/v2/original-access/v1`. Responses are private and non-cacheable. The patient and document identifiers do not appear in these URLs.
+
+| Method and path | Principal | Request and result |
+| --- | --- | --- |
+| POST /request | Current clinician, initiating hospital/session and signed V3 history | Body `document_id`. Returns request ID, state, absolute expiry. Repeat pending requests return the same request. |
+| GET /mine | Current patient session | Own requests and signed context, actual provider and facility names, category and upload date. Active requests appear first. |
+| POST /decision | Current patient and enrolled P-256 key | Request ID, key ID, decision and base64 DER ECDSA signature. The server reconstructs canonical signed fields and consumes the pending decision once. |
+| POST /status | Same clinician, session, facility and live history | Request ID. Returns current state and expiry. A terminal response closes the viewer. |
+| POST /open | Same clinician, session, facility, live history and exact signed original decision | Request ID. One opening returns authenticated PDF, PNG or JPEG bytes after source and audit checks. |
+| POST /revoke | Current patient | Request ID. Revokes pending, approved or opened access, with idempotent terminal readback. |
+
+The clinician supplies the existing session transport and CSRF protections, `X-Hospital-Id`, `X-Patient-Id` and `X-Consent-Token`. Only a validated V3 routine grant can initiate this additional request. The time window is at most five minutes from request creation and ends by the parent grant expiry. Request IDs are locators. See [the signed contract and rehearsal](governance/P1B_ORIGINAL_DOCUMENT_ACCESS.md).

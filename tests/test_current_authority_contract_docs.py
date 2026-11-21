@@ -87,7 +87,7 @@ def test_pilot_operations_migration_head_matches_runtime_migration_tool() -> Non
     assert match is not None
     expected_head = match.group(1)
 
-    assert expected_head == "20260919_medication_catalog"
+    assert expected_head == "20261120_document_access"
     assert f"`{expected_head}`" in runbook
     assert f"`{expected_head}`" in _read("docs/API-CONTRACTS.md")
     assert "`20260906_verification_scheduler`" not in runbook
@@ -139,7 +139,7 @@ def test_current_state_preserves_live_external_and_manual_boundaries() -> None:
     assert "Slice 10A" in current
     assert "MERGED / QUALIFIED" in current
     assert "Slice 10B / 10B.5" in current
-    assert "20260919_medication_catalog" in current
+    assert "20261120_document_access" in current
     assert "CREATE_ENCOUNTER" in current
     assert "WRITE_VITALS" in current
     assert "WRITE_PRESCRIPTION PERSISTENCE BLOCKED" in current

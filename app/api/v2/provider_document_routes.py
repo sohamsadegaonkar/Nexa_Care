@@ -127,7 +127,9 @@ async def list_provider_patient_documents(
     """
     response.headers["Cache-Control"] = "private, no-store"
     try:
-        patient_uuid = uuid.UUID(patient_id)
+        patient_uuid = uuid.UUID(str(capability.patient_id))
+        if patient_uuid != uuid.UUID(patient_id):
+            raise HTTPException(403, detail={"error_code": "PATIENT_BINDING_MISMATCH"})
     except (TypeError, ValueError) as exc:
         raise HTTPException(
             422, detail={"error_code": "INVALID_PATIENT_REFERENCE"}

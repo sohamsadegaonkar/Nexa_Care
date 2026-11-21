@@ -1,5 +1,6 @@
 /**
- * Review cockpit screen — side-by-side source document and field cards.
+ * Review cockpit screen — ALPHA clinical-review workflow; not verified medical truth.
+ * Shows source document beside field cards for human adjudication.
  *
  * Layout:
  *   Left:  DocumentPreview — authorized original source with bounding-box

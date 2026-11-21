@@ -48,7 +48,8 @@ def render_plan(spec: dict[str, Any]) -> dict[str, Any]:
         "synthetic_only", "identity_id", "identity_client_id", "environment_id",
         "location", "image", "storage_account", "storage_container", "secret_uris",
     }
-    if set(spec) != expected or spec.get("synthetic_only") is not True:
+    full_services = set(spec) == expected | {"azure_services"}
+    if (set(spec) != expected and not full_services) or spec.get("synthetic_only") is not True:
         _fail("SYNTHETIC_DEMO_PLAN_REQUIRED")
     identity = re.fullmatch(_IDENTITY, str(spec["identity_id"]), flags=re.IGNORECASE)
     environment = re.fullmatch(_ENVIRONMENT, str(spec["environment_id"]), flags=re.IGNORECASE)
@@ -108,6 +109,53 @@ def render_plan(spec: dict[str, Any]) -> dict[str, Any]:
         "PATIENT_SOURCE_CLAMD_HOST": "127.0.0.1",
         "PATIENT_SOURCE_CLAMD_PORT": "3310",
     }
+    extra_containers = []
+    if full_services:
+        services = spec["azure_services"]
+        if not isinstance(services, dict) or set(services) != {
+            "dek_key_id", "document_ai_endpoint", "clamd_image"
+        }:
+            _fail("EXACT_AZURE_SERVICE_REFERENCES_REQUIRED")
+        vault = next(iter(vaults))
+        key_id = str(services["dek_key_id"])
+        if not re.fullmatch(
+            rf"https://{re.escape(vault)}\.vault\.azure\.net/keys/nexa-demo-dek/[0-9a-f]{{32}}",
+            key_id,
+        ) or len(key_id) > 128:
+            _fail("VERSION_PINNED_AZURE_DEK_KEY_REQUIRED")
+        endpoint = str(services["document_ai_endpoint"])
+        if not re.fullmatch(r"https://nexa-demo-[a-z0-9-]+\.cognitiveservices\.azure\.com", endpoint):
+            _fail("DEDICATED_DOCUMENT_INTELLIGENCE_ENDPOINT_REQUIRED")
+        scanner = str(services["clamd_image"])
+        registry = image.split("/", 1)[0]
+        if not re.fullmatch(rf"{re.escape(registry)}/nexa-care-clamd@sha256:[0-9a-f]{{64}}", scanner):
+            _fail("DEDICATED_DIGEST_PINNED_SCANNER_REQUIRED")
+        fixed.update({
+            "ENCRYPTION_BACKEND": "azure_key_vault",
+            "AZURE_KMS_SYNTHETIC_ONLY": "YES",
+            "AZURE_DEK_KEY_ID": key_id,
+            "AZURE_KMS_MANAGED_IDENTITY_CLIENT_ID": spec["identity_client_id"],
+            "DOCUMENT_EXTRACTION_PROVIDER": "azure_document_intelligence",
+            "AZURE_DOCUMENT_AI_SYNTHETIC_ONLY": "YES",
+            "AZURE_DOCUMENT_AI_ENDPOINT": endpoint,
+            "AZURE_DOCUMENT_AI_MANAGED_IDENTITY_CLIENT_ID": spec["identity_client_id"],
+            "DOCUMENT_AI_TIMEOUT_SECONDS": "60",
+            "DOCUMENT_AI_PROVIDER_MAX_ATTEMPTS": "1",
+            "DOCUMENT_AI_JOB_MAX_ATTEMPTS": "1",
+            "MAX_UPLOAD_BYTES": "2097152",
+        })
+        # No public scanner ingress. TCP only checks the process's listener;
+        # signature freshness and real INSTREAM scan remain qualification gates.
+        extra_containers.append({
+            "name": "patient-source-clamd",
+            "image": scanner,
+            "resources": {"cpu": 1.0, "memory": "2Gi"},
+            "probes": [
+                {"type": "Startup", "tcpSocket": {"port": 3310},
+                 "periodSeconds": 10, "failureThreshold": 30},
+                {"type": "Readiness", "tcpSocket": {"port": 3310}},
+            ],
+        })
     env.extend({"name": k, "value": v} for k, v in fixed.items())
     # A review candidate only: scanner image, tenant ingress, TLS, exact schema,
     # enrollment and network/identity preflight require separate qualification.
@@ -121,6 +169,8 @@ def render_plan(spec: dict[str, Any]) -> dict[str, Any]:
             "VERIFY_FRESH_DATABASE_TLS_AND_EXACT_SCHEMA_HEAD",
             "VERIFY_TLS_REDIS_AND_SECRET_CUSTODY",
             "VERIFY_BLOB_READBACK_AND_RETENTION",
+            "VERIFY_VAULT_WRAP_UNWRAP_AND_ERASURE_BOUNDARY",
+            "QUALIFY_DOCUMENT_INTELLIGENCE_SOURCE_EVIDENCE",
             "COMPLETE_SIGNED_CONSENT_AND_DEVICE_REHEARSAL",
         ],
         "candidate": {
@@ -150,7 +200,7 @@ def render_plan(spec: dict[str, Any]) -> dict[str, Any]:
                             {"type": "Liveness", "httpGet": {"path": "/healthz", "port": 8000}},
                             {"type": "Readiness", "httpGet": {"path": "/health", "port": 8000}},
                         ],
-                    }],
+                    }] + extra_containers,
                     "scale": {"minReplicas": 0, "maxReplicas": 1},
                 },
             },

@@ -55,10 +55,18 @@ export const ProviderLoginMfaRequiredSchema = z.object({
  */
 export const ProviderMfaVerifySuccessSchema = ProviderLoginSuccessSchema
 
-export const ProviderWebLoginStateSchema = z.object({
-  status: z.enum(['authenticated', 'mfa_required']),
-  expires_at: z.string().optional(),
-})
+// FastAPI serializes expires_at=None as JSON null for the MFA challenge.
+// A completed authenticated session always has a non-empty expiry.
+export const ProviderWebLoginStateSchema = z.discriminatedUnion('status', [
+  z.object({
+    status: z.literal('mfa_required'),
+    expires_at: z.null().optional(),
+  }),
+  z.object({
+    status: z.literal('authenticated'),
+    expires_at: z.string().min(1),
+  }),
+])
 export const ProviderWebAuthenticatedStateSchema = z.object({
   status: z.literal('authenticated'),
   expires_at: z.string().min(1),

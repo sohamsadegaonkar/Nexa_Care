@@ -93,6 +93,7 @@ export function ProviderShell({ children }: { children: ReactNode }) {
             paddingVertical="$1.5"
             borderRadius={8}
             backgroundColor="$nexaMuted"
+            flexShrink={1}
           >
             <Building2
               size={16}
@@ -104,6 +105,7 @@ export function ProviderShell({ children }: { children: ReactNode }) {
               fontWeight="600"
               flexShrink={1}
               minWidth={0}
+              style={{ overflowWrap: 'anywhere' }}
             >
               {hospitalName || 'Facility'}
             </Text>
@@ -126,6 +128,8 @@ export function ProviderShell({ children }: { children: ReactNode }) {
             borderWidth={1}
             borderColor="$nexaBorder"
             backgroundColor="$nexaSurface"
+            flexWrap="wrap"
+            flexShrink={1}
             minWidth={0}
             maxWidth="100%"
           >
