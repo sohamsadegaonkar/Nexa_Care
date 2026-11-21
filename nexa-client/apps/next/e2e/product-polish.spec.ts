@@ -1,6 +1,16 @@
 import { expect, test, type Page } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
+  // Synthetic isolated CI only. Record bounded browser exception details,
+  // never request bodies, session tokens or patient data.
+  page.on('pageerror', (error) => {
+    const details = String(error.stack || error.message).split('\\n').slice(0, 6).join(' | ')
+    console.error('INVESTOR_BROWSER_JS_EXCEPTION:', details.slice(0, 900))
+  })
+  page.on('console', (message) => {
+    if (message.type() === 'error')
+      console.error('INVESTOR_BROWSER_CONSOLE_ERROR:', message.text().slice(0, 250))
+  })
   // The verification build pins its production browser origin to this reserved
   // domain. Serve its assets from loopback without weakening the origin guard or
   // contacting a live API. API requests are intercepted separately below.
