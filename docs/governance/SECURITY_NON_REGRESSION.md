@@ -1016,3 +1016,41 @@ Review this register every 90 days and whenever a security defect, invariant, en
 
 **Change impact:** No backend/API/DB schema or migration; no consent scope, retention, data-storage, erasure, identity, AI extraction, audit, or emergency authority expansion. Existing security and regulatory rules are unchanged.
 
+### Provider reference inventory, not source read (14 November 2026)
+
+**Scope:** Draft P1A stacked on unmerged P0 clinician viewer branch. This is an
+additional, bounded display of canonical document **metadata** already visible
+in the routine clinical timeline. It is not a new `READ_DOCUMENTS` grant, a
+source-file disclosure, a verified clinical fact, or emergency authorization.
+
+**Affected invariants:** SEC-001/002 (memory-only bearer, server-owned patient,
+provider and facility; scope), SEC-005 (emergency separate), SEC-011 (erasure),
+SEC-013 (no PHI in logs/URLs), SEC-014/015 (retain source and no fabricated
+verification), SEC-021 (truthful display), SEC-023 (original source has its own
+authorization). Regulatory mapping: explicit purpose and minimum necessary
+health-data disclosure, separate clinical/processing consent, identity trust,
+patient erasure, and documented review; no assertion of legal compliance.
+
+**Enforcement:** New `GET /api/v2/provider/records/documents` requires current
+`RECORD_READ` clinical eligibility and `require_consent("clinical_summary")`
+with `X-Patient-Id` supplied only as a nonauthoritative lookup header;
+canonical patient and erasure status must be live. Only bounded,
+patient-filtered DocumentReference metadata and confirmed patient-import
+provenance are returned. All file content, original filename, raw storage key,
+identity-review E1–E6 material, candidate values and any invented verification
+state remain undisclosed. Document-opening remains disabled: V3 grants
+`READ_CLINICAL_HISTORY`, not `READ_DOCUMENTS`. Existing consent-gated
+patient record read auditing remains mandatory and fail-closed.
+
+**Validation required:** route/dependency/erasure and pagination tests;
+frontend tests for actual document rows, meaningful unknown provenance,
+load-more and terminal revocation; no URL patient ID/bearer; full frontend CI,
+backend CI, and human privacy/security/clinical review before pilot. Fake
+records, silent treatment authority, ignored revocation and source-read
+shortcuts are forbidden.
+
+**Change impact:** New read-only provider metadata API and frontend inventory,
+not an approval to expose source bytes; no new DB migration, prescription or
+diagnosis write, key handling, retention change, emergency permission, or
+security/regulatory policy weakening. A future original-file view requires
+a separately versioned and signed authority decision with review and tests.

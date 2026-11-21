@@ -62,6 +62,7 @@ from app.api.v2.provider_trust_routes import (
 from app.api.v2.provider_workspace_routes import (
     router as provider_workspace_v2_router,
 )
+from app.api.v2.provider_document_routes import router as provider_document_v2_router
 from app.api.v2.registration_recovery_routes import (
     router as registration_recovery_v2_router,
 )
@@ -413,6 +414,8 @@ app.add_middleware(
         "Authorization",
         "Content-Type",
         "X-Hospital-Id",
+        "X-Patient-Id",
+        "X-Page-Cursor",
         "X-Consent-Token",
         "X-Consent-Purpose",
         "X-CSRF-Token",
@@ -462,6 +465,7 @@ app.include_router(patient_discovery_v2_router)
 app.include_router(provider_trust_v2_router)
 app.include_router(provider_trust_permission_v2_router)
 app.include_router(provider_workspace_v2_router)
+app.include_router(provider_document_v2_router)
 
 app.add_exception_handler(ProviderTrustRouteError, provider_trust_route_error_response)
 app.add_exception_handler(
