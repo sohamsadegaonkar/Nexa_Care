@@ -1,6 +1,6 @@
 """Qualification of included-router discovery across compatible FastAPI versions."""
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, Depends, FastAPI
 
 from tests.registered_routes import registered_routes
 
@@ -13,7 +13,7 @@ def test_nested_route_inventory_preserves_path_method_and_dependencies() -> None
     def authorize() -> None:
         return None
 
-    @leaf.get("/record", dependencies=[])
+    @leaf.get("/record", dependencies=[Depends(authorize)])
     def read_record() -> dict[str, bool]:
         return {"ok": True}
 
@@ -32,5 +32,6 @@ def test_nested_route_inventory_preserves_path_method_and_dependencies() -> None
     ]
     assert len(matches) == 1
     assert matches[0].endpoint is read_record
+    assert any(dep.call is authorize for dep in matches[0].dependant.dependencies)
     assert before == after  # discovery must not replace or mutate runtime routes
     assert all(getattr(route, "path", None) for route in effective)
