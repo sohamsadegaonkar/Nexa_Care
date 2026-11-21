@@ -143,7 +143,9 @@ jobs:
     env:
       NEXT_PUBLIC_API_URL: https://doctor.example.test
       NEXT_PUBLIC_DEMO_MODE: "false"
-      NEXA_UI_BASE_URL: http://127.0.0.1:3100
+      # Production browser is deliberately origin-bound; intercept all requests
+      # and forward only static/local test traffic through Playwright to loopback.
+      NEXA_UI_BASE_URL: https://doctor.example.test
       NEXA_UI_ASSET_ORIGIN: http://127.0.0.1:3100
       NEXA_BROWSER_CHANNEL: chromium
     steps:
