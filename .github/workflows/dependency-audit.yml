@@ -45,6 +45,13 @@ jobs:
                   advisories = sum(len(x.get('vulns', [])) for x in packages)
                   print(f'AUDIT_VULNERABLE_PACKAGES={affected}')
                   print(f'AUDIT_ADVISORY_MATCHES={advisories}')
+                  for dep in sorted(packages, key=lambda x: str(x.get('name', ''))):
+                      vulns = dep.get('vulns', [])
+                      if vulns:
+                          print(
+                              f"AUDIT_AFFECTED_PACKAGE={dep.get('name', '<unknown>')}@"
+                              f"{dep.get('version', '<unknown>')};MATCHES={len(vulns)}"
+                          )
                   print('AUDIT_GATE=FAIL_REMEDIATION_REQUIRED')
               except (ValueError, OSError, TypeError):
                   print('AUDIT_GATE=ERROR_PARSING_REPORT')

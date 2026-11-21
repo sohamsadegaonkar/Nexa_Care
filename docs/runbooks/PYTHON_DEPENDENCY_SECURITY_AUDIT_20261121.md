@@ -27,3 +27,27 @@ This first compatibility slice:
 **Dependabot:** requires a recurring GitHub update schedule and has not been added, pending explicit owner approval. **CodeQL:** should be added as a separately reviewed PR CI check after baseline build/test compatibility is verified. No timed monitoring, production deployment, clinical/PHI data access, automatic migrations, repo visibility change, or branch cleanup was performed.
 
 **Security/governance:** SEC-001/002/003/005/011/013/016/020/023 and REG-001/003, patient isolation, consent, cryptographic provenance, truthful clinical labels and E0 identity-evidence boundaries remain unchanged. No mutation of patient clinical data, consent/access, audit, identity, AI extraction, storage, erasure or emergency logic. Independent human security/privacy/clinical review and physical-device rehearsal remain HOLD.
+
+## Automated advisory decline and pinned candidate status
+
+A phased upgrade was committed on [draft PR #102](https://github.com/sohamsadegaonkar/Nexa_Care/pull/102) while keeping source upload/clinical authorization unchanged:
+- `PyJWT 2.10.1 → 2.15.1` (patient and provider session compatibility tests required)
+- `pypdf 5.9.0 → 7.1.1` (high-risk untrusted document parsing compatibility/adversarial tests required)
+- `Pillow 12.3.0 → 13.0.0` (image imports and PDF rasterization compatibility/adversarial tests required)
+- `cryptography 44.0.3 → 50.0.2` (patient-DEK encryption, JWT signing, P-256 signatures and erasure tests required)
+- `python-multipart >=0.0.9 → 0.0.32`, `alembic 1.15.0 (yanked) → 1.15.2`; `pytest` moved out of production requirements; build-system setuptools/wheel unchanged.
+
+**Actual pip-audit chronological evidence**, each against the resolved production dependency tree from the exact listed commit:
+| Commit | Vulnerable packages | Matched advisories | Source |
+| --- | ---: | ---: | --- |
+| `eea849a` initial multipart/Alembic pin | 10 | 202 | [audit 44906119569](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44906119569) |
+| `8b96809` + PyJWT | 9 | 180 | [audit 44906288768](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44906288768) |
+| `9eeee72` + pypdf | 8 | 77 | [audit 44906341642](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44906341642) |
+| `6565be3` + Pillow | 7 | 35 | [audit 44906443967](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44906443967) |
+| `7d8879e` + cryptography | 6 | 25 | [audit 44906501601](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44906501601) |
+
+These are **version-based advisory matches, not individual proven exploits**, and counts can vary by advisory database. The audit intentionally reports FAILURE until the resolved dependency tree is cleared. The workflow now emits limited, non-secret per-package name/version/advisory-count summaries for prioritization. No advisories are ignored or auto-fixed.
+
+**CI evidence boundary:** On `9eeee72` the real PostgreSQL, Redis, ClamAV and Azure workflows passed; pure unit CI failed **the same four existing main UI source-grep assertions** (ReviewQueue/ReviewCockpit JSDoc and DocumentPreview count/ALPHA) unrelated to the dependency upgrades. Those failing checks must be fixed with visible clinical-truth behavior and/or properly migrated to Vitest, not silently discarded. Later P0 package revision test suites were still in progress at this documentation checkpoint; check each exact SHA before claiming compatibility. Full live Azure and physical Android evidence remain unavailable.
+
+**Next remediation** is a separate FastAPI/Starlette version-compatibility slice and any remaining vulnerable transitive packages, with real request/form, clinician cookie/CSRF, consent and browser/one-time-source regression qualification. CodeQL is not yet enabled. Do not merge into `main` until runtime CI, advisory gate and human security reviewer gates are resolved.
