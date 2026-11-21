@@ -141,9 +141,14 @@ class AzureEncryptedDocumentStorage(DocumentStorage):
         )
 
     async def _get(
-        self, storage_ref: str, *, patient_id: str, tenant_id: str | None
+        self, storage_ref: str, *, patient_id: str, tenant_id: str | None,
+        expected_size: int | None = None,
     ) -> bytes:
         key = self._key_for_ref(storage_ref, self._owner_prefix(patient_id, tenant_id))
+        if expected_size is not None and (
+            type(expected_size) is not int or not 1 <= expected_size <= _MAX_PLAINTEXT
+        ):
+            raise DocumentStorageError("Invalid expected document size")
 
         def download(blob: Any) -> bytes:
             # Bound memory and reject oversized ciphertext rather than streaming
@@ -156,10 +161,17 @@ class AzureEncryptedDocumentStorage(DocumentStorage):
         encrypted = await asyncio.to_thread(self._with_blob, key, download)
         if not 29 <= len(encrypted) <= _MAX_CIPHERTEXT:
             raise DocumentStorageError("Stored document size is invalid")
+        if expected_size is not None and len(encrypted) != expected_size + 28:
+            raise DocumentStorageError("Stored document size mismatch")
         try:
-            return AESGCM(self.key).decrypt(
+            plaintext = AESGCM(self.key).decrypt(
                 encrypted[:12], encrypted[12:], self._bound_aad(key, patient_id, tenant_id)
             )
+            if expected_size is not None and len(plaintext) != expected_size:
+                raise DocumentStorageError("Stored document size mismatch")
+            return plaintext
+        except DocumentStorageError:
+            raise
         except Exception:
             raise DocumentStorageError("Stored document authentication failed") from None
 
@@ -199,8 +211,13 @@ class AzureEncryptedDocumentStorage(DocumentStorage):
     ) -> StoredDocument:
         return await self._put(data, patient_id=patient_id, tenant_id=None, mime_type=mime_type)
 
-    async def get_patient_document_bytes(self, storage_ref: str, *, patient_id: str) -> bytes:
-        return await self._get(storage_ref, patient_id=patient_id, tenant_id=None)
+    async def get_patient_document_bytes(
+        self, storage_ref: str, *, patient_id: str, expected_size: int | None = None
+    ) -> bytes:
+        return await self._get(
+            storage_ref, patient_id=patient_id, tenant_id=None,
+            expected_size=expected_size,
+        )
 
     async def delete_patient_document(self, storage_ref: str, *, patient_id: str) -> None:
         await self._delete(storage_ref, patient_id=patient_id, tenant_id=None)

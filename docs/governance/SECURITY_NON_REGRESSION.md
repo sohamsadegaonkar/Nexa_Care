@@ -52,7 +52,7 @@ The system minimises data and observability, uses durable idempotency, distingui
 | SEC-015 | Human review/risk | Confidence-only automation can promote unsafe fields to clinical truth. | High-risk or uncertain fields require adjudication; explicit risk rules; no AI diagnosis, rule-out, invented history, or silent replacement of source. | `app/ai/auto_approval.py`; `scoring_engine.py`; review routes | AI scoring, auto-approval, tampered payload, medical validation tests | Enforced | 2026-07-27 |
 | SEC-016 | Device lifecycle | Wrong-patient, excess, or revoked device keys could approve. | Key belongs to authenticated patient; device maximum enforced; revoked keys cannot approve; rotation/revocation audited; push registration is not cryptographic enrollment. | `biometric_registry.py`; device routes/models | device key, biometric registry, consent QA tests | Enforced | 2026-07-27 |
 | SEC-017 | Auth/session binding | Client identity/hospital or ambiguous credentials can elevate access; MFA can be replayed. | Provider and hospital resolve server-side; one canonical credential source; privileged MFA binds action/session; lifetime and revocation enforced. | auth dependencies/routes; `provider_auth_service.py`; MFA routes | auth, provider schema/password, MFA replay/integration tests | Enforced | 2026-07-27 |
-| SEC-018 | Migration safety | Multiple heads, unsafe stamping, type drift, automatic API-startup migration, and manual schema fixes create unreproducible production state. | One head; forward-only fixes; explicit schemas; ORM/migration agreement; fresh and previous-head gates; never stamp past failure or manually create required tables. API containers never run migrations during startup; approved deployments use a dedicated release task that verifies the exact single repository and database head. | `alembic/versions`; `Dockerfile`; `scripts/container_start.sh`; `scripts/run_pilot_migrations.py`; current head `20260919_medication_catalog` | migration graph, migration-specific tests, deployment-startup regression tests, `scripts/ci/prepare_ci_shared_db.py`; disposable PostgreSQL upgrade gates | Enforced locally and in CI (Partition B) on disposable PostgreSQL; deployment-environment migration qualification remains required. | 2026-09-06 |
+| SEC-018 | Migration safety | Multiple heads, unsafe stamping, type drift, automatic API-startup migration, and manual schema fixes create unreproducible production state. | One head; forward-only fixes; explicit schemas; ORM/migration agreement; fresh and previous-head gates; never stamp past failure or manually create required tables. API containers never run migrations during startup; approved deployments use a dedicated release task that verifies the exact single repository and database head. | `alembic/versions`; `Dockerfile`; `scripts/container_start.sh`; `scripts/run_pilot_migrations.py`; current head `20261120_document_access` | migration graph, migration-specific tests, deployment-startup regression tests, `scripts/ci/prepare_ci_shared_db.py`; disposable PostgreSQL upgrade gates | Enforced locally and in CI (Partition B) on disposable PostgreSQL; deployment-environment migration qualification remains required. | 2026-09-06 |
 | SEC-019 | Health/readiness | Conflated liveness/readiness can restart healthy processes or admit unsafe traffic. | Liveness and readiness differ; dependency loss does not falsify liveness; readiness includes DB, Redis, outbox worker, dead/stalled work, and audit health without sensitive details. | `app/main.py`; health routes/services | trusted-host, health, audit-outbox/runtime tests | Partially enforced | 2026-07-27 |
 | SEC-020 | Physical device | Unit/API mocks were mistaken for end-to-end consent evidence. | FCM delivery, biometric approval, device P-256 signing, expiry, emergency, and revocation need real-device evidence before pilot. | Expo app, push service, physical preflight scripts | physical-device checklist/report and live evidence | Validation pending for each release candidate | 2026-07-27 |
 | SEC-021 | Patient transparency | Self-access and multi-stage audit events produced blank/duplicate patient cards. | Projection permits only final successful provider access, excludes self access/actor patient, deduplicates operations, resolves immutable IDs with explicit fallbacks, paginates filtered events. | `patient_record_routes.py`; `AccessHistoryScreen.tsx` | `test_access_history.py`; patient screen tests; physical refresh evidence | Enforced | 2026-07-27 |
@@ -1055,6 +1055,10 @@ diagnosis write, key handling, retention change, emergency permission, or
 security/regulatory policy weakening. A future original-file view requires
 a separately versioned and signed authority decision with review and tests.
 
+### P1B isolated development branch — 20 November 2026
+
+Resolve inventory ownership using the validated grant patient. Reject conflicting patient references at the shared provider gate before any clinical query. Original delivery requires a separate exact-document device signature, the same live signed history session and current clinician eligibility. Treat each opening as a one-time claim, serialized with revocation and committed with its audit outbox entry. The browser closes a preview on lost authority or an expired lease. See [the design, risks and rehearsal](P1B_ORIGINAL_DOCUMENT_ACCESS.md). Independent reviews and physical qualification remain pending.
+
 ## Azure document-storage adapter foundation — 20 November 2026 (draft)
 
 This is an explicit synthetic-only development candidate, not a cloud
@@ -1100,3 +1104,29 @@ and incomplete evidence preserves existing review/quarantine gates. No
 clinically verified or auto-committed claims. No production activation or
 reprocessing of identity quarantine. Provider benchmark and privacy/clinical
 review outstanding; current consent and identity policy unchanged.
+
+### Combined demo erasure/preview regression correction (20 November 2026)
+
+SEC-011/013/021/023: commit original-document decision cleanup even when
+source/import rows are already absent, only after source deletion succeeds;
+database errors in metadata cleanup roll back and fail closed. Maintain
+the canonical erasure denial and avoid false irreversible-deletion claims.
+The jsdom test harness supplies browser object URL double methods only;
+no production preview authority, signed-consent, revocation or audit
+logic is weakened. Fresh combined CI and live device review are required.
+
+
+### 21 November 2026 — P1B verified-head reconciliation
+
+Carry P1B bc3abe74's patient selection checks, exact original-document
+approval/release/revocation contract, synthetic PDF fixture, source cleanup,
+and browser test corrections into the isolated Azure investor-demo candidate.
+The Azure Blob adapter now accepts the bounded expected-size parameter
+for a patient original and denies mismatched size; this does not broaden
+authorization. SEC-001/002/003/011/013/014/015/018/020/023 and the
+identity-review non-release boundary remain unchanged. New combined CI
+and live cloud/device/clinical review remain separate mandatory gates.
+
+### 21 November 2026 — P1B source-graph eligibility reconciliation
+
+The single-original-document P1B candidate consumes the stricter source-graph eligibility validator from the preparatory foundation branch as a **necessary, not sufficient** pre-disclosure guard. Require exactly one completed and reviewed patient-self import, finalized timeline/source mapping, non-error state, matching source ownership/type/category/storage reference and digest metadata. Duplicate or inconsistent source links are denied before reading the original. This validator never grants access or bypasses the separately signed document decision, live clinical consent, scanning, audit or erasure. The opt-in Azure patient-source storage must enforce the same exact expected-size boundary as local/S3. Full CI and live phone, browser and human gates remain separate; no clinical or security policy is relaxed.
