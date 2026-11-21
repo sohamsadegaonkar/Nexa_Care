@@ -51,3 +51,24 @@ These are **version-based advisory matches, not individual proven exploits**, an
 **CI evidence boundary:** On `9eeee72` the real PostgreSQL, Redis, ClamAV and Azure workflows passed; pure unit CI failed **the same four existing main UI source-grep assertions** (ReviewQueue/ReviewCockpit JSDoc and DocumentPreview count/ALPHA) unrelated to the dependency upgrades. Those failing checks must be fixed with visible clinical-truth behavior and/or properly migrated to Vitest, not silently discarded. Later P0 package revision test suites were still in progress at this documentation checkpoint; check each exact SHA before claiming compatibility. Full live Azure and physical Android evidence remain unavailable.
 
 **Next remediation** is a separate FastAPI/Starlette version-compatibility slice and any remaining vulnerable transitive packages, with real request/form, clinician cookie/CSRF, consent and browser/one-time-source regression qualification. CodeQL is not yet enabled. Do not merge into `main` until runtime CI, advisory gate and human security reviewer gates are resolved.
+
+
+## 21 November 2026 — ASGI dependency and adversarial regression continuation
+
+**This section supersedes earlier pending/remaining-advisory status above; historical run results remain intact.** PR #102 is still **DRAFT / DO NOT MERGE**, and all evidence is from disposable synthetic CI, not production.
+
+**Candidate versions** staged in `requirements.txt`:
+- FastAPI `0.105.0 → 0.165.0` + explicit Starlette `1.10.0` + AnyIO `4.16.0` (jointly tested dependency chain).
+- Redis Python client `4.5.1 → 5.3.1`; Flower `1.0.0 → 2.2.0`; python-dotenv `1.0.1 → 1.2.4`.
+- Earlier pypdf `7.1.1`, Pillow `13.0.0`, PyJWT `2.15.1`, cryptography `50.0.2` remain candidates.
+
+**Audit evidence:** [intermediate resolved audit 44908484378](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44908484378) reduced 25 advisory matches to **8 across 3 packages** after FastAPI/Starlette/AnyIO. [Follow-up audit 44908561724](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44908561724) **PASSED** after Redis/Flower/dotenv updates. [Post-new-test exact-head audit 44908671410](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44908671410) also **PASSED**. An audit PASS is not proof against unknown vulnerabilities nor evidence of actual endpoint compatibility.
+
+**Focused new regression test:** `tests/security/test_asgi_upgrade_fail_closed.py` checks anonymous PDF/image multipart uploads cannot enter the pipeline; a forged provider session cookie with hostile Origin cannot upload; invalid bearer tokens are never echoed by a protected patient route; untrusted Host is denied before sensitive routing. Source-level clinical-truth regression was addressed with explicit ALPHA labels in `ReviewQueueScreen.tsx` and `ReviewCockpitScreen.tsx`, and a rendered count of actual extracted fields for the selected page in `DocumentPreview.tsx` plus a frontend behavior test. Do not interpret field counts as clinical verification.
+
+**Full-suite qualification still mandatory on exact latest head** (not inferred from audit): `.github/workflows/ci.yml` Partition A lint/pure; Partition B PostgreSQL; Partition C PostgreSQL + Redis; `Frontend CI` Next/Vitest/native; `Clamd Integration`; `Azure Foundation Offline CI`; `CodeQL Security Analysis`. Run/verify existing route, cookie+CSRF, multipart, exception/status, bearer/patient JWT, malformed PDF/image, cryptographic erasure, signed-consent, revoke/replay, cross-patient and cross-hospital negative suites. Any regression requires a new SHA and complete requalification.
+
+**Remaining separate threat-model tracks:**
+- [#103 — provider-wide cross-IP MFA abuse ceiling](https://github.com/sohamsadegaonkar/Nexa_Care/issues/103): deny distributed guessing without creating permanent clinician lockout; check Redis outage and parallel writes.
+- [#104 — legacy UUID break-glass default-off and discovered-handle migration](https://github.com/sohamsadegaonkar/Nexa_Care/issues/104): explicit emergency continuity, no patient ID oracle, multi-tenant isolation, audit and revocation.
+Neither change is included in PR #102. No production flag, repository visibility, recurring Dependabot schedule, PR merge, live Azure, device testing, human sign-off or migration was changed.
