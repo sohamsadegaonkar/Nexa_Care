@@ -112,3 +112,9 @@ Each case uses a synthetic-only isolated fixture; no credentials or patient iden
 - Do not merge PR #99 or #101 or change production/cloud state without owner's explicit approval.
 - On any test failure, update its case with exact step, expected/actual, commit, runner and run link; add follow-up defect and fix on integration branch only; retest all affected boundaries.
 - Record all new CI job names, exact SHA, run links, passed/failed/skipped counts in a dated addendum. Do not overwrite this frozen matrix or assert an obsolete July GO verdict.
+
+## 21 November 2026 — Browser regression diagnosis and fix candidate
+
+Observed on Ubuntu 24.04 real Chromium at `969d3e9`: login and 768/1440 workspace checks passed; 360px doctor header exceeded viewport and the patient web-entry assertion expected a retired heading. Before that, the original `http://127.0.0.1` browser origin was correctly refused by the production same-origin API policy; the harness now uses the reserved `https://doctor.example.test` origin and intercepts all static assets to a loopback-only Next server. No production origin policy was changed.
+
+The provider shell has bounded/wrapping identity, hospital and controls at small widths. Patient entry now checks the actual patient mobile-number login screen, with verification button disabled until valid input, rather than asserting a deprecated mobile-only signpost. These are UI/test corrections, not authentication relaxations. Fresh Chromium and full CI must pass on the updated HEAD before changing case INV-QA-07 to PASS. Screenshot/error-context evidence retained in the failed run artifacts for [44870977653](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44870977653). No physical signing, NFC, live Azure or true browser-to-real-backend session observed.

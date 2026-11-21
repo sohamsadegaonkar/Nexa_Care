@@ -77,6 +77,9 @@ export function ProviderShell({ children }: { children: ReactNode }) {
           alignItems="center"
           gap="$4"
           flexWrap="wrap"
+          minWidth={0}
+          maxWidth="100%"
+          $sm={{ width: '100%' }}
         >
           <Brand compact />
           <XStack
@@ -86,6 +89,9 @@ export function ProviderShell({ children }: { children: ReactNode }) {
             paddingVertical="$1.5"
             borderRadius={8}
             backgroundColor="$nexaMuted"
+            flexShrink={1}
+            minWidth={0}
+            maxWidth="100%"
           >
             <Building2
               size={16}
@@ -95,6 +101,7 @@ export function ProviderShell({ children }: { children: ReactNode }) {
               color="$nexaText"
               fontSize={13}
               fontWeight="600"
+              style={{ overflowWrap: 'anywhere' }}
             >
               {hospitalName || 'Facility'}
             </Text>
@@ -104,6 +111,9 @@ export function ProviderShell({ children }: { children: ReactNode }) {
           gap="$3"
           alignItems="center"
           flexWrap="wrap"
+          minWidth={0}
+          maxWidth="100%"
+          $sm={{ width: '100%' }}
         >
           <XStack
             alignItems="center"
@@ -114,6 +124,10 @@ export function ProviderShell({ children }: { children: ReactNode }) {
             borderWidth={1}
             borderColor="$nexaBorder"
             backgroundColor="$nexaSurface"
+            flexWrap="wrap"
+            flexShrink={1}
+            minWidth={0}
+            maxWidth="100%"
           >
             <UserCheck
               size={15}
