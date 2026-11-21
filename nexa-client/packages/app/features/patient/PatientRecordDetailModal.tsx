@@ -323,7 +323,7 @@ export default function PatientRecordDetailModal({
                 <XStack alignItems="center" gap="$2">
                   <Text fontSize={14}>📄</Text>
                   <Paragraph color="$color10" size="$2">
-                    Verified clinical document on file.
+                    Source document referenced in this record; clinical verification is not implied.
                   </Paragraph>
                 </XStack>
               ) : null}
