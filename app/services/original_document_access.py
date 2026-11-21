@@ -31,6 +31,7 @@ from app.models.pipeline import DocumentStorage as Source, ExtractionJob
 from app.services.patient_external_record_source_safety import (
     effective_patient_source_max_bytes,
 )
+from app.services.provider_original_document_eligibility import validate_original_document_graph
 
 PROTOCOL = "nexa-original-document-v1"
 PURPOSE = "review_original_for_current_care"
@@ -97,10 +98,19 @@ async def verify_device_decision(db, row, key_id, signature, decision):
 
 
 async def owned_source(db: AsyncSession, patient: UUID, document: UUID):
+    """Resolve one finalized patient-owned source; eligibility alone is never consent."""
     query = (
-        select(DocumentReference, Source)
-        .join(Import, Import.final_record_id == DocumentReference.id)
-        .join(Source, Source.id == Import.source_document_id)
+        select(DocumentReference, Import, Source)
+        .join(
+            Import,
+            (Import.final_record_id == DocumentReference.id)
+            & (Import.patient_id == DocumentReference.patient_id),
+        )
+        .join(
+            Source,
+            (Source.id == Import.source_document_id)
+            & (Source.patient_id == DocumentReference.patient_id),
+        )
         .where(
             DocumentReference.patient_id == patient,
             DocumentReference.id == document,
@@ -122,13 +132,21 @@ async def owned_source(db: AsyncSession, patient: UUID, document: UUID):
             .where(ExtractionJob.document_id == Source.id)
             .exists(),
         )
+        .limit(2)
         .with_for_update(read=True)
     )
-    pair = (await db.execute(query)).one_or_none()
-    if pair is None:
+    rows = (await db.execute(query)).all()
+    if len(rows) != 1:
         raise HTTPException(404, "Original unavailable")
-    return pair
-
+    reference, imported, source = rows[0]
+    validate_original_document_graph(
+        patient_id=patient,
+        document_id=document,
+        reference=reference,
+        imported=imported,
+        source=source,
+    )
+    return reference, source
 
 async def require_live_parent_for_approval(db, row):
     """Patient-side approval reuses the original server-held initiation assurance."""

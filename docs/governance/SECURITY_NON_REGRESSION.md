@@ -1126,3 +1126,7 @@ for a patient original and denies mismatched size; this does not broaden
 authorization. SEC-001/002/003/011/013/014/015/018/020/023 and the
 identity-review non-release boundary remain unchanged. New combined CI
 and live cloud/device/clinical review remain separate mandatory gates.
+
+### 21 November 2026 — P1B source-graph eligibility reconciliation
+
+The single-original-document P1B candidate consumes the stricter source-graph eligibility validator from the preparatory foundation branch as a **necessary, not sufficient** pre-disclosure guard. Require exactly one completed and reviewed patient-self import, finalized timeline/source mapping, non-error state, matching source ownership/type/category/storage reference and digest metadata. Duplicate or inconsistent source links are denied before reading the original. This validator never grants access or bypasses the separately signed document decision, live clinical consent, scanning, audit or erasure. The opt-in Azure patient-source storage must enforce the same exact expected-size boundary as local/S3. Full CI and live phone, browser and human gates remain separate; no clinical or security policy is relaxed.

@@ -122,3 +122,9 @@ The provider shell has bounded/wrapping identity, hospital and controls at small
 ## 21 November 2026 — Mobile emergency panel root cause
 
 Real Chromium [run 44871575362](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44871575362) narrowed the 360px overflow to the Emergency Access warning text container: viewport=360, page scrollWidth=726, warning flex child left=99 and width=627. Four of five tests passed (provider login, 768/1440 workspace, current patient phone login). The prior header and stale patient test are no longer failing. This targeted layout fix bounds the Emergency Access panel and allows its warning text flex child to shrink while retaining full caution text and distinct emergency route. New exact-head Chromium CI must pass; do not mute the overflow assertion.
+
+## Superseding code-reconciliation checkpoint — 21 November 2026
+
+The original INV-QA/1.0 case outcomes above are tied to the recorded **initial** synthetic revision; they are not test results for the later integrated HEAD. The integration branch was rebased by a non-forced merge of (1) `main` `4723a118ce681489f7800516564d762f7a4fc5af` and (2) PR #99 revision `25ac75f0f4f14f8f52355ed10409db6aebb0b1b9`, retaining the investor-demo-only UI, workflow and Azure service-profile additions.
+
+CI automated checks **must rerun on the new combined commit**, including the P1B real-scanner workflow; do not inherit PASS from the ancestor. INV-QA-08 (real backend browser), INV-QA-09 (actual enrolled device and physical NFC), INV-QA-10 (live Azure), and INV-QA-11 (independent clinical/privacy/security reviewers) remain BLOCKED/NOT_RUN. Without NFC hardware the physical NFC case stays blocked even if manual exact Public ID discovery works. This section does not supersede the frozen gates or authorize a merge, deployment or investor-demo GO.

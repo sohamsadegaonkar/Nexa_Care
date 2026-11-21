@@ -56,3 +56,9 @@ The real-service rehearsal exercised a patient upload, PDF text extraction on th
 The frontend component suite covers revocation and release of object URLs, delayed retrieval after unmount, and existing patient consent controls. The production web build includes the PDF.js worker as a local asset. Local Chromium could not open its process socket. No visual browser rehearsal or physical-device signature is attributed to the automated tests.
 
 Second self-review added exact affiliation binding, live parent validation at approval, bounded encrypted-object reads, dedicated audit events for authority checks and coverage of erasure when source rows are already gone. Independent clinical, privacy and security review is still open.
+
+## 21 November 2026 — Strict source-graph / Azure reconciliation
+
+PR #99 is being reconciled with merged clinician P0/P1A and opt-in Azure development support. The preparatory eligibility checks now run on the actual `owned_source` path: one completed/reviewed canonical patient-self source; exact patient/import/document linkage; matching document category, timeline, finalized timestamps, error-free import, SHA-256 metadata, MIME, encrypted storage reference and size limit. Ambiguous and inconsistent graphs fail closed before a one-time release; metadata eligibility is not consent. Tests from the predecessor foundation branch are retained.
+
+The synthetic-only Azure adapter must accept and strictly enforce `expected_size` on patient source retrieval so its interface matches P1B's local/S3 original opening path. The historical foundation design remains archived and is superseded by this P1B authorization contract. This code reconciliation is **not** physical-device, NFC, live-Azure or independent clinical/privacy/security approval. All automated results must be requalified on the new PR #99 head. A full investor demo stays HOLD until observed browser/phone and remaining review gates pass.

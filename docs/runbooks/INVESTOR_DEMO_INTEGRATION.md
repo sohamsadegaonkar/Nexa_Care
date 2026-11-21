@@ -99,3 +99,11 @@ actual Azure services only after approved isolated resources are available,
 complete real-browser and hardware-key/NFC rehearsal, verify exact scanner
 definitions and independent clinical/security/privacy review. PR #98 stays
 independent and unmerged. No changes to main or cloud resources.
+
+## 21 November 2026 — PR #99 reconciliation checkpoint
+
+This investor-demo integration candidate was reconciled with merged `main` at `4723a118ce681489f7800516564d762f7a4fc5af` and the repaired, independently CI-qualified P1B draft at `25ac75f0f4f14f8f52355ed10409db6aebb0b1b9`. The reconciliation includes strict source-graph eligibility from the earlier P1B foundation, bound Azure patient-document `expected_size`, dedicated P1B real-ClamAV HTTP qualification, and the original investor-demo Chromium UI smoke / Azure full-service plan constraints. No app, database, Azure account or patient device was deployed by this branch update.
+
+CI results from the parent PR #99 commit do **not** qualify this merged integration commit. Re-run GitHub backend, frontend/native, ClamAV, Azure offline and investor-demo workflows on the new integration HEAD; require all green before treating automated qualification as passing. The actual enrolled patient Android signature, live clinician browser-to-API preview with measured eight-second revocation/expiry/disconnect closure, physical NFC (unavailable on the owner's Android), approved live Azure account and independent clinical/security/privacy reviews remain **BLOCKED**. Patient discovery via exact Nexa Public ID / strict QR fallback may exercise the non-NFC portion, but cannot substitute for physical NFC test evidence. PR #99 and #101 remain draft and unmerged; investor-demo readiness remains HOLD.
+
+Evidence sources: [P1B draft and new CI](https://github.com/sohamsadegaonkar/Nexa_Care/pull/99), [P1B real scanner](https://github.com/sohamsadegaonkar/Nexa_Care/actions/runs/44880904628), [P1B source reconciliation](../governance/P1B_ORIGINAL_DOCUMENT_ACCESS.md), and [integration PR #101](https://github.com/sohamsadegaonkar/Nexa_Care/pull/101).
