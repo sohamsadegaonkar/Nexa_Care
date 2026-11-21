@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import ast
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -517,7 +519,7 @@ def test_fastapi_provider_trust_route_surface_remains_27() -> None:
     """Verify FastAPI public surface under /api/v2/provider-trust remains exactly 27 POST routes."""
     trust_routes = [
         route
-        for route in app.routes
+        for route in registered_routes(app)
         if hasattr(route, "path") and route.path.startswith("/api/v2/provider-trust")
     ]
     assert len(trust_routes) == 27
