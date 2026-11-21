@@ -353,8 +353,12 @@ class S3EncryptedDocumentStorage(DocumentStorage):
 
 def get_document_storage() -> DocumentStorage:
     config = get_document_storage_config()
-    return (
-        LocalEncryptedDocumentStorage(config)
-        if config.provider == "local"
-        else S3EncryptedDocumentStorage(config)
-    )
+    if config.provider == "local":
+        return LocalEncryptedDocumentStorage(config)
+    if config.provider == "s3":
+        return S3EncryptedDocumentStorage(config)
+    if config.provider == "azure_blob":
+        from app.services.azure_document_storage import AzureEncryptedDocumentStorage
+
+        return AzureEncryptedDocumentStorage(config)
+    raise ConfigError("Unsupported document storage provider")

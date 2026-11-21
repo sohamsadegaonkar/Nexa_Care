@@ -1058,3 +1058,75 @@ a separately versioned and signed authority decision with review and tests.
 ### P1B isolated development branch — 20 November 2026
 
 Resolve inventory ownership using the validated grant patient. Reject conflicting patient references at the shared provider gate before any clinical query. Original delivery requires a separate exact-document device signature, the same live signed history session and current clinician eligibility. Treat each opening as a one-time claim, serialized with revocation and committed with its audit outbox entry. The browser closes a preview on lost authority or an expired lease. See [the design, risks and rehearsal](P1B_ORIGINAL_DOCUMENT_ACCESS.md). Independent reviews and physical qualification remain pending.
+
+## Azure document-storage adapter foundation — 20 November 2026 (draft)
+
+This is an explicit synthetic-only development candidate, not a cloud
+cutover or clinical release. Applicable invariants are SEC-002 (server-owned
+scope), SEC-011 (erasure), SEC-012 (key isolation), SEC-013 (privacy-safe
+logging), SEC-014 (authentic source evidence), SEC-018 (no migration at
+startup), SEC-019 (readiness), and SEC-023 (source authorization).
+Regulatory baseline REG-001/003 and engineering commitments to patient
+control, provenance, isolation, and truthful validation remain unchanged.
+No new disclosure, consent, access, identity, clinical write, extraction,
+audit or emergency authority is introduced.
+
+The new Azure adapter uses a dedicated private container, managed identity
+only, account/container/tenant/patient/object-bound AES-GCM AAD, opaque remote
+blob names, non-overwriting ciphertext uploads and sanitized failures.
+Local/development/test plus explicit synthetic opt-in is required; all
+production-like and alpha environments are refused. No legacy source refs
+are reinterpreted; no resource creation or automatic migration. Logical
+deletion is not proof of irreversible cloud erasure. Existing AWS
+key/backup recovery remains a distinct approval boundary. Offline tests
+are not Azure runtime qualification; actual SDK/security review and isolated
+cloud validation remain required. See
+[Azure migration foundation](../runbooks/AZURE_MIGRATION_FOUNDATION.md).
+
+### Azure Key Vault synthetic wrapping candidate (20 November 2026)
+
+SEC-011/012/013/018/019: version-pinned dedicated shared RSA key via managed
+identity, wrapped payload binds patient UUID, DEK version and key identifier;
+durable row metadata validated before unwrapping; erasure registry rechecked
+and no plaintext-DEK cache. Reject mixed histories, no legacy fallback, no
+key lifecycle provisioning. Shared-key erasure is only access-blocked; no
+production-like enablement. Existing local and AWS modes are unchanged.
+Offline SDK doubles are not live key or destruction proof. REG-001/003 remain
+subject to human privacy/security/legal review. No access/consent/identity/
+clinical-write scope expansion. Same existing schema; no database migration.
+
+### Azure Layout synthetic form extraction candidate (20 November 2026)
+
+SEC-013/014/015/023: managed identity, dedicated endpoint, one bounded
+synthetic page, no source URLs or raw provider errors; exact source spans,
+closed labels, no identity inference, missing field confidence stays unknown,
+and incomplete evidence preserves existing review/quarantine gates. No
+clinically verified or auto-committed claims. No production activation or
+reprocessing of identity quarantine. Provider benchmark and privacy/clinical
+review outstanding; current consent and identity policy unchanged.
+
+### Combined demo erasure/preview regression correction (20 November 2026)
+
+SEC-011/013/021/023: commit original-document decision cleanup even when
+source/import rows are already absent, only after source deletion succeeds;
+database errors in metadata cleanup roll back and fail closed. Maintain
+the canonical erasure denial and avoid false irreversible-deletion claims.
+The jsdom test harness supplies browser object URL double methods only;
+no production preview authority, signed-consent, revocation or audit
+logic is weakened. Fresh combined CI and live device review are required.
+
+
+### 21 November 2026 — P1B verified-head reconciliation
+
+Carry P1B bc3abe74's patient selection checks, exact original-document
+approval/release/revocation contract, synthetic PDF fixture, source cleanup,
+and browser test corrections into the isolated Azure investor-demo candidate.
+The Azure Blob adapter now accepts the bounded expected-size parameter
+for a patient original and denies mismatched size; this does not broaden
+authorization. SEC-001/002/003/011/013/014/015/018/020/023 and the
+identity-review non-release boundary remain unchanged. New combined CI
+and live cloud/device/clinical review remain separate mandatory gates.
+
+### 21 November 2026 — P1B source-graph eligibility reconciliation
+
+The single-original-document P1B candidate consumes the stricter source-graph eligibility validator from the preparatory foundation branch as a **necessary, not sufficient** pre-disclosure guard. Require exactly one completed and reviewed patient-self import, finalized timeline/source mapping, non-error state, matching source ownership/type/category/storage reference and digest metadata. Duplicate or inconsistent source links are denied before reading the original. This validator never grants access or bypasses the separately signed document decision, live clinical consent, scanning, audit or erasure. The opt-in Azure patient-source storage must enforce the same exact expected-size boundary as local/S3. Full CI and live phone, browser and human gates remain separate; no clinical or security policy is relaxed.
