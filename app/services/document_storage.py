@@ -34,6 +34,17 @@ class DocumentStorageError(RuntimeError):
     pass
 
 
+def _read_ciphertext(stream, expected_size: int | None) -> bytes:
+    if expected_size is None:
+        return stream.read()
+    # AES-GCM envelope has a 12-byte nonce and a 16-byte authentication tag.
+    limit = expected_size + 28
+    encrypted = stream.read(limit + 1)
+    if len(encrypted) != limit:
+        raise DocumentStorageError("Stored document size mismatch")
+    return encrypted
+
+
 class DocumentStorage(ABC):
     @abstractmethod
     async def put_document(
@@ -58,7 +69,7 @@ class DocumentStorage(ABC):
         )
 
     async def get_patient_document_bytes(
-        self, storage_ref: str, *, patient_id: str
+        self, storage_ref: str, *, patient_id: str, expected_size: int | None = None
     ) -> bytes:
         raise DocumentStorageError(
             "Patient-self document storage is unsupported by this adapter"
@@ -160,8 +171,11 @@ class LocalEncryptedDocumentStorage(DocumentStorage):
             raise DocumentStorageError("Unsupported local storage reference")
         return storage_ref[len(prefix) :]
 
-    async def _read_encrypted(self, object_key: str, *, aad: bytes) -> bytes:
-        encrypted = await asyncio.to_thread(self._path(object_key).read_bytes)
+    async def _read_encrypted(self, object_key: str, *, aad: bytes, expected_size: int | None = None) -> bytes:
+        def read():
+            with self._path(object_key).open("rb") as stream:
+                return _read_ciphertext(stream, expected_size)
+        encrypted = await asyncio.to_thread(read)
         if len(encrypted) < 13:
             raise DocumentStorageError("Stored document is corrupt")
         try:
@@ -181,13 +195,13 @@ class LocalEncryptedDocumentStorage(DocumentStorage):
         )
 
     async def get_patient_document_bytes(
-        self, storage_ref: str, *, patient_id: str
+        self, storage_ref: str, *, patient_id: str, expected_size: int | None = None
     ) -> bytes:
         object_key = self._local_object_key(storage_ref)
         if not object_key.startswith(_patient_object_prefix(patient_id)):
             raise DocumentStorageError("Document ownership mismatch")
         return await self._read_encrypted(
-            object_key, aad=_patient_aad(patient_id, object_key)
+            object_key, aad=_patient_aad(patient_id, object_key), expected_size=expected_size
         )
 
     async def _delete_local(self, object_key: str) -> None:
@@ -296,11 +310,15 @@ class S3EncryptedDocumentStorage(DocumentStorage):
             raise DocumentStorageError("Document ownership mismatch")
         return key
 
-    async def _get_s3_bytes(self, key: str, *, aad: bytes) -> bytes:
+    async def _get_s3_bytes(self, key: str, *, aad: bytes, expected_size: int | None = None) -> bytes:
         response = await asyncio.to_thread(
             self.client.get_object, Bucket=self.bucket, Key=key
         )
-        body = await asyncio.to_thread(response["Body"].read)
+        stream = response["Body"]
+        try:
+            body = await asyncio.to_thread(_read_ciphertext, stream, expected_size)
+        finally:
+            stream.close()
         if len(body) < 13:
             raise DocumentStorageError("Stored document is corrupt")
         try:
@@ -315,10 +333,10 @@ class S3EncryptedDocumentStorage(DocumentStorage):
         return await self._get_s3_bytes(key, aad=_aad(tenant_id, patient_id, key))
 
     async def get_patient_document_bytes(
-        self, storage_ref: str, *, patient_id: str
+        self, storage_ref: str, *, patient_id: str, expected_size: int | None = None
     ) -> bytes:
         key = self._patient_object_key(storage_ref, patient_id)
-        return await self._get_s3_bytes(key, aad=_patient_aad(patient_id, key))
+        return await self._get_s3_bytes(key, aad=_patient_aad(patient_id, key), expected_size=expected_size)
 
     async def delete_document(
         self, storage_ref: str, *, tenant_id: str, patient_id: str

@@ -42,6 +42,7 @@ from app.services.original_document_access import (
     context,
     owned_source,
     verify_device_decision,
+    require_live_parent_for_approval,
 )
 from app.services.patient_external_record_lifecycle import (
     assert_patient_external_record_access_active,
@@ -61,36 +62,34 @@ class PrivateRoute(APIRoute):
             try:
                 response = await handle(request)
             except RequestValidationError:
-                raise HTTPException(
-                    422,
-                    "Invalid document request",
-                    headers={"Cache-Control": "private, no-store"},
-                ) from None
+                failure = HTTPException(422, "Invalid document request")
             except HTTPException as exc:
-                actor = getattr(request.state, "original_access_actor", None)
-                if actor:
+                failure = exc
+            except Exception:
+                failure = HTTPException(503, "Document access unavailable")
+            else:
+                response.headers["Cache-Control"] = "private, no-store"
+                response.headers["X-Content-Type-Options"] = "nosniff"
+                return response
+
+            actor = getattr(request.state, "original_access_actor", None)
+            if actor:
+                try:
                     await append_audit_log_or_503(
                         audit_context=request.state.original_access_audit,
                         actor_uid=actor,
                         target_id="ORIGINAL_DOCUMENT",
                         event_type="ORIGINAL_DOCUMENT_ACCESS_DENIED",
                         status="DENIED",
-                        metadata={"status_code": exc.status_code},
+                        metadata={"status_code": failure.status_code},
                     )
-                exc.headers = {
-                    **(exc.headers or {}),
-                    "Cache-Control": "private, no-store",
-                }
-                raise
-            except Exception:
-                raise HTTPException(
-                    503,
-                    "Document access unavailable",
-                    headers={"Cache-Control": "private, no-store"},
-                ) from None
-            response.headers["Cache-Control"] = "private, no-store"
-            response.headers["X-Content-Type-Options"] = "nosniff"
-            return response
+                except Exception:
+                    failure = HTTPException(503, "Document access unavailable")
+            failure.headers = {
+                **(failure.headers or {}),
+                "Cache-Control": "private, no-store",
+            }
+            raise failure from None
 
         return private
 
@@ -134,7 +133,7 @@ def receipt(row):
 
 async def history(
     request: Request,
-    grant=Depends(require_consent("clinical_summary")),
+    grant=Depends(require_consent("clinical_summary", authority_check_only=True)),
     provider: ProviderContext = Depends(
         require_clinical_capability(ClinicalCapability.RECORD_READ)
     ),
@@ -187,6 +186,7 @@ def provider_filter(bindings):
         Access.provider_id == provider.provider.provider_id,
         Access.hospital_id == provider.hospital_id,
         Access.history_id == UUID(grant.clinical_session_id),
+        Access.affiliation_id == provider.affiliation.affiliation_id,
         Access.session_hash
         == hashlib.sha256(provider.session_binding.encode()).hexdigest(),
     )
@@ -282,6 +282,7 @@ async def create(
         provider_id=provider.provider.provider_id,
         hospital_id=provider.hospital_id,
         history_id=UUID(grant.clinical_session_id),
+        affiliation_id=provider.affiliation.affiliation_id,
         source_hash=source.content_hash,
         session_hash=hashlib.sha256(provider.session_binding.encode()).hexdigest(),
         nonce=secrets.token_hex(32),
@@ -352,6 +353,9 @@ async def decide(
         signature = base64.b64decode(payload.signature, validate=True)
     except (ValueError, binascii.Error):
         raise HTTPException(403, "Document approval unavailable") from None
+    if payload.decision == "approved":
+        await require_live_parent_for_approval(db, row)
+        await owned_source(db, row.patient_id, row.document_id)
     await verify_device_decision(db, row, payload.key_id, signature, payload.decision)
     if state(row) != "pending":
         raise HTTPException(409, "Request expired")
@@ -417,7 +421,7 @@ async def open_original(
     if source.content_hash != row.source_hash:
         raise HTTPException(409, "Original unavailable")
     data = await get_document_storage().get_patient_document_bytes(
-        source.storage_ref, patient_id=patient
+        source.storage_ref, patient_id=patient, expected_size=source.size
     )
     if len(data) != source.size:
         raise HTTPException(409, "Original unavailable")
@@ -439,7 +443,7 @@ async def open_original(
     )
     # Re-read durable lifecycle state after scanning; the first authorization may have populated the identity map.
     live = await validate_consent_for_patient(
-        patient, "clinical_summary", provider, token, db
+        patient, "clinical_summary", provider, token, db, authority_check_only=True
     )
     if (
         not isinstance(live, ApprovedAccessCapability)

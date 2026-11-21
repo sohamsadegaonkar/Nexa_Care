@@ -56,6 +56,7 @@ async def validate_consent_for_patient(
     provider: ProviderContext,
     x_consent_token: str | None,
     db: AsyncSession | None = None,
+    *, authority_check_only: bool = False,
 ) -> ConsentCapability | ApprovedAccessCapability:
     """Validate consent for an explicitly provided patient_id.
 
@@ -167,6 +168,15 @@ async def validate_consent_for_patient(
             detail={"error_code": "BREAK_GLASS_CAPABILITY_NOT_VALID_HERE"},
         )
 
+    if authority_check_only:
+        # P1B state queries do not disclose clinical content. Actual releases have
+        # a separate transactional outbox entry and must not be counted twice.
+        await append_audit_log_or_503(
+            audit_context=current_audit_context(AuditDomain.CONSENT), actor_uid=actor_uid,
+            event_type="DOCUMENT_AUTHORITY_CHECKED", target_id=target_id, status="SUCCESS",
+        )
+        return capability
+
     approved_request_id = getattr(capability, "request_id", None)
     approved_purpose = getattr(capability, "purpose", purpose)
     audit_metadata = {
@@ -208,7 +218,7 @@ async def validate_consent_for_patient(
 
 
 def require_consent(
-    purpose: str,
+    purpose: str, *, authority_check_only: bool = False,
 ) -> Callable[[Request, ProviderContext, str | None, AsyncSession], Any]:
     """FastAPI dependency factory enforcing live consent for provider access."""
 
@@ -251,6 +261,7 @@ def require_consent(
             provider=provider,
             x_consent_token=x_consent_token,
             db=db,
+            **({"authority_check_only": True} if authority_check_only else {}),
         )
 
     return _consent_gate

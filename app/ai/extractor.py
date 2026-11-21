@@ -8,6 +8,8 @@ because remote credentials are absent.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+from io import BytesIO
 import json
 import logging
 import random
@@ -34,6 +36,7 @@ from app.ai.textract_parser import parse_textract_blocks
 from app.core.config import DocumentExtractionConfig, get_document_extraction_config
 from app.models.ai_models import (
     ExtractedMedicalDocument,
+    ProviderFieldEvidence,
     ProviderAttemptOutcome,
     ProviderAttemptTrace,
 )
@@ -781,6 +784,24 @@ class AwsTextractExtractionProvider(ExtractionProvider):
         ) from last_error
 
 
+# Only the bundled, non-clinical rehearsal file has a known reviewable layout.
+# Match exact bytes, then read the printed source line; filenames confer no trust.
+_DEMO_ORIGINAL_SHA256 = "bca2148407fa6509e5c2d06f0896d667bf3ca2e992cc2ec6197d4ba6062a43e9"
+
+
+def _demo_report_evidence(data: bytes, mime_type: str) -> list[ProviderFieldEvidence]:
+    if mime_type != "application/pdf" or hashlib.sha256(data).hexdigest() != _DEMO_ORIGINAL_SHA256:
+        return []
+    from pypdf import PdfReader
+    lines = PdfReader(BytesIO(data), strict=True).pages[0].extract_text().splitlines()
+    source_line = next(line for line in lines if line.startswith("HbA1c: "))
+    return [ProviderFieldEvidence(
+        canonical_field_name="hba1c", raw_value=source_line.partition(":")[2].strip(),
+        source_text=source_line, page_number=0, provider_name="demo",
+        provider_api_version="synthetic-pdf-text-v1", extraction_timestamp=datetime.now(timezone.utc),
+    )]
+
+
 class DemoExtractionProvider(ExtractionProvider):
     """Deterministic synthetic provider for explicit test/demo environments."""
 
@@ -795,7 +816,7 @@ class DemoExtractionProvider(ExtractionProvider):
     async def extract_bytes(
         self, document_bytes: bytes, *, mime_type: str, request_id: str
     ) -> ExtractionProviderResult:
-        _ = (document_bytes, mime_type, request_id)
+        _ = request_id
         result = ExtractedMedicalDocument(
             patient_name="Synthetic Patient",
             aadhaar_abha_id="SYNTHETIC-ID",
@@ -804,6 +825,7 @@ class DemoExtractionProvider(ExtractionProvider):
             lab_results=[],
             prescriptions=[],
             extraction_confidence=0.50,
+            field_evidence=_demo_report_evidence(document_bytes, mime_type),
         )
         return _complete_provider_result(
             result,

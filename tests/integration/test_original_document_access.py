@@ -2,7 +2,7 @@
 
 import asyncio
 import base64
-import io
+from pathlib import Path
 import json
 import os
 from hashlib import sha256
@@ -12,11 +12,8 @@ import pytest
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import ec
-from pypdf import PdfWriter
-from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from sqlalchemy import text
 
-from app.ai.extractor import DemoExtractionProvider
 from app.main import app
 from app.security.patient_source_malware_scanner import (
     MalwareScanOutcome,
@@ -25,7 +22,6 @@ from app.security.patient_source_malware_scanner import (
 from tests.integration.test_patient_provider_true_e2e import (
     _established_clinical_access,
 )
-from tests.test_patient_external_record_extraction import _evidence, _result
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.postgres, pytest.mark.redis]
 
@@ -37,44 +33,38 @@ def override_deps():
     app.dependency_overrides.clear()
 
 
-def synthetic_report():
-    writer = PdfWriter()
-    page = writer.add_blank_page(width=400, height=250)
-    stream = DecodedStreamObject()
-    stream.set_data(
-        b"BT /F1 14 Tf 25 180 Td (Synthetic Hospital X - demonstration report) Tj 0 -30 Td (Synthetic measurement: 6.1 percent) Tj ET"
+def signed_decision(graph, card, decision):
+    signed = {
+        **card["context"],
+        "decision": decision,
+        "device_id": str(graph["device_id"]),
+        "key_id": str(graph["device_key_id"]),
+        "key_version": graph["device_key_version"],
+        "key_fingerprint": graph["device_key_fingerprint"],
+    }
+    sig = graph["private_key"].sign(
+        json.dumps(signed, sort_keys=True, separators=(",", ":")).encode(),
+        ec.ECDSA(hashes.SHA256()),
     )
-    font = DictionaryObject(
-        {
-            NameObject("/Type"): NameObject("/Font"),
-            NameObject("/Subtype"): NameObject("/Type1"),
-            NameObject("/BaseFont"): NameObject("/Helvetica"),
-        }
-    )
-    page[NameObject("/Resources")] = DictionaryObject(
-        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): font})}
-    )
-    page[NameObject("/Contents")] = writer._add_object(stream)
-    dest = io.BytesIO()
-    writer.write(dest)
-    return dest.getvalue()
+    return {
+        "request_id": card["request_id"],
+        "decision": decision,
+        "signature": base64.b64encode(sig).decode(),
+        "key_id": signed["key_id"],
+    }
 
 
 async def test_single_document_patient_decision_and_audited_open(monkeypatch, tmp_path):
-    report = synthetic_report()
+    report = (
+        Path(__file__).resolve().parents[2]
+        / "docs/demo/synthetic-hospital-x-report.pdf"
+    ).read_bytes()
     monkeypatch.setenv("DOCUMENT_STORAGE_PROVIDER", "local")
     monkeypatch.setenv("DOCUMENT_STORAGE_LOCAL_ROOT", str(tmp_path))
     monkeypatch.setenv(
         "DOCUMENT_STORAGE_ENCRYPTION_KEY", Fernet.generate_key().decode()
     )
     monkeypatch.setenv("DOCUMENT_EXTRACTION_PROVIDER", "demo")
-    # Synthetic OCR evidence fixture. Approval, signature verification, import/review/save,
-    # authorizations, DB, Redis, source storage and audit are real application code.
-    monkeypatch.setattr(
-        DemoExtractionProvider,
-        "extract_bytes",
-        AsyncMock(return_value=_result(_evidence("hba1c", "6.1%"))),
-    )
     if os.getenv("P1B_REHEARSAL_CLAMD") != "1":
         scanner_stub = AsyncMock()
         scanner_stub.scan.return_value = MalwareScanResult(
@@ -84,7 +74,7 @@ async def test_single_document_patient_decision_and_audited_open(monkeypatch, tm
             "app.services.patient_external_record_source_safety.get_patient_source_malware_scanner",
             lambda: scanner_stub,
         )
-    async with _established_clinical_access() as ctx:
+    async with _established_clinical_access("Synthetic Hospital Y") as ctx:
         client = ctx.client
         patient = {"Authorization": "Bearer " + ctx.patient_token}
         doctor = {**ctx.auth_headers, "X-Patient-Id": str(ctx.graph["patient_id"])}
@@ -102,6 +92,7 @@ async def test_single_document_patient_decision_and_audited_open(monkeypatch, tm
         assert process.status_code == 200, process.text
         review = await client.get(item + "/review", headers=patient)
         assert review.status_code == 200, review.text
+        assert [item["extracted_value"] for item in review.json()["items"]] == ["6.1%"]
         for evidence in review.json()["items"]:
             accepted = await client.post(
                 item + "/review/" + evidence["review_item_id"],
@@ -128,30 +119,48 @@ async def test_single_document_patient_decision_and_audited_open(monkeypatch, tm
         card = next(
             c for c in cards.json() if c["request_id"] == selection["request_id"]
         )
+        assert card["hospital"] == "Synthetic Hospital Y"
         assert card["context"]["document_id"] == doc
         graph = ctx.graph
-        signed = {
-            **card["context"],
-            "decision": "approved",
-            "device_id": str(graph["device_id"]),
-            "key_id": str(graph["device_key_id"]),
-            "key_version": graph["device_key_version"],
-            "key_fingerprint": graph["device_key_fingerprint"],
-        }
-        sig = graph["private_key"].sign(
-            json.dumps(signed, sort_keys=True, separators=(",", ":")).encode(),
-            ec.ECDSA(hashes.SHA256()),
-        )
-        payload = {
-            **selection,
-            "decision": "approved",
-            "signature": base64.b64encode(sig).decode(),
-            "key_id": signed["key_id"],
-        }
+        payload = signed_decision(graph, card, "approved")
         approved = await client.post(api + "/decision", headers=patient, json=payload)
         assert approved.is_success, approved.text
         duplicate = await client.post(api + "/decision", headers=patient, json=payload)
         assert duplicate.status_code == 409
+        from app.api.v2 import original_document_routes as routes
+
+        # Each failed dependency must leave the approved claim usable and release zero bytes.
+        for dependency in ("get_document_storage", "enqueue_audit_event"):
+            with monkeypatch.context() as fault:
+                if dependency == "enqueue_audit_event":
+                    fault.setattr(
+                        routes,
+                        dependency,
+                        AsyncMock(side_effect=RuntimeError("outbox unavailable")),
+                    )
+                else:
+                    fault.setattr(routes, dependency, lambda: None)
+                refused = await client.post(
+                    api + "/open", headers=doctor, json=selection
+                )
+                assert refused.status_code == 503
+                assert report not in refused.content
+        with monkeypatch.context() as fault:
+            from app.services.patient_external_record_source_safety import (
+                PatientSourceSafetyError,
+            )
+
+            fault.setattr(
+                routes,
+                "qualify_patient_source_for_extraction",
+                AsyncMock(
+                    side_effect=PatientSourceSafetyError(
+                        "SOURCE_MALWARE_DETECTED", retryable=False
+                    )
+                ),
+            )
+            blocked = await client.post(api + "/open", headers=doctor, json=selection)
+            assert blocked.status_code == 415
         opens = await asyncio.gather(
             *(
                 client.post(api + "/open", headers=doctor, json=selection)
@@ -172,6 +181,32 @@ async def test_single_document_patient_decision_and_audited_open(monkeypatch, tm
         assert (
             await client.post(api + "/open", headers=doctor, json=selection)
         ).status_code == 403
+        # Prove prospective revocation independently of the already-consumed one-time claim.
+        for decision in ("denied", "approved"):
+            fresh = await client.post(
+                api + "/request", headers=doctor, json={"document_id": doc}
+            )
+            assert fresh.is_success, fresh.text
+            fresh_id = {"request_id": fresh.json()["request_id"]}
+            history = await client.get(api + "/mine", headers=patient)
+            card = next(
+                c for c in history.json() if c["request_id"] == fresh_id["request_id"]
+            )
+            result = await client.post(
+                api + "/decision",
+                headers=patient,
+                json=signed_decision(graph, card, decision),
+            )
+            assert result.json()["status"] == decision
+            if decision == "approved":
+                result = await client.post(
+                    api + "/revoke", headers=patient, json=fresh_id
+                )
+                assert result.json()["status"] == "revoked"
+            assert (
+                await client.post(api + "/open", headers=doctor, json=fresh_id)
+            ).status_code == 403
+
         async with ctx.engine.connect() as conn:
             events = (
                 (

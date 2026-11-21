@@ -1,5 +1,5 @@
 import { fireEvent, screen, waitFor } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { renderWithTamagui } from '../../../../test/test-utils'
 import { NexaApiClient, type OriginalReceipt } from '../../utils/apiClient'
 import { OriginalDocumentViewer } from './OriginalDocumentViewer'
@@ -8,7 +8,14 @@ const access = { patientId: 'synthetic', hospitalId: 'facility', consentToken: '
 const receipt = (status: OriginalReceipt['status']): OriginalReceipt => ({
   request_id: 'request', expires_at: new Date(Date.now() + 60000).toISOString(), status,
 })
-afterEach(() => vi.restoreAllMocks())
+beforeEach(() => {
+  class BrowserURL extends URL {
+    static createObjectURL = vi.fn(() => 'blob:temporary')
+    static revokeObjectURL = vi.fn()
+  }
+  vi.stubGlobal('URL', BrowserURL)
+})
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 it('closes the visible image and releases its temporary URL after revocation', async () => {
   vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:temporary')
