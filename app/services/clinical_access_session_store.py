@@ -190,7 +190,7 @@ async def validate_active_session(
             select(ConsentGrantLog).where(
                 ConsentGrantLog.token_hash == digest,
                 ConsentGrantLog.request_id == consent_request_id,
-            )
+            ).execution_options(populate_existing=True)
         )
     ).scalar_one_or_none()
     if grant is None:

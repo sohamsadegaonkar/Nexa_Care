@@ -40,6 +40,7 @@ from app.models.patient_device_keys import PatientDeviceKey
 from app.models.patient_records import Vitals
 from app.models.provider import (
     AffiliationTrustStatus,
+    HospitalRegistry,
     FacilityVerification,
     FacilityVerificationStatus,
     ProfessionalVerification,
@@ -97,7 +98,7 @@ def _get_redis_url() -> str:
     return get_qualification_redis_url()
 
 
-async def _seed_graph(db_url: str) -> dict[str, object]:
+async def _seed_graph(db_url: str, receiving_facility: str | None = None) -> dict[str, object]:
     engine = create_async_engine(db_url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     private_key = ec.generate_private_key(ec.SECP256R1())
@@ -122,6 +123,9 @@ async def _seed_graph(db_url: str) -> dict[str, object]:
                 roles=["clinician"],
                 issue_session=False,
             )
+            if receiving_facility:
+                facility = await db.get(HospitalRegistry, hospital_id)
+                facility.display_name = receiving_facility
             cred = (
                 await db.execute(
                     select(ProviderCredential).where(
@@ -490,7 +494,7 @@ class EstablishedClinicalAccess:
 
 
 @asynccontextmanager
-async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAccess]:
+async def _established_clinical_access(receiving_facility: str | None = None) -> AsyncIterator[EstablishedClinicalAccess]:
     """Establish one real routine clinical access flow up to successful record.read.
 
     This provisions a real loopback graph, authenticates the provider with password + MFA,
@@ -530,7 +534,7 @@ async def _established_clinical_access() -> AsyncIterator[EstablishedClinicalAcc
 
     redis = Redis.from_url(redis_url, decode_responses=True)
     await redis.flushdb()
-    graph = await _seed_graph(db_url)
+    graph = await _seed_graph(db_url, receiving_facility)
     assert _PUBLIC_ID_RE.fullmatch(str(graph["public_patient_id"]))
     patient_token, _, _ = await issue_patient_access_session(
         str(graph["patient_id"]), str(graph["patient_subject"])

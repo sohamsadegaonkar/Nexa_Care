@@ -8,25 +8,14 @@ const access = { patientId: 'synthetic', hospitalId: 'facility', consentToken: '
 const receipt = (status: OriginalReceipt['status']): OriginalReceipt => ({
   request_id: 'request', expires_at: new Date(Date.now() + 60000).toISOString(), status,
 })
-// jsdom does not implement the browser's object URL APIs. Install explicit
-// test doubles and restore the original global surface after each test.
-const createDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')
-const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')
 beforeEach(() => {
-  Object.defineProperty(URL, 'createObjectURL', {
-    configurable: true, writable: true, value: vi.fn(() => 'blob:temporary'),
-  })
-  Object.defineProperty(URL, 'revokeObjectURL', {
-    configurable: true, writable: true, value: vi.fn(),
-  })
+  class BrowserURL extends URL {
+    static createObjectURL = vi.fn(() => 'blob:temporary')
+    static revokeObjectURL = vi.fn()
+  }
+  vi.stubGlobal('URL', BrowserURL)
 })
-afterEach(() => {
-  vi.restoreAllMocks()
-  if (createDescriptor) Object.defineProperty(URL, 'createObjectURL', createDescriptor)
-  else Reflect.deleteProperty(URL, 'createObjectURL')
-  if (revokeDescriptor) Object.defineProperty(URL, 'revokeObjectURL', revokeDescriptor)
-  else Reflect.deleteProperty(URL, 'revokeObjectURL')
-})
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
 
 it('closes the visible image and releases its temporary URL after revocation', async () => {
   vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:temporary')

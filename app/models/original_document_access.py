@@ -20,7 +20,12 @@ class OriginalDocumentAccess(Base):
     )
     provider_id: Mapped[UUID]
     hospital_id: Mapped[UUID]
-    history_id: Mapped[UUID]
+    affiliation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("provider_hospital_affiliation.id")
+    )
+    history_id: Mapped[UUID] = mapped_column(
+        ForeignKey("clinical_access_sessions.session_id")
+    )
     session_hash: Mapped[str] = mapped_column(String(64))
     source_hash: Mapped[str] = mapped_column(String(64))
     nonce: Mapped[str] = mapped_column(String(64), unique=True)

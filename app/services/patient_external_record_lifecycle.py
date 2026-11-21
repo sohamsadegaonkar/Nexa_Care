@@ -126,9 +126,6 @@ async def delete_patient_external_record_sources(
             "patient external source metadata unavailable"
         ) from exc
 
-    # Original-document approvals can survive removal of the source metadata.
-    # Always neutralize decision material, even when source/import rows are gone.
-
     pending_source_rows = [
         row for row in source_rows if row.storage_ref != _ERASED_SOURCE_REF
     ]
@@ -161,11 +158,6 @@ async def delete_patient_external_record_sources(
     ]
 
     try:
-        await db.execute(
-            delete(OriginalDocumentAccess).where(
-                OriginalDocumentAccess.patient_id == patient_uuid
-            )
-        )
         for row in source_rows:
             row.storage_ref = _ERASED_SOURCE_REF
             row.original_filename = None
@@ -183,6 +175,10 @@ async def delete_patient_external_record_sources(
                 )
                 .values(storage_ref=_ERASED_DOCUMENT_REF)
             )
+        # Remove linkable decision material even if retained source rows are already gone.
+        await db.execute(
+            delete(OriginalDocumentAccess).where(OriginalDocumentAccess.patient_id == patient_uuid)
+        )
         await db.flush()
         await db.commit()
     except SQLAlchemyError as exc:

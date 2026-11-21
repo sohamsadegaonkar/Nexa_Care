@@ -315,9 +315,17 @@ async def _load_live_capability(
     hospital_id: str,
 ) -> ApprovedAccessCapability | None:
     """Load a live capability after all identity, request, and revocation checks."""
+    return await load_server_bound_capability(
+        digest=token_hash(token), patient_id=patient_id, provider_id=provider_id, hospital_id=hospital_id,
+    )
+
+
+async def load_server_bound_capability(
+    *, digest: str, patient_id: str, provider_id: str, hospital_id: str,
+) -> ApprovedAccessCapability | None:
+    """Recheck Redis using a digest from durable authority, never from an HTTP caller."""
     try:
         redis = get_async_redis_client()
-        digest = token_hash(token)
         payload = _decode(await redis.get(_capability_key(digest)))
         if payload is None:
             return None

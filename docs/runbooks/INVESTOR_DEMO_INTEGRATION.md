@@ -75,3 +75,27 @@ job attempt, no clinical auto-commit and no production-like runtime. A
 TCP scanner probe is insufficient to qualify signature freshness.
 The generated candidate must remain non-deployable until actual cost,
 identity, TLS, scanner and live service checks are approved and passed.
+
+
+## 21 November 2026 — P1B evidence refresh
+
+Reconciled P1B's verified commit bc3abe74fedc32f1f3dc244020980981997bf3e1
+with the isolated Azure integration candidate. Source P1B workflows:
+backend 44865000225, frontend 44865000211 and Clamd 44865000210
+all completed successfully at that exact head. This supersedes the
+earlier P1B failing-test snapshot and prior fixture/rehearsal limitations.
+The source branch now includes the bundled synthetic Hospital X PDF and
+the synthetic software-key/database/Redis original-access rehearsal.
+Do not misrepresent that evidence as a real enrolled phone, NFC handset,
+live Azure account or Chromium doctor-browser session. Fresh combined
+integration CI is required at the new integration head.
+
+The P1B source adds an expected-size check when retrieving an original,
+which the Azure adapter now honors for patient-owned blobs. This prevents
+a P1B-only pass from masking a storage-provider signature mismatch.
+
+Next gates: run latest combined backend/frontend/Clamd/Azure CI, test
+actual Azure services only after approved isolated resources are available,
+complete real-browser and hardware-key/NFC rehearsal, verify exact scanner
+definitions and independent clinical/security/privacy review. PR #98 stays
+independent and unmerged. No changes to main or cloud resources.

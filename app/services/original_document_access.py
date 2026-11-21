@@ -11,6 +11,17 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redis import get_async_redis_client
+from app.models.clinical_access_session import ClinicalAccessSessionRecord
+from app.services.approved_access_capability import (
+    CLINICAL_ACCESS_SESSION_GRANT_TYPE,
+    load_server_bound_capability,
+)
+from app.services.clinical_access_session_store import validate_active_session
+from app.services.consent_v3_authority import (
+    ConsentV3ProviderIneligible,
+    assert_live_consent_v3_provider,
+)
 from app.models.patient_device_keys import PatientDeviceKey
 from app.models.patient_external_record_import import (
     PatientExternalRecordImport as Import,
@@ -36,6 +47,7 @@ def context(row):
         "provider_id": str(row.provider_id),
         "hospital_id": str(row.hospital_id),
         "history_id": str(row.history_id),
+        "affiliation_id": str(row.affiliation_id),
         "session_hash": row.session_hash,
         "source_hash": row.source_hash,
         "nonce": row.nonce,
@@ -116,3 +128,47 @@ async def owned_source(db: AsyncSession, patient: UUID, document: UUID):
     if pair is None:
         raise HTTPException(404, "Original unavailable")
     return pair
+
+
+async def require_live_parent_for_approval(db, row):
+    """Patient-side approval reuses the original server-held initiation assurance."""
+    parent = await db.get(
+        ClinicalAccessSessionRecord, row.history_id, populate_existing=True
+    )
+    if parent is None:
+        raise HTTPException(403, "History approval unavailable")
+    identity = dict(
+        patient_id=str(row.patient_id),
+        provider_id=str(row.provider_id),
+        hospital_id=str(row.hospital_id),
+    )
+    grant = await load_server_bound_capability(digest=parent.token_hash, **identity)
+    if (
+        grant is None
+        or grant.is_break_glass
+        or grant.grant_type != CLINICAL_ACCESS_SESSION_GRANT_TYPE
+        or grant.clinical_session_id != str(row.history_id)
+        or grant.allowed_operations != ("READ_CLINICAL_HISTORY",)
+        or grant.provider_session_binding_hash != row.session_hash
+        or not await validate_active_session(
+            db,
+            session_id=str(row.history_id),
+            token_hash=parent.token_hash,
+            consent_request_id=grant.request_id,
+            provider_session_binding_hash=row.session_hash,
+            allowed_operations=grant.allowed_operations,
+            policy_version=grant.clinical_access_policy_version,
+            **identity,
+        )
+    ):
+        raise HTTPException(403, "History approval unavailable")
+    raw = await get_async_redis_client().get(f"consent_request:{grant.request_id}")
+    data = json.loads(raw) if raw else {}
+    if data.get("status") != "approved" or any(
+        str(data.get(k)) != v for k, v in identity.items()
+    ):
+        raise HTTPException(403, "History approval unavailable")
+    try:
+        await assert_live_consent_v3_provider(db=db, request_data=data)
+    except ConsentV3ProviderIneligible:
+        raise HTTPException(403, "Provider authority unavailable") from None

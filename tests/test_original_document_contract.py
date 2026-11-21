@@ -23,6 +23,7 @@ from app.services.original_document_preview import require_passive_pdf
         "hospital_id",
         "document_id",
         "history_id",
+        "affiliation_id",
         "id",
         "session_hash",
         "source_hash",
@@ -42,6 +43,7 @@ async def test_signature_verifies_only_the_exact_issued_decision(field):
         hospital_id=uuid4(),
         document_id=uuid4(),
         history_id=uuid4(),
+        affiliation_id=uuid4(),
         session_hash="a" * 64,
         source_hash="b" * 64,
         nonce="c" * 64,
@@ -98,3 +100,31 @@ def test_preview_rejects_attachments_and_accepts_passive_pdf():
     with pytest.raises(HTTPException) as exc:
         require_passive_pdf(attached.getvalue())
     assert exc.value.status_code == 415
+
+
+@pytest.mark.asyncio
+async def test_preview_status_fails_closed_on_data_store_outage(monkeypatch):
+    from app.api.v2 import original_document_routes as routes
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from app.core.database import get_db_session
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    app.dependency_overrides[routes.history] = lambda: ()
+    app.dependency_overrides[get_db_session] = lambda: object()
+    monkeypatch.setattr(routes, "provider_filter", lambda _: ())
+    monkeypatch.setattr(
+        routes,
+        "find",
+        AsyncMock(side_effect=RuntimeError("internal datastore details")),
+    )
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/api/v2/original-access/v1/status", json={"request_id": str(uuid4())}
+        )
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "private, no-store"
+    assert "internal datastore details" not in response.text

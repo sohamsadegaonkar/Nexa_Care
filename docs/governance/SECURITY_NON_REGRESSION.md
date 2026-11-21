@@ -1114,3 +1114,15 @@ the canonical erasure denial and avoid false irreversible-deletion claims.
 The jsdom test harness supplies browser object URL double methods only;
 no production preview authority, signed-consent, revocation or audit
 logic is weakened. Fresh combined CI and live device review are required.
+
+
+### 21 November 2026 — P1B verified-head reconciliation
+
+Carry P1B bc3abe74's patient selection checks, exact original-document
+approval/release/revocation contract, synthetic PDF fixture, source cleanup,
+and browser test corrections into the isolated Azure investor-demo candidate.
+The Azure Blob adapter now accepts the bounded expected-size parameter
+for a patient original and denies mismatched size; this does not broaden
+authorization. SEC-001/002/003/011/013/014/015/018/020/023 and the
+identity-review non-release boundary remain unchanged. New combined CI
+and live cloud/device/clinical review remain separate mandatory gates.
