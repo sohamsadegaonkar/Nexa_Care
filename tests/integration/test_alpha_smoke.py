@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from app.main import app
+from tests.registered_routes import registered_routes
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -13,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 def test_signed_approval_to_durable_claim_seam_is_registered():
     routes = {
         (method, route.path)
-        for route in app.routes
+        for route in registered_routes(app)
         for method in getattr(route, "methods", set())
     }
     assert ("POST", "/api/v2/consent/approve-signed") in routes
