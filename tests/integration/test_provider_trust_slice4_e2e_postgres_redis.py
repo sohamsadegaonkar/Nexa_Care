@@ -32,6 +32,8 @@ Proves the complete Slice-4 Organizational Trust Permission Administration archi
 
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import asyncio
 import os
 import uuid
@@ -3088,7 +3090,7 @@ async def test_route_surface_freeze():
     """Assert /api/v2/provider-trust contains exactly 27 POST routes and zero non-POST routes."""
     routes = [
         r
-        for r in main_app.routes
+        for r in registered_routes(main_app)
         if getattr(r, "path", "").startswith("/api/v2/provider-trust")
     ]
     assert (
