@@ -57,9 +57,25 @@ async function stubSession(page: Page, authenticated: boolean) {
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true
-  )
+  const metrics = await page.evaluate(() => {
+    const viewport = window.innerWidth
+    const width = document.documentElement.scrollWidth
+    const outliers = [...document.querySelectorAll<HTMLElement>('body *')]
+      .filter((element) => {
+        const rect = element.getBoundingClientRect()
+        const style = getComputedStyle(element)
+        return rect.width > 0 && (rect.right > viewport + 1 || rect.left < -1) &&
+          style.position !== 'fixed' && style.visibility !== 'hidden'
+      })
+      .slice(0, 8).map(element => {
+        const rect = element.getBoundingClientRect()
+        return { tag: element.tagName, className: String(element.className).slice(0, 110),
+          right: Math.round(rect.right), left: Math.round(rect.left), width: Math.round(rect.width) }
+      })
+    return { viewport, width, outliers }
+  })
+  if (metrics.width > metrics.viewport) console.error('INVESTOR_MOBILE_OVERFLOW:', JSON.stringify(metrics))
+  expect(metrics.width).toBeLessThanOrEqual(metrics.viewport)
 }
 
 test('provider credentials have accessible labels, a visible primary action and keyboard submission', async ({
