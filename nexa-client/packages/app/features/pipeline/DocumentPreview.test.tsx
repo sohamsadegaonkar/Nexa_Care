@@ -59,6 +59,30 @@ describe('pipeline source document preview', () => {
     expect(document.querySelectorAll('svg rect')).toHaveLength(0)
   })
 
+  it('shows the current page field count without implying clinical verification', () => {
+    const onPageChange = vi.fn()
+    renderWithTamagui(
+      <DocumentPreview
+        jobId="job-1"
+        consentToken="consent-capability"
+        totalPages={2}
+        fields={[
+          { field_id: 'field-1', field_name: 'Allergy', source_page: 1, source_bbox: null, status: 'needs_review', risk_level: 'HIGH_RISK' },
+          { field_id: 'field-2', field_name: 'Medicine', source_page: 2, source_bbox: null, status: 'needs_review', risk_level: 'HIGH_RISK' },
+          { field_id: 'field-3', field_name: 'Diagnosis', source_page: 2, source_bbox: null, status: 'approved', risk_level: 'LOW_RISK' },
+        ]}
+        highlightedFieldId={null}
+        currentPage={2}
+        onPageChange={onPageChange}
+      />
+    )
+
+    expect(screen.getByText('2 extracted fields on this page')).toBeTruthy()
+    expect(screen.getByText(/ALPHA — extracted fields require clinical verification/)).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Show page 1' }))
+    expect(onPageChange).toHaveBeenCalledWith(1)
+  })
+
   it('loads the PDF through the consent-gated API and revokes its object URL', async () => {
     const source = vi
       .spyOn(NexaApiClient, 'getExtractionJobDocument')

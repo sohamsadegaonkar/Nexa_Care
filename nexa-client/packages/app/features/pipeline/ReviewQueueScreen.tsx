@@ -1,5 +1,6 @@
 /**
  * Review queue screen — list all flagged fields needing human adjudication.
+ * ALPHA: extracted fields are provisional and require clinical verification.
  *
  * Fetches GET /api/v2/pipeline/review-queue and displays items grouped by
  * job. Each item shows document title, flagged field count, highest risk
