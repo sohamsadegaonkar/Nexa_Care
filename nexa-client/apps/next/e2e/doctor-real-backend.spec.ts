@@ -64,6 +64,63 @@ test('real clinician web session uses Next same-origin proxy and synthetic MFA',
   })
   expect(session).toEqual({ status: 200, provider: true, hospital: true })
 
+  // The signed ORIGINAL DOCUMENT endpoint must remain closed to a fully
+  // authenticated doctor who has no independent patient-history grant.
+  // Use the *real* cookie session, valid CSRF and synthetic header IDs, so this
+  // does not pass merely by triggering the anonymous-auth or CSRF guard.
+  const originalDenials = await page.evaluate(async () => {
+    const current = await fetch('/api/v2/auth/web/session', { credentials: 'include' })
+    if (!current.ok) throw new Error('No live provider session for consent-denial test')
+    const provider = await current.json() as { hospital_id: string }
+    const csrfPart = document.cookie
+      .split('; ')
+      .find((part) => part.startsWith('nexa_csrf='))
+      ?.split('=')[1]
+    if (!csrfPart) throw new Error('No browser CSRF cookie for consent-denial test')
+    const headers: Record<string, string> = {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': decodeURIComponent(csrfPart),
+      'X-Hospital-Id': provider.hospital_id,
+      'X-Patient-Id': crypto.randomUUID(),
+    }
+    const requests = [
+      { operation: 'request', body: { document_id: crypto.randomUUID() } },
+      { operation: 'status', body: { request_id: crypto.randomUUID() } },
+      { operation: 'open', body: { request_id: crypto.randomUUID() } },
+    ]
+    return Promise.all(requests.map(async ({ operation, body }) => {
+      // An absent token on "request" and a forged token on "status"/"open"
+      // must fail before a database row can be accessed or document bytes sent.
+      const attempt = await fetch('/api/v2/original-access/v1/' + operation, {
+        method: 'POST',
+        credentials: 'include',
+        headers: operation === 'request'
+          ? headers
+          : { ...headers, 'X-Consent-Token': 'synthetic-fabricated-not-a-capability' },
+        body: JSON.stringify(body),
+      })
+      const raw = await attempt.text()
+      const parsed = JSON.parse(raw) as { detail?: unknown }
+      return {
+        operation,
+        status: attempt.status,
+        detail: typeof parsed.detail === 'string' ? parsed.detail : null,
+        cacheControl: attempt.headers.get('cache-control') ?? '',
+        contentType: attempt.headers.get('content-type') ?? '',
+        noPdf: !raw.startsWith('%PDF-'),
+      }
+    }))
+  })
+  for (const attempt of originalDenials) {
+    expect(attempt.status, attempt.operation).toBe(403)
+    expect(attempt.detail, attempt.operation).toContain('consent token required')
+    expect(attempt.cacheControl, attempt.operation).toContain('no-store')
+    expect(attempt.contentType, attempt.operation).toContain('application/json')
+    expect(attempt.noPdf, attempt.operation).toBe(true)
+  }
+  console.log('REAL_BACKEND_ORIGINAL_UNGRANTED=DENIED_THREE_OPERATIONS')
+
   // Secure server-owned bearer must never become JS-visible browser storage.
   const scriptVisibleCookies = await page.evaluate(() => document.cookie)
   expect(scriptVisibleCookies).not.toContain('nexa_provider_session')
