@@ -34,7 +34,18 @@ test('real clinician web session uses Next same-origin proxy and synthetic MFA',
 
   await page.getByLabel('Email or Login Identifier').fill(demoEmail)
   await page.getByLabel('Password', { exact: true }).fill(password!)
+  const loginResponsePromise = page.waitForResponse(
+    (response) => response.url().endsWith('/api/v2/auth/web/login') &&
+      response.request().method() === 'POST',
+    { timeout: 20_000 }
+  )
   await page.getByRole('button', { name: 'Sign In', exact: true }).click()
+  const loginResponse = await loginResponsePromise
+  // Only status is logged; never request body, Set-Cookie, password, MFA code or tokens.
+  console.log(`SYNTHETIC_DOCTOR_LOGIN_HTTP=${loginResponse.status()}`)
+  expect(loginResponse.status()).toBe(200)
+  const loginState = await loginResponse.json()
+  expect(loginState.status).toBe('mfa_required')
   await expect(page.getByRole('heading', { name: 'Verify Provider' })).toBeVisible()
 
   await page.getByLabel('Authenticator Code').fill(currentSyntheticTotp())
