@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -64,7 +66,7 @@ def test_route_inventory_and_surface_audit():
     # Overall application provider-trust surface must be exactly 27 routes (all POST)
     all_pt_routes = [
         r
-        for r in app.routes
+        for r in registered_routes(app)
         if getattr(r, "path", "").startswith("/api/v2/provider-trust")
     ]
     assert len(all_pt_routes) == 27
