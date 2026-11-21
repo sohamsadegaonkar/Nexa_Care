@@ -999,3 +999,104 @@ Review this register every 90 days and whenever a security defect, invariant, en
 - Cross-references: [decisions](../../tools/orchestrator_gateway/DECISIONS.md),
   [deployment and limitations](../../tools/orchestrator_gateway/README.md),
   [validation report](../../tools/orchestrator_gateway/VALIDATION.md).
+
+## Clinician record-viewer truth-in-evidence follow-up (14 November 2026)
+
+**Status:** Branch-level corrective implementation awaiting frontend CI, security/clinical review, and user-authorized merge. This implementation note is **not** a policy expansion or a claim of qualified physical/device or live clinical performance.
+
+**Affected established safeguards:** SEC-002 (server-side clinical access scope), SEC-005 (separate emergency authorization), SEC-015 (no inferred clinical verification), SEC-020 (unqualified physical workflows), SEC-021 (truthful patient-facing presentation), and the Engineering Constitution's patient-control, provenance, and no-fabricated-clinical-data commitments.
+
+**Problem and intended correction:** The clinician record viewer used legacy frontend scope names to decide whether to display authorized V3 allergies or fetch the timeline; an empty allergy list was represented as "No known allergies"; the documents panel displayed a hardcoded clinician-verified example; and patient record detail equated source-document presence with clinical verification. These are **UI trust/visibility defects**, not evidence that the server permitted access without consent.
+
+**Non-regression conditions:** Preserve server-authoritative authorization and memory-only capability custody; V3 `clinical`/`full` read grants must display available permitted allergy/timeline data without broadening permissions; terminal 401/403 timeline failure must fail closed; transient timeline failures must not be shown as empty history; no clinical verification label without explicit evidence; source attachments must not be promoted to clinician-verified facts. Emergency grant categories, signed read access, and Treatment Session write limits remain unchanged.
+
+**Change scope:** `nexa-client/packages/app/features/doctor/PatientRecordViewerScreen.tsx`, `nexa-client/packages/app/features/patient/PatientRecordDetailModal.tsx`, and their focused component tests. A patient-document inventory, clinician source drill-down, and clinical-grade summary remain **future work** and are not implied by hiding demo placeholders.
+
+**Required validation:** Targeted Vitest tests for `clinical`/`full` scope, allergy unknown semantics, missing/failed timeline, revoked capability, and unverified source; complete frontend test/build in CI; explicit human clinical/safety review of displays and phrasing before real-patient pilot. Do not treat mere repository commit as test PASS.
+
+**Change impact:** No backend/API/DB schema or migration; no consent scope, retention, data-storage, erasure, identity, AI extraction, audit, or emergency authority expansion. Existing security and regulatory rules are unchanged.
+
+### Provider reference inventory, not source read (14 November 2026)
+
+**Scope:** Draft P1A stacked on unmerged P0 clinician viewer branch. This is an
+additional, bounded display of canonical document **metadata** already visible
+in the routine clinical timeline. It is not a new `READ_DOCUMENTS` grant, a
+source-file disclosure, a verified clinical fact, or emergency authorization.
+
+**Affected invariants:** SEC-001/002 (memory-only bearer, server-owned patient,
+provider and facility; scope), SEC-005 (emergency separate), SEC-011 (erasure),
+SEC-013 (no PHI in logs/URLs), SEC-014/015 (retain source and no fabricated
+verification), SEC-021 (truthful display), SEC-023 (original source has its own
+authorization). Regulatory mapping: explicit purpose and minimum necessary
+health-data disclosure, separate clinical/processing consent, identity trust,
+patient erasure, and documented review; no assertion of legal compliance.
+
+**Enforcement:** New `GET /api/v2/provider/records/documents` requires current
+`RECORD_READ` clinical eligibility and `require_consent("clinical_summary")`
+with `X-Patient-Id` supplied only as a nonauthoritative lookup header;
+canonical patient and erasure status must be live. Only bounded,
+patient-filtered DocumentReference metadata and confirmed patient-import
+provenance are returned. All file content, original filename, raw storage key,
+identity-review E1–E6 material, candidate values and any invented verification
+state remain undisclosed. Document-opening remains disabled: V3 grants
+`READ_CLINICAL_HISTORY`, not `READ_DOCUMENTS`. Existing consent-gated
+patient record read auditing remains mandatory and fail-closed.
+
+**Validation required:** route/dependency/erasure and pagination tests;
+frontend tests for actual document rows, meaningful unknown provenance,
+load-more and terminal revocation; no URL patient ID/bearer; full frontend CI,
+backend CI, and human privacy/security/clinical review before pilot. Fake
+records, silent treatment authority, ignored revocation and source-read
+shortcuts are forbidden.
+
+**Change impact:** New read-only provider metadata API and frontend inventory,
+not an approval to expose source bytes; no new DB migration, prescription or
+diagnosis write, key handling, retention change, emergency permission, or
+security/regulatory policy weakening. A future original-file view requires
+a separately versioned and signed authority decision with review and tests.
+
+## Azure document-storage adapter foundation — 20 November 2026 (draft)
+
+This is an explicit synthetic-only development candidate, not a cloud
+cutover or clinical release. Applicable invariants are SEC-002 (server-owned
+scope), SEC-011 (erasure), SEC-012 (key isolation), SEC-013 (privacy-safe
+logging), SEC-014 (authentic source evidence), SEC-018 (no migration at
+startup), SEC-019 (readiness), and SEC-023 (source authorization).
+Regulatory baseline REG-001/003 and engineering commitments to patient
+control, provenance, isolation, and truthful validation remain unchanged.
+No new disclosure, consent, access, identity, clinical write, extraction,
+audit or emergency authority is introduced.
+
+The new Azure adapter uses a dedicated private container, managed identity
+only, account/container/tenant/patient/object-bound AES-GCM AAD, opaque remote
+blob names, non-overwriting ciphertext uploads and sanitized failures.
+Local/development/test plus explicit synthetic opt-in is required; all
+production-like and alpha environments are refused. No legacy source refs
+are reinterpreted; no resource creation or automatic migration. Logical
+deletion is not proof of irreversible cloud erasure. Existing AWS
+key/backup recovery remains a distinct approval boundary. Offline tests
+are not Azure runtime qualification; actual SDK/security review and isolated
+cloud validation remain required. See
+[Azure migration foundation](../runbooks/AZURE_MIGRATION_FOUNDATION.md).
+
+### Azure Key Vault synthetic wrapping candidate (20 November 2026)
+
+SEC-011/012/013/018/019: version-pinned dedicated shared RSA key via managed
+identity, wrapped payload binds patient UUID, DEK version and key identifier;
+durable row metadata validated before unwrapping; erasure registry rechecked
+and no plaintext-DEK cache. Reject mixed histories, no legacy fallback, no
+key lifecycle provisioning. Shared-key erasure is only access-blocked; no
+production-like enablement. Existing local and AWS modes are unchanged.
+Offline SDK doubles are not live key or destruction proof. REG-001/003 remain
+subject to human privacy/security/legal review. No access/consent/identity/
+clinical-write scope expansion. Same existing schema; no database migration.
+
+### Azure Layout synthetic form extraction candidate (20 November 2026)
+
+SEC-013/014/015/023: managed identity, dedicated endpoint, one bounded
+synthetic page, no source URLs or raw provider errors; exact source spans,
+closed labels, no identity inference, missing field confidence stays unknown,
+and incomplete evidence preserves existing review/quarantine gates. No
+clinically verified or auto-committed claims. No production activation or
+reprocessing of identity quarantine. Provider benchmark and privacy/clinical
+review outstanding; current consent and identity policy unchanged.

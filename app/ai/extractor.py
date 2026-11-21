@@ -831,6 +831,8 @@ def get_medical_document_extractor(
         config.environment,
         config.api_url,
         config.aws_region,
+        config.azure_endpoint,
+        config.azure_identity_client_id,
         config.timeout_seconds,
         config.provider_max_attempts,
         config.job_max_attempts,
@@ -840,6 +842,10 @@ def get_medical_document_extractor(
             _extractor_singleton = DemoExtractionProvider()
         elif config.provider == "aws_textract":
             _extractor_singleton = AwsTextractExtractionProvider(config)
+        elif config.provider == "azure_document_intelligence":
+            from app.ai.azure_document_intelligence import AzureDocumentIntelligenceProvider
+
+            _extractor_singleton = AzureDocumentIntelligenceProvider(config)
         else:
             _extractor_singleton = RemoteExtractionProvider(config)
         _extractor_fingerprint = fingerprint

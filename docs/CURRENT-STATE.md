@@ -1,7 +1,7 @@
 # Nexa Care — Current Engineering State
 
-**Last reconciled:** 2026-09-16  
-**Reconciliation basis:** Slice 10A merged/qualified baseline plus active Slice 10B bounded clinical-access-session implementation on `main`.  
+**Last reconciled:** 2026-09-30  
+**Reconciliation basis:** authoritative `main` at `44ab956ce5601141bf623604a7d2599ae4ba90da`, including the merged Treatment Session V1 encounter/`WRITE_VITALS` path, medication-catalog readiness work, and provider/demo UX integration through PR #96.  
 **Purpose:** repository-attested current state. Historical alpha and earlier Slice-7/8/9 closure documents remain useful context but are not authoritative when they conflict with this file or later governance attestations.
 
 ## 1. Current authority boundaries
@@ -23,7 +23,7 @@ account authentication
 != encounter/write authority
 ```
 
-Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, registration-recovery review cannot independently mint patient session/device/consent authority, and an identifier match never grants patient authentication, consent, or clinical access. The current Signed Consent V3 treatment bridge is intentionally read-only: it may establish `READ_CLINICAL_HISTORY`, but it does not authorize encounter creation, prescriptions, diagnoses, vitals, notes, investigations, or any other write operation.
+Patient consent cannot repair failed provider trust, a valid account login cannot create fresh device authority once device history exists, registration-recovery review cannot independently mint patient session/device/consent authority, and an identifier match never grants patient authentication, consent, or clinical access. Signed Consent V3 remains intentionally read-only and may establish only `READ_CLINICAL_HISTORY`. Clinical writes use the separate patient-signed Treatment Session V1 authority. The only currently implemented Treatment Session write boundary is canonical `CREATE_ENCOUNTER` plus `WRITE_VITALS`; that authority does not extend to prescriptions, diagnoses, clinical notes, investigations, or other mutation families.
 
 ## 2. Provider trust and external registry boundary
 
@@ -99,19 +99,43 @@ Name-only search, prefix/fuzzy search, ranked candidate lists, broad directory s
 
 The patient frontend exposes Phone Discoverability as a visible privacy control on web and native clients; the provider client exposes only qualified discovery modes. Discovery capabilities remain memory-only and do not travel in URLs or durable client storage.
 
-### Slice 10B — bounded clinical access session
+### Slice 10B / 10B.5 — bounded clinical access and Treatment Session V1
 
-Slice 10B is **IN PROGRESS / BACKEND HARDENING** on `main`; it is not yet a completed release slice.
+The repository now carries two deliberately separate patient-authority protocols.
 
-The current server-owned operation vocabulary includes read and future treatment-write operation names, but current Signed Consent V3 maps only to `READ_CLINICAL_HISTORY`. The existing V3 patient signature does not bind a write-operation set, so it must not be reinterpreted as write consent.
+**Signed Consent V3** remains the canonical routine read path. Its patient-signed bytes do not bind a clinical-write operation set, and its current policy permits exactly `READ_CLINICAL_HISTORY`. It must not be reinterpreted as write consent.
 
-Canonical routine V3 access claims are bound to the exact provider session and issue a short-lived Redis `clinical_access_session` capability containing only server-owned session metadata. The raw provider session binding is not stored; only a one-way binding hash is carried. Routine clinical reads revalidate that exact provider-session binding and the closed current operation set.
+**Treatment Session V1** is a separate patient-signed protocol with an exact closed operation set, exact patient/provider/hospital/request binding, a one-way binding to the initiating provider session, hardware-backed patient-device signing, one-time provider claim, and matching live Redis plus durable PostgreSQL authority.
 
-Slice 10B.3 adds the durable PostgreSQL `clinical_access_sessions` authority. The raw record-access bearer is never stored in PostgreSQL; only its SHA-256 digest and server-owned patient/provider/hospital/request/session/policy bindings are persisted. The current database contract locks v1 sessions to exactly `READ_CLINICAL_HISTORY`, positive lifetime, active/revoked lifecycle consistency, and a closed revocation vocabulary.
+The current implemented Treatment Session V1 lifecycle is:
 
-The current read boundary requires Redis capability state and PostgreSQL durable session state to agree. Neither store alone is sufficient authority. V3 claim finalization stages the durable session in the same database transaction as the durable consent grant log; post-commit finalization failure invalidates Redis and compensates the durable authority fail-closed.
+```text
+POST /api/v2/treatment-session/v1/request
+GET  /api/v2/treatment-session/v1/challenge/{request_id}
+POST /api/v2/treatment-session/v1/approve-signed
+POST /api/v2/treatment-session/v1/{request_id}/claim
+```
 
-Patient-revocation integration and final adversarial/exact-head qualification remain active work. No Slice 10B completion claim is made yet, and no `CREATE_ENCOUNTER` or `WRITE_*` authority is enabled.
+The central `require_clinical_session(operation)` gate fails closed unless live Redis capability state, durable `ClinicalAccessSessionRecord`, durable `ConsentGrantLog`, current provider/hospital/session authority, expiry/revocation state, policy, and the exact patient-signed operation all agree.
+
+Two treatment operations are currently executable:
+
+- `CREATE_ENCOUNTER` — `POST /api/v2/treatment-session/v1/encounter` materializes one server-owned canonical Encounter bound to the same Treatment Session; the client does not choose the patient, provider, hospital, clinical-session, or Encounter authority.
+- `WRITE_VITALS` — `POST /api/v2/treatment-session/v1/vitals` is the only currently enabled Treatment Session clinical-record mutation family. It requires the same canonical Encounter and exact `WRITE_VITALS` authority and uses durable idempotency plus transactional audit.
+
+Patient self-revocation is implemented through the opaque `public_ref` treatment-access boundary. Revocation invalidates live Treatment Session capability state before durable grant/session revocation is committed; if live invalidation fails, the database mutation fails closed. Subsequent Encounter or Vitals calls are denied by the same central gate.
+
+No other Treatment Session write family inherits authority from these implementations. In particular, `WRITE_PRESCRIPTION` persistence remains **BLOCKED**. Prescriber-eligibility authority and medication-catalog governance/readiness infrastructure exist, but they do not create canonical Prescription persistence or issuance authority.
+
+### Provider clinical workspace and demo-readiness integration
+
+The provider-facing product has advanced beyond the September 16 reconciliation:
+
+- PR #94 / merge `7e9d4d2a57e1bebab00224441010487cc3431f27` added the authenticated provider clinical workspace, active Treatment Session and recent-Encounter projections, and bounded continuation/re-access semantics.
+- PR #95 / merge `3c4913936a99e4b8446895fb719109dcadf91850` added the development-only clinical demo bootstrap/readiness path and the discovery-bound emergency issue route.
+- PR #96 / merge `44ab956ce5601141bf623604a7d2599ae4ba90da` hardened clinician discovery, emergency, documents, and imported-record review UX.
+
+The normal clinician emergency UI now uses `POST /api/v2/consent/break-glass/discovered/issue` after patient discovery rather than asking the clinician to type a canonical patient UUID. This repository integration is not a claim of legal authorization for a live emergency pilot, physical NFC qualification, or deployed production readiness.
 
 ## 4. Native mobile key custody
 
@@ -129,9 +153,20 @@ Slice 6I has a qualified evidence harness, validator, blocked manifest, and phys
 
 The current single Alembic head on `main` is:
 
-`20260917_treatment_session_operations`
+`20260919_medication_catalog`
 
-It descends linearly from `20260914_patient_search_identifiers`, which descends from `20260910_registration_recovery_review`. The Slice 10B migration adds only durable server-owned clinical-session authority; it stores bearer digests rather than raw access tokens.
+The current treatment-era chain remains linear:
+
+```text
+20260917_treatment_session_operations
+→ 20260916_patient_external_record_import
+→ 20260918_canonical_encounter
+→ 20260918_treatment_vitals_encounter
+→ 20260919_prescriber_eligibility
+→ 20260919_medication_catalog
+```
+
+The later migrations add the external-record import boundary, canonical Encounter authority, Treatment Session V1 vitals-to-Encounter binding, prescriber-eligibility authority, and medication-catalog governance infrastructure. They do not create canonical Prescription persistence.
 
 Pilot/staging/production startup must not silently migrate, stamp, or downgrade the database.
 
@@ -215,11 +250,11 @@ Therefore live rollback/runtime qualification remains **BLOCKED BY PILOT AWS/TAR
 
 ## 11. Backend closure state
 
-The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is merged and qualified. Slice **10B** is active backend work and remains incomplete until its durable session lifecycle, revocation paths, adversarial qualification and exact-head release gates are green.
+The previously reconciled backend closure through Slices **8A–8G** remains intact. Slice **9A** backend and UI are merged. Slice **10A** is merged and qualified. Treatment Session V1 has progressed through the central gate, canonical Encounter, and exactly one bounded clinical mutation family (`WRITE_VITALS`), with patient self-revocation cutting off both live and durable treatment authority. Signed Consent V3 remains read-only.
 
 Current matrix:
 
-| Slice | Repository/software state | Remaining live/external state |
+| Slice / boundary | Repository/software state | Remaining live/external state |
 | --- | --- | --- |
 | 8A | MERGED / INTERNALLY QUALIFIED | none for repository hardening |
 | 8B | live-cloud gate MERGED | AWS account/OIDC/targets missing; NOT DEPLOYED |
@@ -230,7 +265,8 @@ Current matrix:
 | 8G | registry boundary ready / contract gate enforced | official HPR/HFR machine contract + sandbox missing |
 | 9A | backend + UI MERGED / QUALIFIED | live deployment not claimed |
 | 10A | MERGED / QUALIFIED | no remaining repository closure gate |
-| 10B | IN PROGRESS / read-only durable clinical-session hardening | revocation + adversarial/exact-head qualification pending |
+| 10B / 10B.5 | Treatment Session V1 claim/gate + canonical Encounter + `WRITE_VITALS` + patient revocation implemented | additional clinical write families remain separate; `WRITE_PRESCRIPTION PERSISTENCE BLOCKED` |
+| 11A + demo UX | provider clinical workspace and PR #95/#96 demo/clinician integrations merged | physical clinic workflow and NFC-reader qualification remain NOT_RUN |
 
 The remaining live backend gates still require real prerequisites that repository code cannot manufacture:
 
@@ -240,18 +276,20 @@ The remaining live backend gates still require real prerequisites that repositor
 4. a complete authoritative NHA/ABDM HPR/HFR server-to-server machine contract and official qualification target before a concrete registry transport adapter may be implemented or enabled; and
 5. an actual FHIR partner/sandbox if end-to-end exchange qualification is required.
 
-Slice 6I supported-handset execution remains a separate physical-platform gate outside backend software closure.
+Medication-catalog code does not remove its own external and human blockers: real release still requires the approved terminology/licensing basis, real governance reviewers, an authorized target database, and the dedicated signing/runtime authority described by the medication-catalog runbook.
+
+Slice 6I supported-handset execution and a qualified native NFC reader remain separate physical-platform gates outside repository software closure.
 
 ## 12. Next safe action
 
-Continue Slice 10B backend hardening without broadening write authority:
+Do not reopen already-completed Treatment Session revocation or broaden clinical-write authority merely to create more demo surface.
 
-1. finish patient-revocation propagation into the durable `ClinicalAccessSession` lifecycle;
-2. reconcile current migration-head/runtime evidence contracts to `20260917_treatment_session_operations`;
-3. prove Redis/PostgreSQL exact agreement, revocation, expiry, wrong-session/wrong-provider/wrong-hospital/tampered-operation denial, and post-claim failure compensation under adversarial tests;
-4. freeze one exact `main` SHA only after the implementation and current governance contracts agree; and
-5. require Backend CI Partitions A/B/C with each zero-skip assertion green before treating the durable backend increment as qualified.
+The next safe repository/product proof is:
 
-Current Signed Consent V3 remains read-only. A future patient-signed treatment context must explicitly bind any write-operation set before `CREATE_ENCOUNTER`, `WRITE_PRESCRIPTION`, `WRITE_DIAGNOSIS`, `WRITE_VITALS`, `WRITE_CLINICAL_NOTES`, or `ORDER_INVESTIGATION` can become valid authority.
+1. keep Signed Consent V3 read-only and preserve the current exact Treatment Session V1 boundary (`CREATE_ENCOUNTER` + `WRITE_VITALS`);
+2. keep `WRITE_PRESCRIPTION PERSISTENCE BLOCKED` until its independent clinical, terminology, governance, and runtime prerequisites are genuinely satisfied;
+3. qualify the existing end-to-end provider/patient clinic workflow on real supported hardware, including a real NFC-reader/card path with QR fallback, without relabeling CI/simulator evidence as physical qualification;
+4. instrument the pilot workflow for objective timing/error/support measurements without placing clinical values or bearer authority in analytics; and
+5. treat the existing AWS, operational-database, retention, HPR/HFR, partner-interoperability, medication-release, and physical-device blockers as real external/manual gates.
 
-The live/external blockers above remain unchanged and must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, or physical-device PASS.
+The live/external blockers above must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, medication-release completion, or physical-device/NFC PASS.

@@ -1162,6 +1162,10 @@ def get_encryption_provider() -> EncryptionProvider:
                 "Local envelope encryption is forbidden in this environment"
             )
         return LocalEnvelopeProvider()
+    elif config.encryption_backend == "azure_key_vault":
+        from app.services.azure_key_vault_envelope import AzureKeyVaultEnvelopeProvider
+
+        return AzureKeyVaultEnvelopeProvider()
     elif config.encryption_backend == "kms":
         try:
             from botocore.exceptions import BotoCoreError
