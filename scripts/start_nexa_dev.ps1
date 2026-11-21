@@ -2,7 +2,9 @@
 param(
     [switch]$Restart,
     [switch]$NoBrowser,
-    [switch]$OpenAndroid
+    [switch]$OpenAndroid,
+    [ValidateSet('Nfc','PublicId')]
+    [string]$Discovery = 'Nfc'
 )
 
 Set-StrictMode -Version Latest
@@ -115,7 +117,8 @@ else {
     Write-Warning 'Firebase Android client config not present; push-dependent demo features may be unavailable.'
 }
 
-& $python (Join-Path $repoRoot 'scripts\demo_preflight.py')
+$discoveryArg = if ($Discovery -eq 'PublicId') { 'public-id' } else { 'nfc' }
+& $python (Join-Path $repoRoot 'scripts\demo_preflight.py') --discovery $discoveryArg
 if ($LASTEXITCODE -ne 0) {
     Write-Host 'NEXA STARTUP: NO-GO' -ForegroundColor Red
     throw 'Development preflight failed. No automatic database mutation was performed.'
@@ -302,7 +305,13 @@ if (-not $NoBrowser) {
 }
 
 Write-Host ''
-Write-Host 'NEXA STARTUP: GO' -ForegroundColor Green
+if ($Discovery -eq 'PublicId') {
+    Write-Warning 'Non-NFC public-ID development services launched; physical NFC, enrolled-device signature, clinician browser integration and release gates are NOT verified.'
+    Write-Host 'NEXA STARTUP: NON-NFC PREREQUISITES ONLY' -ForegroundColor Yellow
+}
+else {
+    Write-Host 'NEXA STARTUP: GO' -ForegroundColor Green
+}
 Write-Host '  Backend: http://localhost:8000'
 Write-Host '  Doctor:  http://localhost:3000'
 Write-Host '  Metro:   http://localhost:8081'
