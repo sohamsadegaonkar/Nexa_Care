@@ -1,0 +1,185 @@
+# Synthetic investor-demo qualification. No Azure/AWS connections or deployments.
+name: Investor Demo Qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/investor-demo-qualification.yml"
+      - "docs/runbooks/INVESTOR_DEMO_QUALIFICATION_20261121.md"
+      - "docs/runbooks/INVESTOR_DEMO_INTEGRATION.md"
+      - "app/**"
+      - "alembic/**"
+      - "tests/integration/test_original_document_access.py"
+      - "scanner_integration/**"
+      - "nexa-client/**"
+
+permissions:
+  contents: read
+
+jobs:
+  original-document-real-scanner:
+    name: Synthetic P1B HTTP with PostgreSQL Redis and real Clamd
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexa
+          POSTGRES_PASSWORD: nexa_test
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 8
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 8
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared
+      TEST_DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared
+      TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      UPSTASH_REDIS_URL: redis://127.0.0.1:6379/0
+      TEST_REDIS_PREFIX: "nexa-investor-qual:"
+      NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+      SUPABASE_URL: https://placeholder.supabase.co
+      SUPABASE_KEY: synthetic-placeholder
+      HANDSHAKE_PEPPER_SECRET: ci-investor-synthetic-pepper
+      KEK_ROOT_SECRET: ci-investor-synthetic-kek-root-secret-32-bytes
+      NEXA_PEPPER_KEY: ci-investor-synthetic-pepper-key
+      PII_ENCRYPTION_KEY: vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw=
+      MFA_ENCRYPTION_KEY: ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8=
+      PATIENT_JWT_SECRET: synthetic-patient-jwt-secret-at-least-32-chars-long
+      OTP_RATE_LIMIT_HMAC_SECRET: ci-investor-rate-hmac-secret-32-bytes
+      PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET: ci-investor-registration-secret-32-bytes
+      PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET: ci-investor-contact-secret-32-bytes
+      PATIENT_GRANT_REFERENCE_HMAC_SECRET: ci-investor-grant-ref-secret-32-bytes
+      DOCUMENT_STORAGE_PROVIDER: local
+      DOCUMENT_STORAGE_LOCAL_ROOT: /tmp/nexa-investor-documents
+      DOCUMENT_STORAGE_ENCRYPTION_KEY: vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw=
+      DOCUMENT_EXTRACTION_PROVIDER: demo
+      ENCRYPTION_BACKEND: local
+      P1B_REHEARSAL_CLAMD: "1"
+      PATIENT_SOURCE_MALWARE_SCANNER: clamd
+      PATIENT_SOURCE_CLAMD_HOST: 127.0.0.1
+      PATIENT_SOURCE_CLAMD_PORT: "3310"
+      PATIENT_SOURCE_CLAMD_MAX_BYTES: "20971520"
+      PATIENT_SOURCE_CLAMD_MAX_SIGNATURE_AGE_HOURS: "168"
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build scanner with official signature refresh
+        run: docker build --tag local/investor-clamd:qualification --file scanner_integration/Dockerfile .
+      - name: Launch isolated ClamAV daemon
+        run: |
+          docker run -d --name investor-clamd -p 3310:3310 \
+            -e CLAMAV_NO_CLAMD=false \
+            -e CLAMAV_NO_FRESHCLAMD=true \
+            -e CLAMAV_NO_MILTERD=true \
+            -e CLAMD_STARTUP_TIMEOUT=300 \
+            local/investor-clamd:qualification
+          docker image inspect local/investor-clamd:qualification --format='SCANNER_IMAGE_ID={{.Id}}'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Python and document-reading dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr poppler-utils
+          python -m pip install -r requirements.txt -r requirements_dev.txt
+      - name: Create and migrate disposable database only
+        run: python scripts/ci/prepare_ci_shared_db.py
+      - name: Wait for full scanner readiness
+        run: |
+          python - <<'PY'
+          import asyncio
+          from app.security.patient_source_malware_scanner import (
+              ClamdPatientSourceMalwareScanner, get_patient_source_malware_scanner_config,
+          )
+
+          async def check():
+              scanner = ClamdPatientSourceMalwareScanner(get_patient_source_malware_scanner_config())
+              for _ in range(30):
+                  try:
+                      if await scanner.ready():
+                          print("INVESTOR_REAL_CLAMD_READY=PASS")
+                          return
+                  except Exception:
+                      pass
+                  await asyncio.sleep(5)
+              raise SystemExit("real clamd readiness timed out")
+          asyncio.run(check())
+          PY
+      - name: Run full signed-original HTTP flow against real scanner
+        run: |
+          python -m pytest tests/integration/test_original_document_access.py -q --tb=short \
+            --junitxml=.test-results/investor-original-real-scanner.xml
+          python scripts/ci/assert_pytest_junit.py .test-results/investor-original-real-scanner.xml
+      - name: Stop isolated scanner
+        if: always()
+        run: |
+          docker stop investor-clamd || true
+          docker rm investor-clamd || true
+
+  browser-chromium-smoke:
+    name: Actual Chromium UI smoke (synthetic API, not signed-device E2E)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: nexa-client
+    env:
+      NEXT_PUBLIC_API_URL: https://doctor.example.test
+      NEXT_PUBLIC_DEMO_MODE: "false"
+      NEXA_UI_BASE_URL: http://127.0.0.1:3100
+      NEXA_UI_ASSET_ORIGIN: http://127.0.0.1:3100
+      NEXA_BROWSER_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install locked frontend dependencies
+        run: yarn install --immutable
+      - name: Build production Next assets
+        run: yarn verify:next-build
+        timeout-minutes: 5
+      - name: Install actual Chromium runtime
+        run: yarn workspace next-app exec playwright install --with-deps chromium
+      - name: Start localhost-only Next production server
+        run: |
+          cd apps/next
+          nohup ../../node_modules/.bin/next start --hostname 127.0.0.1 --port 3100 > /tmp/nexa-investor-next.log 2>&1 &
+          echo $! > /tmp/nexa-investor-next.pid
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:3100/ > /dev/null; then
+              echo "LOCAL_NEXT_READY=PASS"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Local Next server did not become ready"
+          tail -n 60 /tmp/nexa-investor-next.log
+          exit 1
+      - name: Real Chromium provider-shell smoke
+        working-directory: nexa-client/apps/next
+        run: yarn exec playwright test --config=playwright.product.config.ts
+      - name: Stop local Next server
+        if: always()
+        run: |
+          if [ -f /tmp/nexa-investor-next.pid ]; then
+            kill "$(cat /tmp/nexa-investor-next.pid)" 2>/dev/null || true
+          fi
