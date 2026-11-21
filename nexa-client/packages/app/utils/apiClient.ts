@@ -1282,7 +1282,7 @@ export const NexaApiClient = {
 
   providerWebLogin(
     payload: ProviderLoginRequest
-  ): Promise<{ status: 'authenticated' | 'mfa_required'; expires_at?: string }> {
+  ): Promise<{ status: 'mfa_required'; expires_at?: null } | { status: 'authenticated'; expires_at: string }> {
     return request(
       '/api/v2/auth/web/login',
       { method: 'POST', body: JSON.stringify(payload) },
@@ -1292,10 +1292,9 @@ export const NexaApiClient = {
       true
     ).then(
       (data) =>
-        validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login') as {
-          status: 'authenticated' | 'mfa_required'
-          expires_at?: string
-        }
+        validateOrThrow(ProviderWebLoginStateSchema, data, 'provider web login') as
+          | { status: 'mfa_required'; expires_at?: null }
+          | { status: 'authenticated'; expires_at: string }
     )
   },
 
