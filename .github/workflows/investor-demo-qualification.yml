@@ -175,9 +175,45 @@ jobs:
           echo "Local Next server did not become ready"
           tail -n 60 /tmp/nexa-investor-next.log
           exit 1
+      - name: Verify rendered HTML from a separate CI step
+        run: |
+          python - <<'PY'
+          from urllib.request import urlopen
+          from html.parser import HTMLParser
+          class Inspect(HTMLParser):
+              title = ""
+              current = False
+              def handle_starttag(self, tag, attrs):
+                  if tag == "title": self.current = True
+              def handle_endtag(self, tag):
+                  if tag == "title": self.current = False
+              def handle_data(self, data):
+                  if self.current: self.title += data
+          for route in ("/", "/doctor/login", "/doctor/dashboard"):
+              with urlopen("http://127.0.0.1:3100" + route, timeout=10) as response:
+                  status, body = response.status, response.read(2_000_000)
+              doc = Inspect(); doc.feed(body.decode("utf-8", errors="replace"))
+              print(f"SSR_ROUTE={route} STATUS={status} TITLE={doc.title!r} HTML_BYTES={len(body)}")
+              if status != 200 or not doc.title or b"<html" not in body:
+                  raise SystemExit("SSR missing or invalid")
+          PY
       - name: Real Chromium provider-shell smoke
         working-directory: nexa-client/apps/next
         run: yarn exec playwright test --config=playwright.product.config.ts
+      - name: Preserve browser failure context without secrets
+        if: failure()
+        run: |
+          if [ -f /tmp/nexa-investor-next.log ]; then
+            tail -n 50 /tmp/nexa-investor-next.log
+          fi
+      - name: Upload browser artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: investor-browser-failures
+          path: .test-results/ui-product/
+          retention-days: 3
+          if-no-files-found: ignore
       - name: Stop local Next server
         if: always()
         run: |
