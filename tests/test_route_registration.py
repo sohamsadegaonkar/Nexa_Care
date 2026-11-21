@@ -29,11 +29,12 @@ a false positive here teaches the team to ignore this file's failures,
 which is exactly when a *real* duplicate-route regression would slip
 through unnoticed too.
 
-No mocking needed: this only inspects the real `app.routes` list that
+No mocking needed: this only inspects the real `registered_routes(app)` list that
 gets built at import time from the route decorators in app/api/routes.py.
 """
 
 from app.main import app
+from tests.registered_routes import registered_routes
 
 
 # Reconciled against the actual router registrations in app/main.py.
@@ -295,7 +296,7 @@ EXPECTED_ROUTES = {
 
 def _registered_routes():
     found = []
-    for route in app.routes:
+    for route in registered_routes(app):
         methods = getattr(route, "methods", None)
         path = getattr(route, "path", None)
         if not methods or not path:
