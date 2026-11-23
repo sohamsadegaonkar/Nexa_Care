@@ -36,3 +36,9 @@ For future changes to patient, clinician, document or consent flows:
 This is a **product-availability non-regression correction**, not permission to relax identity, consent, data access, or clinical safeguards. The staging UI is not a functional patient login. The real web frontend is still blocked from FastAPI/Redis/PostgreSQL/S3/KMS/ClamAV and real OTP delivery. Keep PR #106 **draft/unmerged** and clinical/production release **NO-GO** until actual authenticated integration and human reviews pass.
 
 **Required validation:** Next production build; staging synthetic-flow non-regression; browser navigation from patient login into every demo step, simulated consent state changes and return to login; 503 readiness; no real SMS or clinical API calls. If any of these fail, repair without weakening the test or removing another workflow.
+
+## Follow-up: accessibility of disabled controls
+
+The first browser acceptance inspection found that the login form's custom `FormField` and `ActionButton` looked disabled under `disabled={STAGING_READ_ONLY}` in source, but the **rendered HTML input/button still lacked the native `disabled` attribute and remained keyboard-focusable**. Do not interpret a component prop or a visual style as evidence of actual interaction blocking.
+
+The correction retains the original login form layout but wraps only the OTP controls in an HTML `<fieldset disabled={STAGING_READ_ONLY}>` with an ancestor `inert={STAGING_READ_ONLY ? true : undefined}`. The synthetic walkthrough CTA remains **outside** that ancestor. The OTP handlers continue to return before network activity when staging preview is active. The CI contract checks the disabled/inert ancestry and clickable alternate navigation; an independent browser test must check actual focus and interactivity, not appearance alone.
