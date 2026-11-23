@@ -88,15 +88,17 @@ export default function PatientLoginPage() {
   return (
     <AuthFrame>
       <StatusBadge tone="info">
-        {step === 'phone' ? 'Patient Portal · Step 1 of 2' : 'Patient Portal · Step 2 of 2'}
+        {STAGING_READ_ONLY ? 'Patient sandbox · Fictional demo' : step === 'phone' ? 'Patient Portal · Step 1 of 2' : 'Patient Portal · Step 2 of 2'}
       </StatusBadge>
 
       <ScreenHeader
         title={step === 'phone' ? 'Your Health, Your Control' : 'Enter Verification Code'}
         description={
-          step === 'phone'
-            ? 'Sign in with your phone to review doctor access, inspect your medical timeline, and manage consent.'
-            : `We sent a 6-digit verification code to ${phone}.`
+          STAGING_READ_ONLY
+            ? 'Enter a fictional DEMO-* code to explore a sample patient journey. No real sign-in, SMS or clinical records.'
+            : step === 'phone'
+              ? 'Sign in with your phone to review doctor access, inspect your medical timeline, and manage consent.'
+              : `We sent a 6-digit verification code to ${phone}.`
         }
       />
 
@@ -234,13 +236,19 @@ export default function PatientLoginPage() {
 
         <Separator borderColor="$nexaBorder" />
 
-        {/* Security / Privacy Trust Callout */}
-        <XStack alignItems="center" gap="$2" justifyContent="center">
-          <ShieldCheck size={16} color="$nexaAccent" />
-          <Text color="$nexaSecondary" fontSize={12} fontWeight="600">
-            Direct patient authentication with scoped consent and audit logging
+        {/* Preview must never imply a real signed-in consent or audited session. */}
+        {STAGING_READ_ONLY ? (
+          <Text color="$nexaSecondary" fontSize={12}>
+            Fictional practice only. No authentication, consent grant or audit entry is created.
           </Text>
-        </XStack>
+        ) : (
+          <XStack alignItems="center" gap="$2" justifyContent="center">
+            <ShieldCheck size={16} color="$nexaAccent" />
+            <Text color="$nexaSecondary" fontSize={12} fontWeight="600">
+              Direct patient authentication with scoped consent and audit logging
+            </Text>
+          </XStack>
+        )}
 
         <ActionButton
           chromeless
