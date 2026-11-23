@@ -36,6 +36,8 @@ jobs:
           node-version: "22"
       - name: Verify staging gateway can never claim readiness
         run: node --test scripts/staging/holding_server.test.mjs
+      - name: Preserve patient entry workflow and synthetic-only isolation
+        run: node --test scripts/staging/patient_workflow_non_regression.test.mjs
       - name: Run isolated synthetic OTP and adversarial checks
         env:
           ENVIRONMENT: test
