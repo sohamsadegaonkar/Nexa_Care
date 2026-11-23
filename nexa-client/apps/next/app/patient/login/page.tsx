@@ -19,6 +19,10 @@ import { useState } from 'react'
 import { requestPatientOtp, verifyPatientOtp } from 'app/services/patientOtp'
 import { storePatientAuthSession } from 'app/services/patientAuthSession'
 
+// This is a build-time public flag for the isolated Render staging UI only.
+// It cannot be used to authorize any API action or replace server-side checks.
+const STAGING_READ_ONLY = process.env.NEXT_PUBLIC_STAGING_READ_ONLY === '1'
+
 export default function PatientLoginPage() {
   const router = useRouter()
   const [phone, setPhone] = useState('')
@@ -28,6 +32,10 @@ export default function PatientLoginPage() {
   const [error, setError] = useState<string | null>(null)
 
   const handleSendOtp = async () => {
+    if (STAGING_READ_ONLY) {
+      setError('Patient OTP is not available in this staging preview. The isolated API has not been connected.')
+      return
+    }
     if (!phone.trim()) {
       setError('Please enter your phone number.')
       return
@@ -50,6 +58,10 @@ export default function PatientLoginPage() {
   }
 
   const handleVerifyOtp = async () => {
+    if (STAGING_READ_ONLY) {
+      setError('Patient OTP is not available in this staging preview. The isolated API has not been connected.')
+      return
+    }
     if (!otp.trim() || otp.trim().length < 6) {
       setError('Please enter the complete 6-digit verification code.')
       return
@@ -87,6 +99,12 @@ export default function PatientLoginPage() {
       />
 
       <YStack gap="$4">
+        {STAGING_READ_ONLY && (
+          <InlineNotice
+            title="Staging preview only — patient OTP is disabled until the isolated Nexa Care backend is ready. Do not enter real patient information."
+            tone="danger"
+          />
+        )}
         {step === 'phone' ? (
           <FormField
             id="web-patient-phone"
@@ -98,7 +116,7 @@ export default function PatientLoginPage() {
               setPhone(text)
               if (error) setError(null)
             }}
-            disabled={loading}
+            disabled={loading || STAGING_READ_ONLY}
             onSubmitEditing={handleSendOtp}
           />
         ) : (
@@ -113,7 +131,7 @@ export default function PatientLoginPage() {
                 if (error) setError(null)
               }}
               maxLength={6}
-              disabled={loading}
+              disabled={loading || STAGING_READ_ONLY}
               letterSpacing={6}
               fontSize={24}
               textAlign="center"
@@ -133,7 +151,7 @@ export default function PatientLoginPage() {
               <ActionButton
                 chromeless
                 onPress={handleSendOtp}
-                disabled={loading}
+                disabled={loading || STAGING_READ_ONLY}
               >
                 Resend Code
               </ActionButton>
@@ -147,7 +165,7 @@ export default function PatientLoginPage() {
 
         <ActionButton
           intent="primary"
-          disabled={loading || (step === 'phone' ? !phone.trim() : otp.trim().length < 6)}
+          disabled={STAGING_READ_ONLY || loading || (step === 'phone' ? !phone.trim() : otp.trim().length < 6)}
           aria-busy={loading}
           onPress={step === 'phone' ? handleSendOtp : handleVerifyOtp}
         >
