@@ -75,6 +75,7 @@ from app.core.config import (
 from app.core.rate_limiter import atomic_fixed_window
 from app.core.client_ip import resolve_client_ip
 from app.core.supabase import get_supabase_client
+from app.security.staging_otp_guard import enforce_staging_otp_allowlist
 from app.services.patient_auth_service import (
     issue_device_enrollment_token,
     issue_patient_access_session,
@@ -224,6 +225,7 @@ def _normalized_phone_or_422(phone: str) -> str:
 
 
 async def _enforce_otp_limits(request: Request, phone: str) -> None:
+    enforce_staging_otp_allowlist(phone)
     ip = _client_ip_from_request(request) or "unknown"
     action = request.url.path.rsplit("/", 1)[-1]
     try:
