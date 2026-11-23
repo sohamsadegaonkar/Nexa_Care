@@ -31,6 +31,6 @@ test('the synthetic walkthrough cannot become an auth or clinical API shortcut',
   assert.doesNotMatch(demo, /\bfetch\s*\(|\baxios\b|\bapiClient\b|\bsupabase\b|localStorage|sessionStorage|document\.cookie/i)
   assert.doesNotMatch(demo, /storePatientAuthSession|Authorization|access_token|device_enrollment_token/)
   assert.match(demo, /NO network requests/)
-  assert.match(demo, /not an authenticated/i)
+  assert.match(demo, /NOT A PATIENT SESSION/)
   assert.match(guard, /STAGING_OTP_PHONE_ALLOWLIST/)
 })
