@@ -42,6 +42,9 @@ export default function SyntheticPatientWalkthrough() {
   const [view, setView] = useState<View>('Overview')
   const [decision, setDecision] = useState<DemoDecision>('pending')
   const [reportOpen, setReportOpen] = useState(false)
+  const [sampleRecords, setSampleRecords] = useState(['Example blood test summary'])
+  const [newRecordLabel, setNewRecordLabel] = useState('')
+  const [recordError, setRecordError] = useState<string | null>(null)
 
   if (!PREVIEW_ENABLED) {
     return (
@@ -90,7 +93,7 @@ export default function SyntheticPatientWalkthrough() {
           <h2 style={{ marginTop: 0 }}>Your health, your control</h2>
           <p style={muted}>A preview of the patient dashboard without an authenticated session or any clinical API calls.</p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 14, margin: '24px 0' }}>
-            {[['1', 'Sample report'], ['3', 'Example timeline events'], [decision === 'approved' ? '1' : '0', 'Simulated approvals']].map(([value, label]) => (
+            {[[String(sampleRecords.length), 'Sample reports'], [String(sampleRecords.length + 2), 'Example timeline events'], [decision === 'approved' ? '1' : '0', 'Simulated approvals']].map(([value, label]) => (
               <div key={label} style={{ flex: '1 1 160px', padding: 18, background: '#eff7f5', borderRadius: 12 }}>
                 <div style={{ fontSize: 30, fontWeight: 800 }}>{value}</div>
                 <div style={{ ...muted, fontSize: 14 }}>{label}</div>
@@ -122,6 +125,40 @@ export default function SyntheticPatientWalkthrough() {
               </div>
             )}
           </article>
+          <form
+            aria-label="Create fictional demo report"
+            style={{ borderTop: '1px solid #c8dcd7', marginTop: 24, paddingTop: 20, display: 'grid', gap: 12 }}
+            onSubmit={(event) => {
+              event.preventDefault()
+              const candidate = newRecordLabel.trim().toUpperCase()
+              if (!/^DEMO-[A-Z0-9 _-]{3,30}$/.test(candidate)) {
+                setRecordError('Use a fictional report label such as DEMO-LAB-PANEL. No real patient information.')
+                return
+              }
+              setSampleRecords((records) => [...records, candidate])
+              setNewRecordLabel('')
+              setRecordError(null)
+            }}
+          >
+            <label htmlFor="demo-report-label" style={{ fontWeight: 700 }}>Add an example report</label>
+            <input
+              id="demo-report-label"
+              placeholder="DEMO-LAB-PANEL"
+              value={newRecordLabel}
+              maxLength={35}
+              onChange={(event) => {
+                setNewRecordLabel(event.target.value.toUpperCase())
+                setRecordError(null)
+              }}
+              style={{ padding: '12px 14px', border: '1px solid #91b4b0', borderRadius: 10, color: '#153b3a', fontSize: 16 }}
+            />
+            <p style={{ ...muted, margin: 0 }}>Only invented DEMO-* labels are accepted; nothing is uploaded or saved.</p>
+            {recordError && <p role="alert" style={{ color: '#aa1b31', margin: 0 }}>{recordError}</p>}
+            <button type="submit" style={buttonStyle}>Add fictional report</button>
+          </form>
+          <ul aria-label="Fictional report list" style={{ lineHeight: 1.8, marginTop: 16 }}>
+            {sampleRecords.map((item, index) => <li key={index}>{item} — sample only</li>)}
+          </ul>
           <button type="button" style={{ ...buttonStyle, marginTop: 22 }} onClick={() => setView('Timeline')}>Continue to timeline</button>
         </section>
       )}
@@ -134,6 +171,9 @@ export default function SyntheticPatientWalkthrough() {
             <li><strong>Day 1:</strong> Example document received</li>
             <li><strong>Day 2:</strong> Sample report reviewed</li>
             <li><strong>Day 3:</strong> Example clinician access request arrives</li>
+            {sampleRecords.slice(1).map((item, index) => (
+              <li key={index}><strong>Demo event {index + 4}:</strong> Added {item} (local simulation)</li>
+            ))}
           </ol>
           <button type="button" style={buttonStyle} onClick={() => setView('Consent')}>Continue to access control</button>
         </section>
