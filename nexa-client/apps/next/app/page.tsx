@@ -1,6 +1,9 @@
 import { Suspense } from 'react'
 import { DoctorLoginScreen } from 'app/features/doctor/DoctorLoginScreen'
 
+// Read staging-only safety mode at runtime; do not pre-render away its banner.
+export const dynamic = 'force-dynamic'
+
 export default function Page() {
   const stagingPreview = process.env.NEXA_STAGING_WEB_PREVIEW === '1'
   return (
