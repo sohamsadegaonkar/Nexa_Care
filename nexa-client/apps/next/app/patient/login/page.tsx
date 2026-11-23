@@ -30,6 +30,8 @@ export default function PatientLoginPage() {
   const [step, setStep] = useState<'phone' | 'otp'>('phone')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [demoCode, setDemoCode] = useState('')
+  const [demoCodeError, setDemoCodeError] = useState<string | null>(null)
 
   const handleSendOtp = async () => {
     if (STAGING_READ_ONLY) {
@@ -105,17 +107,52 @@ export default function PatientLoginPage() {
             tone="danger"
           />
         )}
-        {STAGING_READ_ONLY && (
-          <ActionButton
-            intent="primary"
-            aria-label="Explore synthetic patient workflow"
-            onPress={() => router.push('/demo/patient')}
+        {STAGING_READ_ONLY ? (
+          <form
+            aria-label="Synthetic patient entry"
+            onSubmit={(event) => {
+              event.preventDefault()
+              const candidate = demoCode.trim().toUpperCase()
+              if (!/^DEMO-[A-Z0-9]{3,8}$/.test(candidate)) {
+                setDemoCodeError('Enter a fictional code such as DEMO-001. Real phone numbers and patient identifiers are not accepted here.')
+                return
+              }
+              setDemoCodeError(null)
+              router.push('/demo/patient')
+            }}
+            style={{ display: 'grid', gap: 12 }}
           >
-            Explore synthetic patient workflow
-          </ActionButton>
-        )}
-        <div inert={STAGING_READ_ONLY ? true : undefined} aria-disabled={STAGING_READ_ONLY}>
-          <fieldset disabled={STAGING_READ_ONLY} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, width: '100%' }}>
+            <label htmlFor="synthetic-patient-code" style={{ fontWeight: 700, color: '#153b3a' }}>
+              Synthetic patient code
+            </label>
+            <input
+              id="synthetic-patient-code"
+              aria-describedby="synthetic-code-hint"
+              autoComplete="off"
+              inputMode="text"
+              spellCheck={false}
+              maxLength={13}
+              placeholder="DEMO-001"
+              value={demoCode}
+              onChange={(event) => {
+                setDemoCode(event.target.value.toUpperCase())
+                setDemoCodeError(null)
+              }}
+              style={{ border: '1px solid #9cbfba', borderRadius: 10, padding: '14px 16px', fontSize: 16, width: '100%', background: '#fff', color: '#153b3a' }}
+            />
+            <Paragraph id="synthetic-code-hint" color="$nexaSecondary">
+              Try DEMO-001. This accepts fictional codes only and does not send an SMS or create a patient session.
+            </Paragraph>
+            {demoCodeError && <InlineNotice title={demoCodeError} tone="danger" />}
+            <button
+              type="submit"
+              style={{ background: '#087a74', border: 0, borderRadius: 10, color: '#fff', padding: 16, fontWeight: 700, fontSize: 16, cursor: 'pointer' }}
+            >
+              Open interactive patient sandbox →
+            </button>
+          </form>
+        ) : (
+          <>
         {step === 'phone' ? (
           <FormField
             id="web-patient-phone"
@@ -127,7 +164,7 @@ export default function PatientLoginPage() {
               setPhone(text)
               if (error) setError(null)
             }}
-            disabled={loading || STAGING_READ_ONLY}
+            disabled={loading}
             onSubmitEditing={handleSendOtp}
           />
         ) : (
@@ -142,7 +179,7 @@ export default function PatientLoginPage() {
                 if (error) setError(null)
               }}
               maxLength={6}
-              disabled={loading || STAGING_READ_ONLY}
+              disabled={loading}
               letterSpacing={6}
               fontSize={24}
               textAlign="center"
@@ -162,7 +199,7 @@ export default function PatientLoginPage() {
               <ActionButton
                 chromeless
                 onPress={handleSendOtp}
-                disabled={loading || STAGING_READ_ONLY}
+                disabled={loading}
               >
                 Resend Code
               </ActionButton>
@@ -176,7 +213,7 @@ export default function PatientLoginPage() {
 
         <ActionButton
           intent="primary"
-          disabled={STAGING_READ_ONLY || loading || (step === 'phone' ? !phone.trim() : otp.trim().length < 6)}
+          disabled={loading || (step === 'phone' ? !phone.trim() : otp.trim().length < 6)}
           aria-busy={loading}
           onPress={step === 'phone' ? handleSendOtp : handleVerifyOtp}
         >
@@ -192,8 +229,8 @@ export default function PatientLoginPage() {
           )}
         </ActionButton>
 
-          </fieldset>
-        </div>
+          </>
+        )}
 
         <Separator borderColor="$nexaBorder" />
 
