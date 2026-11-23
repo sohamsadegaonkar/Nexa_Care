@@ -105,8 +105,15 @@ export default function PatientLoginPage() {
             tone="danger"
           />
         )}
-        {!STAGING_READ_ONLY && (
-          <>
+        {STAGING_READ_ONLY && (
+          <ActionButton
+            intent="primary"
+            aria-label="Explore synthetic patient workflow"
+            onPress={() => router.push('/demo/patient')}
+          >
+            Explore synthetic patient workflow
+          </ActionButton>
+        )}
         {step === 'phone' ? (
           <FormField
             id="web-patient-phone"
@@ -182,9 +189,6 @@ export default function PatientLoginPage() {
             'Verify & Open Dashboard'
           )}
         </ActionButton>
-
-          </>
-        )}
 
         <Separator borderColor="$nexaBorder" />
 
