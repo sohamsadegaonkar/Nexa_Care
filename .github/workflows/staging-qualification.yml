@@ -41,9 +41,7 @@ jobs:
       - name: Assert staging patient and provider entry screens match main exactly
         run: |
           git fetch --no-tags --depth=1 origin main
-          git diff --exit-code FETCH_HEAD HEAD -- \\
-            nexa-client/apps/next/app/patient/login/page.tsx \\
-            nexa-client/apps/next/app/page.tsx
+          git diff --exit-code FETCH_HEAD HEAD -- nexa-client/apps/next/app/patient/login/page.tsx nexa-client/apps/next/app/page.tsx
           test ! -e nexa-client/apps/next/app/demo/patient/page.tsx
       - name: Run isolated synthetic OTP and adversarial checks
         env:
