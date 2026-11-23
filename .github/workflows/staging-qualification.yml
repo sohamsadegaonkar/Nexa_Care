@@ -52,6 +52,7 @@ jobs:
         run: |
           python -m pytest -q -m "not postgres and not redis" \
             tests/staging/test_staging_target.py \
+            tests/staging/test_staging_otp_guard.py \
             tests/test_patient_otp_auth.py \
             tests/security/test_patient_jwt_upgrade_regression.py \
             tests/security/test_asgi_upgrade_fail_closed.py \
