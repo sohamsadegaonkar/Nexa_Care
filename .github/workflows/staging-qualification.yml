@@ -75,7 +75,7 @@ jobs:
     needs: synthetic-otp-and-security
     runs-on: ubuntu-latest
     env:
-      STAGING_URL: ${{ vars.NEXA_STAGING_BASE_URL }}
+      STAGING_URL: ${{ vars.NEXA_STAGING_BASE_URL || 'https://nexa-care-staging-web-20261124.onrender.com' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
