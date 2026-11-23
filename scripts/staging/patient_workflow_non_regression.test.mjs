@@ -17,6 +17,12 @@ test('a failed API deployment cannot erase the patient entry workflow', () => {
 
 test('staging preview has a prominent usable patient workflow route', () => {
   assert.match(login, /aria-label="Explore synthetic patient workflow"/)
+  assert.match(login, /inert=\\{STAGING_READ_ONLY/)
+  assert.match(login, /fieldset disabled=\\{STAGING_READ_ONLY\\}/)
+  assert.ok(
+    login.indexOf('aria-label="Explore synthetic patient workflow"') < login.indexOf('<div inert='),
+    'the patient walkthrough button must remain outside the disabled OTP form',
+  )
   assert.match(login, /router\.push\('\/demo\/patient'\)/)
   assert.match(login, /Staging preview only/)
   assert.match(login, /if \(STAGING_READ_ONLY\)/)
