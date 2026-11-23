@@ -36,3 +36,17 @@ Staging OTP strategy: **synthetic fixture identities** only. For CI use fake Sup
 - [ ] Set up protected production GitHub Environment and release-owner approval. **Do not enable production auto deploy based on this staging job.**
 
 Related work: [draft PR #102](https://github.com/sohamsadegaonkar/Nexa_Care/pull/102), [draft PR #101](https://github.com/sohamsadegaonkar/Nexa_Care/pull/101), [draft PR #99](https://github.com/sohamsadegaonkar/Nexa_Care/pull/99), [MFA #103](https://github.com/sohamsadegaonkar/Nexa_Care/issues/103), [break-glass #104](https://github.com/sohamsadegaonkar/Nexa_Care/issues/104), [review gate #105](https://github.com/sohamsadegaonkar/Nexa_Care/issues/105).
+
+
+## 23 Nov 2026 — Approved isolated Render resources (actual provisioning)
+
+The owner approved proceeding with isolated staging hosting infrastructure. **Two free-plan, Singapore-region resources were created in the connected Render workspace `tea-d8sftp7avr4c73fo8pbg`:**
+- PostgreSQL `nexa-care-staging-db-20261123`, id `dpg-dc1vb3hksfps73a22vpg-a`, PostgreSQL 16, [Render dashboard](https://dashboard.render.com/d/dpg-dc1vb3hksfps73a22vpg-a); created 2026-11-23 08:13 UTC, **free instance expiry 2026-12-23 08:13 UTC**. Was `creating` at first post-create verification. This database is **not production ready** and expiry cannot be treated as a durable release host.
+- Redis-compatible Render Key Value `nexa-care-staging-redis-20261123`, id `red-dc1vb4jl550s73flueug`, version 8.1.10, free plan, `noeviction`, **persistence off**. First post-create verification: `available`. This instance is for **disposable non-PHI synthetic credentials only**, and must not be treated as durable consent/session storage during outage/restore qualifications.
+- No existing Nexa Care Render service was modified. Existing `Nexa_Care` stays on `main` at `https://nexa-care.onrender.com` with its previous auto-deploy behavior unchanged.
+
+**Outstanding before an actual public staging URL:**
+1. Provision a *new* Supabase sandbox project after the owner explicitly selects the Supabase organization; never reuse the existing `alpha_testing` or other Supabase projects. Supabase hosted test phone numbers and fixed codes expire and require a configured phone SMS provider even when test-number SMS is not sent. Never publish test numbers/codes. Disable signups outside allowlisted synthetic fixtures.
+2. Confirm independent hosted storage/scanner, TLS-only application DB and Redis connection strings, strict trusted hosts and CORS, unique secret values and isolation startup tests. Do not copy production secrets or production data. These resources have no connection credentials in the repository.
+3. Only then create an isolated staging backend/frontend deployment **with autoDeploy initially off**, protect access, and verify it passes production-like boot checks plus `/healthz`. Register its actual assigned HTTPS URL as `NEXA_STAGING_BASE_URL` and rerun staging/CI.
+4. Since the PostgreSQL free tier expires December 23 and Redis persistence is off, runtime failure/recovery, consent atomicity and production-like durability tests require separate ephemeral test containers or an approved durable plan. **Never claim full staging release qualification from these two disposable resources alone.**
