@@ -105,6 +105,8 @@ export default function PatientLoginPage() {
             tone="danger"
           />
         )}
+        {!STAGING_READ_ONLY && (
+          <>
         {step === 'phone' ? (
           <FormField
             id="web-patient-phone"
@@ -180,6 +182,9 @@ export default function PatientLoginPage() {
             'Verify & Open Dashboard'
           )}
         </ActionButton>
+
+          </>
+        )}
 
         <Separator borderColor="$nexaBorder" />
 
