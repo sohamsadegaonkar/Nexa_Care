@@ -34,6 +34,10 @@ Every code task must report files changed; applicable invariants; tests run, pas
 
 Agents must not weaken security to pass tests, conceal production defects through test changes, add release-critical `xfail`, claim real PostgreSQL/Redis/KMS/object-storage/device evidence from mocks, expose health data or secrets in logs/URLs/errors, put patient data in URLs, use production data for tests, perform destructive database work without an explicitly disposable target, silently expand scope, claim legal compliance without legal review, or commit/push/merge/deploy without explicit authorization.
 
+## Patient and clinician workflow non-regression
+
+**Case study:** [Patient entry lost when fixing missing staging API URL (24 Nov 2026)](docs/governance/PATIENT_WORKFLOW_NON_REGRESSION_20261124.md). Do not "fix" a configuration, availability, or security failure by silently removing an essential user journey or entry point. Preserve the real UI (disabled and accurately explained if its backend is unqualified) and keep a genuinely usable, clearly labelled synthetic walkthrough separate from authenticated API or clinical data. Test both the available and unavailable states, patient and clinician navigation, access boundaries, and the exact deployed browser experience. Never let a synthetic demo issue auth tokens, access PHI, approve real consent, or count as release readiness.
+
 ## Documentation maintenance
 
 Update the relevant governance document in the same patch when a change creates an invariant, fixes a new security defect, introduces a regulated feature, changes consent/retention/breach/AI/clinical scope, or changes a mandatory engineering rule.
