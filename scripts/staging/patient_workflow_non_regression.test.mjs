@@ -18,6 +18,9 @@ test('real authenticated patient form and handlers survive the staging fix', () 
 
 test('staging entry has an editable fictional-code form, not a dead phone button', () => {
   assert.ok(login.includes('aria-label="Synthetic patient entry"'))
+  assert.ok(login.includes('Patient sandbox · Fictional demo'))
+  assert.ok(login.includes('No real sign-in, SMS or clinical records.'))
+  assert.ok(login.includes('No authentication, consent grant or audit entry is created.'))
   assert.ok(login.includes('id="synthetic-patient-code"'))
   assert.ok(login.includes('onChange={(event) => {'))
   assert.ok(login.includes('event.preventDefault()'))
