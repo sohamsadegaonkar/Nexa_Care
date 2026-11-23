@@ -114,6 +114,8 @@ export default function PatientLoginPage() {
             Explore synthetic patient workflow
           </ActionButton>
         )}
+        <div inert={STAGING_READ_ONLY ? true : undefined} aria-disabled={STAGING_READ_ONLY}>
+          <fieldset disabled={STAGING_READ_ONLY} style={{ border: 0, padding: 0, margin: 0, minWidth: 0, width: '100%' }}>
         {step === 'phone' ? (
           <FormField
             id="web-patient-phone"
@@ -189,6 +191,9 @@ export default function PatientLoginPage() {
             'Verify & Open Dashboard'
           )}
         </ActionButton>
+
+          </fieldset>
+        </div>
 
         <Separator borderColor="$nexaBorder" />
 
