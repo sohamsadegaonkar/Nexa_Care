@@ -1,0 +1,52 @@
+"""Fail closed when a release check could target production or an unsafe URL."""
+from __future__ import annotations
+
+import argparse
+import ipaddress
+from urllib.parse import urlsplit
+
+
+PRODUCTION_HOSTS = frozenset({
+    "nexa-care.onrender.com",
+    "nexa-care.com",
+    "www.nexa-care.com",
+})
+
+
+def validate_staging_target(value: str) -> str:
+    url = urlsplit(value.strip())
+    host = (url.hostname or "").lower().rstrip(".")
+    if (
+        url.scheme != "https"
+        or not host
+        or host in PRODUCTION_HOSTS
+        or url.username is not None
+        or url.password is not None
+        or url.query
+        or url.fragment
+        or url.path not in ("", "/")
+        or url.port not in (None, 443)
+        or host == "localhost"
+        or host.endswith((".localhost", ".local", ".internal"))
+    ):
+        raise ValueError("STAGING_TARGET_INVALID")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        if not address.is_global:
+            raise ValueError("STAGING_TARGET_INVALID")
+    if not (host.endswith(".onrender.com") or host.endswith(".azurewebsites.net") or host.endswith(".vercel.app") or host.endswith(".nexacare.dev")):
+        raise ValueError("STAGING_HOST_NOT_ALLOWLISTED")
+    return f"https://{host}"
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("url")
+    args = parser.parse_args()
+    try:
+        print(validate_staging_target(args.url))
+    except ValueError as exc:
+        parser.exit(2, f"{exc}\n")

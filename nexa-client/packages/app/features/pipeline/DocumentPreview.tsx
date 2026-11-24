@@ -1,6 +1,7 @@
 /**
  * DocumentPreview — renders an uploaded document page with bounding-box
  * overlays for AI-extracted fields.
+ * ALPHA: extracted field locations and counts are not clinical verification.
  *
  * The preview loads the authorized original document on explicit request.
  * For image sources it can also draw source bounding boxes over page one.
@@ -363,6 +364,15 @@ export function DocumentPreview({
           </XStack>
         </ScrollView>
       )}
+
+      <XStack alignItems="center" flexWrap="wrap" gap="$2" aria-live="polite">
+        <Text color="$orange10" fontWeight="700" fontSize="$2">
+          ALPHA — extracted fields require clinical verification
+        </Text>
+        <Text color="$color10" fontSize="$2">
+          {pageFields.length} extracted field{pageFields.length === 1 ? '' : 's'} on this page
+        </Text>
+      </XStack>
 
       {/* ── Document page canvas with bbox overlays ─────────────────── */}
       <YStack

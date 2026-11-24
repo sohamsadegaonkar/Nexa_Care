@@ -4,6 +4,7 @@ from pathlib import Path
 
 from app.api.v2.pipeline_routes import ALLOWED_COMMIT_STATUSES
 from app.main import app
+from tests.registered_routes import registered_routes
 from app.models.pipeline import ExtractedFieldRecord
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -33,7 +34,7 @@ def test_orchestrator_never_marks_extraction_auto_approved():
 
 
 def test_legacy_push_decision_route_is_absent():
-    paths = {getattr(route, "path", "") for route in app.routes}
+    paths = {getattr(route, "path", "") for route in registered_routes(app)}
     assert "/api/v2/push/{request_id}/respond" not in paths
     assert "/api/v2/consent/approve-signed" in paths
 
@@ -71,5 +72,5 @@ def test_pipeline_storage_is_adapter_backed_and_encrypted():
 
 
 def test_no_transparency_mock_router_is_registered():
-    paths = {getattr(route, "path", "") for route in app.routes}
+    paths = {getattr(route, "path", "") for route in registered_routes(app)}
     assert not any(path.startswith("/api/v2/transparency") for path in paths)

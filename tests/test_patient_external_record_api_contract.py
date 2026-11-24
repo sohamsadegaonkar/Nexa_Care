@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -32,7 +34,7 @@ from app.services.patient_external_record_import import (
 
 
 def _route(path: str, method: str):
-    for candidate in router.routes:
+    for candidate in registered_routes(router):
         methods = getattr(candidate, "methods", set()) or set()
         if getattr(candidate, "path", None) == path and method in methods:
             return candidate
@@ -58,7 +60,7 @@ def test_patient_external_record_routes_are_registered_under_me_namespace() -> N
     }
     actual = {
         (method, candidate.path)
-        for candidate in router.routes
+        for candidate in registered_routes(router)
         for method in (getattr(candidate, "methods", set()) or set())
         if "external-records" in getattr(candidate, "path", "")
     }

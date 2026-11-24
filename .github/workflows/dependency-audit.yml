@@ -1,0 +1,60 @@
+# Supply-chain audit on isolated CI; deliberately fails while advisories remain.
+# No scheduled or recurring job is created without owner approval.
+name: Python Dependency Vulnerability Audit
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'requirements*.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/dependency-audit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-dependency-audit:
+    name: Resolved Python dependency advisory gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pinned auditor without changing application requirements
+        run: python -m pip install 'pip-audit==2.10.1'
+      - name: Audit resolved production dependency tree (fail on any known advisory)
+        # Do not use --no-deps: vulnerable transitive Starlette/FastAPI chains matter.
+        run: |
+          python -m pip_audit --requirement requirements.txt --format json --output /tmp/nexa-dependency-audit.json
+      - name: Explain existing advisory failures without publishing secrets
+        if: failure()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/tmp/nexa-dependency-audit.json')
+          if path.is_file():
+              try:
+                  report = json.loads(path.read_text(encoding='utf8'))
+                  packages = report.get('dependencies', [])
+                  affected = sum(bool(x.get('vulns')) for x in packages)
+                  advisories = sum(len(x.get('vulns', [])) for x in packages)
+                  print(f'AUDIT_VULNERABLE_PACKAGES={affected}')
+                  print(f'AUDIT_ADVISORY_MATCHES={advisories}')
+                  for dep in sorted(packages, key=lambda x: str(x.get('name', ''))):
+                      vulns = dep.get('vulns', [])
+                      if vulns:
+                          print(
+                              f"AUDIT_AFFECTED_PACKAGE={dep.get('name', '<unknown>')}@"
+                              f"{dep.get('version', '<unknown>')};MATCHES={len(vulns)}"
+                          )
+                  print('AUDIT_GATE=FAIL_REMEDIATION_REQUIRED')
+              except (ValueError, OSError, TypeError):
+                  print('AUDIT_GATE=ERROR_PARSING_REPORT')
+          else:
+              print('AUDIT_GATE=ERROR_AUDITOR_DID_NOT_WRITE_REPORT')
+          PY

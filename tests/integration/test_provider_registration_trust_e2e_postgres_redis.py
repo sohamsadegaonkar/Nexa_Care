@@ -6,6 +6,8 @@ provider registration and trust-management journey (Slices 3A through 3F).
 
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import asyncio
 import json
 import os
@@ -2228,7 +2230,7 @@ async def test_12_route_surface_audit():
     - Zero generic status PATCH, zero generic transition routes.
     - Zero begin_nested() calls in provider_contact_assurance_service.py (architectural invariant).
     """
-    routes = [route for route in app.routes if hasattr(route, "path")]
+    routes = [route for route in registered_routes(app) if hasattr(route, "path")]
     trust_routes = [r for r in routes if "/provider-trust" in r.path]
     assert (
         len(trust_routes) == 27

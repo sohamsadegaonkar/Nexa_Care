@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import uuid
 from datetime import datetime, timezone
 from types import SimpleNamespace
@@ -279,7 +281,7 @@ def test_public_upload_formats_exactly_match_validator_policy() -> None:
 
 
 def _route(path: str, method: str):
-    for candidate in router.routes:
+    for candidate in registered_routes(router):
         methods = getattr(candidate, "methods", set()) or set()
         if getattr(candidate, "path", None) == path and method in methods:
             return candidate

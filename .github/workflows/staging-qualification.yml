@@ -1,0 +1,99 @@
+name: Nexa Care Staging Qualification (NO production deploy)
+
+on:
+  push:
+    branches:
+      - staging/nexa-care-qualification-20261123
+  pull_request:
+    paths:
+      - "scripts/staging/**"
+      - "tests/staging/**"
+      - ".github/workflows/staging-qualification.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexa-staging-qualification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  synthetic-otp-and-security:
+    name: Synthetic auth and security smoke (no SMS, no real patients)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CI dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements_dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify staging gateway can never claim readiness
+        run: node --test scripts/staging/holding_server.test.mjs
+      - name: Preserve patient entry workflow and synthetic-only isolation
+        run: node --test scripts/staging/patient_workflow_non_regression.test.mjs
+      - name: Assert staging patient and provider entry screens match main exactly
+        run: |
+          git fetch --no-tags --depth=1 origin main
+          git diff --exit-code FETCH_HEAD HEAD -- nexa-client/apps/next/app/patient/login/page.tsx nexa-client/apps/next/app/page.tsx
+          test ! -e nexa-client/apps/next/app/demo/patient/page.tsx
+      - name: Run isolated synthetic OTP and adversarial checks
+        env:
+          ENVIRONMENT: test
+          SUPABASE_URL: https://placeholder.supabase.co
+          SUPABASE_KEY: synthetic-only-never-real
+          PATIENT_JWT_SECRET: synthetic-patient-jwt-secret-at-least-32-chars-long
+          HANDSHAKE_PEPPER_SECRET: synthetic-test-pepper
+          KEK_ROOT_SECRET: synthetic-kek-root-secret-32-bytes-long
+          NEXA_PEPPER_KEY: synthetic-only-pepper
+          PII_ENCRYPTION_KEY: vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw=
+          MFA_ENCRYPTION_KEY: ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8=
+          OTP_RATE_LIMIT_HMAC_SECRET: synthetic-otp-rate-limit-hmac-secret-32bytes
+          PATIENT_GRANT_REFERENCE_HMAC_SECRET: synthetic-patient-grant-reference-hmac-secret
+        run: |
+          python -m pytest -q -m "not postgres and not redis" \
+            tests/staging/test_staging_target.py \
+            tests/staging/test_staging_otp_guard.py \
+            tests/test_patient_otp_auth.py \
+            tests/security/test_patient_jwt_upgrade_regression.py \
+            tests/security/test_asgi_upgrade_fail_closed.py \
+            tests/test_patient_external_record_source_safety.py \
+            tests/test_signed_approval.py \
+            tests/test_approved_access_capability.py \
+            tests/test_cryptographic_erasure.py
+
+  deployed-staging-smoke:
+    name: Staging HTTPS health (requires separately isolated real deployment)
+    needs: synthetic-otp-and-security
+    runs-on: ubuntu-latest
+    env:
+      STAGING_URL: ${{ vars.NEXA_STAGING_BASE_URL || 'https://nexa-care-staging-web-20261124.onrender.com' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Require configured isolated HTTPS staging origin
+        run: |
+          if [ -z "$STAGING_URL" ]; then
+            echo "::error::NEXA_STAGING_BASE_URL is unset. Do not promote: staging is not deployed."
+            exit 1
+          fi
+          python scripts/staging/check_target.py "$STAGING_URL"
+      - name: HTTPS readiness probe — NEVER production
+        run: |
+          curl --fail --show-error --silent --max-redirs 0 --max-time 20 \
+            --proto '=https' --tlsv1.2 --output /dev/null "$STAGING_URL/healthz"
+      - name: Require real authenticated application readiness, NOT a maintenance page
+        run: |
+          curl --fail --show-error --silent --max-redirs 0 --max-time 20 \
+            --proto '=https' --tlsv1.2 --output /dev/null "$STAGING_URL/readyz"
+
+# This workflow cannot push or deploy to production. Existing CI, scanner,
+# browser/device rehearsal, and human review remain separate mandatory gates.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import asyncio
 import inspect
 from contextlib import asynccontextmanager
@@ -248,7 +250,7 @@ def test_all_trust_mutation_models_forbid_unknown_fields() -> None:
 
 
 def test_provider_trust_router_is_registered_in_fastapi_composition() -> None:
-    registered_paths = {route.path for route in main_app.routes}
+    registered_paths = {route.path for route in registered_routes(main_app)}
 
     assert "/api/v2/provider-trust/professional/me/submit" in registered_paths
 

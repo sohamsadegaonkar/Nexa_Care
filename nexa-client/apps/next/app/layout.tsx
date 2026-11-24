@@ -8,6 +8,7 @@ export const metadata: Metadata = {
   description:
     'Consent-first health records and clinical workflows. Connect care with clear patient control and source transparency.',
   icons: '/favicon.ico',
+  robots: process.env.NEXA_STAGING_WEB_PREVIEW === '1' ? { index: false, follow: false } : undefined,
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

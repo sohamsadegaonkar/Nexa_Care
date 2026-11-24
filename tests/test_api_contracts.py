@@ -5,12 +5,13 @@ import uuid
 import pytest
 
 from app.main import app
+from tests.registered_routes import registered_routes
 
 
 def routes():
     return {
         (method, route.path)
-        for route in app.routes
+        for route in registered_routes(app)
         for method in getattr(route, "methods", set())
     }
 
