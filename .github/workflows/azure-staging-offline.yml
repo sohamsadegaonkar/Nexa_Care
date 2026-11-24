@@ -64,7 +64,7 @@ jobs:
           if docker run --rm --network none -e ENVIRONMENT=staging nexa-azure-api:ci > "$RUNNER_TEMP/unsafe-start.log" 2>&1; then
             exit 1
           fi
-          rg -F 'ERROR: unsafe container startup configuration' "$RUNNER_TEMP/unsafe-start.log"
+          grep -Fx 'ERROR: unsafe container startup configuration' "$RUNNER_TEMP/unsafe-start.log"
       - name: Build the original Next frontend and run readiness tests
         run: |
           docker build --target build -f nexa-client/Dockerfile.azure-staging -t nexa-azure-web:ci \

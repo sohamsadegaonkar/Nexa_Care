@@ -73,24 +73,39 @@ jobs:
     needs: synthetic-otp-and-security
     runs-on: ubuntu-latest
     env:
-      STAGING_URL: ${{ vars.NEXA_STAGING_BASE_URL || 'https://nexa-care-staging-web-20261124.onrender.com' }}
+      RELEASE_REF: ${{ github.head_ref || github.ref_name }}
+      AZURE_STAGING_URL: ${{ vars.NEXA_AZURE_STAGING_BASE_URL }}
+      RENDER_STAGING_URL: ${{ vars.NEXA_STAGING_BASE_URL || 'https://nexa-care-staging-web-20261124.onrender.com' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Require configured isolated HTTPS staging origin
+        id: target
         run: |
-          if [ -z "$STAGING_URL" ]; then
-            echo "::error::NEXA_STAGING_BASE_URL is unset. Do not promote: staging is not deployed."
-            exit 1
-          fi
-          python scripts/staging/check_target.py "$STAGING_URL"
+          case "$RELEASE_REF" in
+            staging/azure-migration-*)
+              if [ -z "$AZURE_STAGING_URL" ]; then
+                echo "::error::NEXA_AZURE_STAGING_BASE_URL is unset. Azure staging is not qualified."
+                exit 1
+              fi
+              target=$(python scripts/staging/check_target.py --azure-only "$AZURE_STAGING_URL")
+              ;;
+            *)
+              target=$(python scripts/staging/check_target.py "$RENDER_STAGING_URL")
+              ;;
+          esac
+          printf 'url=%s\n' "$target" >> "$GITHUB_OUTPUT"
       - name: HTTPS readiness probe — NEVER production
+        env:
+          STAGING_URL: ${{ steps.target.outputs.url }}
         run: |
           curl --fail --show-error --silent --max-redirs 0 --max-time 20 \
             --proto '=https' --tlsv1.2 --output /dev/null "$STAGING_URL/healthz"
       - name: Require real authenticated application readiness, NOT a maintenance page
+        env:
+          STAGING_URL: ${{ steps.target.outputs.url }}
         run: |
           curl --fail --show-error --silent --max-redirs 0 --max-time 20 \
             --proto '=https' --tlsv1.2 --output /dev/null "$STAGING_URL/readyz"

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import ipaddress
+import re
 from urllib.parse import urlsplit
 
 
@@ -11,9 +12,18 @@ PRODUCTION_HOSTS = frozenset({
     "nexa-care.com",
     "www.nexa-care.com",
 })
+AZURE_STAGING_HOST = re.compile(
+    r"nexa-stg-web\.[a-z0-9-]+\.centralindia\.azurecontainerapps\.io"
+)
+LEGACY_STAGING_SUFFIXES = (
+    ".onrender.com",
+    ".azurewebsites.net",
+    ".vercel.app",
+    ".nexacare.dev",
+)
 
 
-def validate_staging_target(value: str) -> str:
+def validate_staging_target(value: str, *, azure_only: bool = False) -> str:
     url = urlsplit(value.strip())
     host = (url.hostname or "").lower().rstrip(".")
     if (
@@ -37,16 +47,19 @@ def validate_staging_target(value: str) -> str:
     else:
         if not address.is_global:
             raise ValueError("STAGING_TARGET_INVALID")
-    if not (host.endswith(".onrender.com") or host.endswith(".azurewebsites.net") or host.endswith(".vercel.app") or host.endswith(".nexacare.dev")):
+    if not AZURE_STAGING_HOST.fullmatch(host) and (
+        azure_only or not host.endswith(LEGACY_STAGING_SUFFIXES)
+    ):
         raise ValueError("STAGING_HOST_NOT_ALLOWLISTED")
     return f"https://{host}"
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--azure-only", action="store_true")
     parser.add_argument("url")
     args = parser.parse_args()
     try:
-        print(validate_staging_target(args.url))
+        print(validate_staging_target(args.url, azure_only=args.azure_only))
     except ValueError as exc:
         parser.exit(2, f"{exc}\n")

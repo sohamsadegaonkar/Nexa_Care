@@ -101,6 +101,10 @@ templates in [deploy/azure](../../deploy/azure).
    Next `/readyz` reflects the private API dependency response. Check protected
    API operations health with an authorized mechanism. Verify log redaction,
    VA/RBAC audit access, and App/Vault activity evidence before test data use.
+   Configure `NEXA_AZURE_STAGING_BASE_URL` with the exact approved web origin
+   for the Azure branch readiness workflow. Its probe must originate from an
+   approved staging network. An unconfigured URL or unavailable approved
+   runner is a release blocker. Preserve the ingress restrictions.
 5. Create synthetic identities through approved real app setup. Use the
    genuine approved patient/clinician browser flows and signed Expo build.
    Observe every row in the [qualification register](AZURE_STAGING_QUALIFICATION.md).
