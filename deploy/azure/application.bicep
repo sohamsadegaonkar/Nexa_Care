@@ -50,7 +50,7 @@ param patientLegalConfig {
 @description('Confirmed 32-character version IDs by secret name. Supply identifiers only.')
 param secretVersions object
 
-var location = 'centralindia'
+var location = 'malaysiawest'
 var suffix = uniqueString(resourceGroup().id)
 var prefix = 'nexa-stg-${suffix}'
 var tags = {

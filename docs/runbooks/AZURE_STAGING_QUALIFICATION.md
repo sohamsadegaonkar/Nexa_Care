@@ -1,11 +1,15 @@
 # Nexa Care Azure staging qualification
 
-**24 November 2026 · Live Azure status BLOCKED · Ready URL pending**
+**24 November 2026 · Malaysia West synthetic staging · Ready URL pending**
 
 An independent tester records the exact source revision, API/web/scanner
 digests, test environment, timestamp and sanitized evidence. Existing
 GitHub checks establish disposable CI behavior on their listed commits.
 The Azure qualification statuses below apply only to a deployed environment.
+The owner reported a successful preflight for the region-adjusted foundation
+in `rg-nexacare-staging`. Provider validation and what-if for the reviewed
+commit, explicit spending approval and live deployment evidence are required
+before qualification.
 
 | Scope | Live Azure status | Acceptance evidence |
 | --- | --- | --- |

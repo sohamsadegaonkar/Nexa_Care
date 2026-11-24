@@ -3,7 +3,7 @@ export async function azureBackendReady() {
   const api = process.env.NEXA_AZURE_STAGING_EXPECTED_API_ORIGIN
   const web = process.env.NEXA_AZURE_STAGING_EXPECTED_WEB_ORIGIN
   const environment = api?.match(
-    /^https:\/\/nexa-stg-api\.internal\.([a-z0-9-]+\.centralindia\.azurecontainerapps\.io)$/
+    /^https:\/\/nexa-stg-api\.internal\.([a-z0-9-]+\.malaysiawest\.azurecontainerapps\.io)$/
   )?.[1]
   if (
     !environment ||

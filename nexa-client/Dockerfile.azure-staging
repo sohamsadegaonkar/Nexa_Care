@@ -13,7 +13,7 @@ ARG API_PROXY_TARGET
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
     API_PROXY_TARGET=${API_PROXY_TARGET} \
     NEXT_PUBLIC_DEMO_MODE=false
-RUN node -e 'const match = /^https:\/\/nexa-stg-api\.internal\.([a-z0-9-]+\.centralindia\.azurecontainerapps\.io)$/.exec(process.env.API_PROXY_TARGET); if (!match || process.env.NEXT_PUBLIC_API_URL !== "https://nexa-stg-web." + match[1]) process.exit(1)' \
+RUN node -e 'const match = /^https:\/\/nexa-stg-api\.internal\.([a-z0-9-]+\.malaysiawest\.azurecontainerapps\.io)$/.exec(process.env.API_PROXY_TARGET); if (!match || process.env.NEXT_PUBLIC_API_URL !== "https://nexa-stg-web." + match[1]) process.exit(1)' \
     && yarn workspace next-app build \
     && yarn cache clean
 

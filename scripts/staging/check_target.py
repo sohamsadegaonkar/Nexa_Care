@@ -13,7 +13,7 @@ PRODUCTION_HOSTS = frozenset({
     "www.nexa-care.com",
 })
 AZURE_STAGING_HOST = re.compile(
-    r"nexa-stg-web\.[a-z0-9-]+\.centralindia\.azurecontainerapps\.io"
+    r"nexa-stg-web\.[a-z0-9-]+\.malaysiawest\.azurecontainerapps\.io"
 )
 LEGACY_STAGING_SUFFIXES = (
     ".onrender.com",

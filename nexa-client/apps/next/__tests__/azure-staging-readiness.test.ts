@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { GET } from '../app/readyz/route'
 
-const api = 'https://nexa-stg-api.internal.sample-123.centralindia.azurecontainerapps.io'
-const web = 'https://nexa-stg-web.sample-123.centralindia.azurecontainerapps.io'
+const api = 'https://nexa-stg-api.internal.sample-123.malaysiawest.azurecontainerapps.io'
+const web = 'https://nexa-stg-web.sample-123.malaysiawest.azurecontainerapps.io'
 const backendReady = {
   status: 'ok',
   checks: {
@@ -50,6 +50,23 @@ describe('Azure staging dependency readiness', () => {
 
   it('refuses a build configured for a different environment before fetching', async () => {
     vi.stubEnv('API_PROXY_TARGET', 'https://other.example.test')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    expect((await GET()).status).toBe(503)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      api.replace('.malaysiawest.', '.centralindia.'),
+      web.replace('.malaysiawest.', '.centralindia.'),
+    ],
+    [api, web.replace('.sample-123.', '.different-env.')],
+  ])('blocks an invalid staging origin pair before fetching', async (apiOrigin, webOrigin) => {
+    vi.stubEnv('NEXA_AZURE_STAGING_EXPECTED_API_ORIGIN', apiOrigin)
+    vi.stubEnv('NEXA_AZURE_STAGING_EXPECTED_WEB_ORIGIN', webOrigin)
+    vi.stubEnv('API_PROXY_TARGET', apiOrigin)
+    vi.stubEnv('NEXT_PUBLIC_API_URL', webOrigin)
     const fetch = vi.fn()
     vi.stubGlobal('fetch', fetch)
     expect((await GET()).status).toBe(503)

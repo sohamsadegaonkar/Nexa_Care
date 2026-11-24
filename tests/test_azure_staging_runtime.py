@@ -12,7 +12,7 @@ from scripts.azure_staging_targets import check_database, check_redis
 @pytest.fixture
 def staging_environment() -> dict[str, str]:
     postgres = "nexa-stg-1234567890abc.postgres.database.azure.com"
-    redis = "nexa-stg-1234567890abc.centralindia.redis.azure.net"
+    redis = "nexa-stg-1234567890abc.malaysiawest.redis.azure.net"
     return {
         "ENVIRONMENT": "staging",
         "NEXA_AZURE_STAGING_POSTGRES_HOST": postgres,
@@ -59,6 +59,16 @@ def test_redis_host_and_tls_are_bound(staging_environment, old, new):
     staging_environment["UPSTASH_REDIS_URL"] = staging_environment["UPSTASH_REDIS_URL"].replace(
         old, new
     )
+    with pytest.raises(ValueError, match="AZURE_STAGING_REDIS_TARGET_REJECTED"):
+        check_redis(staging_environment)
+
+
+@pytest.mark.parametrize("region", ["centralindia", "southeastasia"])
+def test_matching_redis_hosts_in_other_regions_are_rejected(staging_environment, region):
+    for variable in ("NEXA_AZURE_STAGING_REDIS_HOST", "UPSTASH_REDIS_URL"):
+        staging_environment[variable] = staging_environment[variable].replace(
+            ".malaysiawest.", f".{region}."
+        )
     with pytest.raises(ValueError, match="AZURE_STAGING_REDIS_TARGET_REJECTED"):
         check_redis(staging_environment)
 

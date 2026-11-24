@@ -2,8 +2,9 @@
 
 Scope is an approved synthetic-only deployment of the original FastAPI, Next
 and Expo code. Treat Azure billing, access, AWS and Supabase activation as
-separate owner decisions. This runbook applies to the Central India staging
-templates in [deploy/azure](../../deploy/azure).
+separate owner decisions. Use the Malaysia West (`malaysiawest`) templates
+and the isolated `rg-nexacare-staging` resource group. Use synthetic fixtures
+for this overseas deployment. [Bicep templates](../../deploy/azure)
 
 ## Foundation and prerequisites
 
@@ -12,7 +13,7 @@ templates in [deploy/azure](../../deploy/azure).
    for Microsoft.App, Microsoft.Network, Microsoft.DBforPostgreSQL,
    Microsoft.Cache, Microsoft.ContainerRegistry, Microsoft.KeyVault,
    Microsoft.Storage, Microsoft.ManagedIdentity, Microsoft.OperationalInsights
-   and Microsoft.Insights. Check Central India ACA environment and CPU quotas,
+   and Microsoft.Insights. Check Malaysia West ACA environment and CPU quotas,
    PostgreSQL 16 and Standard B1ms availability, Balanced B0 non-HA and private
    links. Verify no existing workload uses the resource group or VNet.
 2. Bind temporary deployment rights to the staging resource group. Separate
@@ -21,10 +22,12 @@ templates in [deploy/azure](../../deploy/azure).
    GitHub environment protection and federated credentials before automating
    any cloud write. The checked-in PR workflow builds and tests without Azure
    or AWS credentials and does not publish images.
-3. With spending approved, review provider validation and a minimal-output ARM
-   what-if. Apply `foundation.bicep` in incremental mode. Supply the secure
-   PostgreSQL administrator parameter from protected custody. Check the result
-   for unexpected resources, same-region DNS, PostgreSQL delegation, private
+3. Repeat provider validation and a minimal-output ARM what-if for the reviewed
+   revision in `rg-nexacare-staging`. The owner's preflight on a region-adjusted
+   foundation showed 35 creates and zero modifications or deletions. After
+   explicit spending approval, apply `foundation.bicep` in incremental mode.
+   Supply the secure PostgreSQL administrator parameter from protected custody.
+   Check the result for unexpected resources, same-region DNS, PostgreSQL delegation, private
    endpoints, Key Vault RBAC, purge protection and ACR admin access disabled.
 4. From an approved staging-only private operator path, use TLS with hostname
    verification to reach PostgreSQL. Prepare `nexa_migrator` and
@@ -42,7 +45,8 @@ templates in [deploy/azure](../../deploy/azure).
    `nexacare_staging` using distinct expected usernames and
    `postgresql+asyncpg` with no TLS URL overrides. Use the image's maintained
    CA root bundle, verified against the Azure CA guidance. The Redis URL uses
-   the exact foundation FQDN, `rediss`, port `10000`, DB 0 and
+   the exact foundation FQDN (`nexa-stg-<suffix>.malaysiawest.redis.azure.net`),
+   `rediss`, port `10000`, DB 0 and
    `ssl_check_hostname=true`. Check certificate and hostname mismatch denial.
    Beware password escaping when constructing connection URIs. No credentials,
    keys, patient data or test phone numbers belong in GitHub, Notion or logs.
@@ -72,7 +76,10 @@ templates in [deploy/azure](../../deploy/azure).
 1. Check out the reviewed exact commit. Build the API using the root Dockerfile
    and `INSTALL_AZURE_SDK=true`. Build the original Next workspace with
    `nexa-client/Dockerfile.azure-staging` and the exact returned `webOrigin`
-   for `NEXT_PUBLIC_API_URL` and `apiOrigin` for `API_PROXY_TARGET`. Build
+   for `NEXT_PUBLIC_API_URL` and `apiOrigin` for `API_PROXY_TARGET`. These
+   are `https://nexa-stg-web.<environment>.malaysiawest.azurecontainerapps.io`
+   and `https://nexa-stg-api.internal.<environment>.malaysiawest.azurecontainerapps.io`
+   in the same Container Apps environment. Build
    the scanner using `scanner_integration/Dockerfile` and fresh definitions.
    Verify dependency and image scans, provenance, SBOM and release image
    digests. Publish those exact images to the dedicated ACR via the approved

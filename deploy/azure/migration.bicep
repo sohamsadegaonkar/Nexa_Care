@@ -54,7 +54,7 @@ resource migrationSecretReader 'Microsoft.Authorization/roleAssignments@2022-04-
 
 resource migration 'Microsoft.App/jobs@2025-07-01' = {
   name: 'nexa-stg-migration'
-  location: 'centralindia'
+  location: 'malaysiawest'
   tags: {
     application: 'nexa-care'
     environment: 'staging'

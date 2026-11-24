@@ -8,6 +8,8 @@ Use the staging source at `f1177755251a060964a4e6f734028739eef9311a` as the base
 
 SEC-001–004, 006–008, 011–020, 022–024 and the signed-original and identity-disclosure policies apply to consent, identity, audit, key custody, scanner behavior and readiness. REG-001–005, 009, 014, 017–020 govern the privacy and operational review. The engineering constitution requires original product fidelity, a separate migration task, value-free telemetry, independent reviews and real evidence for physical or cloud results. This change prepares isolated infrastructure and integrates existing drafts for synthetic testing. No production or historical patient data, live consent, identity records, model outputs, erasure state or emergency paths are changed by the infrastructure work. [Security register](../governance/SECURITY_NON_REGRESSION.md) · [India baseline](../governance/INDIA_REGULATORY_BASELINE.md) · [Identity evidence](../governance/IDENTITY_EVIDENCE_DISCLOSURE_POLICY.md) · [Engineering constitution](../governance/NEXA_CARE_ENGINEERING_CONSTITUTION.md)
 
+The Malaysia West correction binds Azure staging resources, exact hostnames and build and readiness checks to `malaysiawest`. Its data-handling scope is synthetic-only in `rg-nexacare-staging`. The staging contract requires private service access, verified TLS, scoped managed identities and the isolated Mumbai AWS storage, keys and extraction path. Qualification covers Bicep compilation, strict host rejection, container builds, application regression and a fresh provider validation and what-if for the selected revision.
+
 ## Source checks and release state
 
 | Source checked | Verified state at 24 November 2026 |
@@ -35,7 +37,7 @@ SEC-001–004, 006–008, 011–020, 022–024 and the signed-original and ident
 
 | ID | Decision and trade-off |
 | --- | --- |
-| AZ-01 | Use Bicep for Azure control plane and separate foundation, migration job and application steps. Central India is the staging candidate. Public catalog listing supports investigation; subscription-specific SKU, quota and policy readback plus ARM validation remain release gates. |
+| AZ-01 | Use Bicep for Azure control plane and separate foundation, migration job and application steps. The isolated student subscription preflight selected Malaysia West for synthetic staging after Central India was denied and India South Central lacked the required Container Apps APIs. The owner reported 0 of 1 ACA environments in use, Consumption and PostgreSQL B1ms availability, and foundation Provider validation and what-if with 35 creates and zero modifications or deletions. Validate the committed revision before activation. |
 | AZ-02 | Use the Container Apps consumption workload profile in a dedicated VNet. Next terminates HTTPS on an allowlisted staging ingress and calls the FastAPI internal HTTPS FQDN. Bind ClamAV to the app replica loopback. Use separate managed identities for registry pulls, secrets and workload access. Verify actual forwarded-header hops before enabling test phones. |
 | AZ-03 | Use Azure PostgreSQL Flexible Server on a delegated private subnet and Azure Managed Redis through Private Link. Require verified TLS. The existing application supports a scoped Postgres credential and Redis access key; keep both in versioned Key Vault references and verify rotation/failover before production. Reconsider Entra database/cache auth after the app supports token refresh for all sync and async clients. |
 | AZ-04 | Use ACR Basic for the synthetic candidate with admin and anonymous access off, scoped `AcrPull`, immutable deployment digests and explicit provenance. Basic has a publicly reachable authenticated data plane. Evaluate Premium with Private Link and restricted build/pull networks for production. |
@@ -93,7 +95,7 @@ flowchart TB
 ## Operational artifacts
 
 - [Deployment, migration, rollback and recovery](AZURE_STAGING_DEPLOYMENT.md)
-- [Central India cost and scale assumptions](AZURE_STAGING_COST_MODEL.md)
+- [Malaysia West cost and scale assumptions](AZURE_STAGING_COST_MODEL.md)
 - [Qualification register](AZURE_STAGING_QUALIFICATION.md)
 
 ## Azure source references

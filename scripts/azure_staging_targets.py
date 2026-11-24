@@ -36,7 +36,7 @@ def check_redis(environment: Mapping[str, str]) -> None:
     try:
         url = urlsplit(environment.get("UPSTASH_REDIS_URL", ""))
         valid = (
-            re.fullmatch(r"nexa-stg-[a-z0-9]{13}\.centralindia\.redis\.azure\.net", expected)
+            re.fullmatch(r"nexa-stg-[a-z0-9]{13}\.malaysiawest\.redis\.azure\.net", expected)
             and url.scheme == "rediss"
             and url.hostname == expected
             and url.port == 10000

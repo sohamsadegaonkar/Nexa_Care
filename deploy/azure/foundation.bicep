@@ -7,7 +7,7 @@ param postgresAdministratorPassword string
 @description('Azure Managed Redis HA is optional for this synthetic stage. Reprice before enabling it.')
 param redisHighAvailability bool = false
 
-var location = 'centralindia'
+var location = 'malaysiawest'
 var suffix = uniqueString(resourceGroup().id)
 var prefix = 'nexa-stg-${suffix}'
 var tags = {

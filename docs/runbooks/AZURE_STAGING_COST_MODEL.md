@@ -1,39 +1,54 @@
 # Nexa Care Azure cost and scaling model
 
-Central India public retail estimates in INR, retrieved 24 November 2026.
-Amounts are monthly planning estimates before tax, discounts, credits, support,
-AWS, Supabase, Twilio, mobile device costs and DNS domain registration. The
-model assumes 730 hours and 2,628,000 seconds per month. Verify the effective
-rate, quota and budget in the intended subscription before approval.
+Malaysia West (`malaysiawest`) public retail estimates in INR, retrieved
+24 November 2026 for synthetic-only Nexa Care staging. The model uses 730 hours
+per month and estimates Azure consumption before tax, negotiated discounts,
+credits and support. AWS Mumbai, Supabase, Twilio, devices and domain registration
+are external costs. Verify the student subscription's eligibility, credit balance,
+quotas and effective offer before approving spending. [Azure Retail Prices API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices)
 
 ## Development and functional staging
 
 | Environment | Assumptions | Estimated Azure spend |
 | --- | --- | ---: |
 | Minimal development | Run the real app with disposable local Postgres/Redis and synthetic fixtures. Optional cloud adapter benchmark requires its own isolated account, endpoint and budget. | ₹0 local Azure consumption |
-| Staging foundation | B1ms PostgreSQL 16, 32 GB storage, 14-day same-region PITR, one Redis B0 node, ACR Basic, three Private Endpoints, four private DNS zones. Foundation stays allocated a full month. | About ₹6,043 fixed |
-| Functional staging, controlled sessions | Foundation stays allocated. Two app groups active for 80 hours in the month at 20% active time. Budget 20 synthetic identities, 100 OTPs, 40 new 2.5 MiB documents, 120 pages for extraction, 10 concurrent requests, 10 GB egress, up to 5 GB encrypted recovery artifacts and 2 GB analytics logs. | About ₹7,610 |
-| Functional staging, always on | Same volumes, with one API+scanner replica and one web replica allocated for 730 hours. Active resource fraction 5–35%, 15% midpoint. | ₹13,244–₹17,186, midpoint ₹14,558 |
+| Staging foundation | PostgreSQL 16 B1ms with 32 GB and 14-day same-region PITR, one Redis B0 node, ACR Basic, three standard private endpoints and four private DNS zones. | ₹6,015.01 fixed/month |
+| Functional staging, controlled sessions | Foundation allocated all month. Run the API with scanner and the web app for 80 hours at 20% active time. | ₹7,720.90/month |
+| Functional staging, always on | Same foundation and monthly volumes, with one API with scanner replica and one web replica allocated for 730 hours. | ₹14,829.03–₹19,332.76/month at 5–35% active time. ₹16,330.27 at 15%. |
 
-The API group reserves 2 vCPU/4 GiB, including the scanner. The web group
-reserves 0.5 vCPU/1 GiB. Actual ACA active time depends on HTTP requests and
-background activity, so measure an isolated run before relying on the low
-end. Stop the app groups deliberately between approved test windows only
-after audit queues drain. The stateful services, endpoints, registry, logs
-and backup retention can continue to bill. Managed Azure PostgreSQL backup
-storage up to provisioned server storage is included at this price basis.
-The initial hybrid qualification sends real synthetic pages to isolated
-Textract. Its usage and cross-cloud transfer are external costs. An approved
-separate Azure prebuilt benchmark of 120 pages is about ₹114 at list price
-before any F0 allowance. [Azure PostgreSQL backup pricing and behavior](https://learn.microsoft.com/azure/postgresql/flexible-server/concepts-backup-restore) · [ACA pricing](https://azure.microsoft.com/en-in/pricing/details/container-apps/)
+The fixed foundation comprises PostgreSQL compute ₹1,626.70, PostgreSQL disk
+₹378.48, Redis ₹1,251.31, ACR ₹482.56, private endpoints ₹2,085.51 and private
+DNS zones ₹190.46. Subtotals use unrounded meter values. The model assumes
+PostgreSQL backups stay within the provisioned storage allowance. [Azure PostgreSQL backup pricing and behavior](https://learn.microsoft.com/azure/postgresql/flexible-server/concepts-backup-restore)
 
-## Production sizing scenarios
+The API and scanner reserve 2 vCPU and 4 GiB. The web app reserves
+0.5 vCPU and 1 GiB. Compute equals allocated seconds multiplied by the
+weighted active and idle CPU rates and the memory rate. For example, the
+controlled session compute is ₹1,152.00. Measure the actual active time because
+worker or scanner activity can make replicas bill at the active rate. Stop
+the app replicas between approved sessions after audit queues drain. The
+stateful services and other foundation components continue to bill. [Container Apps billing](https://learn.microsoft.com/azure/container-apps/billing)
 
-The scenarios assume approved Azure-native extraction and storage, a
-Central India regional WAF, two warm API/scanner and two warm web replicas
-(5 vCPU/10 GiB total), zone-redundant database and two Redis nodes. They are
-capacity estimates for a future deployment. Sizing depends on measured
-latency, burst, data isolation and extraction quality.
+Staging assumes 20 synthetic identities, 100 OTP sends, 40 documents of
+2.5 MiB each, 120 Textract pages, 10 peak concurrent requests and 10,000 HTTP
+requests. The Azure usage allowance adds ₹553.88 per month for 2 GB of
+analytics ingestion at the paid rate, 5 GB of Hot LRS storage with 1,000 writes
+and 1,000 reads, 10 GB in each direction through Private Link, 100,000 private
+DNS queries, 10,000 Key Vault operations, one active one-hour migration job,
+HTTP requests and 10 GB Internet egress within the published first 100 GB
+tier. The estimate assumes no ACA or Log Analytics free grants are available.
+The staging OCR route uses the isolated AWS Mumbai services. The Malaysia West
+catalog returned no Consumption meter for Document Intelligence or Form
+Recognizer. Price any future Azure-native OCR benchmark separately.
+
+## Capacity cost sensitivity
+
+These hypothetical Malaysia West subtotals allow comparison across sizes.
+They use one WAF v2 gateway, two warm API with scanner replicas and two warm
+web replicas (5 vCPU and 10 GiB), multiple database nodes and a two-node Redis
+budget. Azure OCR is unpriced, so the subtotals exclude extraction and are
+incomplete for a production budget. The Malaysia West staging approval
+scope is synthetic testing.
 
 40% of registered patients are active monthly. Each active patient uploads
 two documents averaging three pages and 2.5 MiB, triggers 2.5 SMS sends,
@@ -51,35 +66,52 @@ workload estimates and exclude real historical records.
 | 100,000 | 40,000 | 80,000 / 240,000 | 2,813 | 100,000 | 500 | 3,200 |
 | 1,000,000 | 400,000 | 800,000 / 2,400,000 | 28,125 | 1,000,000 | 4,000 | 32,000 |
 
-| Registered patients | Primary size × total DB nodes; storage/node | Redis / logs and DB backup GiB over allowance | Azure fixed | Azure variable | Model total |
+| Registered patients | DB size × nodes / GB per node | Redis / log GB / excess backup GB | Azure fixed | Azure variable | Subtotal before OCR |
 | ---: | --- | --- | ---: | ---: | ---: |
-| 500 early production | D2ds v5 × 2; 32 GB | B1 HA / 6 and 0 | ₹98,651 | ₹5,671 | ≈ ₹1.04 lakh |
-| 1,000 | D2ds v5 × 2; 64 GB | B1 HA / 8 and 0 | ₹1,00,450 | ₹8,982 | ≈ ₹1.09 lakh |
-| 10,000 | D4ds v5 × 2; 128 GB | B5 HA / 20 and 60 | ₹1,58,880 | ₹41,529 | ≈ ₹2.00 lakh |
-| 100,000 | D8ds v5 × 2; 512 GB | B10 HA / 70 and 256 | ₹2,73,335 | ₹3,26,344 | ≈ ₹6.00 lakh |
-| 1,000,000 | D16ds v5 × 3 incl. one read replica; 4,096 GB | B20 HA / 400 and 2,048 | ₹8,23,359 | ₹30,62,454 | ≈ ₹38.86 lakh |
+| 500 | D2ds v5 × 2 / 32 | B1 HA / 6 / 0 | ₹74,116 | ₹24,656 | ₹98,772 |
+| 1,000 | D2ds v5 × 2 / 64 | B1 HA / 8 / 0 | ₹74,873 | ₹26,980 | ₹1,01,852 |
+| 10,000 | D4ds v5 × 2 / 128 | B5 HA / 20 / 60 | ₹1,26,064 | ₹44,636 | ₹1,70,699 |
+| 100,000 | D8ds v5 × 2 / 512 | B10 HA / 70 / 256 | ₹2,20,987 | ₹1,45,855 | ₹3,66,841 |
+| 1,000,000 | D16ds v5 × 3 / 4,096 with one read replica | B20 HA / 400 / 2,048 | ₹6,47,141 | ₹8,99,249 | ₹15,46,390 |
+
+Fixed costs include the gateway base charge, ACR Premium and five endpoints
+and private DNS zones. In table order, ACA active fractions are 10%, 15%,
+28%, 55% and 75%, plus 0, 20, 140, 1,700 and 18,000 active vCPU-hours with
+2 GiB per extra vCPU. The corresponding monthly average WAF capacity units
+are 5, 5, 10, 25 and 100. Variable costs also include one write and two
+reads per new document, one private DNS query per HTTP request, 100,000
+Key Vault operations, and Private Link GB in each direction equal to the
+Internet egress GB assumption. These usage assumptions require measurement
+for a production quote. [Application Gateway usage units](https://learn.microsoft.com/azure/application-gateway/understanding-pricing)
 
 ## Model inputs and source rates
 
-| Meter | INR retail rate or explicit assumption |
+| Meter | INR retail rate |
 | --- | --- |
-| ACA | ₹0.0023 per active vCPU-second, ₹0.0003 per idle vCPU-second, ₹0.0003/GiB-second, ₹38.0915/million requests. Production active fractions are 10%, 15%, 28%, 55%, 75% with 0, 20, 140, 1,700, 18,000 incremental active vCPU-hours respectively. Extra active compute has 2 GiB per vCPU. |
-| PostgreSQL | B1ms ₹2.3331/hour. D2ds/D4ds/D8ds/D16ds v5 ₹23.9024/47.8048/95.6097/191.2193 per node-hour. Provisioned disk ₹12.475/GB-month. Incremental LRS backup ₹9.0467/GB-month. Count HA nodes separately as a conservative planning basis. |
-| Managed Redis | Balanced B0/B1/B5/B10/B20 ₹1.6189/3.1425/15.4271/31.2350/62.2796 per cache-hour meter. Model one billable node for staging and two for HA. Confirm the SKU-specific HA pricing basis against the current subscription quote. |
-| Object storage and OCR | Hot LRS ₹1.9046/GB-month, with a ₹0.003 per-document transaction allowance. Document Intelligence S0 layout/prebuilt benchmark ₹952.2875/1,000 pages, without commitment discounts. Production redundancy choice is a further sensitivity. |
-| Registry, Vault, networking | ACR Basic/Premium ₹15.8651/₹158.7082 per day. Key Vault standard ₹2.8569/10,000 operations, with ₹29/month for production estimates. Private Endpoint planning rate ₹0.9523/hour each plus metered data where applicable, private DNS ₹47.6144/zone-month. Production plans use five links/zones. |
-| Logging and outbound | Analytics ingestion ₹306.6366/GB. To be conservative this model does not deduct the 5 GB ingestion allowance. Internet outbound ₹11.4275/GB after 100 GB/month, using the first paid tier for all usage. |
-| Production regional edge | ₹38,000/39,000/43,000/55,000/1,40,000 per month as explicit WAF, capacity and network allowances. Replace with the selected WAF v2 fixed and measured capacity-unit rates and bandwidth before proposing spend. |
+| ACA Consumption | ₹0.002666 per active vCPU-second, ₹0.000381 per idle vCPU-second, ₹0.000381 per GiB-second and ₹44.567055 per million requests. |
+| PostgreSQL | B1ms ₹2.228353/hour. D2ds/D4ds/D8ds/D16ds v5 ₹20.912234/41.824467/83.648934/167.297868 per node-hour, provisioned storage ₹11.827411 per GB-month and excess LRS backup ₹9.046731 per GB-month. |
+| Managed Redis | Balanced B0/B1/B5/B10/B20 ₹1.714118/3.428235/16.541234/33.510997/66.850583 per cache-hour. The staging model counts one node and the HA estimate counts two. Confirm the HA pricing basis with the subscription quote. |
+| ACR and Key Vault | ACR Basic ₹15.865110/day and Premium ₹158.708235/day. Key Vault Standard ₹2.856863 per 10,000 operations. |
+| Blob | Hot LRS ₹1.714118 per GB-month at these volumes, ₹4.285294 per 10,000 writes and ₹0.342824 per 10,000 reads. |
+| Private Link and DNS | Global standard endpoint ₹0.952288/hour and first-tier data processed ₹0.952288/GB in each direction. Global private DNS ₹47.614375 per zone-month at these zone counts and ₹38.091500 per million queries. |
+| Azure Monitor and Internet egress | Log Analytics ₹256.260566/GB at the paid ingestion tier. Microsoft-network Internet egress uses the catalog tiers, including ₹0 through 100 GB, ₹11.427450/GB above 100 GB and ₹8.094444/GB above 10,335 GB within the modeled volumes. |
+| WAF v2 | ₹40.110350/hour fixed and ₹1.371294 per capacity-unit hour. WAF applies only to the capacity examples. |
 
-Public meter data comes from the Azure Retail Prices API with
-`currencyCode='INR'`, Consumption pricing and `armRegionName='centralindia'`
-where regional meters apply. For example the B1ms meter is
-`27c18f86-1cc2-552e-b6b9-657d170d563d`, B0 is
-`bf063fd6-9db7-5e24-bdef-9ac0bde98ed3`, and the prebuilt OCR meter is
-`ddaa022c-eaf7-542d-8766-d86879934f9a`. Service pricing and allocation
-should be rechecked for redundancy, backups, approved data retention, ACR
-storage above quota, Private Link data, regional edge capacity and cross-region DR.
-[Retail API](https://learn.microsoft.com/rest/api/cost-management/retail-prices/azure-retail-prices) · [Managed Redis](https://azure.microsoft.com/en-in/pricing/details/managed-redis/) · [Private Link](https://azure.microsoft.com/en-in/pricing/details/private-link/) · [Application Gateway cost units](https://learn.microsoft.com/azure/application-gateway/understanding-pricing)
+To reproduce the lookup, query `https://prices.azure.com/api/retail/prices`
+with `api-version=2023-01-01-preview`, `currencyCode='INR'` and
+`$filter=armRegionName eq 'malaysiawest'` plus the service or product filter.
+Follow `NextPageLink` and select Consumption rows at the relevant tier.
+The Private Link and DNS entries use global meters from the same API.
+
+| Source meter | Meter ID |
+| --- | --- |
+| Malaysia West B1ms | `d0cb18fd-775c-5f2f-84a2-2eb6e23142f4` |
+| Malaysia West Redis B0 | `42db9844-7427-549a-a5d9-746a1e1d1e27` |
+| Malaysia West ACA active vCPU | `3bcf4424-48a0-5905-bd13-8b047f92911c` |
+| Malaysia West ACA idle vCPU | `4493709d-ee9b-5bd2-8710-a3248537f3c3` |
+| Malaysia West Log Analytics ingestion | `53de4a8a-4768-5f74-a1f8-6ab32e21ba03` |
+| Global standard Private Endpoint | `e6ab7238-e433-4fe0-a2b2-2b2564df2cdb` |
+| Global private DNS zones | `0b608a26-f611-4232-8192-ce81b6b57194` |
 
 ## Cost controls and scale triggers
 
@@ -101,8 +133,9 @@ storage above quota, Private Link data, regional edge capacity and cross-region 
   change. Increase ACA replica counts only after worker and signed-consent
   concurrency tests. Use query/index and outbox evidence before adding read
   models or dedicated compute.
-- OCR pages dominate the large-scale scenarios. Reprice approved commitment
-  tiers after sustained measured page volume. Detect exact duplicate requests
+- Obtain a separate OCR quote before budgeting high page volumes. Price
+  approved commitment tiers after sustained measured page volume. Detect exact
+  duplicate requests
   safely without weakening provenance. Control egress, alerts and log sampling
   without discarding required audit evidence. Obtain external SMS/identity
   quotes for the indicated volume, and include retry/spend controls.
