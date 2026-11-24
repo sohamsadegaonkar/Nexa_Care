@@ -80,7 +80,7 @@ async def test_list_is_patient_scoped_keyset_paginated_and_no_store(monkeypatch)
     response = Response()
     page = await routes.list_provider_patient_documents(
         response=response, patient_id=str(patient_id), limit=1, cursor=None,
-        provider=MagicMock(), capability=object(), db=db,
+        provider=MagicMock(), capability=SimpleNamespace(patient_id=str(patient_id)), db=db,
     )
     assert len(page.items) == 1
     assert page.items[0].document_id == first.id
@@ -108,7 +108,7 @@ async def test_erasure_or_retirement_blocks_listing_before_database_query(monkey
     with pytest.raises(HTTPException) as caught:
         await routes.list_provider_patient_documents(
             response=Response(), patient_id=str(patient_id),
-            limit=20, cursor=None, provider=MagicMock(), capability=object(), db=db,
+            limit=20, cursor=None, provider=MagicMock(), capability=SimpleNamespace(patient_id=str(patient_id)), db=db,
         )
     assert caught.value.status_code == 410
     db.execute.assert_not_awaited()
@@ -124,3 +124,15 @@ def test_read_route_requires_both_provider_capability_and_routine_consent():
     assert any(getattr(d, "__name__", "") == "_consent_gate" for d in deps)
     assert set(path.methods) == {"GET"}
     assert not any("/source" in getattr(x, "path", "") for x in routes.router.routes)
+
+
+@pytest.mark.asyncio
+async def test_mismatched_authorized_owner_stops_before_data_access():
+    db = AsyncMock()
+    with pytest.raises(HTTPException) as exc:
+        await routes.list_provider_patient_documents(
+            response=Response(), patient_id=str(uuid.uuid4()), limit=20, cursor=None,
+            provider=MagicMock(), capability=SimpleNamespace(patient_id=str(uuid.uuid4())), db=db,
+        )
+    assert exc.value.status_code == 403
+    db.execute.assert_not_awaited()

@@ -8,6 +8,8 @@ import {
   type ProviderDocumentItem,
 } from '../../utils/apiClient'
 
+import { OriginalDocumentViewer } from './OriginalDocumentViewer'
+
 interface Props {
   patientId: string
   consentToken: string
@@ -16,7 +18,14 @@ interface Props {
 }
 
 /** Canonical reference inventory; NOT an original-source document viewer. */
-export function ProviderDocumentInventory({
+export function ProviderDocumentInventory(props: Props) {
+  const scope = useRef({ ...props, epoch: 0 })
+  if (scope.current.patientId !== props.patientId || scope.current.hospitalId !== props.hospitalId ||
+    scope.current.consentToken !== props.consentToken) scope.current = { ...props, epoch: scope.current.epoch + 1 }
+  return <DocumentInventory key={scope.current.epoch} {...props} />
+}
+
+function DocumentInventory({
   patientId,
   consentToken,
   hospitalId,
@@ -120,8 +129,12 @@ export function ProviderDocumentInventory({
               : 'Clinical verification: Not established'}
           </Paragraph>
           <Text color="$color10" fontSize={12}>
-            Original source: separate authorization required
+            {document.source_origin === 'patient_imported_external'
+              ? 'Original source: separate authorization required' : 'Original source unavailable'}
           </Text>
+          {document.source_origin === 'patient_imported_external' && (
+            <OriginalDocumentViewer documentId={document.document_id} access={{ patientId, hospitalId, consentToken }} />
+          )}
         </Card>
       ))}
 

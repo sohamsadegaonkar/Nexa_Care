@@ -67,6 +67,12 @@ from tests.registered_routes import registered_routes
 # If this file goes red again, confirm the owning route was intentionally
 # added or removed before updating this set.
 EXPECTED_ROUTES = {
+    ("POST", "/api/v2/original-access/v1/request"),
+    ("GET", "/api/v2/original-access/v1/mine"),
+    ("POST", "/api/v2/original-access/v1/decision"),
+    ("POST", "/api/v2/original-access/v1/revoke"),
+    ("POST", "/api/v2/original-access/v1/status"),
+    ("POST", "/api/v2/original-access/v1/open"),
     ("GET", "/api/v2/provider/workspace"),
     ("GET", "/api/v2/provider/records/documents"),
     ("POST", "/api/v2/auth/otp/send"),

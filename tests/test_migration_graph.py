@@ -15,7 +15,7 @@ TREATMENT_SESSION_REVISION = "20260917_treatment_session_operations"
 PATIENT_EXTERNAL_RECORD_REVISION = "20260916_patient_external_record_import"
 CANONICAL_ENCOUNTER_REVISION = "20260918_canonical_encounter"
 TREATMENT_VITALS_REVISION = "20260918_treatment_vitals_encounter"
-EXPECTED_HEAD = "20260919_medication_catalog"
+EXPECTED_HEAD = "20261120_document_access"
 
 
 def _scripts() -> ScriptDirectory:
@@ -153,7 +153,7 @@ def test_prescriber_eligibility_descends_from_treatment_vitals() -> None:
 
 
 def test_medication_catalog_descends_from_prescriber_eligibility() -> None:
-    revision = _scripts().get_revision(EXPECTED_HEAD)
+    revision = _scripts().get_revision("20260919_medication_catalog")
     assert revision is not None
     assert revision.down_revision == "20260919_prescriber_eligibility"
 

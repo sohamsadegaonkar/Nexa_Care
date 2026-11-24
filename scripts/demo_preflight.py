@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import inspect as stdlib_inspect
 import os
@@ -11,6 +12,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+from typing import Literal
 
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -46,6 +48,8 @@ from scripts.seed_demo_doctor import (  # noqa: E402
     DEMO_PROVIDER_EMAIL,
     demo_public_patient_id,
 )
+
+DiscoveryMode = Literal["nfc", "public-id"]
 
 _REQUIRED_PROVIDER_TABLES = {
     "provider_identity",
@@ -119,7 +123,9 @@ async def _schema_ready(database_url: str) -> tuple[bool, list[str]]:
     return not problems, problems
 
 
-async def _demo_state(database_url: str) -> tuple[bool, str | None]:
+async def _demo_state(
+    database_url: str, *, discovery_mode: DiscoveryMode = "nfc"
+) -> tuple[bool, str | None]:
     engine = create_async_engine(database_url)
     try:
         from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -192,24 +198,28 @@ async def _demo_state(database_url: str) -> tuple[bool, str | None]:
                 except Exception:
                     return False, "DEMO_PATIENT_ERASURE_BLOCKED_OR_UNAVAILABLE"
 
-            card = await db.scalar(
-                select(NFCCardRegistry).where(NFCCardRegistry.card_uid == DEMO_NFC_UID)
-            )
-            if (
-                card is None
-                or card.patient_id != DEMO_PATIENT_1_ID
-                or card.status != NFCCardStatus.ACTIVE.value
-            ):
-                return False, "DEMO_NFC_NOT_READY"
+            if discovery_mode == "nfc":
+                card = await db.scalar(
+                    select(NFCCardRegistry).where(NFCCardRegistry.card_uid == DEMO_NFC_UID)
+                )
+                if (
+                    card is None
+                    or card.patient_id != DEMO_PATIENT_1_ID
+                    or card.status != NFCCardStatus.ACTIVE.value
+                ):
+                    return False, "DEMO_NFC_NOT_READY"
             return True, None
     finally:
         await engine.dispose()
 
 
-async def run_preflight() -> bool:
+async def run_preflight(*, discovery_mode: DiscoveryMode = "nfc") -> bool:
+    if discovery_mode not in ("nfc", "public-id"):
+        raise ValueError("Unsupported patient discovery preflight mode")
     environment = require_demo_environment("demo_preflight")
     print("NEXA CARE DEVELOPMENT PREFLIGHT")
     print(f"database_environment_classification={environment}")
+    print(f"discovery_mode={discovery_mode}")
     all_go = True
 
     database_url = get_database_config().url
@@ -253,7 +263,7 @@ async def run_preflight() -> bool:
         all_go = False
 
     try:
-        ready, denial = await _demo_state(database_url)
+        ready, denial = await _demo_state(database_url, discovery_mode=discovery_mode)
         print(f"ready_for_clinical_access={str(ready).lower()}")
         if denial:
             print(f"clinical_denial_code={denial}")
@@ -283,7 +293,7 @@ async def run_preflight() -> bool:
     patient_b_public_id = demo_public_patient_id(DEMO_PATIENT_2_ID)
     print("DEMO_PATIENT_A")
     print(f"public_id={patient_a_public_id}")
-    print(f"nfc_uid={DEMO_NFC_UID}")
+    print(f"nfc_uid={DEMO_NFC_UID}" if discovery_mode == "nfc" else "nfc_uid=NOT_USED")
     print(f"qr_payload=nexa://patient-discovery/v1/{patient_a_public_id}")
     print("qr_supported=true")
     print("DEMO_PATIENT_B")
@@ -291,9 +301,33 @@ async def run_preflight() -> bool:
     print(f"qr_payload=nexa://patient-discovery/v1/{patient_b_public_id}")
     print("qr_supported=true")
 
-    print(f"preflight={'GO' if all_go else 'NO-GO'}")
+    # A passing local dependency preflight never establishes phone, NFC,
+    # live-browser, security-review or investor-demo release qualification.
+    if discovery_mode == "public-id":
+        print("nfc_registry_check=NOT_REQUIRED_FOR_PUBLIC_ID_DISCOVERY")
+        print("physical_nfc_gate=NOT_RUN_NO_NFC_HARDWARE")
+        print("patient_device_signature_gate=NOT_RUN")
+        print("clinician_browser_real_api_gate=NOT_RUN")
+        print("release_gate=HOLD")
+        print(f"preflight={'NON_NFC_PREREQUISITES_READY' if all_go else 'NO-GO'}")
+    else:
+        print("physical_nfc_gate=NOT_RUN")
+        print(f"preflight={'GO' if all_go else 'NO-GO'}")
     return all_go
 
 
+def _parse_discovery_mode(argv: list[str] | None = None) -> DiscoveryMode:
+    parser = argparse.ArgumentParser(description="Read-only synthetic development preflight")
+    parser.add_argument(
+        "--discovery",
+        choices=("nfc", "public-id"),
+        default="nfc",
+        help="Public ID checks discovery prerequisites without requiring an NFC registry row.",
+    )
+    return parser.parse_args(argv).discovery
+
+
 if __name__ == "__main__":
-    raise SystemExit(0 if asyncio.run(run_preflight()) else 1)
+    raise SystemExit(
+        0 if asyncio.run(run_preflight(discovery_mode=_parse_discovery_mode())) else 1
+    )

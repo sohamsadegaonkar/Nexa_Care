@@ -86,7 +86,7 @@ async def test_preflight_closes_redis_4_client_without_aclose(monkeypatch, capsy
     monkeypatch.setattr(
         demo_preflight,
         "_database_revisions",
-        AsyncMock(return_value=("20260919_medication_catalog", "20260919_medication_catalog")),
+        AsyncMock(return_value=("20261120_document_access", "20261120_document_access")),
     )
     monkeypatch.setattr(demo_preflight, "_schema_ready", AsyncMock(return_value=(True, [])))
     monkeypatch.setattr(demo_preflight, "_demo_state", AsyncMock(return_value=(True, None)))

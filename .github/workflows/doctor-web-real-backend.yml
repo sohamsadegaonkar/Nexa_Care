@@ -1,0 +1,153 @@
+# CI-hosted real HTTP doctor-web test: isolated synthetic doctor, not a device/production rehearsal.
+name: Doctor Web Real Backend Qualification
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/doctor-web-real-backend.yml"
+      - "nexa-client/**"
+      - "app/**"
+      - "alembic/**"
+      - "scripts/check_nexa_web_stack.py"
+      - "scripts/seed_demo_doctor.py"
+      - "scripts/ci/prepare_ci_shared_db.py"
+      - "docs/runbooks/LOCAL_DOCTOR_WEB_STARTUP_20261121.md"
+
+permissions:
+  contents: read
+
+jobs:
+  doctor-browser-real-api:
+    name: Real Chromium → Next proxy → FastAPI + PostgreSQL/Redis (synthetic MFA)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nexa
+          POSTGRES_PASSWORD: nexa_test
+          POSTGRES_DB: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 8
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 2s
+          --health-retries 8
+
+    env:
+      ENVIRONMENT: test
+      DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared
+      TEST_DATABASE_URL: postgresql+asyncpg://nexa:nexa_test@127.0.0.1:5432/nexa_qual_ci_shared
+      UPSTASH_REDIS_URL: redis://127.0.0.1:6379/0
+      TEST_REDIS_URL: redis://127.0.0.1:6379/0
+      NEXA_ALLOW_DISPOSABLE_TEST_DB: "1"
+      SUPABASE_URL: https://placeholder.supabase.co
+      SUPABASE_KEY: synthetic-placeholder
+      HANDSHAKE_PEPPER_SECRET: ci-doctor-web-pepper-32-bytes-minimum
+      KEK_ROOT_SECRET: ci-doctor-web-kek-root-secret-32-bytes
+      NEXA_PEPPER_KEY: ci-doctor-web-extra-pepper
+      PII_ENCRYPTION_KEY: vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw=
+      MFA_ENCRYPTION_KEY: ru5zUf5rqAFKWFyI_6zfNX4Ewv77BJnpFuKClSVs9E8=
+      PATIENT_JWT_SECRET: synthetic-patient-jwt-secret-at-least-32-chars-long
+      OTP_RATE_LIMIT_HMAC_SECRET: ci-doctor-web-rate-hmac-secret-32-bytes
+      PROVIDER_REGISTRATION_IDEMPOTENCY_HMAC_SECRET: ci-doctor-web-registration-hmac-secret-32-bytes
+      PROVIDER_CONTACT_ASSURANCE_HMAC_SECRET: ci-doctor-web-contact-hmac-secret-32-bytes
+      PATIENT_GRANT_REFERENCE_HMAC_SECRET: ci-doctor-web-patient-grant-hmac-secret-32-bytes
+      DOCUMENT_STORAGE_PROVIDER: local
+      DOCUMENT_STORAGE_LOCAL_ROOT: /tmp/nexa-doctor-web-ci-source
+      DOCUMENT_STORAGE_ENCRYPTION_KEY: vkMf8Y8z-UZyqKKtoI2AjRiGgQinLUGH7jrr4hc8vLw=
+      DOCUMENT_EXTRACTION_PROVIDER: demo
+      ENCRYPTION_BACKEND: local
+      PATIENT_SOURCE_MALWARE_SCANNER: unavailable
+      CORS_ALLOWED_ORIGINS: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:3000
+      API_PROXY_TARGET: http://127.0.0.1:8000
+      NEXT_PUBLIC_DEMO_MODE: "false"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install pinned backend and dev dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr poppler-utils
+          python -m pip install -r requirements.txt -r requirements_dev.txt
+      - name: Generate ephemeral synthetic-only doctor login secrets
+        run: |
+          python - <<'PY'
+          import os, secrets, pyotp
+          password = 'CiDoctor9!' + secrets.token_urlsafe(24)
+          mfa_secret = pyotp.random_base32()
+          print('::add-mask::' + password)
+          print('::add-mask::' + mfa_secret)
+          with open(os.environ['GITHUB_ENV'], 'a', encoding='utf-8') as f:
+              f.write('DEMO_PROVIDER_PASSWORD=' + password + '\n')
+              f.write('DEMO_PROVIDER_MFA_SECRET=' + mfa_secret + '\n')
+          print('SYNTHETIC_CI_DOCTOR_SECRETS=GENERATED_NOT_LOGGED')
+          PY
+      - name: Create isolated disposable qualification database and apply migrations
+        run: python scripts/ci/prepare_ci_shared_db.py
+      - name: Seed synthetic clinic/doctor only on this disposable database
+        run: |
+          python scripts/seed_demo_doctor.py > /tmp/nexa-ci-seed.log 2>&1
+          grep -q "ready_for_clinical_access=true" /tmp/nexa-ci-seed.log
+          echo "SYNTHETIC_DOCTOR_SEED=PASS"
+      - name: Enable Corepack and install exact frontend lockfile
+        working-directory: nexa-client
+        run: |
+          corepack enable
+          yarn install --immutable
+      - name: Install actual Chromium runtime
+        working-directory: nexa-client
+        run: yarn workspace next-app exec playwright install --with-deps chromium
+      - name: Launch loopback-only FastAPI and real Next development server
+        run: |
+          nohup python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > /tmp/nexa-ci-backend.log 2>&1 &
+          echo "$!" > /tmp/nexa-ci-backend.pid
+          ( cd nexa-client && nohup yarn workspace next-app dev --hostname localhost --port 3000 > /tmp/nexa-ci-next.log 2>&1 & )
+          echo "CI_LOCAL_SERVICES=STARTED_NOT_YET_READY"
+      - name: Check actual service readiness and same-origin anonymous session denial
+        run: |
+          for i in $(seq 1 50); do
+            if python scripts/check_nexa_web_stack.py > /tmp/nexa-ci-readiness.out 2>&1; then
+              cat /tmp/nexa-ci-readiness.out
+              exit 0
+            fi
+            sleep 3
+          done
+          cat /tmp/nexa-ci-readiness.out
+          echo "REAL_BACKEND_TO_NEXT_PROXY=NO_GO"
+          tail -n 35 /tmp/nexa-ci-backend.log | sed -E 's/([Aa]uthorization|[Cc]ookie):.*/\1: [REDACTED]/'
+          tail -n 35 /tmp/nexa-ci-next.log | sed -E 's/([Aa]uthorization|[Cc]ookie):.*/\1: [REDACTED]/'
+          exit 1
+      - name: Chromium synthetic doctor password + TOTP through real local FastAPI
+        working-directory: nexa-client/apps/next
+        run: yarn exec playwright test --config=playwright.real-backend.config.ts
+      - name: Report bounded service failures (no request bodies or credentials)
+        if: failure()
+        run: |
+          if [ -f /tmp/nexa-ci-readiness.out ]; then
+            cat /tmp/nexa-ci-readiness.out
+          fi
+      - name: Stop local services
+        if: always()
+        run: |
+          if [ -f /tmp/nexa-ci-backend.pid ]; then
+            kill "$(cat /tmp/nexa-ci-backend.pid)" 2>/dev/null || true
+          fi
+          pkill -f 'next dev --hostname localhost --port 3000' || true

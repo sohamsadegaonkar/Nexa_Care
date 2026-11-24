@@ -134,6 +134,7 @@ async def test_delete_patient_sources_deletes_and_neutralizes_metadata(
             _Result(source_rows),
             _Result(import_rows),
             _Result([]),
+            _Result([]),
         ]
     )
     db = SimpleNamespace(
@@ -163,6 +164,9 @@ async def test_delete_patient_sources_deletes_and_neutralizes_metadata(
     assert all(row.uploader_id is None for row in source_rows)
     assert all(row.content_hash is None for row in import_rows)
     assert "document_references" in str(execute.await_args_list[2].args[0]).lower()
+    deletion = execute.await_args_list[3].args[0]
+    assert deletion.is_delete and deletion.table.name == "original_document_access"
+    assert uuid.UUID(patient_id) in deletion.compile().params.values()
     assert str(patient_uuid) not in lifecycle_module._ERASED_DOCUMENT_REF
     db.flush.assert_awaited_once()
     db.commit.assert_awaited_once()
@@ -185,6 +189,7 @@ async def test_metadata_neutralization_runs_when_source_rows_are_already_gone(
             _Result([]),
             _Result([import_row]),
             _Result([]),
+            _Result([]),
         ]
     )
     db = SimpleNamespace(
@@ -201,6 +206,9 @@ async def test_metadata_neutralization_runs_when_source_rows_are_already_gone(
     assert deleted == 0
     assert import_row.content_hash is None
     assert "document_references" in str(execute.await_args_list[2].args[0]).lower()
+    deletion = execute.await_args_list[3].args[0]
+    assert deletion.is_delete and deletion.table.name == "original_document_access"
+    assert uuid.UUID(patient_id) in deletion.compile().params.values()
     storage_factory.assert_not_called()
     db.commit.assert_awaited_once()
 
@@ -388,3 +396,14 @@ async def test_source_read_denies_erased_patient_before_storage_access(
 
     assert exc_info.value.status_code == 410
     storage_factory.assert_not_called()
+
+@pytest.mark.asyncio
+async def test_erasure_commits_linked_decision_cleanup_without_remaining_sources():
+    patient_id = uuid.uuid4()
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[_Result([]), _Result([]), _Result([])]),
+                         flush=AsyncMock(), commit=AsyncMock(), rollback=AsyncMock())
+    assert await delete_patient_external_record_sources(db, patient_id=str(patient_id)) == 0
+    stmt = db.execute.await_args.args[0]
+    assert stmt.is_delete and stmt.table.name == "original_document_access"
+    assert patient_id in stmt.compile().params.values()
+    db.commit.assert_awaited_once()

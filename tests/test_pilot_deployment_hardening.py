@@ -113,7 +113,7 @@ def test_migration_script_requires_migration_database_url() -> None:
 
 
 def test_migration_script_remains_pinned_to_approved_pilot_head() -> None:
-    assert run_pilot_migrations.EXPECTED_HEAD == "20260919_medication_catalog"
+    assert run_pilot_migrations.EXPECTED_HEAD == "20261120_document_access"
 
 
 def test_migration_script_scopes_url_and_redacts_command_output(

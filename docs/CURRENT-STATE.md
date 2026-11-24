@@ -293,3 +293,7 @@ The next safe repository/product proof is:
 5. treat the existing AWS, operational-database, retention, HPR/HFR, partner-interoperability, medication-release, and physical-device blockers as real external/manual gates.
 
 The live/external blockers above must not be misrepresented as pilot deployment, live extraction PASS, operational audit PASS, retention approval, live rollback PASS, HPR/HFR integration, partner interoperability, medication-release completion, or physical-device/NFC PASS.
+
+## P1B development branch, 20 November 2026
+
+The original-access lifecycle adds migration `20261120_document_access` on top of the medication catalog. See [the branch qualification record](governance/P1B_ORIGINAL_DOCUMENT_ACCESS.md).

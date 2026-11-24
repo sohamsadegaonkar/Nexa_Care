@@ -341,6 +341,16 @@ export function DocumentPreview({
       flex={1}
       gap="$2"
     >
+      {/* Honest ALPHA labeling: extracted locations are not clinical verification. */}
+      <XStack alignItems="center" justifyContent="space-between" gap="$2" flexWrap="wrap">
+        <Text color="$orange10" fontSize="$2" fontWeight="600">
+          ALPHA · AI-assisted field locations require clinical verification.
+        </Text>
+        <Text color="$color10" fontSize="$2">
+          {pageFields.length} {pageFields.length === 1 ? 'field' : 'fields'} on this page
+        </Text>
+      </XStack>
+
       {/* ── Page thumbnails sidebar ─────────────────────────────────── */}
       {totalPages > 1 && (
         <ScrollView

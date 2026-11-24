@@ -62,6 +62,7 @@ from app.api.v2.provider_trust_routes import (
 from app.api.v2.provider_workspace_routes import (
     router as provider_workspace_v2_router,
 )
+from app.api.v2.original_document_routes import router as original_document_v1_router
 from app.api.v2.provider_document_routes import router as provider_document_v2_router
 from app.api.v2.registration_recovery_routes import (
     router as registration_recovery_v2_router,
@@ -466,6 +467,7 @@ app.include_router(provider_trust_v2_router)
 app.include_router(provider_trust_permission_v2_router)
 app.include_router(provider_workspace_v2_router)
 app.include_router(provider_document_v2_router)
+app.include_router(original_document_v1_router)
 
 app.add_exception_handler(ProviderTrustRouteError, provider_trust_route_error_response)
 app.add_exception_handler(

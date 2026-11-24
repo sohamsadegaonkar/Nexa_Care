@@ -1,6 +1,16 @@
 import { expect, test, type Page } from '@playwright/test'
 
 test.beforeEach(async ({ page }) => {
+  // Synthetic isolated CI only. Record bounded browser exception details,
+  // never request bodies, session tokens or patient data.
+  page.on('pageerror', (error) => {
+    const details = String(error.stack || error.message).split('\\n').slice(0, 6).join(' | ')
+    console.error('INVESTOR_BROWSER_JS_EXCEPTION:', details.slice(0, 900))
+  })
+  page.on('console', (message) => {
+    if (message.type() === 'error')
+      console.error('INVESTOR_BROWSER_CONSOLE_ERROR:', message.text().slice(0, 250))
+  })
   // The verification build pins its production browser origin to this reserved
   // domain. Serve its assets from loopback without weakening the origin guard or
   // contacting a live API. API requests are intercepted separately below.
@@ -48,9 +58,25 @@ async function stubSession(page: Page, authenticated: boolean) {
 }
 
 async function expectNoHorizontalOverflow(page: Page) {
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
-    true
-  )
+  const metrics = await page.evaluate(() => {
+    const viewport = window.innerWidth
+    const width = document.documentElement.scrollWidth
+    const outliers = [...document.querySelectorAll<HTMLElement>('body *')]
+      .filter((element) => {
+        const rect = element.getBoundingClientRect()
+        const style = getComputedStyle(element)
+        return rect.width > 0 && (rect.right > viewport + 1 || rect.left < -1) &&
+          style.position !== 'fixed' && style.visibility !== 'hidden'
+      })
+      .slice(0, 8).map(element => {
+        const rect = element.getBoundingClientRect()
+        return { tag: element.tagName, className: String(element.className).slice(0, 110),
+          right: Math.round(rect.right), left: Math.round(rect.left), width: Math.round(rect.width) }
+      })
+    return { viewport, width, outliers }
+  })
+  if (metrics.width > metrics.viewport) console.error('INVESTOR_MOBILE_OVERFLOW:', JSON.stringify(metrics))
+  expect(metrics.width).toBeLessThanOrEqual(metrics.viewport)
 }
 
 test('provider credentials have accessible labels, a visible primary action and keyboard submission', async ({
