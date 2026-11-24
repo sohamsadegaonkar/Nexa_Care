@@ -32,3 +32,15 @@ For the owner, a **staging website** is the actual Nexa Care product checked out
 5. Exact revision CI, security dependencies, readiness, privacy/security/clinical human reviewers and explicit production-promotion gates all pass.
 
 **Do not claim any of these unverified gates passed.**
+
+## Azure candidate infrastructure
+
+The source-exact web and API entry points retain the canonical runtime gates.
+An Azure staging web image is bound to the intended HTTPS frontend and internal
+API origins. Its readiness endpoint verifies backend dependency health.
+SMS, physical approval, clinician access, encrypted-source recovery and
+reviewer evidence must pass independently before a staged release is approved.
+The Azure templates and runbook document separate runtime and migrator roles,
+staging-only connection validation and versioned secret references. The
+Azure development-only providers remain restricted by the existing runtime
+qualification rules. [Azure architecture and release gates](../runbooks/AZURE_STAGING_ARCHITECTURE.md)

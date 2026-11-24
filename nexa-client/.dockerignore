@@ -1,0 +1,14 @@
+**/.env*
+**/.npmrc
+**/.netrc
+**/*.key
+**/*.pem
+**/.git
+**/node_modules
+**/.next
+**/.expo
+**/dist
+**/.yarn/cache
+**/.yarn/install-state.gz
+**/*.log
+**/*.tsbuildinfo
