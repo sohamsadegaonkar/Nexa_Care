@@ -44,6 +44,8 @@ function resolveApiProxyTarget(rawValue) {
 
 /** @type {import('next').NextConfig} */
 module.exports = {
+  output: 'standalone',
+  outputFileTracingRoot: path.join(__dirname, '../..'),
   async headers() {
     const values = [
       { key: 'X-Content-Type-Options', value: 'nosniff' },

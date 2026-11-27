@@ -102,7 +102,7 @@ jobs:
       - name: Record scanner build evidence
         run: |
           echo "=== Base Image Digest ==="
-          echo "clamav/clamav:1.4.6-debian@sha256:2463487b937071421c0ddadac6616111bedba45b9bd9312bbb4591b57450f8f4"
+          echo "clamav/clamav:stable-debian@sha256:d1d22e1cf0be19f3b0d58347dded3c28122e0331dcdca65d5829f64d25eb35fb"
           echo "=== Derived Image Digest ==="
           docker inspect --format='{{index .Id}}' local/patient-source-clamd:qualified
           echo "=== Baked ClamAV Version and Signatures ==="
