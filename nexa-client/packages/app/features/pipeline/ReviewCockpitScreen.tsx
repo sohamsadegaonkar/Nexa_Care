@@ -1,5 +1,6 @@
 /**
  * Review cockpit screen — side-by-side source document and field cards.
+ * ALPHA: this review UI does not itself establish clinical verification.
  *
  * Layout:
  *   Left:  DocumentPreview — authorized original source with bounding-box

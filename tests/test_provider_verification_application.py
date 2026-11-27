@@ -6,6 +6,8 @@ fail-closed behaviors in complete isolation.
 
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -391,7 +393,7 @@ async def test_execute_lookup_and_create_envelope_helper() -> None:
 
 def test_route_freeze_exactly_27_provider_trust_post_routes() -> None:
     """Verify route freeze: zero HTTP routes added, exactly 27 POST routes under /api/v2/provider-trust."""
-    routes = [route for route in app.routes if hasattr(route, "path")]
+    routes = [route for route in registered_routes(app) if hasattr(route, "path")]
     trust_routes = [r for r in routes if "/provider-trust" in r.path]
     assert (
         len(trust_routes) == 27

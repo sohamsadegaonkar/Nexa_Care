@@ -3,11 +3,12 @@
 import pytest
 
 from app.main import app
+from tests.registered_routes import registered_routes
 
 
 @pytest.mark.integration
 def test_push_transport_exposes_no_decision_route():
-    paths = {getattr(route, "path", "") for route in app.routes}
+    paths = {getattr(route, "path", "") for route in registered_routes(app)}
     assert "/api/v2/push/{request_id}/respond" not in paths
     assert "/api/v2/consent/approve-signed" in paths
 

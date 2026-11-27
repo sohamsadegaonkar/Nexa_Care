@@ -30,7 +30,7 @@ FIXED_LOGIN_ROLES = frozenset({MIGRATOR_ROLE_NAME, RUNTIME_ROLE_NAME})
 RUNTIME_SECRET_ID = "nexa-care/pilot/db/runtime"
 MIGRATOR_SECRET_ID = "nexa-care/pilot/db/migrator"
 DATABASE_SSL_CA_PATH = Path("/app/deploy/ssl/aws-rds-ca-bundle.pem")
-EXPECTED_MIGRATION_HEAD = "20260919_medication_catalog"
+EXPECTED_MIGRATION_HEAD = "20261120_document_access"
 MASTER_USERNAME_REGEX = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,62}$")
 
 SECRET_KEYS = frozenset(

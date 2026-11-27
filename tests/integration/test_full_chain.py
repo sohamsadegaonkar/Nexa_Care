@@ -7,13 +7,14 @@ these tests prevent the former weak response seam from returning.
 import pytest
 
 from app.main import app
+from tests.registered_routes import registered_routes
 
 
 @pytest.mark.integration
 def test_full_chain_uses_canonical_signed_approval_route():
     routes = {
         (method, route.path)
-        for route in app.routes
+        for route in registered_routes(app)
         for method in getattr(route, "methods", set())
     }
     assert ("POST", "/api/v2/consent/approve-signed") in routes

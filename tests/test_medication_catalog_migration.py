@@ -20,8 +20,9 @@ def _scripts() -> ScriptDirectory:
     return ScriptDirectory.from_config(config)
 
 
-def test_medication_catalog_is_single_linear_head() -> None:
-    assert _scripts().get_heads() == [REVISION]
+def test_document_access_extends_medication_catalog() -> None:
+    assert _scripts().get_heads() == ["20261120_document_access"]
+    assert _scripts().get_revision("20261120_document_access").down_revision == REVISION
     revision = _scripts().get_revision(REVISION)
     assert revision is not None
     assert revision.down_revision == PARENT
@@ -51,7 +52,7 @@ def test_medication_catalog_migration_contains_physical_security_guards() -> Non
 
 def test_current_migration_authorities_all_equal_repository_head() -> None:
     repository_heads = tuple(_scripts().get_heads())
-    assert repository_heads == (REVISION,)
-    assert run_pilot_migrations.EXPECTED_HEAD == REVISION
-    assert prepare_ci_shared_db.HEAD == REVISION
-    assert validate_pilot_runtime_evidence.CURRENT_MIGRATION_HEAD == REVISION
+    assert repository_heads == ("20261120_document_access",)
+    assert run_pilot_migrations.EXPECTED_HEAD == repository_heads[0]
+    assert prepare_ci_shared_db.HEAD == repository_heads[0]
+    assert validate_pilot_runtime_evidence.CURRENT_MIGRATION_HEAD == repository_heads[0]

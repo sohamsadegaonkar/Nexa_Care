@@ -183,3 +183,24 @@ def test_direct_constructor_cannot_bypass_production_guard(fake_cloud):
         module.AzureEncryptedDocumentStorage(
             DocumentStorageConfig(provider="azure_blob", environment="production")
         )
+
+
+@pytest.mark.asyncio
+async def test_exact_size_enforced_for_patient_original_retrieval(fake_cloud):
+    storage = get_document_storage()
+    saved = await storage.put_patient_document(
+        PAYLOAD, patient_id=PATIENT, mime_type="application/pdf"
+    )
+    assert await storage.get_patient_document_bytes(
+        saved.storage_ref, patient_id=PATIENT, expected_size=len(PAYLOAD)
+    ) == PAYLOAD
+    for size in (len(PAYLOAD) - 1, len(PAYLOAD) + 1):
+        with pytest.raises(DocumentStorageError, match="size mismatch"):
+            await storage.get_patient_document_bytes(
+                saved.storage_ref, patient_id=PATIENT, expected_size=size
+            )
+    for size in (0, -1, 20 * 1024 * 1024 + 1, True):
+        with pytest.raises(DocumentStorageError, match="Invalid expected"):
+            await storage.get_patient_document_bytes(
+                saved.storage_ref, patient_id=PATIENT, expected_size=size
+            )

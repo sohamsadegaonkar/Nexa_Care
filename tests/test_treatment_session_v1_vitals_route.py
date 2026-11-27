@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.registered_routes import registered_routes
+
 import hashlib
 import json
 import uuid
@@ -155,7 +157,7 @@ def test_router_is_mounted_in_app_after_task1_merge():
     from app.main import app
 
     assert "/api/v2/treatment-session/v1/vitals" in {
-        route.path for route in app.routes
+        route.path for route in registered_routes(app)
     }
 
 

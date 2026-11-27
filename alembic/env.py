@@ -4,7 +4,7 @@ import os
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
@@ -87,10 +87,20 @@ async def run_migrations_online() -> None:
         connect_args=build_database_connect_args(db_config),
     )
 
-    async with connectable.connect() as connection:
-        await connection.run_sync(do_run_migrations)
-
-    await connectable.dispose()
+    try:
+        async with connectable.connect() as connection:
+            if os.getenv("NEXA_AZURE_STAGING_MIGRATION_LOCK") == "1":
+                # Keep the lock on the same session that runs DDL. Closing the
+                # connection releases it, including after a failed migration.
+                acquired = await connection.scalar(
+                    text("SELECT pg_try_advisory_lock(20261124, 1)")
+                )
+                await connection.commit()
+                if acquired is not True:
+                    raise RuntimeError("AZURE_STAGING_MIGRATION_ALREADY_RUNNING")
+            await connection.run_sync(do_run_migrations)
+    finally:
+        await connectable.dispose()
 
 
 if context.is_offline_mode():
